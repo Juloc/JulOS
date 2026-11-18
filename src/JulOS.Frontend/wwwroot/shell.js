@@ -14,12 +14,21 @@ const SCREENS = ['boot', 'setup', 'login', 'home', 'remote'];
 const FORCE = new URLSearchParams(location.search);
 const WIDE = FORCE.has('phone') ? false : FORCE.has('desktop') ? innerWidth >= 1000 : matchMedia('(min-width: 1000px) and (pointer: fine)').matches;
 const D = WIDE ? await import('./desktop.js').catch(() => null) : null;
+// Handy-Oberflaeche (Material 3, mobile.js): auf allem, was nicht die Desktop-Oberflaeche bekommt. ?classic zeigt die schlichte alte Startseite.
+const M = !D && !FORCE.has('classic') ? await import('./mobile.js').catch(() => null) : null;
 
 const show = (name) => {
   if (D) {   // Desktop: Startseite und Fernsteuerung sind Fenster in #desktop (die Fernsteuerung zeigt und versteckt app.js selbst)
     const desk = name === 'home' || name === 'remote';
     for (const n of ['boot', 'setup', 'login', 'home']) $('#' + n).hidden = n !== name;
     $('#desktop').hidden = !desk;
+    return;
+  }
+  if (M) {   // Handy: die Startseite ist #mobile (blendet sich selbst ein und aus), die alte #home bleibt zu
+    M.setShown(name === 'home');
+    for (const n of SCREENS) if (n !== 'home') $('#' + n).hidden = n !== name;
+    $('#home').hidden = true;
+    if (name === 'remote') { const r = $('#remote'); r.classList.remove('m3-in'); void r.offsetWidth; r.classList.add('m3-in'); r.addEventListener('animationend', () => r.classList.remove('m3-in'), { once: true }); }
     return;
   }
   for (const n of SCREENS) $('#' + n).hidden = n !== name;
@@ -107,6 +116,7 @@ $('#setupSecretForm').addEventListener('submit', async (e) => {
 /* ---------- Anmeldung ---------- */
 function showLogin(message = '') {
   if (D) D.reset();
+  if (M) M.reset();
   show('login'); setMsg($('#loginMsg'), message);
   $('#loginPw').value = ''; $('#loginCode').value = '';
   setTimeout(() => ($('#loginUser').value ? $('#loginPw') : $('#loginUser')).focus(), 50);
@@ -131,15 +141,17 @@ async function showHome(user, message = '') {
   $('#accountMenu').hidden = true;
   setMsg($('#homeMsg'), message);
   show('home');
+  if (M) M.userChanged(user, message);
   await loadConnections();
   if (D) D.userChanged(user, message);
 }
 
 async function loadConnections() {
   try { const r = await api('/api/connections'); state.connections = r.connections; state.canStore = !!r.canStorePasswords; }
-  catch (e) { if (e.status === 401) return showLogin('Die Sitzung ist abgelaufen. Bitte neu anmelden.'); setMsg($('#homeMsg'), e.message); return; }
+  catch (e) { if (e.status === 401) return showLogin('Die Sitzung ist abgelaufen. Bitte neu anmelden.'); setMsg($('#homeMsg'), e.message); if (M) M.snack(e.message); return; }
   renderConnections();
   if (D) D.connectionsChanged();
+  if (M) M.connectionsChanged();
 }
 
 const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -185,12 +197,12 @@ $('#connKind').addEventListener('change', () => { $('#connPort').placeholder = D
 $('#connEngine').addEventListener('change', showEngineChoice);
 $('#addConn').addEventListener('click', () => editDialog(null));
 
-function editDialog(c) {
+function editDialog(c, kind) {
   state.editing = c;
   $('#connDlgTitle').textContent = c ? 'Verbindung ändern' : 'Neue Verbindung';
   $('#connName').value = c ? c.name : '';
-  $('#connKind').value = c ? c.kind : 'desktop';
-  $('#connEngine').value = c && c.engine ? c.engine : 'guac'; showEngineChoice();
+  $('#connKind').value = c ? c.kind : kind || 'desktop';
+  $('#connEngine').value = c && c.engine ? c.engine : M ? M.defaultEngine() : 'guac'; showEngineChoice();
   $('#connHost').value = c ? c.host : '';
   $('#connPort').value = c ? String(c.port) : '';
   $('#connPort').placeholder = DEFAULT_PORT[$('#connKind').value];
@@ -223,6 +235,7 @@ $('#connForm').addEventListener('submit', async (e) => {
     $('#connPw').value = '';
     $('#connDlg').close();
     await loadConnections();
+    if (M) M.snack(c ? 'Änderungen gespeichert' : 'Verbindung hinzugefügt');
   } catch (err) { setMsg(msg, err.message); }
   finally { busy(form, false); }
 });
@@ -232,7 +245,7 @@ $('#connDelete').addEventListener('click', async (e) => {
   const b = e.currentTarget;
   if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = 'Wirklich löschen?'; setTimeout(() => { b.dataset.sure = ''; b.textContent = 'Löschen'; }, 3000); return; }
   b.dataset.sure = '';
-  try { await api(`/api/connections/${state.editing.id}`, { method: 'DELETE' }); $('#connDlg').close(); await loadConnections(); }
+  try { await api(`/api/connections/${state.editing.id}`, { method: 'DELETE' }); $('#connDlg').close(); await loadConnections(); if (M) M.snack('Verbindung gelöscht'); }
   catch (err) { setMsg($('#connMsg'), err.message); }
 });
 
@@ -252,6 +265,7 @@ function startDialog(c) {
 /** Verbindung starten. Desktop: erst das Sitzungsfenster anlegen, dann verbindet app.js in dessen Anzeige. */
 function launch(c, password) {
   if (D && !D.beforeConnect(c)) return;
+  if (M) M.started(c);
   show('remote');
   openRemote({ id: c.id, name: c.name, kind: c.kind, engine: c.engine, stored: c.hasPassword ? true : undefined }, password);
 }
@@ -269,9 +283,11 @@ $('#startForm').addEventListener('submit', (e) => {
 setLeaveHandler((message, reason) => {
   if (reason === 'auth') return showLogin(message);
   if (D) return D.remoteLeft(message);   // Desktop: nur das Sitzungsfenster schliessen, die Startseite bleibt
+  if (M) M.ended(message, reason);
   showHome(state.user, message);
 });
 
+if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), signOut });
 if (D) await D.init({ state, esc, connect: startDialog, edit: editDialog, add: () => editDialog(null), devices: openDevices, signOut });
 
 /* ---------- Geraete und Sitzungen ---------- */

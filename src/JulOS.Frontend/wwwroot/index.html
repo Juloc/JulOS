@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
-  <meta name="theme-color" content="#0e1014">
+  <meta name="theme-color" content="#fdf8ff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#141218" media="(prefers-color-scheme: dark)">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials">
@@ -92,6 +93,9 @@
       <p id="connEmpty" class="empty" hidden>Noch keine Verbindung. Lege den Computer an, den du steuern willst.</p>
       <button id="addConn" type="button" class="fab" aria-label="Verbindung hinzufügen"><span data-ic="add"></span><span class="faclabel">Hinzufügen</span></button>
     </section>
+
+    <!-- Handy-Oberflaeche (Material 3; mobile.js baut sie, nur auf schmalen oder Touch-Bildschirmen) -->
+    <section id="mobile" hidden></section>
 
     <!-- Desktop-Oberflaeche (nur breite Bildschirme mit Maus; desktop.js fuellt sie und nimmt die Fernsteuerung in ein Fenster) -->
     <section id="desktop" hidden></section>

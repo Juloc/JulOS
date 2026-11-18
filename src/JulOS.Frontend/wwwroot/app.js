@@ -85,7 +85,7 @@ const S = {
   debug: store.get('debug', true),     // sendet nur Messwerte (Groessen, Ereignisarten), nie getippten Text
   cursor: { ibeam: false },
   autoPaste: store.get('autoPaste', true),   // Foto nach dem Hochladen sofort mit Strg+V einfuegen
-  seed: store.get('seed', 'system'),         // Grundfarbe fuer das Material-You-Design ('system' oder #rrggbb)
+  seed: store.get('seed', '#9a67ea'),         // Grundfarbe fuer das Material-You-Design ('system' oder #rrggbb), Standard Violett wie die Handy-Oberflaeche
   scheme: store.get('scheme', 'auto'),       // 'auto' | 'light' | 'dark'
 };
 
@@ -1292,6 +1292,8 @@ el.imgSeedInput.addEventListener('change', async () => {
 });
 el.seedInput.addEventListener('input', () => { S.seed = el.seedInput.value; store.set('seed', S.seed); applyTheme(); });
 el.schemeSel.addEventListener('change', () => { S.scheme = el.schemeSel.value; store.set('scheme', S.scheme); applyTheme(); });
+/** Fuer die Handy-Oberflaeche (mobile.js): Farbe und Hell/Dunkel setzen, speichern und anwenden. */
+export function setTheme({ seed, scheme }) { if (seed) { S.seed = seed; store.set('seed', seed); } if (scheme) { S.scheme = scheme; store.set('scheme', scheme); } applyTheme(); }
 
 /* =====================================================================
  *  Foto einfuegen: hochladen, Helfer legt es in die Zwischenablage der VM-Sitzung, dann Strg+V

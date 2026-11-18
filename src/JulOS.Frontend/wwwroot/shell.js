@@ -135,7 +135,7 @@ function renderConnections() {
     const row = document.createElement('div');
     row.className = 'conn';
     row.innerHTML = `<button type="button" class="connmain"><span class="connic">${ico(c.kind === 'terminal' ? 'terminal' : 'desktop')}</span>
-        <span class="conntext"><span class="connname">${esc(c.name)}</span><span class="connsub">${esc(KIND_LABEL[c.kind] || c.kind)} · ${esc(c.username ? c.username + '@' : '')}${esc(c.host)}:${c.port}${c.hasPassword ? ' · 🔑' : ''}</span></span></button>
+        <span class="conntext"><span class="connname">${esc(c.name)}</span><span class="connsub">${esc(KIND_LABEL[c.kind] || c.kind)} · ${esc(c.username ? c.username + '@' : '')}${esc(c.host)}:${c.port}${c.hasPassword ? `<span class="connkey" title="Passwort gespeichert">${ico('key')}</span>` : ''}</span></span></button>
       <button type="button" class="connedit ghost" aria-label="Bearbeiten">${ico('edit')}</button>`;
     row.querySelector('.connmain').addEventListener('click', () => startDialog(c));
     row.querySelector('.connedit').addEventListener('click', () => editDialog(c));

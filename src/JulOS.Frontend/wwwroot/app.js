@@ -300,10 +300,10 @@ function groupRow(row, r, label) {
   if (label) { const t = document.createElement('div'); t.className = 'gt'; t.textContent = row.title; rk.appendChild(t); }
   row.items.forEach((def, i) => rk.appendChild(keyEl(def, r, i)));
   if (S.editing) {
-    const add = document.createElement('div'); add.setAttribute('role', 'button'); add.className = 'k add'; add.textContent = '＋ Taste';
+    const add = document.createElement('div'); add.setAttribute('role', 'button'); add.className = 'k add'; add.innerHTML = ico('add') + '<span>Taste</span>';
     add.addEventListener('click', () => openKeyEditor(r, -1)); rk.appendChild(add);
     if (r === rows.length - 1) {
-      const done = document.createElement('div'); done.setAttribute('role', 'button'); done.className = 'k'; done.textContent = '✓ Fertig';
+      const done = document.createElement('div'); done.setAttribute('role', 'button'); done.className = 'k'; done.textContent = 'Fertig';
       done.addEventListener('click', () => { S.editing = false; renderRows(); toast('Tasten gespeichert'); }); rk.appendChild(done);
     }
   }
@@ -335,9 +335,9 @@ function renderRows() {
     const rk = document.createElement('div'); rk.className = 'rk'; rk.dataset.r = String(r);
     row.items.forEach((def, i) => rk.appendChild(keyEl(def, r, i)));
     if (S.editing) {
-      const add = document.createElement('div'); add.setAttribute('role', 'button'); add.className = 'k add'; add.textContent = '＋ Taste';
+      const add = document.createElement('div'); add.setAttribute('role', 'button'); add.className = 'k add'; add.innerHTML = ico('add') + '<span>Taste</span>';
       add.addEventListener('click', () => openKeyEditor(r, -1)); rk.appendChild(add);
-      const done = document.createElement('div'); done.setAttribute('role', 'button'); done.className = 'k'; done.textContent = '✓ Fertig';
+      const done = document.createElement('div'); done.setAttribute('role', 'button'); done.className = 'k'; done.textContent = 'Fertig';
       done.addEventListener('click', () => { S.editing = false; renderRows(); toast('Tasten gespeichert'); }); rk.appendChild(done);
     }
     wrap.append(rk); bottom.appendChild(wrap);
@@ -580,6 +580,9 @@ function fitDisplay() {
 }
 function pushSize(force = false) {
   if (!S.client || !S.connected) return;
+  // Waehrend der VM ihr erstes Bild aufbaut, keine Groessenaenderungen schicken: jede startet beim Ziel das Anzeigen neu und verzoegert das erste Bild
+  // (die Groesse steht schon im Verbindungsaufbau). Spaetestens nach 6 s geht es normal weiter.
+  if (!S.frameSeen && Date.now() - S.connectedAt < 6000) { scheduleSize(); return; }
   const { w, h } = computeRemote();
   if (!force && w === S.lastSent.w && h === S.lastSent.h) return;
   S.lastSent = { w, h };
@@ -686,7 +689,7 @@ async function connect() {
     if (S.client !== client) return;
     if (st === 3) { // verbunden
       clearTimeout(S.connectTimer);
-      S.connected = true; S.everConnected = true; S.connectedAt = Date.now(); startWindowBar(); fitDisplay(); pushSize(true); waitForFrame(client);
+      S.connected = true; S.everConnected = true; S.connectedAt = Date.now(); S.frameSeen = false; startWindowBar(); fitDisplay(); pushSize(); waitForFrame(client);
       // Die Zaehler der Wiederholung gelten erst als zurueckgesetzt, wenn die Verbindung wirklich haelt (sonst endlos: verbunden, sofort getrennt, neu ...)
       setTimeout(() => { if (S.client === client && S.connected) { S.firstLogin = false; S.retry = 0; } }, 12000);
     } else if (st === 5) { // getrennt
@@ -763,16 +766,17 @@ function waitForFrame(client) {
     const age = Date.now() - started;
     const ok = hasContent();
     if (seen.w > 0 && !sizedAt) sizedAt = Date.now();
-    if (probes++ % 4 === 0 && probes < 40) dbg('frameprobe', { ms: age, nudges, ...seen });
+    if (probes++ % 4 === 0 && probes < 120) dbg('frameprobe', { ms: age, nudges, ...seen });
     if (sizedAt || age > 4000) release(sizedAt ? 'groesse' : 'zeit');
-    if (ok || age > 12000) { dbg('firstframe', { ms: age, nudges, ok, ...seen }); release('bild'); return; }
+    if (ok) S.frameSeen = true;
+    if (ok || age > 25000) { S.frameSeen = true; dbg('firstframe', { ms: age, nudges, ok, ...seen }); release('bild'); return; }
     // Anstupsen (die VM zeichnet nach einer echten Groessenaenderung alles neu) erst, wenn es eine Bildgroesse gibt:
     // vorher geht die Aenderung ins Leere, weil die VM noch gar nicht verbunden ist
     if (sizedAt) {
       const since = Date.now() - sizedAt;
-      if (nudges === 0 && since > 700) { nudges = 1; nudgeSize(2); }
-      else if (nudges === 1 && since > 2500) { nudges = 2; nudgeSize(64); }
-      else if (nudges === 2 && since > 5000) { nudges = 3; nudgeSize(128); }
+      // erst warten (das Ziel braucht beim Wiederverbinden mehrere Sekunden), dann hoechstens zwei sanfte Anstupser
+      if (nudges === 0 && since > 8000) { nudges = 1; nudgeSize(2); }
+      else if (nudges === 1 && since > 16000) { nudges = 2; nudgeSize(64); }
     }
     setTimeout(tick, 250);
   };
@@ -1207,7 +1211,9 @@ async function pasteImageFromClipboard() {
       const type = item.types.find((t) => t.startsWith('image/'));
       if (type) { const b = await item.getType(type); await handleKbFiles([new File([b], 'zwischenablage', { type })]); return; }
     }
-    toast('In der Zwischenablage ist kein Bild. Erst ein Bild kopieren.', 3200);
+    // Die Google-Tastatur legt kopierte Bilder so ab, dass Chrome nur Text sieht: dann gleich die Galerie anbieten, statt nichts zu tun
+    toast('Kein Bild in der Zwischenablage. Wähle eines aus der Galerie.', 3200);
+    pickPhoto();
   } catch (e) { dbg('clipread-error', { n: e.name }); openPhotoDlg(); toast('Zwischenablage nicht erlaubt, bitte Einfügefeld nutzen', 3200); }
 }
 async function sendPhotoFiles(files) {

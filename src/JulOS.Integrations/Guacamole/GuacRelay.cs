@@ -23,6 +23,18 @@ public sealed class GuacRelay(GuacdOptions options, ILogger<GuacRelay> log)
 
     private readonly SemaphoreSlim _slots = new(options.MaxConnections);
     private sealed class Active { public CancellationTokenSource Soft = null!; public volatile bool Replaced; }
+
+    /// <summary>Messwerte vom Bildaufbau (nur fuer das Log): wann kamen die ersten Bildanweisungen von guacd, und wie viel in den ersten 15 s.</summary>
+    private sealed class PictureStats
+    {
+        public long FirstSizeMs = -1, FirstImgMs = -1, BytesFirst15s;
+        public void Note(ReadOnlySpan<byte> block, long ms)
+        {
+            if (ms < 15000) BytesFirst15s += block.Length;
+            if (FirstSizeMs < 0 && block.IndexOf("4.size,"u8) >= 0) FirstSizeMs = ms;
+            if (FirstImgMs < 0 && block.IndexOf("3.img,"u8) >= 0) FirstImgMs = ms;
+        }
+    }
     private readonly ConcurrentDictionary<string, Active> _active = new();
 
     /// <param name="sessionAlive">Wird regelmaessig gefragt; bei false wird die Verbindung beendet (Abmeldung, abgelaufene Sitzung).</param>
@@ -51,6 +63,7 @@ public sealed class GuacRelay(GuacdOptions options, ILogger<GuacRelay> log)
         {
             log.LogInformation("Remote-Verbindung offen ({Protocol}, Handshake {Ms} ms)", spec.Protocol, clock.ElapsedMilliseconds);
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var stats = new PictureStats();
             // Pro Benutzer und Verbindung nur ein Browser: ein zweites Fenster (oder ein Geraet) uebernimmt, das alte bekommt eine Meldung und bleibt ruhig.
             // Sonst riss jede neue Verbindung die alte beim Ziel hinaus, und zwei Fenster haetten sich endlos gegenseitig verdraengt.
             // Abgebrochen wird nur das Lesen von guacd ("weich"): wer ein WebSocket-Lesen abbricht, reisst das WebSocket ein, dann ginge die Meldung verloren
@@ -64,7 +77,7 @@ public sealed class GuacRelay(GuacdOptions options, ILogger<GuacRelay> log)
             {
                 // interne Anweisung: der Browser-Tunnel erwartet als Erstes seine Kennung
                 await ws.SendAsync(GuacProtocol.Encode("", conn.Id), WebSocketMessageType.Text, true, cts.Token).ConfigureAwait(false);
-                var down = DownAsync(ws, conn, soft.Token, mine);
+                var down = DownAsync(ws, conn, soft.Token, mine, stats, clock);
                 var up = UpAsync(ws, conn, cts.Token);
                 var watch = WatchAsync(sessionAlive, sessionCheck, cts.Token);
                 var first = await Task.WhenAny(down, up, watch).ConfigureAwait(false);
@@ -79,6 +92,7 @@ public sealed class GuacRelay(GuacdOptions options, ILogger<GuacRelay> log)
             finally
             {
                 if (spec.Slot is { } slot2) _active.TryRemove(new KeyValuePair<string, Active>(slot2, mine));
+                log.LogInformation("Bildaufbau ({Protocol}): Größe nach {Size} ms, erstes Bild nach {Img} ms, {Kb} kB in den ersten 15 s", spec.Protocol, stats.FirstSizeMs, stats.FirstImgMs, stats.BytesFirst15s / 1024);
                 log.LogInformation("Remote-Verbindung beendet nach {Seconds} s{Replaced}", (int)clock.Elapsed.TotalSeconds, mine.Replaced ? " (von einer neuen Verbindung abgelöst)" : "");
                 await CloseAsync(ws).ConfigureAwait(false);
             }
@@ -86,7 +100,7 @@ public sealed class GuacRelay(GuacdOptions options, ILogger<GuacRelay> log)
     }
 
     /// <summary>guacd -> Browser: Bloecke mit ganzen Anweisungen.</summary>
-    private static async Task DownAsync(WebSocket ws, GuacdConnection conn, CancellationToken ct, Active mine)
+    private static async Task DownAsync(WebSocket ws, GuacdConnection conn, CancellationToken ct, Active mine, PictureStats stats, Stopwatch clock)
     {
         try
         {
@@ -94,6 +108,7 @@ public sealed class GuacRelay(GuacdOptions options, ILogger<GuacRelay> log)
             {
                 var block = await conn.Reader.ReadBlockAsync(ct).ConfigureAwait(false);
                 if (block.IsEmpty) return;
+                stats.Note(block.Span, clock.ElapsedMilliseconds);
                 await ws.SendAsync(block, WebSocketMessageType.Text, true, ct).ConfigureAwait(false);
             }
         }

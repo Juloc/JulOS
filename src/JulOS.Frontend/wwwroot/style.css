@@ -240,3 +240,7 @@ button:disabled { opacity: .55; cursor: default; }
 .opt { color: var(--muted); font-size: .8em; }
 label.check { display: flex; align-items: center; gap: 10px; }
 label.check input { width: auto; }
+
+.connkey { display: inline-flex; vertical-align: -3px; margin-left: 6px; color: var(--muted); }
+.connkey svg { width: 14px; height: 14px; fill: currentColor; }
+.row .k.add svg { width: 18px; height: 18px; margin-right: 4px; }

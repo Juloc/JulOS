@@ -46,6 +46,8 @@ interface instead of the phone home: menu bar, dock, launcher, a Home window and
 is moved into it; the engines are untouched). The phone never loads these two files. `?desktop` forces the desktop view and `?phone` the phone view
 (useful in a browser whose pointer is not reported as "fine"). Docker, Caddy, DDNS, Files and the system overview have no backend yet and are only
 shown as "bald verfügbar" (see `IDEAS.md`).
+On a wide screen with a mouse the remote picture is requested 1:1 in device pixels (zoom 1, shown at exactly 1 / `devicePixelRatio`); the phone keeps 0.8. A browser that does not report a fine pointer (some test panes) gets 0.8: set `localStorage` `pd.k` to `1` to see the PC rendering.
+The display tests run against your own compose project with `JULOS_DEV_NETWORK=my-ui_default deploy/dev/test-display.sh`.
 To test next to other sessions, start your own compose project with other ports and your `wwwroot` mounted over `/app/wwwroot` (no rebuild after
 frontend changes), for example an override file with `ports: !override ["127.0.0.1:18280:8080"]` and `docker compose -p my-ui -f deploy/dev/compose.yaml -f override.yaml up -d`.
 Cookies belong to the host name, not the port: two stacks opened as `127.0.0.1:...` in one browser overwrite each other's login, so open yours as

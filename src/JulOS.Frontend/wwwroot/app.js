@@ -71,11 +71,16 @@ const el = {
 };
 
 /* ---------- Zustand ---------- */
+// Am PC (grosser Schirm, Maus) steht die VM 1:1 auf dem Schirm: ein Bild, das auf 80 % verkleinert angefordert und dann hochgezogen wird, ist
+// ueberall weich, besonders der Text. Auf dem Handy bleibt es bei 0,8 (Inhalt etwas groesser).
+function pcDefaultK() {
+  try { return matchMedia('(pointer: fine)').matches && matchMedia('(min-width: 1000px)').matches ? 1 : 0.8; } catch { return 0.8; }
+}
 const S = {
   client: null, tunnel: null, display: null, mouse: null,
   password: null,            // nur im Arbeitsspeicher dieser Seite
   connected: false, everConnected: false, intentional: false,
-  k: clamp(store.get('k', 0.8), 0.35, 1.8),   // Remote-Pixel pro Handy-Pixel (kleiner = Inhalt groesser)
+  k: clamp(store.get('k', pcDefaultK()), 0.35, 1.8),   // Remote-Pixel pro Geraetepixel (kleiner = Inhalt groesser; 1 = jedes Pixel der VM ein Pixel des Schirms)
   kbMode: store.get('kbMode2', 'rich'),       // 'rich' (Bilder aus der Tastatur) | 'normal' (mit Vorschlaegen) | 'direct' (ohne Vorschlaege)
   touchMode: store.get('touchMode', 'direct'),// 'direct' (Tippen = Klick an der Stelle) | 'pad' (Touchpad)
   lastSent: { w: 0, h: 0 }, sizeTimes: [],
@@ -586,7 +591,12 @@ function fitDisplay() {
   if (!S.display) return;
   const rw = S.display.getWidth();
   if (!rw) return;
-  S.display.scale(el.stage.getBoundingClientRect().width / rw);
+  // Das Bild der VM hat nach dem Abrunden auf Vielfache von 4 ein paar Pixel weniger als das Fenster; wuerde es darauf gestreckt, laege es um
+  // Bruchteile eines Pixels daneben und waere ueberall weich. Wo es 1:1 auf den Schirm passt (Faktor 1 / devicePixelRatio), bleibt es genau dort.
+  const dpr = window.devicePixelRatio || 1;
+  let scale = el.stage.getBoundingClientRect().width / rw;
+  if (Math.abs(scale * dpr - 1) < 0.02) scale = 1 / dpr;
+  S.display.scale(scale);
 }
 // Kleine Schwankungen (ein paar Pixel durch Rundung, Leiste, Systemleiste) sind keine neue Groesse wert.
 const SIZE_TOL = { w: 8, h: 16 };                  // Geraetepixel

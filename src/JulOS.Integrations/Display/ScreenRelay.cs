@@ -236,7 +236,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16)
         switch (m[0])
         {
             case ScreenProtocol.FromBrowserAck:
-                stream.Acknowledge();
+                stream.Acknowledge(m.Length >= 5 ? BinaryPrimitives.ReadInt32BigEndian(m[1..]) : null);
                 break;
             case ScreenProtocol.FromBrowserMove when m.Length >= 5:
                 stream.MouseMove(BinaryPrimitives.ReadUInt16BigEndian(m[1..]), BinaryPrimitives.ReadUInt16BigEndian(m[3..]));

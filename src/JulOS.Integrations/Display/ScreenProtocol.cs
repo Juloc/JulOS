@@ -14,7 +14,7 @@ namespace JulOS.Integrations.Display;
 ///   5 Uebernommen
 ///   6 Zwischenablage UTF-8-Text ...          (der ferne Rechner hat Text kopiert; bis ClipboardBridge.MaxTextBytes)
 /// Browser an Server:
-///   1 Bestaetigung   (ein Bild ist dekodiert)
+///   1 Bestaetigung   folge(4)   (alle Bilder bis zu dieser Folgenummer sind dekodiert oder verworfen; ohne Nummer: ein Bild)
 ///   2 Maus bewegt    x(2) y(2)
 ///   3 Maustaste      taste(1: 0 links, 1 mitte, 2 rechts) unten(1)
 ///   4 Mausrad        delta(2, mit Vorzeichen) waagerecht(1)

@@ -6,14 +6,14 @@
  * Nachrichten (alle binaer, Zahlen big endian), siehe ScreenProtocol auf dem Server:
  *   Server -> Browser: 1 Bild (flags, folge u32, H.264), 2 Zeiger, 3 Groesse, 4 Fehler, 5 uebernommen, 6 Zwischenablage (UTF-8-Text)
  *   Browser -> Server: 1 Bestaetigung, 2 Maus bewegt, 3 Maustaste, 4 Mausrad, 5 Taste (Scancode), 6 Zeichen, 7 Fenstergroesse, 8 Schluesselbild,
- *                      9 Zwischenablage (UTF-8-Text, bis 1 MiB; der ferne Rechner holt ihn, wenn er einfuegt)
+ *                      9 Zwischenablage (UTF-8-Text, bis 1 MiB; der ferne Rechner holt ihn, wenn er einfuegt), 10 Pause (1 = die Ansicht ist nicht zu sehen: der Server kodiert nicht, 0 = weiter)
  *
  * Zwischenablage: wie bei Guacamole als Strom (onclipboard(stream, 'text/plain') mit onblob/onend, createClipboardStream() mit sendBlob/sendEnd),
  * damit Guacamole.StringReader und StringWriter in app.js unveraendert funktionieren. Nur Text.
  * ===================================================================== */
 
 const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6 };
-const OUT = { ack: 1, move: 2, button: 3, wheel: 4, key: 5, unicode: 6, resize: 7, keyframe: 8, clipboard: 9 };
+const OUT = { ack: 1, move: 2, button: 3, wheel: 4, key: 5, unicode: 6, resize: 7, keyframe: 8, clipboard: 9, pause: 10 };
 
 /* ---------- Tasten: X11-Keysyms (so arbeitet app.js) -> RDP-Scancodes ---------- */
 // [scancode, erweitert]
@@ -126,10 +126,20 @@ export class StreamClient {
     this.layout = layout;
     this.stats = { pictures: 0, dropped: 0 };
     this.failures = 0;
+    this.paused = false;                // die Ansicht ist im Hintergrund: der Server kodiert dann keine Bilder
     this.drawn = false;                 // ob schon ein Bild gezeichnet wurde (davor darf app.js auf Guacamole ausweichen)
   }
 
   getDisplay() { return this.display; }
+
+  // Ansicht im Hintergrund (andere Sitzung vorn, Fenster minimiert, Seite versteckt): der Server hoert auf zu kodieren, der Browser dekodiert nichts.
+  // Beim Zurueckkommen schickt der Server alles, was sich inzwischen geaendert hat, als naechstes Bild (der Kodierer hat keines uebersprungen).
+  setPaused(on) {
+    on = !!on;
+    if (this.paused === on) return;
+    this.paused = on;
+    if (this.connected) this.send(Uint8Array.of(OUT.pause, on ? 1 : 0));
+  }
 
   setState(s) { if (this.state === s) return; this.state = s; if (this.onstatechange) this.onstatechange(s); }
 
@@ -178,7 +188,7 @@ export class StreamClient {
       }
       case IN.size:
         this.display.resize(v.getUint16(1), v.getUint16(3));
-        if (!this.connected) { this.connected = true; this.setState(3); }
+        if (!this.connected) { this.connected = true; this.setState(3); if (this.paused) this.send(Uint8Array.of(OUT.pause, 1)); }
         break;
       case IN.error: {
         const code = v.getUint16(1), message = new TextDecoder().decode(new Uint8Array(buffer, 3));

@@ -88,13 +88,13 @@ html.desktop body { background: #d9d4f2; }
 /* Sitzungsfenster: die Fernsteuerung (#remote) wird hierher verschoben */
 .dk-win.dk-session { background: rgba(255, 255, 255, .78); }
 .dk-win.dk-session .dk-wb { background: #000; }
-html.desktop #remote { flex: 1; min-height: 0; }
-html.desktop #remote #rowsTop { display: none; }
-html.desktop #remote #dock { border-radius: 0; background: rgba(255, 255, 255, .86); box-shadow: 0 -1px 0 rgba(90, 80, 150, .14); }
-html.desktop #remote #dock .row.bar { padding-top: 4px; padding-bottom: 4px; }
-html.desktop #remote #dock #menuSheet { left: 12px; right: auto; width: 360px; }
-html.desktop #remote #topbar { border-radius: 0; background: rgba(255, 255, 255, .86); box-shadow: 0 1px 0 rgba(90, 80, 150, .14); }
-html.desktop #remote #overlay .box { border-radius: 20px; background: rgba(255, 255, 255, .94); }
+html.desktop .sv { flex: 1; min-height: 0; }
+html.desktop .sv .sv-rowsTop { display: none; }
+html.desktop .sv .sv-dock { border-radius: 0; background: rgba(255, 255, 255, .86); box-shadow: 0 -1px 0 rgba(90, 80, 150, .14); }
+html.desktop .sv .sv-dock .row.bar { padding-top: 4px; padding-bottom: 4px; }
+html.desktop .sv .sv-dock .sv-menu { left: 12px; right: auto; width: 360px; }
+html.desktop .sv .sv-topbar { border-radius: 0; background: rgba(255, 255, 255, .86); box-shadow: 0 1px 0 rgba(90, 80, 150, .14); }
+html.desktop .sv .sv-overlay .box { border-radius: 20px; background: rgba(255, 255, 255, .94); }
 
 /* ---------- Home-Fenster ---------- */
 .dk-home { flex: 1; min-height: 0; display: grid; grid-template-columns: 200px 1fr; }
@@ -213,3 +213,11 @@ html.desktop #remote #overlay .box { border-radius: 20px; background: rgba(255, 
 
 @media (max-width: 1180px) { .dk-sys { grid-template-columns: repeat(2, 1fr); } }
 @media (prefers-reduced-motion: reduce) { .dk-win, .dk-menu, .dk-launch, .dk-toast { animation: none; } }
+
+/* ---------- Mehrere Sitzungen: Zustandspunkt in der Titelleiste, Menueintraege nur fuers Handy ausblenden ---------- */
+.dk-sdot { width: 9px; height: 9px; flex: 0 0 9px; border-radius: 50%; background: #9aa0b8; }
+.dk-sdot.ok { background: #2fb872; }
+.dk-sdot.busy { background: #f0a020; animation: dk-pulse 1.2s ease-in-out infinite; }
+.dk-sdot.bad { background: #e5484d; }
+@keyframes dk-pulse { 50% { opacity: .35; } }
+html.desktop .sv .sv-menu [data-only="phone"] { display: none; }

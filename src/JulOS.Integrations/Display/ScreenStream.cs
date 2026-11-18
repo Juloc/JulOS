@@ -178,6 +178,20 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Die Ansicht im Browser ist im Hintergrund (zum Beispiel eine andere Sitzung vorn): solange kodiert der Server nichts. Der Desktop laeuft
+    /// weiter, die Aenderungen sammeln sich im Bild; beim Weitermachen geht daraus das naechste Bild hinaus (ohne Luecke fuer den Dekodierer).
+    /// </summary>
+    public void SetPaused(bool paused)
+    {
+        var was = Volatile.Read(ref _paused);
+        Volatile.Write(ref _paused, paused);
+        if (was && !paused)
+        {
+            Wake();
+        }
+    }
+
     /// <summary>Ein Schluesselbild als naechstes (der Browser hat den Faden verloren).</summary>
     public void RequestKeyFrame()
     {
@@ -240,6 +254,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     // ---- Kodierschleife ----
 
     private bool _forceKey;
+    private bool _paused;
 
     private async Task EncodeLoopAsync(CancellationToken cancellationToken)
     {
@@ -274,7 +289,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
                     needKey = true;
                 }
             }
-            if (encoder is not null && frame is not null && Volatile.Read(ref _inFlight) < MaxPicturesInFlight)
+            if (encoder is not null && frame is not null && !Volatile.Read(ref _paused) && Volatile.Read(ref _inFlight) < MaxPicturesInFlight)
             {
                 var now = Environment.TickCount64;
                 var hasChange = PeekDirty(out var left, out var top, out var width, out var height, out var pixels);

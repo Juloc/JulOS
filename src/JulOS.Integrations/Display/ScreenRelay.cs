@@ -249,6 +249,9 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             case ScreenProtocol.FromBrowserKeyFrame:
                 stream.RequestKeyFrame();
                 break;
+            case ScreenProtocol.FromBrowserPause when m.Length >= 2:
+                stream.SetPaused(m[1] != 0);
+                break;
         }
     }
 

@@ -100,49 +100,58 @@
     <!-- Desktop-Oberflaeche (nur breite Bildschirme mit Maus; desktop.js fuellt sie und nimmt die Fernsteuerung in ein Fenster) -->
     <section id="desktop" hidden></section>
 
-    <!-- Fernsteuerung -->
-    <section id="remote" hidden>
-      <!-- Programmleiste oben: Modus, offene Fenster, Programm starten -->
-      <header id="topbar" hidden>
-        <div id="rowWin"></div>
-        <div id="winSheet" hidden role="menu"></div>
-      </header>
-      <div id="stage">
-        <div id="display"></div>
-        <div id="touchLayer"></div>
-        <div id="toast" aria-live="polite"></div>
-        <div id="zoomPop" aria-hidden="true"></div>
-        <div id="overlay" hidden>
-          <div class="box">
-            <div id="spinner" class="spinner" hidden aria-hidden="true"></div>
-            <p id="overlayMsg">Verbindung getrennt</p>
-            <button id="reconnectBtn" type="button">Neu verbinden</button>
-            <button id="toLoginBtn" type="button" class="ghost">Zur Startseite</button>
+    <!-- Fernsteuerung: der Behaelter fuer die Sitzungen (Handy). Jede Sitzung bringt ihre Ansicht aus der Vorlage unten mit; auf dem Desktop
+         haengt desktop.js sie je in ein eigenes Fenster. -->
+    <section id="remote" hidden></section>
+
+    <!-- Vorlage einer Fernsteuer-Sitzung (app.js klont sie pro Sitzung) -->
+    <template id="svTemplate">
+      <div class="sv">
+        <!-- Programmleiste oben: Modus, offene Fenster, Programm starten -->
+        <header class="sv-topbar" hidden>
+          <div class="sv-rowWin"></div>
+          <div class="sv-winSheet" hidden role="menu"></div>
+        </header>
+        <div class="sv-stage">
+          <div class="sv-display"></div>
+          <div class="sv-touch"></div>
+          <div class="sv-toast" aria-live="polite"></div>
+          <div class="sv-zoom" aria-hidden="true"></div>
+          <div class="sv-overlay" hidden>
+            <div class="box">
+              <div class="sv-spinner spinner" hidden aria-hidden="true"></div>
+              <p class="sv-overlayMsg">Verbindung getrennt</p>
+              <button class="sv-reconnect" type="button">Neu verbinden</button>
+              <button class="sv-close ghost" type="button">Sitzung schließen</button>
+            </div>
           </div>
         </div>
+
+        <div class="sv-scrim" hidden></div>
+        <nav class="sv-dock">
+          <!-- Menü: kein Dialog, damit die Tastatur offen bleibt -->
+          <div class="sv-menu" hidden role="menu">
+            <div class="mi" role="menuitem" data-act="reconnect"><span class="mic" data-ic="refresh"></span><span class="mt">Neu verbinden</span></div>
+            <div class="mi" role="menuitem" data-act="switcher" data-only="phone"><span class="mic" data-ic="layers"></span><span class="mt">Sitzungen</span><span class="mv mv-count"></span></div>
+            <div class="mi" role="menuitem" data-act="home" data-only="phone"><span class="mic" data-ic="home"></span><span class="mt">Zur Startseite (Sitzung bleibt offen)</span></div>
+            <div class="mi" role="menuitem" data-act="extra"><span class="mic" data-ic="add"></span><span class="mt">Weitere Sitzung zu diesem Ziel</span></div>
+            <div class="mi" role="menuitem" data-act="kbMode"><span class="mic" data-ic="keyboard"></span><span class="mt">Tastatur</span><span class="mv mv-kb"></span></div>
+            <div class="mi" role="menuitem" data-act="autoKb"><span class="mic" data-ic="auto_kb"></span><span class="mt">Auto-Tastatur bei Textfeld</span><span class="mv mv-autokb"></span></div>
+            <div class="mi" role="menuitem" data-act="touchMode"><span class="mic" data-ic="touch"></span><span class="mt">Finger</span><span class="mv mv-touch"></span></div>
+            <div class="mi" role="menuitem" data-act="autoPaste"><span class="mic" data-ic="image"></span><span class="mt">Foto sofort einfügen</span><span class="mv mv-autopaste"></span></div>
+            <div class="mi" role="menuitem" data-act="password"><span class="mic" data-ic="key"></span><span class="mt">Passwort aus Passwortmanager</span></div>
+            <div class="mi" role="menuitem" data-act="theme"><span class="mic" data-ic="palette"></span><span class="mt">Farben und Design</span></div>
+            <div class="mi" role="menuitem" data-act="editKeys"><span class="mic" data-ic="edit"></span><span class="mt">Sondertasten bearbeiten</span></div>
+            <div class="mi" role="menuitem" data-act="resetKeys"><span class="mic" data-ic="restart"></span><span class="mt">Sondertasten zurücksetzen</span></div>
+            <div class="mi" role="menuitem" data-act="install"><span class="mic" data-ic="download"></span><span class="mt">Als App installieren</span></div>
+            <div class="mi" role="menuitem" data-act="logout"><span class="mic" data-ic="logout"></span><span class="mt">Sitzung beenden</span></div>
+          </div>
+
+          <div class="sv-rowsTop"></div>
+          <div class="sv-rowsBottom"></div>
+        </nav>
       </div>
-
-      <div id="menuScrim" hidden></div>
-      <nav id="dock">
-        <!-- Menü: kein Dialog, damit die Tastatur offen bleibt -->
-        <div id="menuSheet" hidden role="menu">
-          <div class="mi" role="menuitem" data-act="reconnect"><span class="mic" data-ic="refresh"></span><span class="mt">Neu verbinden</span></div>
-          <div class="mi" role="menuitem" data-act="kbMode"><span class="mic" data-ic="keyboard"></span><span class="mt">Tastatur</span><span class="mv" id="kbModeLabel"></span></div>
-          <div class="mi" role="menuitem" data-act="autoKb"><span class="mic" data-ic="auto_kb"></span><span class="mt">Auto-Tastatur bei Textfeld</span><span class="mv" id="autoKbLabel"></span></div>
-          <div class="mi" role="menuitem" data-act="touchMode"><span class="mic" data-ic="touch"></span><span class="mt">Finger</span><span class="mv" id="touchModeLabel"></span></div>
-          <div class="mi" role="menuitem" data-act="autoPaste"><span class="mic" data-ic="image"></span><span class="mt">Foto sofort einfügen</span><span class="mv" id="autoPasteLabel"></span></div>
-          <div class="mi" role="menuitem" data-act="password"><span class="mic" data-ic="key"></span><span class="mt">Passwort aus Passwortmanager</span></div>
-          <div class="mi" role="menuitem" data-act="theme"><span class="mic" data-ic="palette"></span><span class="mt">Farben und Design</span></div>
-          <div class="mi" role="menuitem" data-act="editKeys"><span class="mic" data-ic="edit"></span><span class="mt">Sondertasten bearbeiten</span></div>
-          <div class="mi" role="menuitem" data-act="resetKeys"><span class="mic" data-ic="restart"></span><span class="mt">Sondertasten zurücksetzen</span></div>
-          <div class="mi" role="menuitem" data-act="install"><span class="mic" data-ic="download"></span><span class="mt">Als App installieren</span></div>
-          <div class="mi" role="menuitem" data-act="logout"><span class="mic" data-ic="logout"></span><span class="mt">Verbindung beenden</span></div>
-        </div>
-
-        <div id="rowsTop"></div>
-        <div id="rowsBottom"></div>
-      </nav>
-    </section>
+    </template>
 
     <!-- Verbindung anlegen/aendern -->
     <dialog id="connDlg">

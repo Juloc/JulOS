@@ -1,4 +1,5 @@
 import { ico, setTheme } from './app.js';
+import { Sessions } from './sessions.js';
 
 /* =====================================================================
  * Handy-Oberflaeche im Stil von Material 3 (Expressive): Home, Dienste, Server, Monitoring, Profil.
@@ -273,8 +274,9 @@ function favourites() {
   const used = conns().filter((c) => !fav.includes(c) && use[c.id] > 0).sort((a, b) => use[b.id] - use[a.id]);
   return [...fav, ...used].slice(0, 6);
 }
-const tileHtml = (c, pinned) => `<button type="button" class="mb tile m3-state ${c.kind}" data-conn="${c.id}" data-act="start" aria-label="${esc(c.name)} (${esc(c.kind === 'terminal' ? 'Terminal' : 'Desktop')}), tippen zum Verbinden, gedrückt halten für mehr">
-  ${pinned ? `<span class="fav" title="Favorit">${icon('star')}</span>` : ''}${c.hasPassword ? `<span class="badge" title="Passwort gespeichert">${icon('key')}</span>` : ''}
+const openCount = (c) => Sessions.find(c.id).length;
+const tileHtml = (c, pinned) => `<button type="button" class="mb tile m3-state ${c.kind}${openCount(c) ? ' live' : ''}" data-conn="${c.id}" data-act="start" aria-label="${esc(c.name)} (${esc(c.kind === 'terminal' ? 'Terminal' : 'Desktop')}), ${openCount(c) ? openCount(c) + ' Sitzung(en) offen, tippen zum Wechseln' : 'tippen zum Verbinden'}, gedrückt halten für mehr">
+  ${openCount(c) ? `<span class="liveb" title="Sitzung offen">${openCount(c)}</span>` : ''}${pinned ? `<span class="fav" title="Favorit">${icon('star')}</span>` : ''}${c.hasPassword ? `<span class="badge" title="Passwort gespeichert">${icon('key')}</span>` : ''}
   <span class="ti">${kindIcon(c.kind)}</span><span class="tn">${esc(c.name)}</span></button>`;
 
 function activityRows(limit) {
@@ -285,6 +287,16 @@ function activityRows(limit) {
     const sub = l.type === 'end' ? esc(l.msg) : `Verbindung gestartet · ${esc(l.kind === 'terminal' ? 'Terminal' : 'Desktop')}`;
     return `<div class="m3-li static">${lead}<span class="txt"><span class="hl">${esc(c ? c.name : l.name || 'Verbindung')}</span><span class="sl">${sub}</span></span><span class="tr">${esc(whenLabel(l.t))}</span></div>`;
   }).join('');
+}
+
+/* Offene Sitzungen: Karten mit Zustandspunkt, ein Tipp wechselt hin, das Kreuz schliesst */
+const dotClass = (st) => (st === 'connected' ? 'ok' : st === 'connecting' || st === 'reconnecting' ? 'busy' : 'bad');
+const sessionRows = () => Sessions.list().map((s) => `<div class="m3-li sess ${s === Sessions.active ? 'act' : ''}" data-act="sess" data-sid="${s.id}" role="button" tabindex="0" aria-label="${esc(s.title)}, ${esc(s.stateText)}, tippen zum Wechseln">
+    <span class="lead">${kindIcon(s.kind)}</span><span class="txt"><span class="hl">${esc(s.title)}</span><span class="sl"><span class="m3-dot sdot ${dotClass(s.state)}"></span>${esc(s.stateText)} · ${esc(s.conn.name === s.title ? (s.kind === 'terminal' ? 'Terminal' : 'Desktop') : s.conn.name)}</span></span>
+    <button type="button" class="mb sx m3-state" data-act="sessclose" data-sid="${s.id}" aria-label="Sitzung ${esc(s.title)} schließen">${icon('close')}</button></div>`).join('');
+function sessionsSection() {
+  if (!Sessions.count) return '';
+  return `<div class="m3-sec">${icon('layers')}<span>Offene Sitzungen</span></div><div class="m3-card acts sesslist">${sessionRows()}</div>`;
 }
 
 function renderHome() {
@@ -314,6 +326,7 @@ function renderHome() {
       <h1>Schön, dass du da bist.</h1>
       ${chip}
     </div>
+    ${sessionsSection()}
     ${server}
     <div class="m3-sec">${icon('star_o')}<span>Meine Favoriten</span><span class="sp"></span><button type="button" class="mb m3-btn text m3-state" data-go="services">Alle Dienste${icon('chevron_right')}</button></div>
     ${favHtml}
@@ -445,6 +458,8 @@ function onClick(e) {
   const g = e.target.closest('[data-go]'); if (g && !g.closest('#mNav')) { go(g.dataset.go); return; }
   const a = e.target.closest('[data-act]'); if (!a) return;
   const act = a.dataset.act;
+  if (act === 'sessclose') { e.stopPropagation(); Sessions.close(a.dataset.sid); return; }
+  if (act === 'sess') { Sessions.activate(a.dataset.sid, { reveal: true }); return; }
   if (act === 'start') { const c = byId(a.dataset.conn); if (c) ctx.connect(c); }
   else if (act === 'add') ctx.add();
   else if (act === 'allacts') { view.allActs = !view.allActs; renderHome(); }
@@ -465,7 +480,8 @@ function actionSheet(c) {
   const fav = ls.get('fav', []).includes(c.id);
   dlg.innerHTML = `<h2>${esc(c.name)}</h2><p class="hint">${esc(c.kind === 'terminal' ? 'Terminal' : 'Desktop')} · ${esc(c.username ? c.username + '@' : '')}${esc(c.host)}:${c.port}</p>
     <div class="m3-list" style="margin:0 -18px">
-      <button type="button" class="mb m3-li m3-state" data-a="start"><span class="lead">${icon('play')}</span><span class="txt"><span class="hl">Verbinden</span></span></button>
+      <button type="button" class="mb m3-li m3-state" data-a="start"><span class="lead">${icon('play')}</span><span class="txt"><span class="hl">${openCount(c) ? 'Zur Sitzung wechseln' : 'Verbinden'}</span>${openCount(c) ? `<span class="sl">${openCount(c)} offen</span>` : ''}</span></button>
+      ${openCount(c) ? `<button type="button" class="mb m3-li m3-state" data-a="extra"><span class="lead">${icon('add')}</span><span class="txt"><span class="hl">Weitere Sitzung</span><span class="sl">Noch eine zum selben Ziel</span></span></button>` : ''}
       <button type="button" class="mb m3-li m3-state" data-a="fav"><span class="lead">${icon(fav ? 'star' : 'star_o')}</span><span class="txt"><span class="hl">${fav ? 'Aus den Favoriten nehmen' : 'Als Favorit anheften'}</span><span class="sl">Nur auf diesem Gerät</span></span></button>
       <button type="button" class="mb m3-li m3-state" data-a="edit"><span class="lead">${icon('edit')}</span><span class="txt"><span class="hl">Bearbeiten</span></span></button>
     </div>`;
@@ -473,6 +489,7 @@ function actionSheet(c) {
     const b = e.target.closest('[data-a]'); if (!b) return;
     dlg.close();
     if (b.dataset.a === 'start') ctx.connect(c);
+    else if (b.dataset.a === 'extra') ctx.connect(c, { extra: true });
     else if (b.dataset.a === 'edit') ctx.edit(c);
     else { const l = ls.get('fav', []); ls.set('fav', fav ? l.filter((x) => x !== c.id) : [...l, c.id]); renderAll(); snack(fav ? 'Aus den Favoriten genommen' : 'Als Favorit angeheftet'); }
   };
@@ -530,4 +547,57 @@ export function applyShellTheme() {
     const hex = '#' + [r, gg, b].map((x) => x.toString(16).padStart(2, '0')).join('');
     for (const m of $$('meta[name=theme-color]')) m.setAttribute('content', hex);
   } finally { probe.remove(); }
+}
+
+/* =====================================================================
+ * Sitzungen (mehrere gleichzeitig): Leiste oben in der Fernsteuerung (ab zwei Sitzungen) und Umschalter als Bottom Sheet
+ * ===================================================================== */
+let strip = null;
+function buildStrip() {
+  const remote = $('#remote');
+  if (!remote || strip) return;
+  strip = document.createElement('div'); strip.className = 'm3-sstrip'; strip.hidden = true; strip.setAttribute('role', 'tablist'); strip.setAttribute('aria-label', 'Offene Sitzungen');
+  remote.prepend(strip);
+  strip.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-s]'); if (!b) return;
+    if (b.dataset.s === 'home') ctx.home();
+    else if (b.dataset.s === 'all') openSwitcher();
+    else Sessions.activate(b.dataset.s, { reveal: true });
+  });
+}
+/** Wird bei jeder Aenderung der Sitzungen gerufen (neue, geschlossene, Zustand, Wechsel): Leiste, Startseite, Umschalter neu zeichnen. */
+export function sessionsChanged() {
+  if (!root) return;
+  buildStrip();
+  const list = Sessions.list();
+  strip.hidden = list.length < 2;
+  strip.innerHTML = `<button type="button" class="mb m3-state sb-home" data-s="home" aria-label="Zur Startseite (die Sitzungen bleiben offen)">${icon('home')}</button>
+    <div class="sb-chips">${list.map((s) => `<button type="button" role="tab" aria-selected="${s === Sessions.active}" class="mb sb-chip m3-state${s === Sessions.active ? ' on' : ''}" data-s="${s.id}" title="${esc(s.stateText)}"><span class="m3-dot sdot ${dotClass(s.state)}"></span><span class="n">${esc(s.title)}</span></button>`).join('')}</div>
+    <button type="button" class="mb m3-state sb-all" data-s="all" aria-label="Alle Sitzungen anzeigen">${icon('layers')}<span class="cnt">${list.length}</span></button>`;
+  const on = strip.querySelector('.sb-chip.on'); if (on) on.scrollIntoView({ inline: 'center', block: 'nearest' });
+  if (shown) renderAll();
+  const dlg = $('#mSessDlg'); if (dlg && dlg.open) fillSwitcher(dlg);
+}
+function fillSwitcher(dlg) {
+  dlg.innerHTML = `<h2>Sitzungen</h2><p class="hint">${Sessions.count ? 'Tippe eine Sitzung an, um zu ihr zu wechseln. Alle laufen im Hintergrund weiter.' : 'Keine Sitzung offen.'}</p>
+    <div class="m3-card acts sesslist" style="margin:0">${sessionRows()}</div>
+    <div class="row" style="margin-top:14px"><button type="button" class="mb m3-btn tonal m3-state" data-a="home">${icon('home')}Startseite</button><button type="button" class="mb m3-btn filled m3-state" data-a="new">${icon('add')}Neue Sitzung</button></div>`;
+}
+export function openSwitcher() {
+  let dlg = $('#mSessDlg');
+  if (!dlg) {
+    dlg = document.createElement('dialog'); dlg.id = 'mSessDlg'; dlg.className = 'm3sheet'; $('#app').appendChild(dlg); wireSheet(dlg);
+    dlg.addEventListener('click', (e) => {
+      const x = e.target.closest('[data-act="sessclose"]');
+      if (x) { e.stopPropagation(); Sessions.close(x.dataset.sid); if (!Sessions.count) dlg.close(); return; }
+      const card = e.target.closest('[data-act="sess"]');
+      if (card) { dlg.close(); Sessions.activate(card.dataset.sid, { reveal: true }); return; }
+      const b = e.target.closest('[data-a]'); if (!b) return;
+      dlg.close();
+      ctx.home();
+      if (b.dataset.a === 'new') go('services');
+    });
+  }
+  fillSwitcher(dlg);
+  if (!dlg.open) dlg.showModal();
 }

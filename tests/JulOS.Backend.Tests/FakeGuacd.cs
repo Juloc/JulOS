@@ -22,6 +22,8 @@ internal sealed class FakeGuacd : IAsyncDisposable
     public byte[] Greeting { get; init; } = [];
     /// <summary>Mehrere Verbindungen nacheinander oder gleichzeitig annehmen (Standard: genau eine).</summary>
     public bool AcceptMany { get; init; }
+    /// <summary>Nach "ready" so viele Megabyte Bilddaten hinterherschicken (ein Browser, der nicht schnell genug liest, haelt das Senden des Relays auf).</summary>
+    public int FloodMegabytes { get; init; }
     public TaskCompletionSource Closed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public FakeGuacd()
@@ -60,6 +62,11 @@ internal sealed class FakeGuacd : IAsyncDisposable
             if (Reject is { } r) { await stream.WriteAsync(GuacProtocol.Encode("error", r.Message, r.Status.ToString()), ct); return; }
             await stream.WriteAsync(GuacProtocol.Encode("ready", "fake-connection-id"), ct);
             if (Greeting.Length > 0) await stream.WriteAsync(Greeting, ct);
+            if (FloodMegabytes > 0)
+            {
+                var chunk = GuacProtocol.Encode("blob", "0", new string('A', 60_000));
+                for (var sent = 0L; sent < FloodMegabytes * 1_048_576L; sent += chunk.Length) await stream.WriteAsync(chunk, ct);
+            }
 
             while (true)
             {

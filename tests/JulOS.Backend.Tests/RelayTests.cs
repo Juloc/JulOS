@@ -269,4 +269,37 @@ public sealed class RelayTests
         await second.WaitAsync(Wait);
         await third.WaitAsync(Wait);
     }
+
+    [Fact]
+    public async Task A_replaced_browser_still_gets_the_message_when_it_is_slow_to_read()
+    {
+        // Das Handy liest langsam: das Senden zum Browser haengt gerade, als die neue Verbindung uebernimmt.
+        // Frueher riss das Abbrechen genau dieses Sendens das WebSocket ein: keine Meldung, nur ein Standbild am Handy.
+        await using var guacd = new FakeGuacd { AcceptMany = true, FloodMegabytes = 24 };
+        var relay = NewRelay(guacd);
+        var spec = GuacSpec.Terminal("h", 22, "u", "p", 800, 600, 96) with { Slot = "jul:handy" };
+
+        var (slow, server1) = await SocketPairAsync();
+        var first = relay.RunAsync(server1, spec, Alive, CancellationToken.None);
+        Assert.StartsWith("0.,", await ReceiveTextAsync(slow));
+        await Task.Delay(800);                                    // guacd flutet, der Browser liest nicht: Puffer voll, Senden haengt
+
+        var (fast, server2) = await SocketPairAsync();
+        var second = relay.RunAsync(server2, spec, Alive, CancellationToken.None);
+        Assert.StartsWith("0.,", await ReceiveTextAsync(fast));
+
+        // jetzt liest das Handy wieder: irgendwann muss die Meldung "Sitzung uebernommen" ankommen (kein Abbruch ohne Meldung)
+        var found = false;
+        var until = DateTime.UtcNow + Wait;
+        while (!found && DateTime.UtcNow < until)
+        {
+            var text = await ReceiveTextAsync(slow);
+            found = text.Contains("5.error") && text.Contains("3.777");
+        }
+        Assert.True(found, "keine Meldung 'Sitzung uebernommen' angekommen");
+        await first.WaitAsync(Wait);
+
+        fast.Abort();                                              // die zweite Verbindung wird hier ebenfalls geflutet und liest nicht: hart beenden
+        await second.WaitAsync(Wait);
+    }
 }

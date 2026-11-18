@@ -73,6 +73,8 @@ dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj    # 
 - A `u8` string literal such as `"\x89PNG"u8` encodes `\x89` as two UTF-8 bytes; binary signatures must be byte arrays.
 - The browser's tunnel only handles whole instructions per WebSocket message, so the relay splits the guacd stream on instruction boundaries (a `;` can appear inside a value, for example in copied text).
 - Reconnecting from the client: disconnect the old Guacamole client only after detaching it (`S.client = null`). Its "disconnected" event fires at once; if the handler still sees itself as the current client it arms a retry timer that kills the fresh connection after 1.5 s, 3 s, 4.5 s. The server log shows it as three short connections (1 s, 2 s, 4 s) before one holds.
+- Never cancel a pending WebSocket send with the "soft" token of a takeover: cancelling a pending `SendAsync`/`ReceiveAsync` aborts the whole socket. Only the read from guacd is cancelled softly, sends use the hard token. Otherwise a slow browser (a phone) that is replaced mid-send gets no "Sitzung übernommen" message and just keeps a frozen picture; a test with a flooding fake guacd covers it.
+- Measured on the real VM: guacd gets the first full picture from xrdp only about 11.5 s after connecting ("20 kB erreicht nach" in the log), no matter what the client does. The black picture is on the VM/xrdp side.
 
 ## Layout
 

@@ -79,7 +79,7 @@ public sealed class GuacRelay(GuacdOptions options, ILogger<GuacRelay> log)
             {
                 // interne Anweisung: der Browser-Tunnel erwartet als Erstes seine Kennung
                 await ws.SendAsync(GuacProtocol.Encode("", conn.Id), WebSocketMessageType.Text, true, cts.Token).ConfigureAwait(false);
-                var down = DownAsync(ws, conn, soft.Token, mine, stats, clock);
+                var down = DownAsync(ws, conn, soft.Token, cts.Token, mine, stats, clock);
                 var up = UpAsync(ws, conn, cts.Token);
                 var watch = WatchAsync(sessionAlive, sessionCheck, cts.Token);
                 var first = await Task.WhenAny(down, up, watch).ConfigureAwait(false);
@@ -102,16 +102,18 @@ public sealed class GuacRelay(GuacdOptions options, ILogger<GuacRelay> log)
     }
 
     /// <summary>guacd -> Browser: Bloecke mit ganzen Anweisungen.</summary>
-    private static async Task DownAsync(WebSocket ws, GuacdConnection conn, CancellationToken ct, Active mine, PictureStats stats, Stopwatch clock)
+    private static async Task DownAsync(WebSocket ws, GuacdConnection conn, CancellationToken soft, CancellationToken hard, Active mine, PictureStats stats, Stopwatch clock)
     {
         try
         {
             while (true)
             {
-                var block = await conn.Reader.ReadBlockAsync(ct).ConfigureAwait(false);
+                // Nur das Lesen von guacd ist "weich" abbrechbar. Ein laufendes Senden zum Browser darf nie mit dem weichen Zeichen abgebrochen werden:
+                // das reisst das WebSocket ein, die Meldung "Sitzung uebernommen" ginge verloren und ein langsamer Browser (Handy) bliebe mit Standbild stehen.
+                var block = await conn.Reader.ReadBlockAsync(soft).ConfigureAwait(false);
                 if (block.IsEmpty) return;
                 stats.Note(block.Span, clock.ElapsedMilliseconds);
-                await ws.SendAsync(block, WebSocketMessageType.Text, true, ct).ConfigureAwait(false);
+                await ws.SendAsync(block, WebSocketMessageType.Text, true, hard).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (mine.Replaced)

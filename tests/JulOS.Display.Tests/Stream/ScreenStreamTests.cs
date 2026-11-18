@@ -122,4 +122,70 @@ public sealed class ScreenStreamTests
         // und die Sitzung laeuft weiter, bis wir abbrechen. Beides ist kein Haengen.
         Assert.True(error is null or OperationCanceledException or RdpException, error?.ToString());
     }
+
+    [Fact]
+    public async Task An_image_and_a_file_from_the_browser_are_taken_by_the_clipboard_of_a_real_xrdp()
+    {
+        var host = Host();
+        await using var stream = new ScreenStream(Options(host, 1024, 640));
+        using var cts = new CancellationTokenSource(Wait);
+        var run = stream.RunAsync(cts.Token);
+        await NextAsync<ScreenSize>(stream, cts.Token);
+
+        // der Kanal braucht einen Augenblick, bis der Server (chansrv) ihn bereit meldet
+        ScreenTransferResult result;
+        var bmp = TinyBmp();
+        for (var attempt = 1; ; attempt++)
+        {
+            stream.BeginTransfer(1, ClipboardBridge.KindImage, 0, 1, bmp.Length, "");
+            stream.TransferChunk(1, bmp);
+            stream.EndTransfer(1);
+            result = await NextAsync<ScreenTransferResult>(stream, cts.Token, r => r.Id == 1);
+            if (result.Code != ClipboardBridge.ResultNoClipboard || attempt >= 10)
+            {
+                break;
+            }
+
+            await Task.Delay(500, cts.Token);
+        }
+
+        Assert.True(result.Code == ClipboardBridge.ResultOk, $"Bild: Code {result.Code} {result.Message} (laeuft xrdp-chansrv? siehe docs/DEVELOPMENT.md)");
+
+        // Dateien nimmt xrdp nur an, wenn es sie per FUSE einhaengen kann (compose.yaml: /dev/fuse beim rdp-target) und wenn der letzte Client sie
+        // wollte: chansrv behaelt die Faehigkeiten des zuletzt verbundenen Clients, und guacd schaltet sie ab (siehe docs/DEVELOPMENT.md)
+        byte[] content = [1, 2, 3, 4, 5];
+        stream.BeginTransfer(2, ClipboardBridge.KindFile, 0, 1, content.Length, "Test Übung.bin");
+        stream.TransferChunk(2, content);
+        stream.EndTransfer(2);
+        result = await NextAsync<ScreenTransferResult>(stream, cts.Token, r => r.Id == 2);
+        if (result.Code == ClipboardBridge.ResultNoClipboard)
+        {
+            await cts.CancelAsync();
+            await run;
+            Assert.Skip("xrdp bietet keine Dateien an (kein /dev/fuse, oder zuletzt war ein Guacamole-Client verbunden: Ziel neu starten).");
+        }
+
+        Assert.True(result.Code == ClipboardBridge.ResultOk, $"Datei: Code {result.Code} {result.Message}");
+
+        await cts.CancelAsync();
+        await run;
+    }
+
+    // 2 x 2 Punkte, 24 Bit
+    private static byte[] TinyBmp()
+    {
+        var bmp = new byte[54 + 16];
+        bmp[0] = (byte)'B';
+        bmp[1] = (byte)'M';
+        BitConverter.GetBytes(bmp.Length).CopyTo(bmp, 2);
+        BitConverter.GetBytes(54).CopyTo(bmp, 10);
+        BitConverter.GetBytes(40).CopyTo(bmp, 14);
+        BitConverter.GetBytes(2).CopyTo(bmp, 18);
+        BitConverter.GetBytes(2).CopyTo(bmp, 22);
+        BitConverter.GetBytes((short)1).CopyTo(bmp, 26);
+        BitConverter.GetBytes((short)24).CopyTo(bmp, 28);
+        BitConverter.GetBytes(16).CopyTo(bmp, 34);
+        bmp.AsSpan(54).Fill(0x80);
+        return bmp;
+    }
 }

@@ -14,6 +14,7 @@ deploy/dev/smoke.sh     # walk-through on the running instance: setup, login, wi
 - The RDP target is an xrdp + XFCE desktop (`rdp-target:3389`, throwaway login `ubuntu` / `ubuntu`, no published port). It behaves like the Linux VM, including reusing a disconnected session when you connect again.
 - `guacd` is published on `127.0.0.1:44822` (local only) so the tests can talk to a real one.
 - The test desktop also runs the real agent and clipboard helper from `tools/` (autostart when a session logs in), and shares a folder with the server (`/uploads` there, `~/julos-uploads` in the desktop), like the live setup. The server runs as the desktop user (`user: "1020:1020"`).
+- The RDP target gets `/dev/fuse` and `SYS_ADMIN` (throwaway container, local only) and has `fuse3`: xrdp mounts the files of a client's clipboard through FUSE, which the clipboard tests for files need. xrdp's `chansrv` keeps the capabilities of the last connected client, so after a Guacamole connection it offers no file streaming to the stream engine until it restarts (`docker restart` of the target, or a new session); see [CLIPBOARD.md](CLIPBOARD.md).
 - Stop with `docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/.env down` (add `-v` to also drop the database).
 
 ## First start and accounts on the test instance
@@ -46,6 +47,7 @@ interface instead of the phone home: menu bar, dock, launcher, a Home window and
 is moved into it; the engines are untouched). The phone never loads these two files. `?desktop` forces the desktop view and `?phone` the phone view
 (useful in a browser whose pointer is not reported as "fine"). Docker, Caddy, DDNS, Files and the system overview have no backend yet and are only
 shown as "bald verfügbar" (see `IDEAS.md`).
+`deploy/dev/test-display.sh` runs the display tests (RDP client, H.264, the clipboard bridge against xrdp) in a container on the network of the test instance; with `JULOS_DEV_PROJECT=<project>` it uses another compose project's network.
 To test next to other sessions, start your own compose project with other ports and your `wwwroot` mounted over `/app/wwwroot` (no rebuild after
 frontend changes), for example an override file with `ports: !override ["127.0.0.1:18280:8080"]` and `docker compose -p my-ui -f deploy/dev/compose.yaml -f override.yaml up -d`.
 Cookies belong to the host name, not the port: two stacks opened as `127.0.0.1:...` in one browser overwrite each other's login, so open yours as

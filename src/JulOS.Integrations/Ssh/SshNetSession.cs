@@ -22,6 +22,7 @@ public sealed class SshNetSession : ISshSession
     private int _pendingOffset;
     private int _cols, _rows;
     private bool _hostKeyRejected;
+    private readonly CancellationTokenSource _stop = new();                 // beendet den Lese-Thread, auch wenn niemand mehr aus dem Kanal liest
 
     public SshHostKey? PresentedHostKey { get; private set; }
 
@@ -60,13 +61,13 @@ public sealed class SshNetSession : ISshSession
         _output = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(32) { SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait });
         var shell = _shell;
         var output = _output;
-        _ = Task.Factory.StartNew(() => PumpShell(shell, output), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        _ = Task.Factory.StartNew(() => PumpShell(shell, output, _stop.Token), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
     }
 
     /// <summary>SHA-256 des Schluessel-Blobs, Base64 ohne Auffuellung, wie bei "ssh-keygen -l".</summary>
     internal static string Fingerprint(byte[] hostKey) => "SHA256:" + Convert.ToBase64String(SHA256.HashData(hostKey)).TrimEnd('=');
 
-    private static void PumpShell(ShellStream shell, Channel<byte[]> output)
+    private static void PumpShell(ShellStream shell, Channel<byte[]> output, CancellationToken stop)
     {
         var buffer = new byte[ChunkSize];
         try
@@ -76,7 +77,7 @@ public sealed class SshNetSession : ISshSession
                 var n = shell.Read(buffer, 0, buffer.Length);
                 if (n <= 0) break;
                 // ShellStream.Read liefert 0 erst, wenn der Kanal zu ist; Warten ist hier gewollt (Gegendruck)
-                output.Writer.WriteAsync(buffer.AsSpan(0, n).ToArray()).AsTask().GetAwaiter().GetResult();
+                output.Writer.WriteAsync(buffer.AsSpan(0, n).ToArray(), stop).AsTask().GetAwaiter().GetResult();
             }
         }
         catch (Exception)
@@ -138,7 +139,8 @@ public sealed class SshNetSession : ISshSession
 
     public ValueTask DisposeAsync()
     {
-        // Erst die Shell, dann den Client: das beendet auch den Lese-Thread
+        // Erst den Lese-Thread aus dem Warten auf den Kanal holen, dann die Shell und den Client schliessen
+        try { _stop.Cancel(); } catch (ObjectDisposedException) { /* schon weg */ }
         try { _shell?.Dispose(); } catch (Exception) { /* schon weg */ }
         try { _client?.Dispose(); } catch (Exception) { /* schon weg */ }
         return ValueTask.CompletedTask;

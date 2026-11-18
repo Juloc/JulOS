@@ -4,7 +4,7 @@
 .term-host { position: absolute; inset: 0; z-index: 6; overflow: hidden; touch-action: none; -webkit-tap-highlight-color: transparent; }
 .term-host[hidden] { display: none; }
 .term-host .xterm { height: 100%; padding: 4px 6px; box-sizing: border-box; }
-.term-host .xterm-viewport { overscroll-behavior: contain; }
+.term-host .xterm-viewport { overscroll-behavior: contain; background-color: transparent !important; }   /* der Rest unter der letzten Zeile zeigt die Farbe des Behaelters */
 .term-host.bell::after { content: ''; position: absolute; inset: 0; box-shadow: inset 0 0 0 3px var(--m3-primary, currentColor); opacity: .55; pointer-events: none; }
 .term-host ::selection { background: transparent; }
 
@@ -29,3 +29,8 @@
 .term-dialog button { min-height: 44px; padding: 0 18px; border: 0; border-radius: 999px; font: 500 .9rem system-ui, sans-serif; cursor: pointer; }
 .term-dialog button.primary { background: var(--m3-primary, #8ab4ff); color: var(--m3-on-primary, #000); }
 .term-dialog button.danger { background: transparent; color: var(--m3-error, #f2b8b5); outline: 1px solid var(--m3-error, #f2b8b5); }
+
+/* In der Sitzung (RemoteSession-Huelle): Bild und Touch-Ebene der Fernsteuerung entfallen, das Terminal fuellt die Buehne */
+.sv-terminal .sv-display, .sv-terminal .sv-touch, .sv-terminal .sv-zoom { display: none; }
+.sv-terminal .sv-stage { background: var(--m3-surface-lowest, #000); }
+.sv-terminal .mi[data-act="touchMode"], .sv-terminal .mi[data-act="autoPaste"] { display: none; }

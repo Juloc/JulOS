@@ -11,7 +11,8 @@ auf den eigenen Rechner, nichts liegt in einer Cloud.
 [English version](README.md)
 
 ```
-Handy (PWA)  --HTTPS-->  dein Reverse-Proxy  -->  JulOS-Server (.NET, eigene Anmeldung)  -->  guacd  --RDP/SSH-->  dein Rechner
+Handy (PWA)  --HTTPS-->  dein Reverse-Proxy  -->  JulOS-Server (.NET, eigene Anmeldung)  -->  guacd  --RDP-->  dein Rechner
+                                                         |--> SSH-Client (Terminal, Text wird im Browser gezeichnet)  --SSH-->  dein Rechner
                                                          |--> PostgreSQL (Konten, Sitzungen, gespeicherte Verbindungen)
                                                          \--> Agent (Unix-Socket) in der Sitzung: Fenster, Programme, Foto-Paste
 ```
@@ -50,6 +51,7 @@ tools/install-linux-agent.sh    # in der grafischen Sitzung des Zielrechners
 `http://<BIND_IP>:8080` oeffnen (auf `localhost` oder ueber HTTPS; das Sitzungs-Cookie braucht einen sicheren Kontext), Setup-Code eingeben, Benutzername und Passwort waehlen und den
 Authenticator-Code bestaetigen. Danach eine Verbindung anlegen (Desktop = RDP, Terminal = SSH) und antippen. Das Passwort des Ziels tippst du bei jeder Verbindung ein, oder es wird auf Wunsch verschluesselt gespeichert (braucht `JULOS_SECRET_KEY` in `.env`: `openssl rand -base64 32`, sichern wie ein Passwort).
 Eine Desktop-Verbindung kann auch die experimentelle Stream-Engine nutzen (eigener RDP-Client, H.264 im Browser; im Dialog der Verbindung unter "Bildübertragung" "Stream" wählen). Standard bleibt Guacamole, und die App weicht darauf aus, wenn Browser oder Server kein H.264 können. Siehe [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Eine Terminal-Verbindung ist ein echtes Terminal im Browser (der Server haelt die SSH-Verbindung, xterm.js zeichnet den Text: Auswahl, Kopieren und Einfuegen, Scrollback). Die erste Verbindung merkt sich den SSH-Host-Schluessel des Ziels; aendert er sich, warnt die Seite und verbindet erst nach deiner Bestaetigung. Die Anmeldung geht vorerst per Passwort.
 Fuer den Rechner, auf dem der Server selbst laeuft, den Hostnamen `host.docker.internal` verwenden.
 
 `BIND_IP` in `.env` ist die Adresse, auf der der Server lauscht: `127.0.0.1` (Standard, hinter einem Reverse-Proxy) oder die LAN-Adresse.

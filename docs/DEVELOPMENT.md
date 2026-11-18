@@ -10,7 +10,7 @@ deploy/dev/smoke.sh     # walk-through on the running instance: setup, login, wi
 
 - The server is on `http://127.0.0.1:18080`, PostgreSQL on `127.0.0.1:45432` (both only local).
 - `up.sh` generates random throwaway credentials in `deploy/dev/.env` on first run. The file is not in the repository.
-- The SSH target is reachable from the server container as `test-ssh:2222` with user `tester` and the password `DEV_TARGET_PASSWORD` from `deploy/dev/.env`.
+- The SSH target is reachable from the server container as `test-ssh:2222` with user `tester` and the password `DEV_TARGET_PASSWORD` from `deploy/dev/.env`, and for the tests on `127.0.0.1:42222` (local only; `JULOS_TEST_SSH`, set by `test.sh`). The SSH tests (`RealSshTests`, `RemoteHttpTests` terminal tests) run the real SSH client against it; without `JULOS_TEST_SSH` they are skipped.
 - The RDP target is an xrdp + XFCE desktop (`rdp-target:3389`, throwaway login `ubuntu` / `ubuntu`, no published port). It behaves like the Linux VM, including reusing a disconnected session when you connect again.
 - `guacd` is published on `127.0.0.1:44822` (local only) so the tests can talk to a real one.
 - The test desktop also runs the real agent and clipboard helper from `tools/` (autostart when a session logs in), and shares a folder with the server (`/uploads` there, `~/julos-uploads` in the desktop), like the live setup. The server runs as the desktop user (`user: "1020:1020"`).
@@ -38,8 +38,8 @@ To start over: `docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/
 ## The browser client
 
 `src/JulOS.Frontend/wwwroot` holds the client (plain ES modules, no build step): `shell.js` is the account and home part (setup, login,
-connection list, devices), `app.js` is the remote view (display, touch, keyboard, key bar, window bar), `lib/` the unmodified
-Guacamole JS client. After changing it, `deploy/dev/up.sh` rebuilds the image; then open `http://127.0.0.1:18080` in a browser (phone
+connection list, devices), `app.js` is the remote view (display, touch, keyboard, key bar, window bar), `terminal.js` / `terminal-session.js` the native SSH terminal (see ARCHITECTURE.md), `lib/` the unmodified
+Guacamole JS client and xterm.js. After changing it, `deploy/dev/up.sh` rebuilds the image; then open `http://127.0.0.1:18080` in a browser (phone
 size in the browser's device mode). A fresh database starts at the setup screen; the setup code is in the server log (see above).
 On a wide screen with a mouse (`min-width: 1000px` and `pointer: fine`) `shell.js` loads `desktop.js` and `desktop.css` and shows the desktop
 interface instead of the phone home: menu bar, dock, launcher, a Home window and one window for the running session (the remote view of `app.js`
@@ -50,6 +50,7 @@ To test next to other sessions, start your own compose project with other ports 
 frontend changes), for example an override file with `ports: !override ["127.0.0.1:18280:8080"]` and `docker compose -p my-ui -f deploy/dev/compose.yaml -f override.yaml up -d`.
 Cookies belong to the host name, not the port: two stacks opened as `127.0.0.1:...` in one browser overwrite each other's login, so open yours as
 `my-ui.localhost:18280`.
+To test a terminal change without a rebuild, mount your `wwwroot` as described above and open a Terminal connection to `test-ssh` (the server image must contain the SSH relay, so rebuild once after backend changes). A changed host key can be provoked by editing `connections.host_key` in the database; the dialog and the confirmation path are then visible.
 To connect, add a Desktop connection to `rdp-target` (login `ubuntu` / `ubuntu`) and a Terminal connection to `test-ssh` port `2222`
 (user `tester`, password `DEV_TARGET_PASSWORD` from `deploy/dev/.env`).
 

@@ -2,7 +2,7 @@
 
 JulOS kann mehrere Fernsteuer-Sitzungen (RDP, SSH) gleichzeitig offen halten, auch mehrere zum selben Ziel. Diese Seite ist der
 Vertrag zwischen der Oberfläche (Handy- und Desktop-Hülle), dem Sitzungsverwalter und den Sitzungsarten (Fernsteuerung in `app.js`,
-später das native Terminal).
+das native Terminal in `terminal-session.js`).
 
 ## Begriffe
 
@@ -66,7 +66,7 @@ Regeln:
 ## Verwalter `Sessions` (`sessions.js`)
 
 ```js
-Sessions.registerFactory(kind, (conn, opts) => new MySession(conn, opts))   // pro Art; später 'terminal' für das native Terminal
+Sessions.registerFactory(kind, (conn, opts) => new MySession(conn, opts))   // pro Art; 'desktop' in app.js, 'terminal' in terminal-session.js
 Sessions.open(conn, { password, extra })   // legt eine Sitzung an (extra: true = bewusst eine zweite zum selben Ziel); sonst wird eine vorhandene aktiviert
 Sessions.list() / Sessions.get(id) / Sessions.find(connId) / Sessions.active
 Sessions.activate(id) / Sessions.close(id) / Sessions.closeAll()

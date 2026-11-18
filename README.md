@@ -11,7 +11,8 @@ nothing is stored in the cloud.
 [Deutsche Version](README.de.md)
 
 ```
-phone (PWA)  --HTTPS-->  your reverse proxy  -->  JulOS server (.NET, own login)  -->  guacd  --RDP/SSH-->  your machine
+phone (PWA)  --HTTPS-->  your reverse proxy  -->  JulOS server (.NET, own login)  -->  guacd  --RDP-->  your machine
+                                                        |--> SSH client (terminal, text drawn in the browser)  --SSH-->  your machine
                                                         |--> PostgreSQL (accounts, sessions, saved connections)
                                                         \--> agent (unix socket) in the desktop session: windows, apps, photo paste
 ```
@@ -53,6 +54,7 @@ tools/install-linux-agent.sh    # in the graphical session of the target machine
 Open `http://<BIND_IP>:8080` (on `localhost` or over HTTPS; the session cookie needs a secure context), enter the setup code, choose a user name and password and
 confirm the authenticator code. Then add a connection (Desktop = RDP, Terminal = SSH) and tap it. The target's password is typed per connection, or stored encrypted on request (needs a key: either `JULOS_SECRET_KEY` in `.env`, `openssl rand -base64 32`, or a volume at `/data` where the server creates `secret.key` itself, as the image's Compose stacks do; back it up like a password).
 A desktop connection can also use the experimental stream engine (own RDP client, H.264 in the browser; choose "Stream" under "Bildübertragung" in the connection dialog). Guacamole stays the default, and the app falls back to it when the browser or server cannot do H.264. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+A Terminal connection is a real terminal in the browser (the server holds the SSH connection, xterm.js draws the text: selection, copy and paste, scrollback). The first connection remembers the target's SSH host key; if it ever changes, the page warns and refuses until you confirm the new key. Login is by password for now.
 To reach the machine the server runs on, use the host name `host.docker.internal`.
 
 `BIND_IP` in `.env` is the address the server listens on: `127.0.0.1` (default, behind a reverse proxy) or the LAN address.

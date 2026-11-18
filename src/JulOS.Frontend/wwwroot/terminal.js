@@ -131,7 +131,9 @@ const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls)
 
 /**
  * Die Terminal-Ansicht (xterm.js plus Verbindung zum Server); die Sitzungsart fuer den Verwalter ist terminal-session.js.
- * opts: { conn: {id, name}, password, container, onState(state, info), onTitle(text), onKeyUsed(), onAuthExpired() }
+ * opts: { conn: {id, name}, sid, password, container, onState(state, info), onTitle(text), onKeyUsed(), onAuthExpired(), onTap(), externalKeyboard }
+ * sid: Sitzungskennung des Browsers (Slot auf dem Server, siehe docs/SESSIONS.md). externalKeyboard: die Bildschirmtastatur gehoert der Seite
+ * (ein eigenes Eingabefeld): ein Tippen oeffnet sie ueber onTap, das Eingabefeld von xterm nimmt dann keinen Fokus und zeigt keine Tastatur.
  * Zustaende: 'connecting' | 'connected' | 'closed' ({message, code, fatal}) | 'error' ({message, fatal}); fatal = nicht wiederholen (Anmeldung abgelehnt, Schluessel abgelehnt).
  */
 export class TerminalView {
@@ -167,7 +169,7 @@ export class TerminalView {
     try {
       const resp = await fetch('/api/remote/ticket', {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, signal: AbortSignal.timeout(10000),
-        body: JSON.stringify({ connection: this.conn.id, password: this.password || undefined, cols, rows, acceptHostKey: acceptHostKey || undefined }),
+        body: JSON.stringify({ connection: this.conn.id, sid: this.opts.sid || undefined, password: this.password || undefined, cols, rows, acceptHostKey: acceptHostKey || undefined }),
       });
       const data = await resp.json().catch(() => ({}));
       if (gen !== this.generation) return;
@@ -321,6 +323,8 @@ export class TerminalView {
       } catch { /* kein WebGL: der normale Renderer zeichnet */ }
     }
     this.host.style.background = theme.background;
+    // Mit der Bildschirmtastatur der Seite soll ein Tippen ins Terminal nicht die Tastatur von xterm oeffnen
+    if (this.opts.externalKeyboard) term.textarea?.setAttribute('inputmode', 'none');
     term.onData((d) => this._typed(d));
     term.onBinary((d) => { if (this.connected) this._sendRaw(TO.data, Uint8Array.from(d, (c) => c.charCodeAt(0))); });
     term.onBell(() => this._bell());
@@ -377,7 +381,10 @@ export class TerminalView {
     if (active) { this._scheduleFit(); this.focus(); }
   }
 
-  focus() { try { this.term?.focus(); } catch { /* egal */ } }
+  /** Tastatur an das Terminal (mit externer Bildschirmtastatur: nichts, die Seite verwaltet ihr Eingabefeld). */
+  focus() { if (!this.opts.externalKeyboard) this.focusInput(); }
+  /** Das Eingabefeld von xterm bekommt den Fokus (echte Tastatur, Einfuegen). */
+  focusInput() { try { this.term?.focus(); } catch { /* egal */ } }
   blur() { try { this.term?.blur(); } catch { /* egal */ } }
   get keyboardFocused() { return !!this.term && this.host.contains(document.activeElement); }
 
@@ -507,6 +514,15 @@ export class TerminalView {
     this.flingFrame = requestAnimationFrame(step);
   }
 
+  _tap(x, y) {
+    const t = this.term;
+    if (t.modes.mouseTrackingMode !== 'none' && this.connected) {
+      const c = this._cellAt(x, y), col = c.col + 1, row = c.row - t.buffer.active.viewportY + 1;
+      this._sendText(this.sgrMouse ? `\x1b[<0;${col};${row}M\x1b[<0;${col};${row}m` : `\x1b[M${String.fromCharCode(32, 32 + col, 32 + row)}\x1b[M${String.fromCharCode(35, 32 + col, 32 + row)}`);
+    }
+    if (this.opts.onTap) this.opts.onTap(); else this.focusInput();
+  }
+
   _menu(x, y, { all = true } = {}) {
     this._closeMenu();
     const menu = el('div', 'term-menu');
@@ -585,6 +601,11 @@ export class TerminalView {
       if (!g) return;
       clearTimeout(g.timer);
       if (g.mode === 'scroll' && Math.abs(g.v || 0) > 0.3 && performance.now() - g.lt < 80) this._fling(-g.v * 16, g.lx, g.ly);   // Wischen: laeuft noch ein Stueck nach
+      if (g.mode === 'wait' && e.type === 'touchend' && !e.touches.length) {
+        // kurzes Tippen: bei Mausunterstuetzung des Programms ein Klick dorthin, sonst Tastatur (die Seite entscheidet) -- und kein Fokuswechsel durch xterm
+        e.preventDefault();
+        this._tap(g.sx, g.sy);
+      }
       if (g.mode === 'select') {
         const p = { x: g.lx || g.sx, y: g.ly || g.sy };
         this._menu(e.changedTouches?.[0]?.clientX ?? p.x, e.changedTouches?.[0]?.clientY ?? p.y);

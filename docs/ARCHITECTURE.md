@@ -15,9 +15,10 @@ host, backend library, integrations, workers and tests, the folders around them)
 | Part | Choice |
 | --- | --- |
 | Server | C# on .NET 10, ASP.NET Core host |
-| Browser | Plain ES modules and the Apache Guacamole JS client, served as static files (the PWA) |
+| Browser | Plain ES modules, the Apache Guacamole JS client (desktops) and xterm.js (terminals), served as static files (the PWA) |
 | Database | PostgreSQL, plain SQL through Npgsql, SQL migrations in `database/`, no ORM |
 | Remote display | `guacd` (container, no published port); the server relays the Guacamole protocol itself. Optional second engine per connection: own RDP client with H.264 (see "Display engines") |
+| Terminal | SSH client in the server (SSH.NET behind `ISshSession`), text to the browser, drawn there by xterm.js (see "Native terminal") |
 | Linux agent | Python (GTK/Wnck) behind the language-neutral agent API; a Windows agent later in C# |
 | Delivery | One image on ghcr.io (amd64, arm64) and a compose file |
 
@@ -42,7 +43,7 @@ Inside a project, code is grouped by feature (Auth, Remote, Files) and, in the b
 
 ## Written ourselves
 
-The guacd protocol relay and its handshake, one-time connection tickets, sessions with rotating cookies, TOTP (RFC 6238) and recovery codes,
+The guacd protocol relay and its handshake, the SSH relay (WebSocket protocol, host key policy), one-time connection tickets, sessions with rotating cookies, TOTP (RFC 6238) and recovery codes,
 login lockout, the migration runner, the SQL access helpers, security headers and the CSRF/origin checks, the agent client, the upload path.
 
 ## Not written ourselves, and why
@@ -54,8 +55,10 @@ login lockout, the migration runner, the SQL access helpers, security headers an
 | Cryptographic primitives (HMAC, AES, random) | .NET base library | No hand-rolled crypto |
 | Password hash | Argon2id from one small library (Konscious), hash format versioned | Memory-hard hash is the one place where a custom version would be risky |
 | RDP engine | `guacd` | Years of protocol work |
+| SSH client | SSH.NET (MIT) behind our `ISshSession` | A full SSH client (key exchange, ciphers, channels) is large and a crypto building block; the interface keeps it replaceable and the relay testable without a network |
+| Terminal emulator in the browser | xterm.js (MIT, vendored in `wwwroot/lib/xterm`, no CDN) | Terminal emulation (escape sequences, unicode widths, selection, scrollback, renderers) is years of work; we write the session, key mapping, touch handling and host key dialog around it |
 
-Target for runtime NuGet packages: **two** (Npgsql and the Argon2 library). Test packages are separate. Versions are centralised in `Directory.Packages.props`.
+Target for runtime NuGet packages: **three** (Npgsql, the Argon2 library and SSH.NET). Test packages are separate. Versions are centralised in `Directory.Packages.props`.
 
 ## Security model
 
@@ -96,7 +99,7 @@ Both are plain read-only API calls behind the session check (no body, no state);
 ## Display engines (per connection)
 
 A desktop connection has an `engine` setting (`connections.engine`, migration 004; `guac` is the default, `stream` the new one). It is chosen in the
-connection dialog ("Bildübertragung"); terminals always use Guacamole.
+connection dialog ("Bildübertragung"); terminals do not use these engines at all (see "Native terminal").
 
 | Engine | Path | Picture | Clipboard |
 | --- | --- | --- | --- |
@@ -107,6 +110,29 @@ connection dialog ("Bildübertragung"); terminals always use Guacamole.
 - **Fallback:** if a stream session never draws a picture (socket error, closed without a message, an error other than login refused / taken over / too many sessions, no picture within 10 s of the size message, or the decoder failing three times), `app.js` reconnects once with Guacamole and keeps using it until the connection is left (`fallBackFromStream`). A stream that has shown a picture is never swapped out silently.
 - **Wire protocol:** binary, documented in `ScreenProtocol.cs` and the header of `stream.js`. The clipboard is message 6 (server to browser, UTF-8 text, the remote desktop copied) and message 9 (browser to server, UTF-8 text, up to 1 MiB; the remote desktop fetches it when it pastes). `stream.js` presents it to `app.js` through the same stream objects as the Guacamole client (`onclipboard`, `createClipboardStream`), so the clipboard dialog is shared.
 - **The agent is independent of the engine.** `/api/agent/*` (health, windows, apps, launch, mode), the window bar and uploads talk to the agent through its Unix socket on the server and never see the picture path. They work the same with `guac` and `stream` (checked on the test instance with `stream`: health, window list, launch, window bar).
+
+## Native terminal (SSH)
+
+A connection of kind **Terminal** is not a picture: the server holds the SSH connection and the browser draws real text with xterm.js, so selection, copy and
+paste, scrollback and fonts are the browser's own. Guacamole is no longer involved in SSH (`GuacSpec.Terminal` is gone).
+
+- **Backend:** `JulOS.Integrations/Ssh`. `ISshSession` (connect with password, host key callback, read, write, resize) with one implementation, `SshNetSession`
+  (SSH.NET: password and keyboard-interactive login, pseudo-terminal `xterm-256color`, keep-alive every 30 s, the shell is read on its own thread through a bounded channel so a slow browser
+  throttles the target through the SSH window). `SshRelay` joins a WebSocket and a session. SSH.NET is the one place that knows the library; replacing it means writing another `ISshSession`.
+- **Endpoint:** `POST /api/remote/ticket` for a terminal connection answers `engine: "ssh"` and a one-time ticket (`SshTickets`, 30 s, per user, in memory; the request carries `cols`, `rows`, `sid`, and optionally `acceptHostKey`).
+  `GET /api/remote/ssh?ticket=` upgrades to a WebSocket (same checks as the other two: session, own origin, ticket). The relay ends when the app session ends (checked every minute), like the other relays.
+- **Wire protocol** (binary, first byte = kind; `SshProtocol.cs`, `terminal.js`): browser to server `1` data, `2` size (u16 cols, u16 rows), `3` ping, `4` pause, `5` resume;
+  server to browser `1` data, `2` ready (JSON: `hostKey` = `new`, `known` or `changed-accepted`, `fingerprint`), `3` end (JSON: `code`, `message`, for a changed key also `fingerprint` and `previous`). Pause/resume is flow control: the browser asks the
+  server to stop reading the shell when it has more than 256 kB it has not drawn yet (a WebSocket has no back pressure of its own). Input messages are limited to 64 kB (the page sends 16 kB pieces).
+- **Limits and sessions:** the shared `SessionRegistry` (see [SESSIONS.md](SESSIONS.md)): one WebSocket per slot (user, connection, browser session id; a new one for the same slot replaces the old one, whose shell on the target ends with it), `JULOS_MAX_SESSIONS_PER_USER` per user, and 32 terminals at the same time in total. There is no extra idle timeout: like the other relays, an open session ends with the app session or the browser connection (a shell that is open but idle is the user's business).
+  Error codes are the Guacamole ones where they exist (513 busy, 514 timeout, 515 failed, 520 unreachable, 769 login refused, 777 taken over, 797 too many sessions) plus 800 host key changed, 801 shell ended, 802 app session ended. All texts are German and never contain the password.
+- **Host key (trust on first use):** the SHA-256 fingerprint of the host key, `"<algorithm> SHA256:<base64>"` as `ssh-keygen -l` prints it, is stored per connection (`connections.host_key`, migration 005).
+  First connection: the key is accepted and stored *after* the login succeeded (a target whose password does not fit is not pinned) and the page says so. Later connections: the same key is silent. **A different key is never accepted silently**: the relay refuses before sending the password (end code 800 with both fingerprints), the page shows a warning dialog
+  and only the button "Neuen Schlüssel vertrauen" repeats the ticket request with `acceptHostKey` set to exactly the shown fingerprint (a confirmation for any other key does not count); then the new key replaces the old one. Changing host, port or kind of a connection forgets the key (it belonged to the old target); "forget" is also a flag on the connection update.
+  Key algorithm changes count as changes (the same server offering another algorithm first would show the dialog once). Not covered: a key that is *already* in the database from a man in the middle on the first connection (TOFU's known limit; compare the fingerprint shown with the one on the target).
+- **Password:** typed per connection or stored in the same encrypted store as for RDP (nothing new is stored); it only lives in the ticket (30 s, memory) and in the SSH handshake. Key-based login is not built (see IDEAS).
+- **Browser:** `terminal.js` (`TerminalView`: xterm.js, WebGL renderer when available, fit, unicode 11, font stack, theme from the app tokens, scrollback 10 000 lines, selection and copy/paste, mouse reporting, flow control, host key dialog) and `terminal-session.js` (`TerminalSession`, the session kind for `Sessions`; it extends `RemoteSession`, so key bar, menu and overlay are the ones of the remote view).
+  Size follows the container: xterm fits locally at once, the new columns and rows go to the server (SSH `window-change`) 180 ms after the last change, so a keyboard animation does not flood the target; the terminal never changes the size of its container, so there is no feedback loop. Phone: the page's own input field (`#kb`, the proven Gboard handling) types, the key bar sends X11 keysyms that `keysymBytes` turns into bytes (arrows follow the application cursor mode, modifiers use the xterm parameter form); drag scrolls (as scrollback, as arrow keys in vim/less, as mouse wheel for programs with mouse support), long press selects a word and drag extends it, a small menu copies and pastes, two fingers change the font size. Desktop: xterm takes the keys directly, Ctrl+Shift+C / Ctrl+Insert copy, Ctrl+Shift+V / Shift+Insert paste, Ctrl+C copies when there is a selection and is ^C otherwise, right click opens the copy/paste menu.
 
 ## Order of work (one step at a time, each tested before the next)
 

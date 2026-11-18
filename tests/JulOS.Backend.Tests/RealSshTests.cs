@@ -71,6 +71,27 @@ public sealed class RealSshTests
     }
 
     [Fact]
+    public async Task A_lot_of_output_arrives_complete_and_in_order_and_a_reader_that_stops_does_not_hang_dispose()
+    {
+        var (host, port, password) = Target();
+        await using var s = new SshNetSession();
+        await s.ConnectAsync(new SshConnectOptions(host, port, "tester", password, 100, 30), _ => true, CancellationToken.None);
+        await WriteAsync(s, "stty -echo; seq 1 200000; echo ENDE-$((40+2))\n");
+        var output = await ReadUntilAsync(s, "ENDE-42");
+        Assert.Contains("\r\n199999\r\n200000\r\nENDE-42", output);
+        Assert.Contains("\r\n2\r\n3\r\n4\r\n", output);
+        Assert.Equal(200000, System.Text.RegularExpressions.Regex.Matches(output, @"(?<=[\r\n])\d+\r\n").Count);          // jede Zeile genau einmal
+
+        // Ausgabe, die niemand mehr abholt (der Kanal ist voll): Freigeben muss trotzdem sofort gehen
+        var second = new SshNetSession();
+        await second.ConnectAsync(new SshConnectOptions(host, port, "tester", password, 100, 30), _ => true, CancellationToken.None);
+        await WriteAsync(second, "yes | head -c 50000000\n");
+        await Task.Delay(1500);
+        var disposing = second.DisposeAsync().AsTask();
+        Assert.Same(disposing, await Task.WhenAny(disposing, Task.Delay(TimeSpan.FromSeconds(10))));
+    }
+
+    [Fact]
     public async Task Exiting_the_shell_ends_the_read_with_zero()
     {
         var (host, port, password) = Target();

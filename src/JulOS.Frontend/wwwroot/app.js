@@ -689,7 +689,7 @@ async function connect() {
     if (S.client !== client) return;
     if (st === 3) { // verbunden
       clearTimeout(S.connectTimer);
-      S.connected = true; S.everConnected = true; S.connectedAt = Date.now(); S.frameSeen = false; startWindowBar(); fitDisplay(); pushSize(); waitForFrame(client);
+      S.connected = true; S.everConnected = true; S.connectedAt = Date.now(); S.frameSeen = false; startWindowBar(); fitDisplay(); pushSize(); waitForFrame(client); focusKbForHardware();
       // Die Zaehler der Wiederholung gelten erst als zurueckgesetzt, wenn die Verbindung wirklich haelt (sonst endlos: verbunden, sofort getrennt, neu ...)
       setTimeout(() => { if (S.client === client && S.connected) { S.firstLogin = false; S.retry = 0; } }, 12000);
     } else if (st === 5) { // getrennt
@@ -1042,6 +1042,24 @@ function wireKb(node) {
   node.addEventListener('focus', () => { setActOn('keyboard', true); dbg('kbfocus', { mode: S.kbMode }); });
 }
 wireKb(el.kbInput); wireKb(el.kbRich);
+
+// Desktop-Browser (Maus, echte Tastatur): Tasten gehen ohne Umweg ueber den Tastatur-Knopf an die Fernsteuerung.
+// Das versteckte Eingabefeld bekommt den Fokus beim Verbinden, bei jedem Klick ins Bild und bei der ersten Taste, die sonst ins Leere ginge.
+const HW_KB = matchMedia('(pointer: fine) and (hover: hover)').matches || location.search.includes('hwkb');   // ?hwkb: nur zum Testen
+function focusKbForHardware() {
+  if (!HW_KB || !S.connected || kbFocused()) return;
+  if (document.querySelector('dialog[open]') || !el.menuSheet.hidden) return;
+  try { el.kb.focus({ preventScroll: true }); } catch { el.kb.focus(); }
+}
+if (HW_KB) {
+  el.touch.addEventListener('mousedown', () => focusKbForHardware());
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') return;
+    const a = document.activeElement;
+    if (a && a !== document.body && a !== document.documentElement) return;      // ein anderes Feld hat den Fokus: in Ruhe lassen
+    focusKbForHardware();
+  }, true);
+}
 // Falls die Tastatur ein Bild als <img> in das Feld legt: Bild holen, hochladen, Element entfernen
 new MutationObserver((list) => {
   for (const m of list) for (const n of m.addedNodes) {

@@ -1,5 +1,6 @@
 import Guacamole from '/lib/guacamole-common.min.js';
 import { StreamClient } from './stream.js';
+import { SizeGate, LayoutLog } from './layoutlog.js';
 
 /* =====================================================================
  * JulOS – Client
@@ -78,7 +79,7 @@ const S = {
   k: clamp(store.get('k', 0.8), 0.35, 1.8),   // Remote-Pixel pro Handy-Pixel (kleiner = Inhalt groesser)
   kbMode: store.get('kbMode2', 'rich'),       // 'rich' (Bilder aus der Tastatur) | 'normal' (mit Vorschlaegen) | 'direct' (ohne Vorschlaege)
   touchMode: store.get('touchMode', 'direct'),// 'direct' (Tippen = Klick an der Stelle) | 'pad' (Touchpad)
-  lastSent: { w: 0, h: 0 }, sizeTimes: [],
+  lastSent: { w: 0, h: 0 }, gate: new SizeGate(), sizeHoldUntil: 0,
   retry: 0, retryTimer: null, resizeTimer: null, toastTimer: null,
   expanded: store.get('expanded', false), group: store.get('group', 'keys'), actOn: {}, zoomTimer: null, editing: false,
   autoKb: store.get('autoKb', true),   // Tastatur oeffnet sich beim Tippen auf ein Textfeld (Erkennung am Mauszeiger)
@@ -100,11 +101,13 @@ const dbgQueue = [];
 let dbgTimer = null;
 function dbg(evt, data = {}) {
   if (!S.debug || !S.conn) return;     // Messwerte nur waehrend einer Verbindung (davor gibt es noch keine Sitzung)
+  if (dbgQueue.length >= 400) dbgQueue.shift();
   dbgQueue.push({ t: Math.round(performance.now()), evt, ...data });
-  if (!dbgTimer) dbgTimer = setTimeout(() => {
+  if (!dbgTimer) dbgTimer = setTimeout(function flush() {
     dbgTimer = null;
     const events = dbgQueue.splice(0, 40);
     fetch('/api/log', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, body: JSON.stringify({ events }), keepalive: true }).catch(() => {});
+    if (dbgQueue.length) dbgTimer = setTimeout(flush, 2500);      // mehr als 40 aufgelaufen: der Rest geht im naechsten Paket mit
   }, 2500);
 }
 
@@ -113,8 +116,23 @@ const vv = window.visualViewport;
 let baseH = vv ? vv.height : window.innerHeight;
 let lastW = vv ? vv.width : window.innerWidth;
 let kbOpen = false;
+// Messwerte und Schleifen-Erkennung (layoutlog.js). Die Anzeige auf dem Bild und die dichten "lay"-Eintraege gibt es nur mit ?debug in der Adresse
+// (der Wert bleibt fuer diesen Tab gemerkt, falls die Seite neu geladen wird); eine erkannte Schleife kommt immer ins Log.
+const LAYDEBUG = (() => {
+  try { if (/[?&]debug\b/.test(location.search)) sessionStorage.setItem('pd.laydebug', '1'); return sessionStorage.getItem('pd.laydebug') === '1'; } catch { return /[?&]debug\b/.test(location.search); }
+})();
+const lay = new LayoutLog({ emit: (evt, d) => dbg(evt, d), parts: { app: $('#app'), stage: el.stage, topbar: el.topbar, dock: el.dock }, state: () => ({ kbOpen }), visible: LAYDEBUG });
 const kbFocused = () => document.activeElement === el.kbInput || document.activeElement === el.kbRich;
-function layoutViewport() {
+// Waehrend die Tastatur ein- oder ausfaehrt, wird keine neue Remote-Groesse gesendet (die Ansicht ruckelt sonst durch mehrere Zwischengroessen)
+const KB_HOLD_MS = 600;
+function holdSize(ms = KB_HOLD_MS) { S.sizeHoldUntil = Math.max(S.sizeHoldUntil || 0, Date.now() + ms); }
+let vpFrame = 0;
+function layoutViewport(why = 'vv') {
+  // Android meldet eine Aenderung oft dreifach (visualViewport resize und scroll, Fenster resize): in einem Bild zusammenfassen
+  if (vpFrame) return;
+  vpFrame = requestAnimationFrame(() => { vpFrame = 0; applyViewport(why); });
+}
+function applyViewport(why) {
   const h = vv ? vv.height : window.innerHeight;
   const w = vv ? vv.width : window.innerWidth;
   const root = document.documentElement;
@@ -125,16 +143,18 @@ function layoutViewport() {
   const open = h < baseH - 140;
   if (open !== kbOpen) {
     kbOpen = open; root.classList.toggle('kb-open', open);
+    holdSize();
     // Tastatur per Zurueck-Geste geschlossen, Feld hat aber noch den Fokus: Fokus loesen, damit der Zustand stimmt
     if (!open && kbFocused()) el.kb.blur();
     setActOn('keyboard', open);
     dbg('kbvisible', { open, vvh: Math.round(h), base: Math.round(baseH), inner: window.innerHeight });
   }
+  lay.layout(why);
 }
-if (vv) { vv.addEventListener('resize', layoutViewport); vv.addEventListener('scroll', layoutViewport); }
-window.addEventListener('resize', layoutViewport);
-window.addEventListener('orientationchange', () => setTimeout(layoutViewport, 300));
-layoutViewport();
+if (vv) { vv.addEventListener('resize', () => layoutViewport('vv')); vv.addEventListener('scroll', () => layoutViewport('vvs')); }
+window.addEventListener('resize', () => layoutViewport('win'));
+window.addEventListener('orientationchange', () => setTimeout(() => layoutViewport('rot'), 300));
+applyViewport('init');
 
 /* =====================================================================
  *  Tasten: Namen -> X11-Keysyms, Umschalter (Strg/Alt/Shift/Win)
@@ -479,7 +499,7 @@ async function startWindowBar() {
   if (!W.available) return;
   pollWindows(); W.timer = setInterval(pollWindows, 2000);
 }
-function stopWindowBar() { clearInterval(W.timer); W.timer = null; W.list = []; W.lastCls = null; winSig = ''; }
+function stopWindowBar() { clearInterval(W.timer); W.timer = null; W.list = []; W.lastCls = null; W.candCls = null; winSig = ''; }
 async function pollWindows() {
   if (!S.connected || !W.available || document.hidden) return;
   try {
@@ -488,10 +508,17 @@ async function pollWindows() {
     renderWindows(); applyProfile();
   } catch { /* naechster Versuch */ }
 }
+// Ein Programm wird erst nach zwei Abfragen (4 s) in Folge als aktiv gewertet und der Wechsel der Anzeigegroesse haelt mindestens 8 s Abstand.
+// Springt der Fokus der VM sonst zwischen zwei Programmen hin und her (Meldungsfenster, Menues, Tooltips), bekaeme die VM jedes Mal eine
+// neue Aufloesung: der Bildschirm "zappelt".
+const PROFILE = { stablePolls: 2, minGap: 8000 };
 function applyProfile() {
-  if (W.mode !== 'apps') { W.lastCls = null; return; }
+  if (W.mode !== 'apps') { W.lastCls = null; W.candCls = null; return; }
   const act = W.list.find((w) => w.active); const cls = act ? act.class : null;
-  if (!cls || cls === W.lastCls) return;
+  if (!cls || cls === W.lastCls) { W.candCls = null; return; }
+  if (W.candCls !== cls) { W.candCls = cls; W.candN = 1; } else W.candN += 1;
+  if (W.candN < PROFILE.stablePolls || Date.now() - (W.profileAt || 0) < PROFILE.minGap) return;
+  W.candCls = null; W.profileAt = Date.now();
   W.lastCls = cls;
   const k = profiles[cls] ?? defaultProfile(cls);
   if (k && Math.abs(k - S.k) > 0.02) { setK(k, false); toast('Anzeige für ' + (act.app || cls) + ' angepasst', 1800); }
@@ -588,28 +615,44 @@ function fitDisplay() {
   if (!rw) return;
   S.display.scale(el.stage.getBoundingClientRect().width / rw);
 }
-// Kleine Schwankungen (ein paar Pixel durch Rundung, Leiste, Systemleiste) sind keine neue Groesse wert.
-const SIZE_TOL = { w: 8, h: 16 };                  // Geraetepixel
-const SIZE_STORM = { max: 4, window: 20000, pause: 5000 };   // hoechstens 4 Aenderungen in 20 s, danach 5 s Pause
+// Wann die Groesse wirklich an die VM geht, entscheidet SizeGate (layoutlog.js): nur bei echtem Unterschied (8 x 16 Geraetepixel Toleranz),
+// nicht waehrend die Tastatur faehrt, hoechstens einmal pro Sekunde und mit Notbremse (4 Aenderungen in 20 s, dann 5 s Pause).
+// Jede Aenderung baut das Bild der VM neu auf; so landet das Handy auch dann nicht in einer Dauerschleife, wenn ein Geraet Groessen
+// in schneller Folge meldet (Adressleiste, Tastatur-Animation, Systemleisten).
+function sendRemoteSize(w, h, why) {
+  S.lastSent = { w, h };
+  lay.note('send', { w, h });
+  dbg('sendSize', { w, h, k: S.k, dpr: window.devicePixelRatio, why });
+  S.client.sendSize(w, h);
+}
 function pushSize(force = false) {
   if (!S.client || !S.connected) return;
   // Waehrend der VM ihr erstes Bild aufbaut, keine Groessenaenderungen schicken: jede startet beim Ziel das Anzeigen neu und verzoegert das erste Bild
   // (die Groesse steht schon im Verbindungsaufbau). Spaetestens nach 6 s geht es normal weiter.
   if (!S.frameSeen && Date.now() - S.connectedAt < 6000) { scheduleSize(); return; }
-  const { w, h } = computeRemote();
-  if (!force && Math.abs(w - S.lastSent.w) <= SIZE_TOL.w && Math.abs(h - S.lastSent.h) <= SIZE_TOL.h) return;
-  // Sicherung gegen Rueckkopplung: jede Groessenaenderung baut das Bild der VM neu auf. Kommen es in kurzer Zeit zu viele, wird nur noch
-  // selten gesendet (und im Log vermerkt), damit das Handy nie in einer Dauerschleife landet.
+  const want = computeRemote();
   const now = Date.now();
-  S.sizeTimes = S.sizeTimes.filter((t) => now - t < SIZE_STORM.window);
-  if (!force && S.sizeTimes.length >= SIZE_STORM.max) { dbg('size-storm', { w, h, last: S.lastSent, n: S.sizeTimes.length }); scheduleSize(SIZE_STORM.pause); return; }
-  S.sizeTimes.push(now);
-  S.lastSent = { w, h };
-  dbg('sendSize', { w, h, k: S.k, dpr: window.devicePixelRatio });
-  S.client.sendSize(w, h);
+  const d = S.gate.decide(now, want, S.lastSent, { force, holdUntil: S.sizeHoldUntil || 0 });
+  if (d.action === 'skip') return;
+  if (d.action === 'wait') {
+    if (d.why === 'storm') dbg('size-storm', { w: want.w, h: want.h, n: d.n });
+    scheduleSize(d.delay);
+    return;
+  }
+  S.gate.sent(now);
+  sendRemoteSize(want.w, want.h, force ? 'force' : 'fit');
 }
-function scheduleSize(delay = 380) { clearTimeout(S.resizeTimer); S.resizeTimer = setTimeout(() => { pushSize(); fitDisplay(); }, delay); }
-new ResizeObserver(() => { fitDisplay(); scheduleSize(); }).observe(el.stage);
+function scheduleSize(delay = 450) { clearTimeout(S.resizeTimer); S.resizeTimer = setTimeout(() => { pushSize(); fitDisplay(); }, delay); }
+let stageW = 0, stageH = 0;
+new ResizeObserver(() => {
+  fitDisplay();
+  const r = el.stage.getBoundingClientRect();
+  if (Math.abs(r.width - stageW) < 1 && Math.abs(r.height - stageH) < 1) return;    // nur ein Rundungs- oder Startsignal: keine neue Groesse
+  stageW = r.width; stageH = r.height;
+  lay.note('stage', { w: Math.round(r.width), h: Math.round(r.height) });
+  lay.layout('stage');
+  scheduleSize();
+}).observe(el.stage);
 
 const zoomPercent = () => Math.round(100 / S.k);
 function showZoomPop() {                                   // Zoomstufe nur kurz einblenden
@@ -725,9 +768,10 @@ async function connect() {
   const client = isStream ? new StreamClient(wsBase + '/api/remote/screen') : new Guacamole.Client(tunnel);
   S.engine = engine;
   const display = client.getDisplay();
-  S.tunnel = tunnel; S.client = client; S.display = display; S.lastSent = { w, h }; S.sizeTimes = [];
+  S.tunnel = tunnel; S.client = client; S.display = display; S.lastSent = { w, h }; S.gate = new SizeGate(); S.sizeHoldUntil = 0;
+  lay.note('conn', { engine });
   el.display.appendChild(display.getElement());
-  display.onresize = () => { fitDisplay(); dbg('remote-size', { w: display.getWidth(), h: display.getHeight() }); };
+  display.onresize = () => { fitDisplay(); const w = display.getWidth(), h = display.getHeight(); lay.note('remote', { w, h }); dbg('remote-size', { w, h }); };
   // Textfeld-Erkennung: Der Mauszeiger der VM wird zum "I-Balken" (schmal, hoch, Hotspot mittig)
   display.oncursor = (canvas, hx, hy) => {
     const c = cursorInfo(canvas, hx, hy);
@@ -796,8 +840,8 @@ async function connect() {
 function nudgeSize(delta = 2) {
   if (!S.client || !S.connected) return;
   const { w, h } = computeRemote();
-  S.lastSent = { w, h: h - delta }; S.client.sendSize(w, h - delta);
-  setTimeout(() => { if (S.client && S.connected) { S.lastSent = { w, h }; S.client.sendSize(w, h); } }, 350);
+  sendRemoteSize(w, h - delta, 'nudge');
+  setTimeout(() => { if (S.client && S.connected) sendRemoteSize(w, h, 'nudge'); }, 350);
 }
 function waitForFrame(client) {
   const started = Date.now();
@@ -1124,8 +1168,8 @@ function wireKb(node) {
   node.addEventListener('drop', (e) => { if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) { e.preventDefault(); handleKbFiles(e.dataTransfer.files); } });
   node.addEventListener('compositionend', () => syncDiff());
   node.addEventListener('input', () => syncDiff());
-  node.addEventListener('blur', () => { setActOn('keyboard', kbOpen); if (node === el.kb) { setKbVal(''); prevValue = ''; } dbg('kbblur', {}); });
-  node.addEventListener('focus', () => { setActOn('keyboard', true); dbg('kbfocus', { mode: S.kbMode }); });
+  node.addEventListener('blur', () => { holdSize(); setActOn('keyboard', kbOpen); if (node === el.kb) { setKbVal(''); prevValue = ''; } dbg('kbblur', {}); });
+  node.addEventListener('focus', () => { holdSize(); setActOn('keyboard', true); dbg('kbfocus', { mode: S.kbMode }); });
 }
 wireKb(el.kbInput); wireKb(el.kbRich);
 

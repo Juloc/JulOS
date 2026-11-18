@@ -9,3 +9,5 @@ JULOS_TEST_GUACD="127.0.0.1:44822" \
 JULOS_TEST_TARGET_PASSWORD="${DEV_TARGET_PASSWORD}" \
 JULOS_TEST_RDP_HOST="rdp-target" \
   dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj "$@"
+# Groessen-Logik des Handy-Clients (reines JavaScript, braucht nur node)
+if command -v node >/dev/null; then node --test tests/frontend; else echo "node fehlt: tests/frontend uebersprungen"; fi

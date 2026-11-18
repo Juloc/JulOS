@@ -85,7 +85,7 @@ Guacamole kann Bild-Zwischenablagen nicht ueber RDP senden, deshalb dieser Weg.
 ## Aufbau
 
 - `src/JulOS.Frontend` Host: Web-Client (`wwwroot`: PWA), HTTP-API, WebSocket; `src/JulOS.Backend` Konten, Sitzungen, Verbindungen (PostgreSQL); `src/JulOS.Integrations` guacd-Relay und Agent-Client; `src/JulOS.Workers` Hintergrundjobs
-- `tests/`, `database/` (SQL-Migrationen), `deploy/dev/` die Test-Instanz mit Wegwerf-Zielen fuer SSH und RDP (siehe [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md))
+- `tests/` (`frontend/` laeuft mit node), `database/` (SQL-Migrationen), `deploy/dev/` die Test-Instanz mit Wegwerf-Zielen fuer SSH und RDP (siehe [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md); Test auf dem echten Handy: [docs/PHONE-TEST.md](docs/PHONE-TEST.md))
 - `tools/julos-agent.py` Linux-Agent (Fenster, Programme, Programm-Modus), `tools/julos-clip.py` Foto-Helfer
 - `tools/install-linux-agent.sh`, `tools/julos-user.sh`, `tools/make-client-cert.sh`
 - `docs/AGENT_API.md` Agent-API, `docs/ARCHITECTURE.md` Stack und Sicherheitskonzept, `caddy/Caddyfile.example`

@@ -1,0 +1,49 @@
+# Test-Instanz: dieselbe Zusammenstellung wie live (Datenbank, guacd, Server aus demselben Dockerfile),
+# dazu Wegwerf-Ziele zum Verbinden. Nur lokal erreichbar, eigene Datenbank, eigene Zugangsdaten (deploy/dev/up.sh erzeugt sie).
+name: julos-dev
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: julos
+      POSTGRES_USER: julos
+      POSTGRES_PASSWORD: ${DEV_DB_PASSWORD:?mit deploy/dev/up.sh starten}
+    volumes:
+      - julos-dev-postgres:/var/lib/postgresql
+    ports:
+      - "127.0.0.1:45432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U julos -d julos"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  guacd:
+    image: guacamole/guacd:1.6.0
+
+  julos:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      JULOS_DB: Host=postgres;Database=julos;Username=julos;Password=${DEV_DB_PASSWORD}
+    ports:
+      - "127.0.0.1:18080:8080"
+
+  # Wegwerf-Ziel fuer das Terminal (SSH). Zugang: Benutzer "tester", Passwort aus deploy/dev/.env (DEV_TARGET_PASSWORD)
+  test-ssh:
+    image: lscr.io/linuxserver/openssh-server:latest
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Europe/Berlin
+      USER_NAME: tester
+      USER_PASSWORD: ${DEV_TARGET_PASSWORD}
+      PASSWORD_ACCESS: "true"
+
+volumes:
+  julos-dev-postgres:

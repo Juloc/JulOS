@@ -66,15 +66,33 @@ Target for runtime NuGet packages: **two** (Npgsql and the Argon2 library). Test
 - **Every API and the WebSocket need a session.** State-changing requests also need a custom header and a matching `Origin`. Static files and the manifest are public so the app can be installed.
 - **Connection ticket instead of an encrypted token:** the browser asks for a one-time ticket (random 128 bit, 30 s, kept in memory with the connection settings) and opens the WebSocket with it. The desktop password is typed per connection, held in memory for at most 30 s, never logged or stored.
 - **Headers:** strict CSP, `nosniff`, `frame-ancestors 'none'`, HSTS over HTTPS, no referrer.
-- **Accounts are created on the server console**, never over the network (`tools/julos-user.sh`). The password is typed in the terminal and never passed as an argument.
+- **The first account is created on the setup screen**, guarded by the one-time setup code from the server log, so only whoever can read the log can claim the instance. Setup closes after the first account. The console tool (`tools/julos-user.sh`) is the recovery path; passwords are typed in the terminal, never passed as an argument.
+
+## Test instance (a mirror of live, used for every change)
+
+`deploy/dev/compose.yaml` starts the same stack as production with its own PostgreSQL volume, `guacd`, the server built from the same
+Dockerfile, plus **throwaway targets**: an SSH server and an RDP desktop (both with generated test accounts that exist only there).
+Everything is tested there first, including a real browser run (login, setup, connect to the terminal and the desktop). Integration tests use the same containers.
+Production and the test instance differ only in ports, volumes and secrets.
+
+## First start and connections
+
+- **First start:** with no account the server prints a one-time **setup code** to its log. The browser shows a setup screen asking for that code, a user name and a password,
+  then shows the authenticator secret (link and key) and ten recovery codes, and finishes only after a valid authenticator code was entered. Afterwards the setup screen is gone.
+  The console tool `tools/julos-user.sh` stays as the recovery path (reset password or authenticator).
+- **Connections:** a user keeps a list of connections: name, kind (**Desktop** = RDP, **Terminal** = SSH, **Screen** = VNC later), host, port, user name. No secret is stored; the
+  password is typed per connection (a password manager can fill it). A connection for the machine the server runs next to is offered at setup. The target host is chosen by the signed-in
+  user, so the server may reach anything the signed-in user names; an optional allow-list in the configuration restricts that.
+- **Home:** after login the user sees the list, can add, edit and delete connections, and starts one with a tap. The remote view is the existing client.
 
 ## Order of work (one step at a time, each tested before the next)
 
+0. Test instance (`deploy/dev`) with throwaway SSH and RDP targets.
 1. Solution skeleton in the layout above: host, static files, headers, health, migration runner, PostgreSQL in compose.
-2. Accounts: Argon2id, TOTP, sessions, lockout, console tool, tests (the Node version on branch `wip/node-auth` is the executable specification).
+2. Accounts: setup screen with setup code, Argon2id, TOTP, sessions, lockout, console tool, tests (the Node version on branch `wip/node-auth` is the executable specification).
 3. Relay: ticket endpoint and WebSocket to `guacd`, tested against a real `guacd`.
 4. Agent client, upload and log endpoints.
-5. Client: login step, sign out, device list.
+5. Client: setup and login screens, home with connections (Desktop and Terminal), sign out, device list.
 6. Switch the compose file over, remove the Node gateway.
 
 Until step 6 the Node gateway keeps running, so nothing breaks in between.

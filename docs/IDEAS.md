@@ -13,3 +13,4 @@ Everything that is not in [SCOPE.md](SCOPE.md) goes here, one line each, with th
 - 2026-11-18 macOS agent, audio, multi-user
 - 2026-11-18 Docker module, Caddy module, DDNS status (milestone 3 in the vision)
 - 2026-11-18 Module shell/core with module list (milestone 2)
+- 2026-11-18 VNC connections, SSH key login, saved connection groups, QR code for the authenticator secret, passkeys (WebAuthn)

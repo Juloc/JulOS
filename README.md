@@ -84,6 +84,7 @@ Guacamole cannot transfer image clipboards over RDP, hence this path.
 - `gateway/public/` the web client (`index.html`, `app.js`, `style.css`, `sw.js`, `manifest.webmanifest`)
 - `tools/julos-agent.py` Linux agent (windows, apps, app mode), `tools/julos-clip.py` photo clipboard helper
 - `tools/install-linux-agent.sh`, `tools/make-client-cert.sh`, `tools/enable-proxy-mode.sh`
+- `src/`, `tests/`, `database/`, `deploy/dev/` the .NET server (in progress, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)); `gateway/` is the current Node gateway until it is replaced
 - `docs/AGENT_API.md` the agent API, `docs/ARCHITECTURE.md` the stack and security design, `caddy/Caddyfile.example`
 - `.github/workflows/docker.yml` builds the image for `ghcr.io/<owner>/<repo>` (amd64 + arm64)
 

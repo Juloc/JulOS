@@ -1,0 +1,6 @@
+**/bin/
+**/obj/
+.git/
+gateway/node_modules/
+deploy/dev/.env
+*.md

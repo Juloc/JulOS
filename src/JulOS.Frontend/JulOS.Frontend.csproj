@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <AssemblyName>JulOS</AssemblyName>
+    <RootNamespace>JulOS.Frontend</RootNamespace>
+    <!-- JSON ohne Reflection (schneller Start, kleiner) -->
+    <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\JulOS.Backend\JulOS.Backend.csproj" />
+  </ItemGroup>
+</Project>

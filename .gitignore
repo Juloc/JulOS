@@ -2,3 +2,8 @@
 node_modules/
 pki/
 docker-compose.override.yml
+bin/
+obj/
+TestResults/
+*.user
+deploy/dev/.env

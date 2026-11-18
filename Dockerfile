@@ -11,7 +11,10 @@ COPY src src
 COPY database database
 RUN dotnet publish src/JulOS.Frontend/JulOS.Frontend.csproj -c Release -o /app --no-restore
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
+# H.264 fuer den eigenen Bildschirm-Stream: libopenh264 2.4.1 (Ubuntu-Paket libopenh264-7, BSD, etwa 1 MB). Genau diese Version ist die, gegen die
+# der Kodierer geprueft ist; das Alpine-Paket ist eine andere (2.6.0) und wird deshalb nicht benutzt.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libopenh264-7 && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app .
 ENV ASPNETCORE_HTTP_PORTS=8080 JULOS_DATA=/data

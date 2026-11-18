@@ -1,4 +1,5 @@
 import Guacamole from '/lib/guacamole-common.min.js';
+import { StreamClient } from './stream.js';
 
 /* =====================================================================
  * JulOS – Client
@@ -664,22 +665,27 @@ async function connect() {
   if (kbFocused()) el.kb.blur();
   for (let i = 0; i < 12 && kbOpen; i++) await sleep(50);
   const { w, h } = computeRemote();
-  let ticket;
+  // Welche Engine: der eigene Stream (H.264 im Browser) nur fuer Desktops und nur, wenn der Browser ihn dekodieren kann; sonst Guacamole
+  const wantStream = S.conn.kind === 'desktop' && store.get('engine', 'guac') === 'stream' && await StreamClient.supported();
+  let ticket, engine = 'guac';
   try {
     const resp = await fetch('/api/remote/ticket', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, signal: AbortSignal.timeout(10000),
-      body: JSON.stringify({ connection: S.conn.id, password: S.password || undefined, width: w, height: h, dpi: 96 }) });
+      body: JSON.stringify({ connection: S.conn.id, password: S.password || undefined, width: w, height: h, dpi: 96, engine: wantStream ? 'stream' : undefined }) });
     const data = await resp.json().catch(() => ({}));
     if (resp.status === 401) return leave('Die Sitzung ist abgelaufen. Bitte neu anmelden.', 'auth');
     if (!resp.ok) throw new Error(data.error || 'Fehler ' + resp.status);
-    ticket = data.ticket;
+    ticket = data.ticket; engine = data.engine || 'guac';
   } catch (e) {
     const msg = e.name === 'TimeoutError' || e.name === 'TypeError' ? 'Keine Verbindung zum Server. Netz prüfen.' : e.message;
     if (!S.everConnected) return leave(msg);
     return showOverlay(msg);
   }
 
-  const tunnel = new Guacamole.WebSocketTunnel((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/remote/ws');
-  const client = new Guacamole.Client(tunnel);
+  const wsBase = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+  const isStream = engine === 'stream';
+  const tunnel = isStream ? null : new Guacamole.WebSocketTunnel(wsBase + '/api/remote/ws');
+  const client = isStream ? new StreamClient(wsBase + '/api/remote/screen') : new Guacamole.Client(tunnel);
+  S.engine = engine;
   const display = client.getDisplay();
   S.tunnel = tunnel; S.client = client; S.display = display; S.lastSent = { w, h };
   el.display.appendChild(display.getElement());
@@ -718,7 +724,7 @@ async function connect() {
     else if (S.firstLogin && Date.now() - S.connectedAt < 12000) leave('Anmeldung fehlgeschlagen. Bitte Passwort prüfen.');
     else showOverlay(msg);
   };
-  tunnel.onerror = (st) => { if (S.client === client && !S.everConnected) leave('Keine Verbindung zum Server: ' + (st && st.message ? st.message : '')); };
+  if (tunnel) tunnel.onerror = (st) => { if (S.client === client && !S.everConnected) leave('Keine Verbindung zum Server: ' + (st && st.message ? st.message : '')); };
   client.onclipboard = (stream, mimetype) => {
     if (!/^text\//.test(mimetype)) return;
     const reader = new Guacamole.StringReader(stream);
@@ -778,7 +784,7 @@ function waitForFrame(client) {
     if (ok || age > 25000) { S.frameSeen = true; dbg('firstframe', { ms: age, nudges, ok, ...seen }); release('bild'); return; }
     // Anstupsen (die VM zeichnet nach einer echten Groessenaenderung alles neu) erst, wenn es eine Bildgroesse gibt:
     // vorher geht die Aenderung ins Leere, weil die VM noch gar nicht verbunden ist
-    if (sizedAt) {
+    if (sizedAt && S.engine !== 'stream') {
       const since = Date.now() - sizedAt;
       // erst warten (das Ziel braucht beim Wiederverbinden mehrere Sekunden), dann hoechstens zwei sanfte Anstupser
       if (nudges === 0 && since > 8000) { nudges = 1; nudgeSize(2); }

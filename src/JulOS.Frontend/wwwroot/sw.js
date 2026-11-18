@@ -1,7 +1,7 @@
 /* Service Worker: haelt die App-Huelle bereit (schneller Start, laeuft auch bei kurzem Netzausfall) und holt Updates zuerst
  * aus dem Netz. API-Aufrufe und WebSocket-Verbindungen werden nie zwischengespeichert. */
-const VERSION = 'pd-v16';
-const SHELL = ['/', '/app.js', '/shell.js', '/style.css', '/lib/guacamole-common.min.js', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png'];
+const VERSION = 'pd-v18';
+const SHELL = ['/', '/app.js', '/stream.js', '/shell.js', '/style.css', '/lib/guacamole-common.min.js', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

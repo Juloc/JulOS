@@ -55,6 +55,8 @@ builder.Services.AddSingleton(new AgentOptions(builder.Configuration["JULOS_AGEN
 builder.Services.AddSingleton<AgentClient>();
 builder.Services.AddSingleton(new UploadOptions(builder.Configuration["JULOS_UPLOAD_DIR"] ?? "/uploads"));
 builder.Services.AddSingleton<ClipboardUploader>();
+builder.Services.AddSingleton<ClipboardFileUploader>();
+builder.Services.AddSingleton<ClipboardPuller>();
 builder.Services.AddSingleton<HitCounter>();
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJson.Default));
 

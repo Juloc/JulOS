@@ -1,3 +1,4 @@
+using JulOS.Integrations;
 using System.Text;
 using JulOS.Integrations.Agent;
 
@@ -134,6 +135,146 @@ public sealed class ClipboardUploaderTests : IDisposable
         var gone = new ClipboardUploader(new UploadOptions(Path.Combine(_dir, "gibt-es-nicht")));
         Assert.Equal(UploadOutcome.FolderNotWritable, (await gone.SaveAsync(Png, CancellationToken.None)).Outcome);
         Assert.Empty(Directory.GetFiles(_dir));
+    }
+}
+
+public sealed class ClipboardFileUploaderTests : IDisposable
+{
+    private readonly string _dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "julos-upf-" + Guid.NewGuid().ToString("N"))).FullName;
+
+    public void Dispose() { try { Directory.Delete(_dir, true); } catch (IOException) { } }
+
+    /// <summary>Spielt den Helfer in der Sitzung: wartet auf einen Ordner files/&lt;id&gt; und quittiert ihn.</summary>
+    private Task<string?> Helper(string marker, string content = "")
+    {
+        return Task.Run(async () =>
+        {
+            var root = Path.Combine(_dir, "files");
+            for (var i = 0; i < 300; i++)
+            {
+                var d = Directory.Exists(root) ? Directory.GetDirectories(root).FirstOrDefault(x => !x.EndsWith(".tmp")) : null;
+                if (d is not null) { await File.WriteAllTextAsync(Path.Combine(d, marker), content); return d; }
+                await Task.Delay(10);
+            }
+            return null;
+        });
+    }
+
+    [Fact]
+    public async Task A_confirmed_file_lies_in_its_own_folder_under_a_clean_name()
+    {
+        var up = new ClipboardFileUploader(new UploadOptions(_dir));
+        var helper = Helper(".ok");
+        var r = await up.SaveAsync("..\\..\\Bericht: Q3?.txt", "inhalt"u8.ToArray(), CancellationToken.None);
+        Assert.Equal(FileOutcome.Ok, r.Outcome);
+        var dir = await helper;
+        Assert.NotNull(dir);
+        Assert.Equal(Path.Combine(_dir, "files"), Path.GetDirectoryName(dir));
+        Assert.Equal("Bericht_ Q3_.txt", Directory.GetFiles(dir!).Select(Path.GetFileName).Single(n => !n!.StartsWith('.')));
+        Assert.Equal("inhalt", await File.ReadAllTextAsync(Path.Combine(dir!, "Bericht_ Q3_.txt")));
+        Assert.Empty(Directory.GetDirectories(Path.Combine(_dir, "files"), "*.tmp"));
+    }
+
+    [Fact]
+    public async Task Paths_cannot_leave_the_folder()
+    {
+        var up = new ClipboardFileUploader(new UploadOptions(_dir, TimeSpan.FromMilliseconds(200)));
+        foreach (var name in new[] { "../../evil.txt", "..\\..\\evil.txt", "/etc/cron.d/evil" })
+        {
+            var r = await up.SaveAsync(name, new byte[] { 1 }, CancellationToken.None);
+            Assert.NotEqual(FileOutcome.FolderNotWritable, r.Outcome);
+        }
+        Assert.False(File.Exists(Path.Combine(_dir, "evil.txt")));
+        Assert.False(File.Exists(Path.Combine(Path.GetDirectoryName(_dir)!, "evil.txt")));
+        Assert.Equal("evil.txt", ClipboardNames.Sanitize("../../evil.txt"));
+    }
+
+    [Theory]
+    [InlineData("setup.exe", ".exe")]
+    [InlineData("Start.DESKTOP", ".desktop")]
+    [InlineData("a.ps1", ".ps1")]
+    public async Task Names_that_run_when_opened_are_refused_and_nothing_is_written(string name, string ext)
+    {
+        var up = new ClipboardFileUploader(new UploadOptions(_dir));
+        var r = await up.SaveAsync(name, new byte[] { 1, 2 }, CancellationToken.None);
+        Assert.Equal((FileOutcome.Blocked, ext), (r.Outcome, r.Detail));
+        Assert.False(Directory.Exists(Path.Combine(_dir, "files")));
+    }
+
+    [Fact]
+    public async Task Empty_too_big_and_nameless_files_are_rejected()
+    {
+        var up = new ClipboardFileUploader(new UploadOptions(_dir));
+        Assert.Equal(FileOutcome.Empty, (await up.SaveAsync("a.txt", Array.Empty<byte>(), CancellationToken.None)).Outcome);
+        Assert.Equal(FileOutcome.TooBig, (await up.SaveAsync("a.bin", new byte[ClipboardFileUploader.MaxBytes + 1], CancellationToken.None)).Outcome);
+        Assert.Equal(FileOutcome.BadName, (await up.SaveAsync("..", new byte[] { 1 }, CancellationToken.None)).Outcome);
+        Assert.Equal(FileOutcome.BadName, (await up.SaveAsync(null, new byte[] { 1 }, CancellationToken.None)).Outcome);
+        await File.WriteAllTextAsync(Path.Combine(_dir, "blocker"), "");           // unter einer Datei laesst sich kein Ordner anlegen
+        var blocked = new ClipboardFileUploader(new UploadOptions(Path.Combine(_dir, "blocker", "sub")));
+        Assert.Equal(FileOutcome.FolderNotWritable, (await blocked.SaveAsync("a.txt", new byte[] { 1 }, CancellationToken.None)).Outcome);
+    }
+
+    [Fact]
+    public async Task An_error_from_the_helper_is_reported_and_the_file_is_removed_and_silence_too()
+    {
+        var up = new ClipboardFileUploader(new UploadOptions(_dir));
+        var helper = Helper(".err", "kein Zugriff");
+        var r = await up.SaveAsync("a.txt", new byte[] { 1 }, CancellationToken.None);
+        Assert.Equal((FileOutcome.HelperFailed, "kein Zugriff"), (r.Outcome, r.Detail));
+        await helper;
+        Assert.Empty(Directory.GetDirectories(Path.Combine(_dir, "files")));
+
+        var silent = new ClipboardFileUploader(new UploadOptions(_dir, TimeSpan.FromMilliseconds(200)));
+        Assert.Equal(FileOutcome.HelperSilent, (await silent.SaveAsync("b.txt", new byte[] { 1 }, CancellationToken.None)).Outcome);
+        Assert.Empty(Directory.GetDirectories(Path.Combine(_dir, "files")));
+    }
+}
+
+public sealed class ClipboardPullerTests : IDisposable
+{
+    private static readonly byte[] Png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3];
+    private readonly string _dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "julos-pull-" + Guid.NewGuid().ToString("N"))).FullName;
+
+    public void Dispose() { try { Directory.Delete(_dir, true); } catch (IOException) { } }
+
+    private Task Helper(string suffix, byte[] content)
+    {
+        return Task.Run(async () =>
+        {
+            var dir = Path.Combine(_dir, "pull");
+            for (var i = 0; i < 300; i++)
+            {
+                var req = Directory.Exists(dir) ? Directory.GetFiles(dir, "*.req").FirstOrDefault() : null;
+                if (req is not null) { await File.WriteAllBytesAsync(req[..^4] + suffix, content); return; }
+                await Task.Delay(10);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task The_helper_answers_with_a_png_and_nothing_is_left_behind()
+    {
+        var helper = Helper(".png", Png);
+        var r = await new ClipboardPuller(new UploadOptions(_dir)).PullAsync(CancellationToken.None);
+        await helper;
+        Assert.Equal(PullOutcome.Image, r.Outcome);
+        Assert.Equal(Png, r.Png);
+        Assert.Empty(Directory.GetFiles(Path.Combine(_dir, "pull")));
+    }
+
+    [Fact]
+    public async Task No_image_an_error_something_that_is_no_png_and_silence_are_told_apart()
+    {
+        var up = new ClipboardPuller(new UploadOptions(_dir, TimeSpan.FromMilliseconds(300)));
+        _ = Helper(".none", []);
+        Assert.Equal(PullOutcome.Nothing, (await up.PullAsync(CancellationToken.None)).Outcome);
+        _ = Helper(".err", "Zwischenablage gesperrt"u8.ToArray());
+        var failed = await up.PullAsync(CancellationToken.None);
+        Assert.Equal((PullOutcome.HelperFailed, "Zwischenablage gesperrt"), (failed.Outcome, failed.Detail));
+        _ = Helper(".png", "<html>"u8.ToArray());
+        Assert.Equal(PullOutcome.HelperFailed, (await up.PullAsync(CancellationToken.None)).Outcome);
+        Assert.Equal(PullOutcome.HelperSilent, (await up.PullAsync(CancellationToken.None)).Outcome);
+        Assert.Empty(Directory.GetFiles(Path.Combine(_dir, "pull")));
     }
 }
 

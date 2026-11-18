@@ -691,7 +691,7 @@ function nudgeSize(delta = 2) {
 }
 function waitForFrame(client) {
   const started = Date.now();
-  let nudges = 0, probes = 0;
+  let nudges = 0, probes = 0, sizedAt = 0, released = false;
   showBusy('Bild wird geladen …');
   const probe = document.createElement('canvas'); probe.width = probe.height = 8;
   const pc = probe.getContext('2d', { willReadFrequently: true });
@@ -707,16 +707,25 @@ function waitForFrame(client) {
       return seen.max > 10;
     } catch { return true; }                                // Pruefung nicht moeglich: nicht blockieren
   };
+  // Die Ladeanzeige geht weg, sobald die VM eine Bildgroesse gemeldet hat (oder nach 4 s): Bedienung und Tastenleiste sollen
+  // nicht auf ein "nicht schwarzes" Bild warten. Die Anstupser laufen danach unsichtbar weiter, bis Inhalt da ist.
+  const release = (why) => { if (released) return; released = true; dbg('overlay-weg', { ms: Date.now() - started, why }); el.overlay.hidden = true; el.spinner.hidden = true; };
   const tick = () => {
     if (S.client !== client || !S.connected) return;
     const age = Date.now() - started;
     const ok = hasContent();
+    if (seen.w > 0 && !sizedAt) sizedAt = Date.now();
     if (probes++ % 4 === 0 && probes < 40) dbg('frameprobe', { ms: age, nudges, ...seen });
-    if (ok || age > 12000) { dbg('firstframe', { ms: age, nudges, ok, ...seen }); el.overlay.hidden = true; el.spinner.hidden = true; return; }
-    // erst klein, dann deutlich anstupsen: der Server zeichnet nach einer echten Groessenaenderung alles neu
-    if (nudges === 0 && age > 1200) { nudges = 1; nudgeSize(2); }
-    else if (nudges === 1 && age > 3500) { nudges = 2; nudgeSize(64); }
-    else if (nudges === 2 && age > 7000) { nudges = 3; nudgeSize(128); }
+    if (sizedAt || age > 4000) release(sizedAt ? 'groesse' : 'zeit');
+    if (ok || age > 12000) { dbg('firstframe', { ms: age, nudges, ok, ...seen }); release('bild'); return; }
+    // Anstupsen (die VM zeichnet nach einer echten Groessenaenderung alles neu) erst, wenn es eine Bildgroesse gibt:
+    // vorher geht die Aenderung ins Leere, weil die VM noch gar nicht verbunden ist
+    if (sizedAt) {
+      const since = Date.now() - sizedAt;
+      if (nudges === 0 && since > 700) { nudges = 1; nudgeSize(2); }
+      else if (nudges === 1 && since > 2500) { nudges = 2; nudgeSize(64); }
+      else if (nudges === 2 && since > 5000) { nudges = 3; nudgeSize(128); }
+    }
     setTimeout(tick, 250);
   };
   tick();

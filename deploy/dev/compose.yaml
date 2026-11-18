@@ -62,6 +62,13 @@ services:
       dockerfile: deploy/dev/rdp-target/Dockerfile
     hostname: rdp-target
     shm_size: 1g
+    # Dateien in der Zwischenablage (xrdp haengt die Dateien des Clients per FUSE ein, "thinclient_drives"): nur fuer dieses Wegwerf-Ziel
+    devices:
+      - /dev/fuse
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
     volumes:
       # Agent-Socket und Foto-Upload, wie ~/julos-uploads auf der echten VM (der Server sieht denselben Ordner als /uploads)
       - julos-dev-share:/home/ubuntu/julos-uploads

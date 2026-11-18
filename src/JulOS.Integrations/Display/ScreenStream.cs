@@ -18,6 +18,18 @@ public sealed record ScreenPicture(int Sequence, bool IsKey, byte[] Data) : Scre
 /// <summary>Der ferne Rechner hat Text kopiert.</summary>
 public sealed record ScreenClipboardText(string Text) : ScreenEvent;
 
+/// <summary>Der ferne Rechner hat ein Bild kopiert (Format 1 PNG, 2 BMP).</summary>
+public sealed record ScreenClipboardImage(byte Format, byte[] Data) : ScreenEvent;
+
+/// <summary>Der ferne Rechner hat Dateien kopiert (leere Liste: die Auswahl ist weg).</summary>
+public sealed record ScreenClipboardFiles(uint Batch, IReadOnlyList<RemoteFile> Files) : ScreenEvent;
+
+/// <summary>Ein Stueck einer Datei, die der Browser angefordert hat (Flags siehe <see cref="ClipboardBridge.ChunkLast"/>).</summary>
+public sealed record ScreenFileChunk(uint Batch, int Index, byte Flags, byte[] Data) : ScreenEvent;
+
+/// <summary>Wie ein Senden vom Browser ausgegangen ist.</summary>
+public sealed record ScreenTransferResult(uint Id, byte Code, string Message) : ScreenEvent;
+
 public enum CursorKind { Shape, Hidden, Default }
 
 /// <summary>Die Form des Mauszeigers des fernen Rechners (RGBA, R zuerst, gerade Alpha, von oben nach unten).</summary>
@@ -78,7 +90,14 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         _options = options;
         _maxKilobitsPerSecond = maxKilobitsPerSecond;
         _log = log;
-        _clipboard = new ClipboardBridge(_clipboardChannel, text => _events.Writer.TryWrite(new ScreenClipboardText(text)));
+        _clipboard = new ClipboardBridge(_clipboardChannel, new ClipboardSink
+        {
+            Text = text => _events.Writer.TryWrite(new ScreenClipboardText(text)),
+            Image = (format, data) => _events.Writer.TryWrite(new ScreenClipboardImage(format, data)),
+            Files = (batch, files) => _events.Writer.TryWrite(new ScreenClipboardFiles(batch, files)),
+            FileChunk = (batch, index, flags, data) => _events.Writer.TryWrite(new ScreenFileChunk(batch, index, flags, data)),
+            Result = (id, code, message) => _events.Writer.TryWrite(new ScreenTransferResult(id, code, message)),
+        });
     }
 
     /// <summary>Ob H.264 auf dieser Maschine kodiert werden kann (libopenh264 vorhanden).</summary>
@@ -142,6 +161,21 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
     /// <summary>Der Browser hat Text abgelegt; der ferne Rechner holt ihn, wenn dort eingefuegt wird.</summary>
     public void SetClipboard(string text) => _clipboard.SetLocalText(text);
+
+    /// <summary>Der Browser sendet ein Bild (als BMP) oder eine Datei an die Zwischenablage des fernen Rechners; siehe <see cref="ClipboardBridge"/>.</summary>
+    public void BeginTransfer(uint id, byte kind, int index, int count, long size, string name) => _clipboard.BeginTransfer(id, kind, index, count, size, name);
+
+    public void TransferChunk(uint id, ReadOnlySpan<byte> data) => _clipboard.TransferChunk(id, data);
+
+    public void EndTransfer(uint id) => _clipboard.EndTransfer(id);
+
+    public void CancelTransfer(uint id) => _clipboard.CancelTransfer(id);
+
+    /// <summary>Der Browser holt eine Datei, die der ferne Rechner kopiert hat.</summary>
+    public void RequestFile(uint batch, int index) => _clipboard.RequestFile(batch, index);
+
+    public void CancelFile(uint batch) => _clipboard.CancelFile(batch);
+
 
     /// <summary>Der Browser hat die Bilder bis zu dieser Folgenummer dekodiert (oder verworfen); ohne Nummer: ein Bild mehr.</summary>
     public void Acknowledge(int? sequence = null)
@@ -539,6 +573,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
             await _rdp.DisposeAsync().ConfigureAwait(false);
         }
 
+        _clipboard.Dispose();
         _encoder?.Dispose();
         _frame?.Dispose();
         _events.Writer.TryComplete();

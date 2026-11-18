@@ -111,6 +111,7 @@
         <div id="display"></div>
         <div id="touchLayer"></div>
         <div id="toast" aria-live="polite"></div>
+        <div id="xferBar" hidden role="status"><span id="xferText"></span><button id="xferCancel" type="button">Abbrechen</button></div>
         <div id="zoomPop" aria-hidden="true"></div>
         <div id="overlay" hidden>
           <div class="box">
@@ -206,10 +207,27 @@
         <button id="typeBtn" type="button">Eintippen</button>
         <button id="pasteBtn" type="button" class="ghost">In Remote-Zwischenablage</button>
       </div>
+      <h3>Datei oder Bild senden</h3>
+      <p class="hint">Bild oder Datei kommt in die Zwischenablage der VM (dort Strg+V). Auch per Ablegen auf das Bild und Strg+V.</p>
+      <div class="row">
+        <button id="sendFileBtn" type="button">Datei senden</button>
+        <button id="pullImgBtn" type="button" class="ghost" hidden>Bild aus der VM holen</button>
+      </div>
       <h3>Von der VM kopiert</h3>
       <textarea id="remoteClip" rows="4" readonly></textarea>
       <div class="row">
         <button id="copyBtn" type="button" class="ghost">Auf dem Handy kopieren</button>
+      </div>
+      <div id="remoteItem" hidden>
+        <h3 id="remoteItemTitle">Bild oder Datei aus der VM</h3>
+        <img id="remoteImg" alt="Bild aus der VM" hidden>
+        <ul id="remoteFiles" hidden></ul>
+        <div class="row" id="remoteImgRow" hidden>
+          <button id="imgCopyBtn" type="button">Bild kopieren</button>
+          <button id="imgSaveBtn" type="button" class="ghost">Speichern</button>
+        </div>
+      </div>
+      <div class="row">
         <button class="ghost close" data-act="close" type="button">Schließen</button>
       </div>
     </dialog>
@@ -289,6 +307,7 @@
   </main>
 
   <input id="photoInput" type="file" accept="image/*" hidden>
+  <input id="fileInput" type="file" multiple hidden>
   <input id="imgSeedInput" type="file" accept="image/*" hidden>
 
   <!-- Eingabefeld für die Android-Tastatur (unsichtbar) -->

@@ -122,6 +122,58 @@ internal static partial class AgentEndpoints
             };
         });
 
+        // Datei in die Zwischenablage der Ziel-Maschine (Engine ohne eigenen Dateikanal): Datei im Body, Name URL-kodiert im Kopf X-File-Name,
+        // hoechstens 64 MB, 20 pro Minute und Benutzer. Der Name wird bereinigt, ausfuehrbare Endungen werden abgelehnt.
+        app.MapPost("/api/upload-file", async (HttpContext ctx, ClipboardFileUploader uploader, HitCounter hits) =>
+        {
+            var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
+            if (!hits.Allow("upload-file:" + id.UserId, 20, Minute)) return Error(429, "Zu viele Uploads, bitte kurz warten.");
+            if (ctx.Request.ContentLength is > ClipboardFileUploader.MaxBytes) return Error(413, "Datei zu groß (höchstens 64 MB).");
+            if (ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit) limit.MaxRequestBodySize = ClipboardFileUploader.MaxBytes;
+            string name;
+            try { name = Uri.UnescapeDataString(ctx.Request.Headers["X-File-Name"].ToString()); }
+            catch (UriFormatException) { return Error(400, "Ungültiger Dateiname."); }
+            if (name.Length > 600) return Error(400, "Ungültiger Dateiname.");
+
+            byte[] data;
+            try
+            {
+                using var ms = new MemoryStream();
+                await ctx.Request.Body.CopyToAsync(ms, ctx.RequestAborted);
+                data = ms.ToArray();
+            }
+            catch (Microsoft.AspNetCore.Http.BadHttpRequestException) { return Error(413, "Datei zu groß (höchstens 64 MB)."); }
+
+            var r = await uploader.SaveAsync(name, data, ctx.RequestAborted);
+            return r.Outcome switch
+            {
+                FileOutcome.Ok => Results.Json(new UploadResponse(true), AppJson.Default.UploadResponse),
+                FileOutcome.Empty => Error(400, "Die Datei ist leer."),
+                FileOutcome.TooBig => Error(413, "Datei zu groß (höchstens 64 MB)."),
+                FileOutcome.BadName => Error(400, "Ungültiger Dateiname."),
+                FileOutcome.Blocked => Error(400, $"Dateityp nicht erlaubt ({r.Detail})."),
+                FileOutcome.FolderNotWritable => Error(500, "Upload-Ordner nicht beschreibbar."),
+                FileOutcome.HelperFailed => Error(500, "Helfer: " + r.Detail),
+                _ => Error(504, "Der Helfer in der Sitzung der Ziel-Maschine antwortet nicht (läuft tools/julos-clip.py?)."),
+            };
+        });
+
+        // Bild aus der Zwischenablage der Ziel-Maschine holen (Engine, die Bilder nicht selbst meldet): PNG im Answer, 204 wenn dort kein Bild liegt
+        app.MapPost("/api/clipboard/pull", async (HttpContext ctx, ClipboardPuller puller, HitCounter hits) =>
+        {
+            var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
+            if (!hits.Allow("pull:" + id.UserId, 30, Minute)) return Error(429, "Zu viele Anfragen, bitte kurz warten.");
+            var r = await puller.PullAsync(ctx.RequestAborted);
+            return r.Outcome switch
+            {
+                PullOutcome.Image => Results.Bytes(r.Png!, "image/png"),
+                PullOutcome.Nothing => Results.StatusCode(204),
+                PullOutcome.FolderNotWritable => Error(500, "Upload-Ordner nicht beschreibbar."),
+                PullOutcome.HelperFailed => Error(500, "Helfer: " + r.Detail),
+                _ => Error(504, "Der Helfer in der Sitzung der Ziel-Maschine antwortet nicht (läuft tools/julos-clip.py?)."),
+            };
+        });
+
         // Diagnose vom Client: nur Messwerte (Zahlen, Wahrheitswerte, kurze Woerter), kein freier Text; landet im Server-Log
         app.MapPost("/api/log", async (HttpContext ctx, HitCounter hits, ILoggerFactory loggers) =>
         {

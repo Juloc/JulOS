@@ -1,6 +1,7 @@
 import Guacamole from '/lib/guacamole-common.min.js';
 import { StreamClient } from './stream.js';
 import { SizeGate, LayoutLog } from './layoutlog.js';
+import { LIMITS, fmtSize, bmpFromImage, pngFromBytes, filesFromTransfer, xhrUpload, saveBlob } from './clip.js';
 
 /* =====================================================================
  * JulOS – Client
@@ -96,8 +97,9 @@ const S = {
 };
 
 /* ---------- Toast / kleine Helfer ---------- */
-function toast(msg, ms = 1400) {
+function toast(msg, ms = 1400, onTap = null) {
   el.toast.textContent = msg; el.toast.classList.add('show');
+  el.toast.classList.toggle('tap', !!onTap); el.toast.onclick = onTap ? () => { el.toast.classList.remove('show'); onTap(); } : null;
   clearTimeout(S.toastTimer); S.toastTimer = setTimeout(() => el.toast.classList.remove('show'), ms);
 }
 
@@ -244,7 +246,7 @@ const DEFAULT_ROWS = [
     ITEM('Strg+C', 'chord', 'ctrl+c'), ITEM('Strg+V', 'chord', 'ctrl+v'), ITEM('Strg+X', 'chord', 'ctrl+x'), ITEM('Strg+A', 'chord', 'ctrl+a'),
     ITEM('Strg+Z', 'chord', 'ctrl+z'), ITEM('Strg+F', 'chord', 'ctrl+f'), ITEM('Alt+Tab', 'chord', 'alt+tab'), ITEM('Strg+⇧+T', 'chord', 'ctrl+shift+t') ] },
   { id: 'funcs', title: 'Funktionen', icon: 'apps', items: [
-    ITEM('Bild einfügen', 'action', 'pasteimg'), ITEM('Foto wählen', 'action', 'photo'), ITEM('Text senden', 'action', 'clip'), ITEM('Passwort', 'action', 'password') ] },
+    ITEM('Bild einfügen', 'action', 'pasteimg'), ITEM('Foto wählen', 'action', 'photo'), ITEM('Datei senden', 'action', 'sendfile'), ITEM('Text senden', 'action', 'clip'), ITEM('Passwort', 'action', 'password') ] },
   // die Leiste: immer sichtbar, eine Zeile, ganz unten
   { id: 'bar', title: 'Leiste', fixed: true, items: [
     ITEM('Esc', 'chord', 'esc'), ITEM('Strg', 'mod', 'ctrl'), ITEM('Tab', 'chord', 'tab'),
@@ -473,8 +475,9 @@ const ACTIONS = {
   menu: () => (el.menuSheet.hidden ? openMenu() : closeMenu()),
   expand: toggleExpanded,
   photo: () => openPhotoDlg(),
+  sendfile: () => pickFile(),
   pasteimg: () => pasteImageFromClipboard(),
-  clip: () => el.clipDlg.showModal(),
+  clip: () => openClipDlg(),
   password: () => openPwDialog(),
 };
 
@@ -833,6 +836,13 @@ async function connect() {
     };
   };
 
+  // Bilder und Dateien: der eigene Stream meldet sie selbst; bei Guacamole holt der Knopf im Dialog das Bild ueber den Helfer
+  if (client.nativeClipboard) {
+    client.onclipimage = (format, bytes) => onRemoteImage(format, bytes);
+    client.onclipfiles = (batch, files) => onRemoteFiles(batch, files);
+    client.onclipresult = (r) => { if (r.text) toast(r.text, 3600); };
+  }
+
   setupMouse(client, display);
   client.connect('ticket=' + encodeURIComponent(ticket));
   // kommt innerhalb von 20 s keine Verbindung zustande: nicht ewig "Verbinde ..." zeigen
@@ -1096,12 +1106,12 @@ const NAMED = { Enter: KS.enter, Backspace: KS.backspace, Tab: KS.tab, Escape: K
   ArrowUp: KS.up, ArrowDown: KS.down, Delete: KS.delete, Home: KS.home, End: KS.end, PageUp: KS.pageup, PageDown: KS.pagedown, Insert: KS.insert };
 for (let i = 1; i <= 12; i++) NAMED['F' + i] = KS['f' + i];   // F-Tasten gehen an die VM (F5/F11/F12 wirken dann nicht im Browser)
 
-// Bilder aus der Tastatur (Sticker, GIFs, kopierte Bilder): hochladen und mit Strg+V einfuegen
+// Bilder und Dateien aus der Tastatur (Sticker, GIFs), per Einfuegen oder Ablegen: an die Zwischenablage der VM senden (sendToRemote)
 async function handleKbFiles(files) {
-  const img = [...files].find((f) => /^image\//.test(f.type));
-  if (!img) return false;
-  dbg('kbimage', { t: img.type, kb: Math.round(img.size / 1024) });
-  try { await uploadPhoto(img); } catch (e) { toast('Bild: ' + e.message, 4200); }
+  const list = [...files];
+  if (!list.length) return false;
+  dbg('kbfiles', { n: list.length, t: String(list[0].type).slice(0, 20), kb: Math.round(list[0].size / 1024) });
+  try { await sendToRemote(list); } catch (e) { toast('Senden: ' + e.message, 4200); }
   return true;
 }
 function onKbPaste(e) {
@@ -1438,6 +1448,177 @@ async function uploadPhoto(file) {
 }
 
 /* =====================================================================
+ *  Bilder und Dateien in der Zwischenablage (Entwurf: docs/CLIPBOARD.md)
+ *  Eigener Stream: Bild (BMP) und Dateien gehen ueber den Stream, die VM meldet Bilder und Dateien selbst.
+ *  Guacamole: Bild ueber den Foto-Helfer (uploadPhoto), eine Datei ueber /api/upload-file, ein Bild der VM holt der Knopf im Dialog.
+ * ===================================================================== */
+const xferBar = $('#xferBar'), xferText = $('#xferText'), fileInput = $('#fileInput');
+let xferAbort = null, xferCancelExtra = null;
+const nativeClip = () => !!(S.client && S.client.nativeClipboard);
+
+function showXfer(text, cancel) {
+  xferText.textContent = text; xferBar.hidden = false;
+  if (cancel !== undefined) xferCancelExtra = cancel;
+}
+function hideXfer() { xferBar.hidden = true; xferAbort = null; xferCancelExtra = null; }
+$('#xferCancel').addEventListener('click', () => { if (xferAbort) xferAbort.abort(); if (xferCancelExtra) xferCancelExtra(); hideXfer(); toast('Abgebrochen'); });
+
+function pickFile() { fileInput.value = ''; fileInput.click(); }
+fileInput.addEventListener('change', async () => {
+  const files = [...(fileInput.files || [])];
+  if (files.length) try { await sendToRemote(files); } catch (e) { toast('Senden: ' + e.message, 4200); }
+});
+$('#sendFileBtn').addEventListener('click', () => { el.clipDlg.close(); pickFile(); });
+
+/* Vom Browser an die VM. Ein einzelnes Bild wird wie ein kopiertes Bild behandelt (und mit Strg+V eingefuegt, wenn das eingeschaltet ist), alles
+   andere sind Dateien. Gibt true zurueck, wenn etwas angekommen ist. */
+async function sendToRemote(list) {
+  if (!S.connected || !S.client) { toast('Nicht verbunden'); return false; }
+  if (xferAbort) { toast('Es läuft schon eine Übertragung.', 2400); return false; }
+  const files = list.filter((f) => f && f.size !== undefined);
+  if (!files.length) return false;
+  if (files.length === 1 && /^image\//.test(files[0].type)) return sendImage(files[0]);
+  if (files.length > LIMITS.files) { toast(`Zu viele Dateien (höchstens ${LIMITS.files}).`, 3600); return false; }
+  if (files.some((f) => f.size === 0)) { toast('Die Datei ist leer.', 3000); return false; }
+  const big = files.find((f) => f.size > LIMITS.fileBytes);
+  if (big || files.reduce((n, f) => n + f.size, 0) > LIMITS.fileBytes) { toast(`Datei zu groß (höchstens ${LIMITS.fileBytes / 1048576} MB).`, 3600); return false; }
+  if (!nativeClip() && files.length > 1) { toast('Mit dieser Bildübertragung geht nur eine Datei auf einmal.', 3800); return false; }
+
+  const ctl = xferAbort = new AbortController();
+  try {
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i], label = files.length > 1 ? ` (${i + 1}/${files.length})` : '';
+      const progress = (done, total) => showXfer(`Sende ${f.name}${label} … ${Math.round(100 * done / total)} %`, null);
+      showXfer(`Sende ${f.name}${label} …`, null);
+      let r;
+      if (nativeClip()) r = await S.client.sendTransfer(2, f, f.name, i, files.length, progress, ctl.signal);
+      else {
+        const x = await xhrUpload('/api/upload-file', { 'X-JulOS': '1', 'X-File-Name': encodeURIComponent(f.name), 'Content-Type': 'application/octet-stream' }, f, progress, ctl.signal);
+        r = { code: x.status === 200 ? 0 : 4, text: (x.body && x.body.error) || 'Fehler ' + x.status };
+      }
+      if (ctl.signal.aborted) return false;
+      if (r.code !== 0) { toast(r.text || 'Senden fehlgeschlagen', 4200); dbg('file-error', { c: r.code }); return false; }
+    }
+  } catch (e) { if (!ctl.signal.aborted) toast('Senden: ' + e.message, 4200); return false; }
+  finally { hideXfer(); }
+  dbg('file-sent', { n: files.length, kb: Math.round(files.reduce((n, f) => n + f.size, 0) / 1024) });
+  toast(files.length > 1 ? 'Dateien liegen in der Zwischenablage der VM – dort einfügen (Strg+V)' : 'Datei liegt in der Zwischenablage der VM – dort einfügen (Strg+V)', 4200);
+  return true;
+}
+
+async function sendImage(file) {
+  if (file.size > LIMITS.imageBytes) { toast(`Bild zu groß (höchstens ${LIMITS.imageBytes / 1048576} MB).`, 3600); return false; }
+  if (!nativeClip()) { await uploadPhoto(file); return true; }
+  const ctl = xferAbort = new AbortController();
+  try {
+    showXfer('Bild wird umgewandelt …', null);
+    const { blob } = await bmpFromImage(file);
+    showXfer('Bild wird gesendet …', null);
+    const r = await S.client.sendTransfer(1, blob, '', 0, 1, (d, t) => showXfer(`Bild wird gesendet … ${Math.round(100 * d / t)} %`, null), ctl.signal);
+    if (ctl.signal.aborted) return false;
+    if (r.code !== 0) { toast(r.text || 'Senden fehlgeschlagen', 4200); return false; }
+  } catch (e) { if (!ctl.signal.aborted) toast('Bild: ' + e.message, 4200); return false; }
+  finally { hideXfer(); }
+  dbg('image-sent', { kb: Math.round(file.size / 1024), auto: S.autoPaste });
+  if (S.autoPaste) { await sleep(250); await sendChord([KS.ctrl, charKeysym('v')]); toast('Bild eingefügt (Strg+V)'); }
+  else toast('Bild liegt in der Zwischenablage der VM – dort Strg+V', 3500);
+  return true;
+}
+
+/* Ablegen von Dateien auf das Bild */
+const stageEl = el.stage;
+let dragDepth = 0;
+const hasFiles = (e) => e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
+stageEl.addEventListener('dragenter', (e) => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; stageEl.classList.add('dropping'); });
+stageEl.addEventListener('dragover', (e) => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+stageEl.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; stageEl.classList.remove('dropping'); } });
+stageEl.addEventListener('drop', async (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault(); dragDepth = 0; stageEl.classList.remove('dropping');
+  const { files, skipped } = filesFromTransfer(e.dataTransfer);
+  if (skipped.length) toast('Ordner werden nicht übertragen: ' + skipped.slice(0, 2).join(', '), 3200);
+  if (files.length) { try { await sendToRemote(files); } catch (err) { toast('Senden: ' + err.message, 4200); } }
+});
+
+/* Von der VM an den Browser */
+const remoteItem = { image: null, imageUrl: null, files: null };
+const itemBox = $('#remoteItem'), itemImg = $('#remoteImg'), itemFiles = $('#remoteFiles'), itemImgRow = $('#remoteImgRow');
+
+function openClipDlg() {
+  $('#pullImgBtn').hidden = nativeClip();
+  el.clipDlg.showModal();
+}
+
+function renderRemoteItem() {
+  itemBox.hidden = !(remoteItem.image || remoteItem.files);
+  itemImg.hidden = itemImgRow.hidden = !remoteItem.image;
+  if (remoteItem.image) { if (remoteItem.imageUrl) URL.revokeObjectURL(remoteItem.imageUrl); remoteItem.imageUrl = URL.createObjectURL(remoteItem.image); itemImg.src = remoteItem.imageUrl; }
+  itemFiles.hidden = !remoteItem.files; itemFiles.textContent = '';
+  if (remoteItem.files) {
+    for (const [i, f] of remoteItem.files.list.entries()) {
+      const li = document.createElement('li'), nm = document.createElement('span'), sz = document.createElement('span'), b = document.createElement('button');
+      nm.className = 'nm'; nm.textContent = f.name; sz.className = 'sz'; sz.textContent = fmtSize(f.size);
+      b.type = 'button'; b.textContent = 'Laden'; b.className = 'ghost';
+      b.addEventListener('click', () => downloadRemoteFile(remoteItem.files.batch, i, f.name));
+      li.append(nm, sz, b); itemFiles.append(li);
+    }
+  }
+}
+
+async function copyImageToLocal(blob) {
+  if (!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem)) throw new Error('Kopieren ist hier nicht möglich (HTTPS nötig)');
+  await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+}
+
+async function showRemoteImage(png, how) {
+  remoteItem.image = png; remoteItem.files = null; renderRemoteItem();
+  // Ohne Fokus oder ohne frische Eingabe verweigert der Browser das Schreiben: dann wartet das Bild im Dialog
+  if (document.hasFocus()) {
+    try { await copyImageToLocal(png); toast('Bild aus der VM kopiert', 2200); dbg('remote-image', { kb: Math.round(png.size / 1024), how, copied: true }); return; } catch { /* Dialog */ }
+  }
+  dbg('remote-image', { kb: Math.round(png.size / 1024), how, copied: false });
+  toast('Bild aus der VM – tippen zum Kopieren', 6000, () => openClipDlg());
+}
+
+async function onRemoteImage(format, bytes) {
+  try { await showRemoteImage(await pngFromBytes(bytes, format), 'push'); } catch (e) { toast('Bild aus der VM nicht lesbar: ' + e.message, 3600); }
+}
+
+function onRemoteFiles(batch, list) {
+  if (!list.length) { remoteItem.files = null; renderRemoteItem(); return; }
+  remoteItem.files = { batch, list }; remoteItem.image = null; renderRemoteItem();
+  toast((list.length === 1 ? 'Datei aus der VM: ' + list[0].name : list.length + ' Dateien aus der VM') + ' – tippen zum Laden', 6000, () => openClipDlg());
+}
+
+async function downloadRemoteFile(batch, index, name) {
+  if (!S.client || !S.client.fetchFile) return;
+  showXfer(`Lade ${name} …`, () => S.client.cancelFetch && S.client.cancelFetch(batch));
+  xferAbort = new AbortController();
+  try {
+    const blob = await S.client.fetchFile(batch, index, (n) => showXfer(`Lade ${name} … ${fmtSize(n)}`));
+    saveBlob(blob, name); toast('Gespeichert: ' + name, 3000);
+  } catch (e) { toast(e.message || 'Download fehlgeschlagen', 4200); }
+  finally { hideXfer(); }
+}
+
+$('#imgCopyBtn').addEventListener('click', async () => {
+  try { await copyImageToLocal(remoteItem.image); toast('Bild kopiert'); } catch (e) { toast(e.message || 'Kopieren nicht erlaubt, bitte Speichern', 3600); }
+});
+$('#imgSaveBtn').addEventListener('click', () => { if (remoteItem.image) saveBlob(remoteItem.image, 'bild-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '') + '.png'); });
+
+// Guacamole meldet Bilder nicht von selbst: der Helfer in der VM-Sitzung liest sie auf Wunsch aus der Zwischenablage
+$('#pullImgBtn').addEventListener('click', async () => {
+  showXfer('Hole das Bild aus der VM …', null);
+  try {
+    const r = await fetch('/api/clipboard/pull', { method: 'POST', headers: { 'X-JulOS': '1' } });
+    if (r.status === 204) { toast('In der Zwischenablage der VM liegt kein Bild', 3200); return; }
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'Fehler ' + r.status); }
+    await showRemoteImage(await r.blob(), 'pull');
+  } catch (e) { toast('Bild holen: ' + e.message, 4200); }
+  finally { hideXfer(); }
+});
+
+/* =====================================================================
  *  Passwort per Passwortmanager (Bitwarden) holen und in die VM tippen
  * ===================================================================== */
 function openPwDialog() {
@@ -1489,7 +1670,7 @@ document.addEventListener('pointerdown', (e) => {
 }, { passive: true });
 
 // nur mit ?debug in der Adresse: Zugriff fuer Tests
-if (location.search.includes('debug')) window.__pd = { W, S, rows: () => rows, renderWindows, renderRows, mods, cursorInfo, openPhotoDlg };
+if (location.search.includes('debug')) window.__pd = { W, S, rows: () => rows, renderWindows, renderRows, mods, cursorInfo, openPhotoDlg, sendToRemote, handleKbFiles };
 
 /* ---------- PWA: Service Worker und Installation ---------- */
 let installEvent = null;

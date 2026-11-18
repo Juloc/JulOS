@@ -57,6 +57,8 @@ builder.Services.AddSingleton(new AgentOptions(builder.Configuration["JULOS_AGEN
 builder.Services.AddSingleton<AgentClient>();
 builder.Services.AddSingleton(new UploadOptions(builder.Configuration["JULOS_UPLOAD_DIR"] ?? "/uploads"));
 builder.Services.AddSingleton<ClipboardUploader>();
+builder.Services.AddSingleton<ClipboardFileUploader>();
+builder.Services.AddSingleton<ClipboardPuller>();
 builder.Services.AddSingleton<HitCounter>();
 // Auslastung des Rechners (CPU, Speicher, Datentraeger des Upload-Ordners, Netzwerk), alle 2 s gemessen
 builder.Services.AddSingleton(new HostMonitor(HostSource.Linux(builder.Configuration["JULOS_UPLOAD_DIR"] ?? "/uploads")));

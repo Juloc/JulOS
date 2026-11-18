@@ -523,7 +523,7 @@ public sealed class RemoteHttpTests
 
         // fremde Verbindungen sind unsichtbar und unveraenderlich
         await db.ExecAsync("insert into users (name, password_hash, totp_secret, totp_confirmed) values ('anna', 'x', 'x', true)");
-        var annas = await new ConnectionStore(db.Data).CreateAsync(await db.ScalarAsync<Guid>("select id from users where name = 'anna'"), "Annas", "terminal", "ziel", 22, "a");
+        var annas = await new ConnectionStore(db.Data).CreateAsync(await db.ScalarAsync<Guid>("select id from users where name = 'anna'"), "Annas", "terminal", "ziel", 22, "a", "guac");
         Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{annas.Id}", new { name = "x", kind = "terminal", host = "ziel" }, cookie))).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Send(HttpMethod.Delete, $"/api/connections/{annas.Id}", null, cookie))).StatusCode);
         Assert.Equal(2, (await Json(await c.SendAsync(GetWith("/api/connections", cookie)))).GetProperty("connections").GetArrayLength());
@@ -532,6 +532,44 @@ public sealed class RemoteHttpTests
         Assert.Equal(HttpStatusCode.NoContent, (await c.SendAsync(Send(HttpMethod.Delete, $"/api/connections/{id}", null, cookie))).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Send(HttpMethod.Delete, $"/api/connections/{id}", null, cookie))).StatusCode);
         Assert.Equal(1, (await Json(await c.SendAsync(GetWith("/api/connections", cookie)))).GetProperty("connections").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task The_engine_is_saved_per_connection_kept_on_change_and_decides_the_ticket()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var guacd = new FakeGuacd();
+        await using var app = new Server(db, $"127.0.0.1:{guacd.Port}", allowed: "ziel", secretKey: TestKey);
+        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (cookie, _) = await SignedInAsync(app, c, db);
+
+        // Ohne Angabe: Guacamole. Mit Angabe wird gespeichert, ein Terminal bleibt immer bei Guacamole.
+        var plain = await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "A", kind = "desktop", host = "ziel", username = "jul" }, cookie)));
+        Assert.Equal("guac", plain.GetProperty("engine").GetString());
+        var streamed = await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "B", kind = "desktop", host = "ziel", username = "jul", engine = "stream", password = "pw" }, cookie)));
+        Assert.Equal("stream", streamed.GetProperty("engine").GetString());
+        var id = streamed.GetProperty("id").GetGuid();
+        var shell = await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "C", kind = "terminal", host = "ziel", engine = "stream" }, cookie)));
+        Assert.Equal("guac", shell.GetProperty("engine").GetString());
+        Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "D", kind = "desktop", host = "ziel", engine = "vnc" }, cookie))).StatusCode);
+
+        // Eine Aenderung ohne Engine behaelt die bisherige; mit Engine wechselt sie
+        var kept = await Json(await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{id}", new { name = "B2", kind = "desktop", host = "ziel", username = "jul" }, cookie)));
+        Assert.Equal("stream", kept.GetProperty("engine").GetString());
+        var list = (await Json(await c.SendAsync(GetWith("/api/connections", cookie)))).GetProperty("connections");
+        Assert.Equal(new[] { "guac", "stream", "guac" }, list.EnumerateArray().Select(x => x.GetProperty("engine").GetString()));
+
+        // Das Ticket folgt der Engine der Verbindung (Stream nur, wenn der Kodierer da ist); die Seite kann sie ausdruecklich ueberstimmen
+        var expected = JulOS.Integrations.Display.ScreenStream.IsAvailable ? "stream" : "guac";
+        var byConnection = await Json(await c.SendAsync(Post("/api/remote/ticket", new { connection = id, width = 856, height = 1448 }, cookie)));
+        Assert.Equal(expected, byConnection.GetProperty("engine").GetString());
+        var forcedGuac = await Json(await c.SendAsync(Post("/api/remote/ticket", new { connection = id, width = 856, height = 1448, engine = "guac" }, cookie)));
+        Assert.Equal("guac", forcedGuac.GetProperty("engine").GetString());
+        var plainId = plain.GetProperty("id").GetGuid();
+        var plainForced = await Json(await c.SendAsync(Post("/api/remote/ticket", new { connection = plainId, password = "x", width = 856, height = 1448, engine = "stream" }, cookie)));
+        Assert.Equal(expected, plainForced.GetProperty("engine").GetString());
+        var shellTicket = await Json(await c.SendAsync(Post("/api/remote/ticket", new { connection = shell.GetProperty("id").GetGuid(), password = "x", engine = "stream" }, cookie)));
+        Assert.Equal("guac", shellTicket.GetProperty("engine").GetString());
     }
 
     [Fact]

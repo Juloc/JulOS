@@ -162,7 +162,9 @@ async function signOut() {
 
 /* ---------- Verbindung anlegen und aendern ---------- */
 const DEFAULT_PORT = { desktop: '3389', terminal: '22' };
-$('#connKind').addEventListener('change', () => { $('#connPort').placeholder = DEFAULT_PORT[$('#connKind').value]; });
+const showEngineChoice = () => { const desktop = $('#connKind').value === 'desktop'; $('#connEngineRow').hidden = !desktop; $('#connEngineHint').hidden = !desktop || $('#connEngine').value !== 'stream'; };
+$('#connKind').addEventListener('change', () => { $('#connPort').placeholder = DEFAULT_PORT[$('#connKind').value]; showEngineChoice(); });
+$('#connEngine').addEventListener('change', showEngineChoice);
 $('#addConn').addEventListener('click', () => editDialog(null));
 
 function editDialog(c) {
@@ -170,6 +172,7 @@ function editDialog(c) {
   $('#connDlgTitle').textContent = c ? 'Verbindung ändern' : 'Neue Verbindung';
   $('#connName').value = c ? c.name : '';
   $('#connKind').value = c ? c.kind : 'desktop';
+  $('#connEngine').value = c && c.engine ? c.engine : 'guac'; showEngineChoice();
   $('#connHost').value = c ? c.host : '';
   $('#connPort').value = c ? String(c.port) : '';
   $('#connPort').placeholder = DEFAULT_PORT[$('#connKind').value];
@@ -191,7 +194,7 @@ $('#connForm').addEventListener('submit', async (e) => {
   const form = e.currentTarget, msg = $('#connMsg');
   const portText = $('#connPort').value.trim();
   if (portText && !/^\d{1,5}$/.test(portText)) return setMsg(msg, 'Der Port muss eine Zahl sein.');
-  const body = { name: $('#connName').value, kind: $('#connKind').value, host: $('#connHost').value, port: portText ? Number(portText) : null, username: $('#connUser').value };
+  const body = { name: $('#connName').value, kind: $('#connKind').value, host: $('#connHost').value, port: portText ? Number(portText) : null, username: $('#connUser').value, engine: $('#connKind').value === 'desktop' ? $('#connEngine').value : 'guac' };
   const pw = $('#connPw').value;
   if (pw) body.password = pw;
   if ($('#connForget').checked && !pw) body.forgetPassword = true;
@@ -219,7 +222,7 @@ $('#connDelete').addEventListener('click', async (e) => {
 function startDialog(c) {
   state.starting = c;
   // Mit gespeichertem Passwort genuegt ein Tipp: der Server nimmt es aus dem verschluesselten Speicher
-  if (c.hasPassword) { show('remote'); openRemote({ id: c.id, name: c.name, kind: c.kind, stored: true }, ''); return; }
+  if (c.hasPassword) { show('remote'); openRemote({ id: c.id, name: c.name, kind: c.kind, engine: c.engine, stored: true }, ''); return; }
   $('#startTitle').textContent = c.name;
   $('#startUser').value = c.username;
   $('#startPw').value = '';
@@ -235,7 +238,7 @@ $('#startForm').addEventListener('submit', (e) => {
   $('#startDlg').close();
   const c = state.starting;
   show('remote');
-  openRemote({ id: c.id, name: c.name, kind: c.kind }, password);
+  openRemote({ id: c.id, name: c.name, kind: c.kind, engine: c.engine }, password);
 });
 
 // Verbindung zu Ende (Fehler, Abbruch, "Zur Startseite"): zurueck zur Liste, mit Hinweis

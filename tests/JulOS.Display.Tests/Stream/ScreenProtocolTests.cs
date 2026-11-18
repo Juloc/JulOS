@@ -50,4 +50,14 @@ public sealed class ScreenProtocolTests
         Assert.Equal("Anmeldung", System.Text.Encoding.UTF8.GetString(error, 3, error.Length - 3));
         Assert.Equal([ScreenProtocol.ToBrowserTaken], ScreenProtocol.Taken());
     }
+
+    [Fact]
+    public void A_clipboard_message_is_the_kind_byte_and_utf8_text()
+    {
+        var message = ScreenProtocol.Clipboard("Grüße €");
+        Assert.Equal(ScreenProtocol.ToBrowserClipboard, message[0]);
+        Assert.Equal("Grüße €", System.Text.Encoding.UTF8.GetString(message, 1, message.Length - 1));
+        Assert.Equal(6, ScreenProtocol.ToBrowserClipboard);
+        Assert.Equal(9, ScreenProtocol.FromBrowserClipboard);
+    }
 }

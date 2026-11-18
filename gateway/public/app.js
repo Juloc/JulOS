@@ -858,8 +858,15 @@ async function endTouch(e) {
       if (S.autoKb && S.cursor.ibeam && !kbOpen) { dbg('autokb', { when: 'tap' }); el.kb.blur(); el.kb.focus(); }
       if (S.touchMode === 'pad') { const q = padPoint(); await clickAt(q.x, q.y, 'left'); }
       else { const q = remoteXY(G.sx, G.sy); await clickAt(q.x, q.y, 'left'); }
-      // Zeigerform kommt erst nach der Mausbewegung an: kurz danach noch einmal pruefen (z. B. Feld, das vorher nicht erkannt wurde)
-      setTimeout(() => { if (S.autoKb && S.connected && S.cursor.ibeam && !kbOpen) { dbg('autokb', { when: 'late' }); el.kb.focus(); } }, 280);
+      // Zeigerform kommt erst nach der Mausbewegung an. Electron-Programme wie Claude liefern den I-Balken erst nach rund einer
+      // Sekunde, deshalb ein Zeitfenster statt einer einzelnen Pruefung.
+      const t0 = Date.now();
+      const poll = () => {
+        if (!S.autoKb || !S.connected || kbOpen || Date.now() - t0 > 1600) return;
+        if (S.cursor.ibeam) { dbg('autokb', { when: 'late', ms: Date.now() - t0 }); el.kb.focus(); return; }
+        setTimeout(poll, 100);
+      };
+      setTimeout(poll, 120);
     } else if (G.mode === 'long') {
       if (S.touchMode === 'pad') { const q = padPoint(); await clickAt(q.x, q.y, 'right'); }
       else { const q = remoteXY(G.sx, G.sy); await clickAt(q.x, q.y, 'right'); }

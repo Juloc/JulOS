@@ -998,6 +998,7 @@ function applyKbMode() {
 }
 const NAMED = { Enter: KS.enter, Backspace: KS.backspace, Tab: KS.tab, Escape: KS.esc, ArrowLeft: KS.left, ArrowRight: KS.right,
   ArrowUp: KS.up, ArrowDown: KS.down, Delete: KS.delete, Home: KS.home, End: KS.end, PageUp: KS.pageup, PageDown: KS.pagedown, Insert: KS.insert };
+for (let i = 1; i <= 12; i++) NAMED['F' + i] = KS['f' + i];   // F-Tasten gehen an die VM (F5/F11/F12 wirken dann nicht im Browser)
 
 // Bilder aus der Tastatur (Sticker, GIFs, kopierte Bilder): hochladen und mit Strg+V einfuegen
 async function handleKbFiles(files) {

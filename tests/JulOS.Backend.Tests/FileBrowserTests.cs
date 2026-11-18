@@ -200,7 +200,7 @@ public sealed class FileBrowserTests : IDisposable
     {
         Directory.CreateSymbolicLink(Path.Combine(_root, "Media", "innen"), "../Projects");      // erlaubt, aber nicht durchsucht (keine Schleifen)
         var r = Browser().Search("", "foto")!;
-        Assert.Equal(["Media/Foto.JPG", "Projects/alt/Foto-alt.png"], r.Results.Select(x => x.Path).Order());
+        Assert.Equal(["Media/Foto.JPG", "Projects/alt/Foto-alt.png"], r.Results.Select(x => x.Path));        // nach Pfad sortiert
         Assert.False(r.Truncated);
         Assert.Empty(Browser().Search("", "agent")!.Results);          // .agent ist unsichtbar
         Assert.Empty(Browser().Search("", "env")!.Results);

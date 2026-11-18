@@ -53,6 +53,9 @@ const P = {
   disk: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 14.5h6"/><circle cx="17" cy="14.5" r=".6"/>',
   network: '<path d="M7 4v16m0 0-3-3m3 3 3-3M17 20V4m0 0-3 3m3-3 3 3"/>',
   chev: '<path d="m6 9 6 6 6-6"/>',
+  file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
+  download: '<path d="M12 3v12m0 0-4-4m4 4 4-4M5 21h14"/>',
+  up: '<path d="m18 15-6-6-6 6"/>',
 };
 const ic = (n) => `<svg class="dk-i" viewBox="0 0 24 24" aria-hidden="true">${P[n] || ''}</svg>`;
 // Der Verlauf steht einmal in DEFS (versteckte SVG im Desktop); jedes Logo verweist nur darauf
@@ -66,7 +69,7 @@ const APPS = [
   { id: 'desktop', name: 'Desktop', sub: 'RDP', ic: 'monitor', g: ['#4fb4f0', '#3b6cf0'] },
   { id: 'terminal', name: 'Terminal', sub: 'SSH', ic: 'terminal', g: ['#5b6275', '#2c3142'] },
   { id: 'settings', name: 'Einstellungen', ic: 'sliders', g: ['#a2a8be', '#6f7590'] },
-  { id: 'files', name: 'Dateien', ic: 'folder', g: ['#f7c76a', '#ee9b3a'], soon: true },
+  { id: 'files', name: 'Dateien', ic: 'folder', g: ['#f7c76a', '#ee9b3a'] },
   { id: 'docker', name: 'Docker', ic: 'box', g: ['#55b9f5', '#2b7bd8'], soon: true },
   { id: 'caddy', name: 'Caddy', ic: 'globe', g: ['#5fd49a', '#1fa971'], soon: true },
   { id: 'ddns', name: 'DDNS', ic: 'cloud', g: ['#8fd0ff', '#5a9cf5'], soon: true },
@@ -288,7 +291,10 @@ const MENUS = () => ({
     { sep: true },
     { label: 'Neue Verbindung …', icon: 'plus', run: () => ctx.add() },
   ],
-  Dateien: [{ label: 'Dateien', icon: 'folder', hint: 'bald verfügbar', disabled: true }],
+  Dateien: [
+    { label: 'Dateien öffnen', icon: 'folder', run: () => openFiles() },
+    { label: 'Suchen …', icon: 'search', run: () => openFiles('', true) },
+  ],
   Apps: [
     { label: 'Launcher öffnen', icon: 'grid', run: () => openLauncher() },
     { sep: true },
@@ -363,6 +369,7 @@ function buildDock() {
   dock.append(
     item('launcher', 'Launcher', { ic: 'grid', g: ['#b08cf5', '#6a58e6'] }, true),
     item('home', 'Start', appById('home')),
+    item('files', 'Dateien', appById('files')),
     el('div', 'dk-dsep'),
     item('desktop', 'Desktop (RDP)', appById('desktop')),
     item('terminal', 'Terminal (SSH)', appById('terminal')),
@@ -380,6 +387,7 @@ function renderDock() {
   if (!root) return;
   const state = {};
   const home = wins.get('home'); if (home) state.home = home;
+  const files = wins.get('files'); if (files) state.files = files;
   const sess = wins.get('session'); if (sess && sessionConn) state[sessionConn.kind] = sess;
   for (const b of root.querySelectorAll('.dk-di[data-dock]')) {
     const w = state[b.dataset.dock];
@@ -394,6 +402,7 @@ function runApp(id, anchor) {
   if (id === 'home') return openHome();
   if (id === 'settings') return openHome('einstellungen');
   if (id === 'monitor') return openHome('system');
+  if (id === 'files') return openFiles();
   if (id === 'desktop' || id === 'terminal') return pickConnection(id, anchor);
 }
 
@@ -468,7 +477,7 @@ function openLauncher() {
  * ===================================================================== */
 const NAV = [
   { id: 'start', name: 'Start', ic: 'home' }, { id: 'apps', name: 'Apps', ic: 'grid' }, { id: 'dienste', name: 'Dienste', ic: 'monitor' },
-  { id: 'dateien', name: 'Dateien', ic: 'folder', soon: true }, { id: 'system', name: 'System', ic: 'activity' }, { id: 'einstellungen', name: 'Einstellungen', ic: 'sliders' },
+  { id: 'dateien', name: 'Dateien', ic: 'folder' }, { id: 'system', name: 'System', ic: 'activity' }, { id: 'einstellungen', name: 'Einstellungen', ic: 'sliders' },
 ];
 const nav = { view: 'start', back: [], fwd: [] };
 const greeting = () => { const h = new Date().getHours(); return h < 5 ? 'Gute Nacht' : h < 11 ? 'Guten Morgen' : h < 17 ? 'Guten Tag' : h < 22 ? 'Guten Abend' : 'Gute Nacht'; };
@@ -493,6 +502,7 @@ function openHome(view) {
     w.side.addEventListener('click', (e) => {
       const b = e.target.closest('[data-nav]'); if (!b) return;
       if (b.getAttribute('aria-disabled') === 'true') return notify(`${b.dataset.name} kommt später – dafür gibt es noch keinen Server-Teil.`);
+      if (b.dataset.nav === 'dateien') return openFiles();
       goto(b.dataset.nav);
     });
     w.main.addEventListener('click', onMainClick);
@@ -632,6 +642,26 @@ function onMainClick(e) {
   else if (t.dataset.act === 'signout') ctx.signOut();
   else if (t.dataset.act === 'settings') goto('einstellungen');
   else if (t.dataset.act === 'desktop' || t.dataset.act === 'terminal') pickConnection(t.dataset.act, t);
+}
+
+
+/* =====================================================================
+ *  Dateien-Fenster (nur lesen; der Inhalt steckt in desktop-files.js)
+ * ===================================================================== */
+async function openFiles(path, focusSearch) {
+  const old = wins.get('files');
+  if (old) { old.minimized ? restoreWin(old) : focusWin(old); if (path !== undefined && old.files) old.files.go(path); if (focusSearch) $('.dk-fsearch input', old.el)?.focus(); return old; }
+  const a = appById('files');
+  const w = createWindow({ id: 'files', title: 'Dateien', icon: `<span class="dk-ti" style="--g1:${a.g[0]};--g2:${a.g[1]};width:22px;height:22px;border-radius:7px">${ic(a.ic)}</span>`,
+    rect: defaultRect('files', 860, 540, 40, 24), minW: 560, minH: 340, cls: 'dk-files' });
+  w.body.innerHTML = '<div class="dk-fempty">Lädt …</div>';
+  try {
+    const m = await import('./desktop-files.js');
+    if (!wins.has('files')) return w;   // schon wieder geschlossen
+    w.files = m.mount(w.body, { el, btn, ic, api: ctx.api });
+    if (focusSearch) $('.dk-fsearch input', w.el)?.focus();
+  } catch { w.body.innerHTML = '<div class="dk-fempty">Die Dateien konnten nicht geladen werden.</div>'; }
+  return w;
 }
 
 /* ---------- Ueber JulOS ---------- */

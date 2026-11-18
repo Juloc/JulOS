@@ -44,7 +44,7 @@ size in the browser's device mode). A fresh database starts at the setup screen;
 On a wide screen with a mouse (`min-width: 1000px` and `pointer: fine`) `shell.js` loads `desktop.js` and `desktop.css` and shows the desktop
 interface instead of the phone home: menu bar, dock, launcher, a Home window and one window for the running session (the remote view of `app.js`
 is moved into it; the engines are untouched). The phone never loads these two files. `?desktop` forces the desktop view and `?phone` the phone view
-(useful in a browser whose pointer is not reported as "fine"). The system overview (CPU, RAM, disk, network tiles on Start and the System view, `GET /api/system/overview`, see ARCHITECTURE.md for what it measures) is real. Docker, Caddy and DDNS have no backend yet and are only
+(useful in a browser whose pointer is not reported as "fine"). The Files window (`desktop-files.js`, read-only: browse, search by name, download; one root folder, see ARCHITECTURE.md) and the system overview (CPU, RAM, disk, network tiles on Start and the System view, `GET /api/system/overview`, see ARCHITECTURE.md for what it measures) is real. Docker, Caddy and DDNS have no backend yet and are only
 shown as "bald verfügbar" (design notes in `IDEAS.md`).
 On every other screen (phone, tablet, narrow window) `shell.js` loads `mobile.js`, `m3.css` and `mobile.css`: the phone shell in Material 3 style with a bottom
 navigation bar (Home, Dienste, Server, Monitoring, Profil), bottom sheets for add, edit and start (the existing dialogs, restyled and with segmented buttons for

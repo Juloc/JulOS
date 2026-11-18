@@ -1505,3 +1505,33 @@ export function openRemote(conn, password) {
 /** Wird mit (Meldung, Grund) gerufen, wenn die Verbindung beendet wird und die Startseite wieder dran ist. */
 export function setLeaveHandler(fn) { leaveHandler = fn; }
 export function disconnectRemote() { if (S.client || !el.remote.hidden) leave(); }
+
+/* =====================================================================
+ *  Haken fuer die Desktop-Oberflaeche (desktop.js): dieselben Aktionen wie die Tastenleiste, nur ohne die Leiste.
+ *  Auf dem PC steht die Leiste nicht unten; ihre Funktionen kommen als Menues in die obere Leiste. Hier wird nichts neu geschrieben.
+ * ===================================================================== */
+export const remoteApi = {
+  /** Tasten senden, zum Beispiel 'esc', 'ctrl+alt+delete', 'f5' (die Schreibweise der Tasten-Editoren) */
+  keys: (chord) => activateKey({ type: 'chord', value: chord }),
+  /** Umschalter Strg/Alt/Shift/Super: Zustand 'off' | 'once' | 'lock' und Weiterschalten wie die Taste in der Leiste */
+  mod: (name) => mods[name], cycleMod,
+  /** Eine der frei belegbaren Gruppen ('keys', 'combos', 'funcs') samt Index fuer den Editor */
+  group: (id) => { const r = rows.findIndex((x) => x.id === id); return r < 0 ? null : { index: r, title: rows[r].title, items: rows[r].items }; },
+  press: (def) => activateKey(def),
+  editKey: (r, i) => openKeyEditor(r, i),
+  resetKeys: () => { if (confirm('Sondertasten auf Standard zurücksetzen?')) { rows = clone(DEFAULT_ROWS); saveRows(); renderRows(); } },
+  /** Ansicht */
+  zoomPercent: () => zoomPercent(),
+  setZoomPercent: (p) => { setK(100 / p); rememberProfile(); },
+  zoomIn: () => ACTIONS.zoomin(), zoomOut: () => ACTIONS.zoomout(),
+  fit: () => { pushSize(true); fitDisplay(); },
+  /** Fenster der VM (Agent): Zustand, aktualisieren, Fenster nach vorn, Modus wechseln, Programm starten */
+  windows: () => ({ available: W.available, mode: W.mode, list: W.list }),
+  refreshWindows: () => pollWindows(),
+  activateWindow: (id) => activateWindow(id, W.mode === 'apps'),
+  toggleMode, openApps,
+  /** Sonstiges */
+  reconnect: () => { S.retry = 0; if (hasCredentials()) connect(); },
+  action: (name) => ACTIONS[name] && ACTIONS[name](),
+  focus: () => focusKbForHardware(),
+};

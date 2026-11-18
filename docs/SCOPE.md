@@ -11,7 +11,7 @@ and securely, with my normal Android keyboard.
 
 ### Done when all of this works on the phone
 
-1. **Install and reach:** the app installs as a PWA over HTTPS (Caddy), protected by client certificate and proxy secret.
+1. **Install and reach:** the app installs as a PWA over HTTPS (Caddy) and is protected by its own login (password, authenticator code, long-lived rotating session).
 2. **Connect:** login with my own password, a picture (not a black screen) within a few seconds, reconnect with one tap after a drop.
 3. **Type:** Gboard suggestions and autocorrect replace words correctly; the one-row key bar has Esc, Ctrl, Tab, zoom, fullscreen, menu,
    expand and keyboard; the expanded rows hold the rest; every row is editable.
@@ -33,12 +33,13 @@ They are the point of JulOS later (see the vision), but they come after 1.0.
 2. **New idea? Write it into [IDEAS.md](IDEAS.md) and go back to work.** Ideas are never started in the same session they come up in.
 3. **Order is fixed:** 1 Install and reach, then 2 and 3 (test on phone), then 4, then 5, then 6. Fixes for things already on the list come before new work.
 4. **No new service, dependency or protocol** without writing down why milestone 1 cannot be done without it.
-5. **Security is never traded for convenience.** No exposure to the internet without client certificate and proxy secret.
+5. **Security is never traded for convenience.** No exposure to the internet without the app's own login (or an equivalent second layer).
 6. **Done means tested on the phone**, not just built.
 
 ## Next steps, in order
 
-1. Push the repo, let the image build, make the package public.
+1. ~~Push the repo, let the image build.~~ Done. Make the package public once the image exists.
+1a. **Own login and the server on the shared stack** (C#/.NET, PostgreSQL): see [ARCHITECTURE.md](ARCHITECTURE.md). The login replaces the reverse proxy's access portal, which blocks installing the PWA.
 2. Caddy: subdomain to the gateway, client certificate, proxy mode (`tools/enable-proxy-mode.sh`).
 3. Test on the phone against the checklist above and write down what fails.
 4. Fix only what that list shows.

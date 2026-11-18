@@ -1,6 +1,6 @@
 # Variante mit fertigem Image aus ghcr.io (statt lokal zu bauen):
 #   docker compose -f docker-compose.image.yml up -d
-# OWNER/REPO durch dein GitHub-Repo ersetzen (kleingeschrieben).
+# Das Image wird von .github/workflows/docker.yml gebaut (ghcr.io/juloc/julos).
 name: julos
 
 services:
@@ -11,7 +11,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   gateway:
-    image: ghcr.io/OWNER/REPO:latest
+    image: ghcr.io/juloc/julos:latest
     restart: unless-stopped
     depends_on: [guacd]
     environment:

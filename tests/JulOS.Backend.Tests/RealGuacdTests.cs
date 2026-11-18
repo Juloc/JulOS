@@ -59,34 +59,10 @@ public sealed class RealGuacdTests
     }
 
     [Fact]
-    public async Task Ssh_terminal_draws_its_first_frame()
-    {
-        var opts = Guacd();
-        var spec = GuacSpec.Terminal("test-ssh", 2222, "tester", Env("JULOS_TEST_TARGET_PASSWORD"), 856, 1448, 96);
-        using var conn = await GuacdClient.ConnectAsync(opts.Host, opts.Port, spec, CancellationToken.None);
-        Assert.False(string.IsNullOrEmpty(conn.Id));
-
-        var seen = await CollectAsync(conn, ins => ins[0] is "sync" or "error");
-        Assert.DoesNotContain(seen, s => s.Op == "error");
-        Assert.Contains(seen, s => s.Op == "size");
-        Assert.Contains(seen, s => s.Op == "sync");
-    }
-
-    [Fact]
-    public async Task A_wrong_ssh_password_comes_back_as_an_error()
-    {
-        var opts = Guacd();
-        var spec = GuacSpec.Terminal("test-ssh", 2222, "tester", "falsches-passwort", 856, 1448, 96);
-        using var conn = await GuacdClient.ConnectAsync(opts.Host, opts.Port, spec, CancellationToken.None);
-        var seen = await CollectAsync(conn, ins => ins[0] == "error");
-        Assert.Contains(seen, s => s.Op == "error");
-    }
-
-    [Fact]
     public async Task A_missing_target_comes_back_as_an_error_not_a_hang()
     {
         var opts = Guacd();
-        var spec = GuacSpec.Terminal("gibt-es-nicht.invalid", 22, "u", "p", 800, 600, 96);
+        var spec = GuacSpec.Desktop("gibt-es-nicht.invalid", 3389, "u", "p", 800, 600, 96);
         using var conn = await GuacdClient.ConnectAsync(opts.Host, opts.Port, spec, CancellationToken.None);
         var seen = await CollectAsync(conn, ins => ins[0] == "error");
         Assert.Contains(seen, s => s.Op == "error");

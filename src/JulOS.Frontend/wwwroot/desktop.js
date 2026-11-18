@@ -9,7 +9,7 @@ import { disconnectRemote } from './app.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const BAR_H = 34, DOCK_RESERVE = 96;
-let ctx = null;            // von shell.js: { state, esc, connect, edit, add, devices, signOut }
+let ctx = null;            // von shell.js: { state, esc, api, connect, edit, add, devices, signOut }
 let root = null, remoteEl = null;
 const wins = new Map();    // id -> Fenster
 let zTop = 10;
@@ -70,7 +70,7 @@ const APPS = [
   { id: 'docker', name: 'Docker', ic: 'box', g: ['#55b9f5', '#2b7bd8'], soon: true },
   { id: 'caddy', name: 'Caddy', ic: 'globe', g: ['#5fd49a', '#1fa971'], soon: true },
   { id: 'ddns', name: 'DDNS', ic: 'cloud', g: ['#8fd0ff', '#5a9cf5'], soon: true },
-  { id: 'monitor', name: 'Monitor', ic: 'activity', g: ['#ee8fc8', '#a05cf0'], soon: true },
+  { id: 'monitor', name: 'Monitor', ic: 'activity', g: ['#ee8fc8', '#a05cf0'] },
 ];
 const appById = (id) => APPS.find((a) => a.id === id);
 const tile = (g, icon) => `<span class="dk-ti" style="--g1:${g[0]};--g2:${g[1]}">${ic(icon)}</span>`;
@@ -300,7 +300,7 @@ const MENUS = () => ({
   System: [
     { label: 'Geräte und Sitzungen …', icon: 'shield', run: () => ctx.devices() },
     { label: 'Einstellungen', icon: 'sliders', run: () => openHome('einstellungen') },
-    { label: 'System-Übersicht', icon: 'activity', hint: 'bald verfügbar', disabled: true },
+    { label: 'System-Übersicht', icon: 'activity', run: () => openHome('system') },
     { sep: true },
     { label: 'Abmelden', icon: 'power', run: () => ctx.signOut() },
   ],
@@ -393,6 +393,7 @@ function runApp(id, anchor) {
   if (a && a.soon) return notify(`${a.name} kommt später – dafür gibt es noch keinen Server-Teil.`);
   if (id === 'home') return openHome();
   if (id === 'settings') return openHome('einstellungen');
+  if (id === 'monitor') return openHome('system');
   if (id === 'desktop' || id === 'terminal') return pickConnection(id, anchor);
 }
 
@@ -467,7 +468,7 @@ function openLauncher() {
  * ===================================================================== */
 const NAV = [
   { id: 'start', name: 'Start', ic: 'home' }, { id: 'apps', name: 'Apps', ic: 'grid' }, { id: 'dienste', name: 'Dienste', ic: 'monitor' },
-  { id: 'dateien', name: 'Dateien', ic: 'folder', soon: true }, { id: 'system', name: 'System', ic: 'activity', soon: true }, { id: 'einstellungen', name: 'Einstellungen', ic: 'sliders' },
+  { id: 'dateien', name: 'Dateien', ic: 'folder', soon: true }, { id: 'system', name: 'System', ic: 'activity' }, { id: 'einstellungen', name: 'Einstellungen', ic: 'sliders' },
 ];
 const nav = { view: 'start', back: [], fwd: [] };
 const greeting = () => { const h = new Date().getHours(); return h < 5 ? 'Gute Nacht' : h < 11 ? 'Guten Morgen' : h < 17 ? 'Guten Tag' : h < 22 ? 'Guten Abend' : 'Gute Nacht'; };
@@ -485,7 +486,7 @@ function openHome(view) {
     back.addEventListener('click', () => { if (nav.back.length) { nav.fwd.push(nav.view); nav.view = nav.back.pop(); renderHome(); } });
     fwd.addEventListener('click', () => { if (nav.fwd.length) { nav.back.push(nav.view); nav.view = nav.fwd.pop(); renderHome(); } });
     w = createWindow({ id: 'home', title: 'Start', icon: `<span class="dk-ti" style="--g1:#8f8cf7;--g2:#5f6cf0;width:22px;height:22px;border-radius:7px">${ic('home')}</span>`,
-      rect: defaultRect('home', 960, 640, -30, 0), minW: 640, minH: 420, head, onClose: () => { nav.view = 'start'; nav.back = []; nav.fwd = []; } });
+      rect: defaultRect('home', 960, 640, -30, 0), minW: 640, minH: 420, head, onClose: () => { stopOverview(); nav.view = 'start'; nav.back = []; nav.fwd = []; } });
     w.head.querySelector('.dk-wt').style.minWidth = '60px';
     w.body.innerHTML = '<div class="dk-home"><nav class="dk-side" aria-label="Bereiche"></nav><div class="dk-main"></div></div>';
     w.side = $('.dk-side', w.body); w.main = $('.dk-main', w.body);
@@ -517,7 +518,8 @@ function renderHome() {
   const hist = w.head.querySelectorAll('.dk-nv');
   hist[0].disabled = !nav.back.length; hist[1].disabled = !nav.fwd.length;
   const m = w.main; m.scrollTop = 0;
-  ({ start: renderStart, apps: renderAppsView, dienste: renderServices, einstellungen: renderSettings }[nav.view] || renderStart)(m);
+  stopOverview();
+  ({ start: renderStart, apps: renderAppsView, dienste: renderServices, system: renderSystem, einstellungen: renderSettings }[nav.view] || renderStart)(m);
   tickClock();
 }
 
@@ -542,9 +544,59 @@ function renderStart(m) {
       <button type="button" class="dk-b" data-act="devices">${ic('shield')}<span>Geräte</span></button>
       <button type="button" class="dk-b" data-act="settings">${ic('sliders')}<span>Einstellungen</span></button>
     </div>
-    <h3>System-Übersicht <span class="dk-tag">bald verfügbar</span></h3>
-    <div class="dk-sys">${[['cpu', 'CPU'], ['ram', 'RAM'], ['disk', 'Festplatte'], ['network', 'Netzwerk']].map(([i, n]) => `<div class="dk-sysc"><b>${ic(i)}${n}</b><div class="dk-bar0"></div></div>`).join('')}</div>
-    <p class="dk-lead">Auslastung, Docker, Caddy, DDNS und Dateien brauchen noch einen Server-Teil und erscheinen hier, sobald es ihn gibt.</p>`;
+    <h3>System-Übersicht <button type="button" class="dk-b dk-more" data-go="system">Monitor öffnen ›</button></h3>
+    ${overviewCards()}`;
+  watchOverview(m);
+}
+
+/* ---------- System-Uebersicht: echte Messwerte des Rechners, auf dem der Server laeuft (GET /api/system/overview) ---------- */
+const GIB = 1024 ** 3;
+const num = (n, d = 1) => n.toLocaleString('de-DE', { minimumFractionDigits: d, maximumFractionDigits: d });
+const gib = (b) => num(b / GIB, b / GIB >= 100 ? 0 : 1);
+const rate = (b) => (b >= 1e6 ? num(b / 1e6) + ' MB/s' : b >= 1e3 ? num(b / 1e3, 0) + ' kB/s' : num(b, 0) + ' B/s');
+const NET_TIP = 'Netzwerk des JulOS-Containers: der Datenverkehr, den JulOS selbst verursacht (Browser, Fernsteuerung), nicht der des ganzen Rechners.';
+const pct = (a, b) => (b > 0 ? Math.round((100 * a) / b) : 0);
+function overviewCards() {
+  const card = (key, icon, name, tip) => `<div class="dk-sysc" data-ov="${key}"${tip ? ` title="${tip}"` : ''}><b>${ic(icon)}${name}</b><div class="dk-sv">…</div><div class="dk-bar0"><i></i></div></div>`;
+  return `<div class="dk-sys">${card('cpu', 'cpu', 'CPU')}${card('ram', 'ram', 'RAM')}${card('disk', 'disk', 'Festplatte')}${card('net', 'network', 'Netzwerk (JulOS)', NET_TIP)}</div>`;
+}
+/** Setzt die Werte in die Karten (CPU, RAM, Festplatte, Netzwerk) und, falls vorhanden, in die Zeile mit Einzelheiten */
+function fillOverview(root0, o) {
+  const set = (key, text, p) => {
+    const c = $(`[data-ov="${key}"]`, root0); if (!c) return;
+    $('.dk-sv', c).textContent = text;
+    const bar = $('.dk-bar0 i', c); if (bar) { bar.style.width = (p === null ? 0 : p) + '%'; bar.parentElement.classList.toggle('off', p === null); bar.parentElement.classList.toggle('hot', p !== null && p >= 90); }
+    c.classList.toggle('off', text === '–');
+  };
+  if (!o) { for (const k of ['cpu', 'ram', 'disk', 'net']) set(k, '–', null); return; }
+  set('cpu', o.cpuPercent == null ? 'misst …' : Math.round(o.cpuPercent) + ' %', o.cpuPercent == null ? null : o.cpuPercent);
+  set('ram', o.memoryTotal == null ? '–' : `${gib(o.memoryUsed)} / ${gib(o.memoryTotal)} GiB (${pct(o.memoryUsed, o.memoryTotal)} %)`, o.memoryTotal == null ? null : pct(o.memoryUsed, o.memoryTotal));
+  set('disk', o.diskTotal == null ? '–' : `${gib(o.diskUsed)} / ${gib(o.diskTotal)} GiB (${pct(o.diskUsed, o.diskTotal)} %)`, o.diskTotal == null ? null : pct(o.diskUsed, o.diskTotal));
+  set('net', o.rxBytesPerSecond == null ? 'misst …' : `↓ ${rate(o.rxBytesPerSecond)}  ↑ ${rate(o.txBytesPerSecond)}`, null);
+  const d = $('[data-ov-details]', root0);
+  if (d) d.textContent = o.sampledAt ? 'Zuletzt gemessen um ' + new Date(o.sampledAt).toLocaleTimeString('de-DE') + (o.cores ? ` · ${o.cores} Prozessorkerne` : '') : '';
+}
+let ovTimer = null;
+function stopOverview() { clearInterval(ovTimer); ovTimer = null; }
+/** Holt alle 3 s neue Werte, solange die Ansicht offen ist (nicht bei minimiertem Fenster oder versteckter Seite) */
+function watchOverview(m) {
+  const tick = async () => {
+    const w = wins.get('home');
+    if (!w || w.minimized || document.hidden || !m.isConnected) return;
+    try { fillOverview(m, await ctx.api('/api/system/overview')); }
+    catch (e) { if (m.isConnected) fillOverview(m, null); if (e && e.status === 401) stopOverview(); }
+  };
+  tick(); ovTimer = setInterval(tick, 3000);
+}
+function renderSystem(m) {
+  m.innerHTML = `<h3 style="margin-top:14px">System</h3>
+    ${overviewCards()}
+    <p class="dk-lead" data-ov-details></p>
+    <div class="dk-card" style="margin-top:14px"><h4>Was hier gemessen wird</h4>
+      <p><b>CPU und RAM:</b> der Rechner, auf dem Docker mit JulOS läuft (nicht eine Grenze des Containers).</p>
+      <p><b>Festplatte:</b> der Datenträger, auf dem der gemeinsame Ordner (Upload-Ordner) liegt.</p>
+      <p style="margin-bottom:2px"><b>Netzwerk:</b> nur der Datenverkehr des JulOS-Containers, also was Browser, Fernsteuerung und Terminal verursachen. Der Verkehr des ganzen Rechners wäre nur mit <code>network_mode: host</code> sichtbar.</p></div>`;
+  watchOverview(m);
 }
 function renderServices(m) {
   const conns = ctx.state.connections;

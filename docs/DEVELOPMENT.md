@@ -44,8 +44,8 @@ size in the browser's device mode). A fresh database starts at the setup screen;
 On a wide screen with a mouse (`min-width: 1000px` and `pointer: fine`) `shell.js` loads `desktop.js` and `desktop.css` and shows the desktop
 interface instead of the phone home: menu bar, dock, launcher, a Home window and one window for the running session (the remote view of `app.js`
 is moved into it; the engines are untouched). The phone never loads these two files. `?desktop` forces the desktop view and `?phone` the phone view
-(useful in a browser whose pointer is not reported as "fine"). Docker, Caddy, DDNS, Files and the system overview have no backend yet and are only
-shown as "bald verfügbar" (see `IDEAS.md`).
+(useful in a browser whose pointer is not reported as "fine"). The system overview (CPU, RAM, disk, network tiles on Start and the System view, `GET /api/system/overview`, see ARCHITECTURE.md for what it measures) is real. Docker, Caddy and DDNS have no backend yet and are only
+shown as "bald verfügbar" (design notes in `IDEAS.md`).
 To test next to other sessions, start your own compose project with other ports and your `wwwroot` mounted over `/app/wwwroot` (no rebuild after
 frontend changes), for example an override file with `ports: !override ["127.0.0.1:18280:8080"]` and `docker compose -p my-ui -f deploy/dev/compose.yaml -f override.yaml up -d`.
 Cookies belong to the host name, not the port: two stacks opened as `127.0.0.1:...` in one browser overwrite each other's login, so open yours as

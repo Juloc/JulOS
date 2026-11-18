@@ -272,7 +272,7 @@ setLeaveHandler((message, reason) => {
   showHome(state.user, message);
 });
 
-if (D) await D.init({ state, esc, connect: startDialog, edit: editDialog, add: () => editDialog(null), devices: openDevices, signOut });
+if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), devices: openDevices, signOut });
 
 /* ---------- Geraete und Sitzungen ---------- */
 function describeAgent(ua) {

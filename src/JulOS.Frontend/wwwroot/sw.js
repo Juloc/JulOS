@@ -1,6 +1,6 @@
 /* Service Worker: haelt die App-Huelle bereit (schneller Start, laeuft auch bei kurzem Netzausfall) und holt Updates zuerst
  * aus dem Netz. API-Aufrufe und WebSocket-Verbindungen werden nie zwischengespeichert. */
-const VERSION = 'pd-v23';
+const VERSION = 'pd-v24';
 const SHELL = ['/', '/app.js', '/stream.js', '/shell.js', '/desktop.js', '/desktop.css', '/style.css', '/lib/guacamole-common.min.js', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (e) => {

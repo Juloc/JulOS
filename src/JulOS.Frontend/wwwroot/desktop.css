@@ -135,9 +135,15 @@ html.desktop #remote #overlay .box { border-radius: 20px; background: rgba(255, 
 .dk-qa button { display: flex !important; flex-direction: column; align-items: center; gap: 8px; padding: 14px 8px 12px !important; color: #3a3d63; font-weight: 500; text-align: center; }
 .dk-qa button svg { width: 26px; height: 26px; color: var(--dk-accent); stroke-width: 1.7; }
 .dk-sys { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-.dk-sysc { border-radius: 14px; border: 1px dashed rgba(90, 80, 150, .3); background: rgba(255, 255, 255, .35); padding: 12px 14px; color: #8a8eae; }
-.dk-sysc b { display: flex; align-items: center; gap: 8px; color: #6b6f8f; font-weight: 600; }
-.dk-sysc .dk-bar0 { height: 5px; border-radius: 4px; background: rgba(90, 80, 150, .12); margin-top: 12px; }
+.dk-sysc { border-radius: 14px; border: 1px solid rgba(255, 255, 255, .9); background: rgba(255, 255, 255, .72); box-shadow: 0 1px 3px rgba(78, 62, 140, .08); padding: 12px 14px; color: #25284a; min-width: 0; }
+.dk-sysc b { display: flex; align-items: center; gap: 8px; color: #4a4e75; font-weight: 600; white-space: nowrap; }
+.dk-sysc .dk-sv { margin-top: 6px; font-size: 14.5px; font-weight: 600; font-variant-numeric: tabular-nums; min-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dk-sysc.off .dk-sv { color: #8a8eae; font-weight: 500; }
+.dk-sysc .dk-bar0 { height: 5px; border-radius: 4px; background: rgba(90, 80, 150, .12); margin-top: 10px; overflow: hidden; }
+.dk-sysc .dk-bar0 i { display: block; height: 100%; width: 0; border-radius: 4px; background: linear-gradient(90deg, #7a67f0, #5b78f4); transition: width .5s ease; }
+.dk-sysc .dk-bar0.hot i { background: linear-gradient(90deg, #f0a24f, #e5484d); }
+.dk-sysc .dk-bar0.off { visibility: hidden; }
+.dk-card code { font-size: 12.5px; background: rgba(106, 88, 230, .1); padding: 1px 5px; border-radius: 5px; }
 .dk-tag { display: inline-block; font-size: 10.5px; line-height: 1; padding: 3px 7px; border-radius: 99px; background: rgba(106, 88, 230, .12); color: #5a4fc7; font-weight: 600; letter-spacing: .02em; white-space: nowrap; }
 .dk-lead { color: #5c607f; margin: 6px 0 0; }
 

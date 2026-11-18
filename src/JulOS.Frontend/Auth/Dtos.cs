@@ -1,0 +1,14 @@
+namespace JulOS.Frontend.Auth;
+
+internal sealed record Health(bool Ok, bool Db, string Version);
+internal sealed record ErrorBody(string Error, int? RetryAfter = null);
+internal sealed record SetupStatus(bool Needed);
+internal sealed record SetupBeginRequest(string? Code, string? User, string? Password);
+internal sealed record SetupBeginResponse(string Secret, string Uri, string[] Recovery);
+internal sealed record SetupFinishRequest(string? Code, string? User, string? Totp);
+internal sealed record LoginRequest(string? User, string? Password, string? Code);
+internal sealed record LoginResponse(string User, int RecoveryLeft);
+internal sealed record MeResponse(string? User, bool SetupNeeded);
+internal sealed record SessionDto(bool Current, DateTimeOffset CreatedAt, DateTimeOffset LastSeen, string? UserAgent, string? Ip);
+internal sealed record SessionsResponse(SessionDto[] Sessions);
+internal sealed record EndedResponse(int Ended);

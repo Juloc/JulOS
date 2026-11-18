@@ -3,12 +3,16 @@
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!-- Die Tests sind kurz; ein Abbruch-Token an jedem Aufruf bringt nichts -->
+    <NoWarn>$(NoWarn);xUnit1051</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <ProjectReference Include="..\..\src\JulOS.Backend\JulOS.Backend.csproj" />
+    <ProjectReference Include="..\..\src\JulOS.Frontend\JulOS.Frontend.csproj" />
   </ItemGroup>
 </Project>

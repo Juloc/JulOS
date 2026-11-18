@@ -1,25 +1,60 @@
+using System.Net;
 using System.Reflection;
-using System.Text.Json.Serialization;
 using JulOS.Backend.Data;
+using JulOS.Backend.Logic;
+using JulOS.Backend.Services;
+using JulOS.Frontend;
+using JulOS.Frontend.Auth;
+using JulOS.Frontend.Cli;
+using JulOS.Workers;
+using Microsoft.AspNetCore.HttpOverrides;
 using Npgsql;
+
+// Konsolenwerkzeug: dotnet JulOS.dll user ...
+if (args.Length > 0 && args[0] == "user") return await UserCli.RunAsync(args[1..]);
 
 var builder = WebApplication.CreateSlimBuilder(args);
 builder.WebHost.ConfigureKestrel(o => o.AddServerHeader = false);
+// Nicht jede Anfrage ins Log (nur Warnungen und Fehler des Frameworks); eigene Meldungen wie Anmeldungen bleiben sichtbar
+builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 
 var connectionString = builder.Configuration["JULOS_DB"]
     ?? throw new InvalidOperationException("JULOS_DB fehlt (Verbindung zu PostgreSQL, siehe deploy/dev/compose.yaml).");
 // Kerberos/GSSAPI wird nicht gebraucht (auf Alpine fehlt die Bibliothek und Npgsql meldet es sonst im Log)
 var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
 dataSourceBuilder.ConnectionStringBuilder.GssEncryptionMode = GssEncryptionMode.Disable;
-var db = dataSourceBuilder.Build();
-builder.Services.AddSingleton(db);
+builder.Services.AddSingleton(dataSourceBuilder.Build());
 builder.Services.AddSingleton<Migrator>();
+builder.Services.AddSingleton<UserStore>();
+builder.Services.AddSingleton<SessionStore>();
+builder.Services.AddSingleton<PasswordHasher>();
+builder.Services.AddSingleton<LoginLimiter>();
+builder.Services.AddSingleton(new SetupCode(builder.Configuration["JULOS_SETUP_CODE"]));
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<AuthService>();
+builder.Services.AddHostedService<SessionPurgeWorker>();
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJson.Default));
+
+// Hinter einem Proxy im eigenen Netz (zum Beispiel Caddy) kommen Client-Adresse, Protokoll und Host aus den X-Forwarded-Kopfzeilen
+builder.Services.Configure<ForwardedHeadersOptions>(o =>
+{
+    o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost;
+    o.ForwardLimit = 1;
+    o.KnownProxies.Clear();
+    o.KnownIPNetworks.Clear();
+    var trusted = builder.Configuration["JULOS_TRUSTED_PROXIES"] ?? "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7";
+    foreach (var net in trusted.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) o.KnownIPNetworks.Add(System.Net.IPNetwork.Parse(net));
+});
 
 var app = builder.Build();
 var log = app.Logger;
+app.UseForwardedHeaders();
 
 await MigrateWithRetryAsync(app.Services.GetRequiredService<Migrator>(), log);
+
+var auth = app.Services.GetRequiredService<AuthService>();
+if (await auth.SetupNeededAsync())
+    log.LogWarning("ERSTEINRICHTUNG: Es gibt noch kein Konto. Öffne die Seite im Browser und gib diesen Setup-Code ein: {Code}", app.Services.GetRequiredService<SetupCode>().Value);
 
 const string Csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; "
                  + "manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
@@ -40,6 +75,7 @@ app.Use(async (ctx, next) =>
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
+app.UseMiddleware<ApiGuard>();
 
 var version = typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion?.Split('+')[0] ?? "0";
 app.MapGet("/api/health", async (NpgsqlDataSource data, CancellationToken ct) =>
@@ -55,8 +91,10 @@ app.MapGet("/api/health", async (NpgsqlDataSource data, CancellationToken ct) =>
     catch (Exception) { /* Datenbank nicht erreichbar: ok=false */ }
     return new Health(dbOk, dbOk, version);
 });
+app.MapAuth();
 
 app.Run();
+return 0;
 
 static async Task MigrateWithRetryAsync(Migrator migrator, ILogger log)
 {
@@ -76,11 +114,5 @@ static async Task MigrateWithRetryAsync(Migrator migrator, ILogger log)
         }
     }
 }
-
-internal sealed record Health(bool Ok, bool Db, string Version);
-
-[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
-[JsonSerializable(typeof(Health))]
-internal sealed partial class AppJson : JsonSerializerContext;
 
 public partial class Program;

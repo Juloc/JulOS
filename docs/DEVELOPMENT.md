@@ -12,6 +12,25 @@ deploy/dev/test.sh      # runs the tests against the test instance's PostgreSQL
 - The SSH target is reachable from the server container as `test-ssh:2222` with user `tester` and the password `DEV_TARGET_PASSWORD` from `deploy/dev/.env`.
 - Stop with `docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/.env down` (add `-v` to also drop the database).
 
+## First start and accounts on the test instance
+
+On a fresh database the server logs a one-time **setup code**:
+
+```bash
+docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/.env logs julos | grep "Setup-Code"
+```
+
+The setup screen (and `POST /api/setup/begin` + `/api/setup/finish`) creates the first account. After that setup is closed.
+Recovery on the server console (passwords are typed in the terminal, never passed as arguments):
+
+```bash
+docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/.env exec -it julos dotnet JulOS.dll user list
+docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/.env exec -it julos dotnet JulOS.dll user passwd NAME
+```
+
+`add`, `passwd`, `totp` (new authenticator and recovery codes), `logout` and `remove` are available too.
+To start over: `docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/.env down -v`.
+
 ## Build and test without Docker
 
 ```bash

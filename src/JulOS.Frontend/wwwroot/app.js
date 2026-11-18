@@ -647,7 +647,12 @@ export class RemoteSession extends Session {
       else if (this.firstLogin && Date.now() - this.connectedAt < 12000) this.requestClose('Anmeldung fehlgeschlagen. Bitte Passwort prüfen.');
       else { this.setState('error', 'Fehler'); this.showOverlay(msg); }
     };
-    if (tunnel) tunnel.onerror = (st) => { if (this.client === client && !this.everConnected) this.requestClose('Keine Verbindung zum Server: ' + (st && st.message ? st.message : '')); };
+    if (tunnel) tunnel.onerror = (st) => {
+      if (this.client !== client) return;
+      if (!this.everConnected) return this.requestClose('Keine Verbindung zum Server: ' + (st && st.message ? st.message : ''));
+      // Die Leitung riss ab (Netz weg), ohne dass guacd etwas gemeldet hat: nur diese Sitzung verbindet neu, die anderen laufen weiter
+      if (this.connected && !this.intentional && !this.fatal) { this.connected = false; this.scheduleReconnect(); }
+    };
     client.onclipboard = (stream, mimetype) => {
       if (!/^text\//.test(mimetype)) return;
       const reader = new Guacamole.StringReader(stream);

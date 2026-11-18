@@ -35,6 +35,7 @@ services:
     environment:
       JULOS_DB: Host=postgres;Database=julos;Username=julos;Password=${DEV_DB_PASSWORD}
       JULOS_SECRET_KEY: ${DEV_SECRET_KEY:-}
+      JULOS_RDP_GFX: ${DEV_RDP_GFX:-}            # Versuch: on = RDP-Grafikpipeline (GFX) einschalten (Standard aus)
     # wie live: der Server laeuft als derselbe Benutzer wie die Sitzung der Ziel-Maschine (Socket-Ordner hat Rechte 0700)
     user: "1020:1020"
     volumes:

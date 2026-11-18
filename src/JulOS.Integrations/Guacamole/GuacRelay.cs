@@ -94,7 +94,7 @@ public sealed class GuacRelay(GuacdOptions options, ILogger<GuacRelay> log)
             finally
             {
                 if (spec.Slot is { } slot2) _active.TryRemove(new KeyValuePair<string, Active>(slot2, mine));
-                log.LogInformation("Bildaufbau ({Protocol}): Größe nach {Size} ms, erste Bilddaten nach {Blob} ms, 20 kB erreicht nach {Big} ms, {Kb} kB in den ersten 15 s", spec.Protocol, stats.FirstSizeMs, stats.FirstBlobMs, stats.Big20kMs, stats.BytesFirst15s / 1024);
+                log.LogInformation("Bildaufbau ({Protocol}): Größe nach {Size} ms, erste Bilddaten nach {Blob} ms, 20 kB erreicht nach {Big} ms, {Kb} kB in den ersten 15 s, {Total} kB insgesamt", spec.Protocol, stats.FirstSizeMs, stats.FirstBlobMs, stats.Big20kMs, stats.BytesFirst15s / 1024, stats.Total / 1024);
                 log.LogInformation("Remote-Verbindung beendet nach {Seconds} s{Replaced}", (int)clock.Elapsed.TotalSeconds, mine.Replaced ? " (von einer neuen Verbindung abgelöst)" : "");
                 await CloseAsync(ws).ConfigureAwait(false);
             }

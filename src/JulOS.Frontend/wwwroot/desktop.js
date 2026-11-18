@@ -1,4 +1,5 @@
-import { disconnectRemote } from './app.js';
+import { disconnectRemote, remoteApi } from './app.js';
+import { remoteMenuNames, remoteMenuItems, sessionMenu } from './desktop-remote.js';
 
 /* =====================================================================
  * Desktop-Oberflaeche (breite Bildschirme mit Maus): Menueleiste, Dock, Launcher, Home-Fenster und ein Fenster
@@ -8,7 +9,7 @@ import { disconnectRemote } from './app.js';
  * ===================================================================== */
 
 const $ = (s, r = document) => r.querySelector(s);
-const BAR_H = 34, DOCK_RESERVE = 96;
+const BAR_H = 34;
 let ctx = null;            // von shell.js: { state, esc, api, connect, edit, add, devices, signOut }
 let root = null, remoteEl = null;
 const wins = new Map();    // id -> Fenster
@@ -53,9 +54,12 @@ const P = {
   disk: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 14.5h6"/><circle cx="17" cy="14.5" r=".6"/>',
   network: '<path d="M7 4v16m0 0-3-3m3 3 3-3M17 20V4m0 0-3 3m3-3 3 3"/>',
   chev: '<path d="m6 9 6 6 6-6"/>',
+  keyboard: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
   file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
   download: '<path d="M12 3v12m0 0-4-4m4 4 4-4M5 21h14"/>',
   up: '<path d="m18 15-6-6-6 6"/>',
+  check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  blank: '',
 };
 const ic = (n) => `<svg class="dk-i" viewBox="0 0 24 24" aria-hidden="true">${P[n] || ''}</svg>`;
 // Der Verlauf steht einmal in DEFS (versteckte SVG im Desktop); jedes Logo verweist nur darauf
@@ -82,6 +86,7 @@ const tile = (g, icon) => `<span class="dk-ti" style="--g1:${g[0]};--g2:${g[1]}"
 function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; }
 const btn = (cls, html, label) => { const b = el('button', 'dk-b ' + (cls || ''), html); b.type = 'button'; if (label) b.setAttribute('aria-label', label); return b; };
 
+let dockHinted = false;
 let toastTimer = null;
 function notify(msg, ms = 3200) {
   if (!msg) return;
@@ -132,31 +137,53 @@ function scene(withBlossoms) {
 /* =====================================================================
  *  Menues (Menueleiste, Dock, Schnellaktionen)
  * ===================================================================== */
-let menuEl = null, menuOwner = null;
-function closeMenu() { menuEl?.remove(); menuEl = null; if (menuOwner) menuOwner.classList.remove('open'); menuOwner = null; }
-/** items: { label, icon, hint, disabled, run } oder { sep: true } oder { cap: 'Text' }; pos: 'below' (unter dem Anker) oder 'above' */
-function showMenu(anchor, items, pos = 'below') {
-  closeMenu();
-  const m = el('div', 'dk-menu'); m.setAttribute('role', 'menu');
+let menuEl = null, menuOwner = null, subEl = null;
+function closeSub() { subEl?.remove(); subEl = null; }
+function closeMenu() { closeSub(); menuEl?.remove(); menuEl = null; if (menuOwner) menuOwner.classList.remove('open'); menuOwner = null; syncKeys(); }
+/** Baut die Eintraege eines Menues. Eintrag: { label, icon, hint, disabled, run } | { sep: true } | { cap: 'Text' } | { label, sub: [Eintraege] } (Untermenue) */
+function menuBody(items, isSub) {
+  const m = el('div', 'dk-menu' + (isSub ? ' sub' : '')); m.setAttribute('role', 'menu');
   for (const it of items) {
     if (it.sep) { m.appendChild(el('div', 'dk-sepl')); continue; }
     if (it.cap) { m.appendChild(el('div', 'dk-cap')).textContent = it.cap; continue; }
-    const b = btn('dk-it', (it.icon ? ic(it.icon) : '') + '<span></span>' + (it.hint ? '<span class="dk-hint"></span>' : ''));
-    b.setAttribute('role', 'menuitem'); b.querySelector('span').textContent = it.label;
+    const b = btn('dk-it', (it.icon ? ic(it.icon) : '') + '<span></span>' + (it.hint || it.sub ? '<span class="dk-hint"></span>' : ''));
+    b.setAttribute('role', 'menuitem'); b.querySelector('span:not(.dk-hint)').textContent = it.label;
     if (it.hint) b.querySelector('.dk-hint').textContent = it.hint;
+    if (it.sub) b.querySelector('.dk-hint').innerHTML = ic('right');
     if (it.disabled) b.disabled = true;
-    else b.addEventListener('click', () => { closeMenu(); it.run && it.run(); });
+    else if (it.sub) {
+      const open = () => {
+        if (subEl && subEl.dataset.owner === it.label) return;
+        closeSub();
+        const sm = menuBody(it.sub, true); sm.dataset.owner = it.label; root.appendChild(sm); subEl = sm;
+        const r = b.getBoundingClientRect(), w = sm.offsetWidth, h = sm.offsetHeight;
+        sm.style.left = (r.right + w + 8 > innerWidth ? Math.max(8, r.left - w - 2) : r.right + 2) + 'px';
+        sm.style.top = clamp(r.top - 6, BAR_H + 4, Math.max(BAR_H + 4, innerHeight - h - 8)) + 'px';
+      };
+      b.addEventListener('click', open);
+      b.addEventListener('mouseenter', open);
+    } else {
+      b.addEventListener('mouseenter', closeSub);
+      b.addEventListener('click', () => { closeMenu(); it.run && it.run(); });
+    }
     m.appendChild(b);
   }
+  return m;
+}
+function showMenu(anchor, items, pos = 'below') {
+  closeMenu();
+  const m = menuBody(items, false);
   root.appendChild(m); menuEl = m;
   const r = anchor.getBoundingClientRect(), w = m.offsetWidth, h = m.offsetHeight;
   m.style.left = clamp(pos === 'above' ? r.left + r.width / 2 - w / 2 : r.left, 8, innerWidth - w - 8) + 'px';
   m.style.top = (pos === 'above' ? Math.max(BAR_H + 6, r.top - h - 14) : r.bottom + 4) + 'px';
   menuOwner = anchor.classList.contains('dk-mi') ? anchor : null;
   menuOwner?.classList.add('open');
+  syncKeys();
 }
 document.addEventListener('pointerdown', (e) => {
   if (menuEl && !e.target.closest('.dk-menu') && !e.target.closest('.dk-mi')) closeMenu();
+  else if (subEl && !e.target.closest('.dk-menu.sub') && !e.target.closest('.dk-it')) closeSub();
   if (launcher && !e.target.closest('.dk-launch') && !e.target.closest('[data-launcher]')) closeLauncher();
 }, true);
 document.addEventListener('keydown', (e) => {
@@ -170,8 +197,9 @@ document.addEventListener('keydown', (e) => {
 function viewport() { return { w: root.clientWidth, h: root.clientHeight }; }
 function defaultRect(id, w, h, dx = 0, dy = 0) {
   const v = viewport();
-  w = Math.min(w, v.w - 40); h = Math.min(h, v.h - BAR_H - DOCK_RESERVE);
-  return { x: Math.round((v.w - w) / 2 + dx), y: Math.round(BAR_H + Math.max(12, (v.h - BAR_H - DOCK_RESERVE - h) / 2) + dy), w, h };
+  const reserve = dockReserve();
+  w = Math.min(w, v.w - 40); h = Math.min(h, v.h - BAR_H - reserve);
+  return { x: Math.round((v.w - w) / 2 + dx), y: Math.round(BAR_H + Math.max(12, (v.h - BAR_H - reserve - h) / 2) + dy), w, h };
 }
 function fitRect(r, minW, minH) {
   const v = viewport();
@@ -317,14 +345,8 @@ function buildBar() {
   const bar = el('header', 'dk-bar');
   const logo = btn('dk-logo', LOGO + '<span>JulOS</span>', 'Start öffnen'); logo.addEventListener('click', () => openHome());
   bar.appendChild(logo);
-  const menus = MENUS();
-  for (const name of Object.keys(menus)) {
-    const b = btn('dk-mi', name); b.dataset.menu = name;
-    const open = () => showMenu(b, MENUS()[name]);
-    b.addEventListener('click', () => (menuOwner === b ? closeMenu() : open()));
-    b.addEventListener('mouseenter', () => { if (menuEl && menuOwner && menuOwner !== b) open(); });   // wie in einer Menueleiste: bei offenem Menue wechselt Darueberfahren
-    bar.appendChild(b);
-  }
+  const menus = el('div', 'dk-menus'); menus.id = 'dkMenus';
+  bar.appendChild(menus);
   bar.appendChild(el('div', 'dk-sp'));
   const sess = btn('dk-ic dk-sess', '<span></span>'); sess.hidden = true; sess.id = 'dkSess'; sess.addEventListener('click', () => { const w = wins.get('session'); if (w) w.minimized ? restoreWin(w) : focusWin(w); });
   const search = btn('dk-ic', ic('search'), 'Suchen'); search.dataset.launcher = '1'; search.addEventListener('click', () => (launcher ? closeLauncher() : openLauncher()));
@@ -337,10 +359,72 @@ function buildBar() {
     { sep: true },
     { label: 'Abmelden', icon: 'power', run: () => ctx.signOut() },
   ]));
-  bar.append(sess, search, clock, user);
+  const keys = el('div', 'dk-keys', ic('keyboard') + '<span></span>'); keys.id = 'dkKeys'; keys.hidden = true;
+  bar.append(keys, sess, search, clock, user);
   return bar;
 }
+
+/* ---------- Tastatur: wer bekommt die Tasten? ----------
+ * Solange ein Fernfenster das aktive Fenster ist (und kein Menue oder Launcher offen), gehen alle Tasten in die Fernsteuerung: app.js nimmt dazu das
+ * versteckte Tastaturfeld in den Fokus (auch wenn der Fokus auf einem Knopf lag). Hier wird der Fokus nach jedem Wechsel zurueckgegeben oder genommen
+ * und gezeigt, wohin getippt wird. */
+const keysToRemote = () => remoteActive() && !menuEl && !launcher;
+function syncKeys() {
+  setTimeout(() => {
+    if (!root) return;
+    if (keysToRemote()) remoteApi.focus(); else remoteApi.blurKeys();
+    markKeys();
+  }, 0);
+}
+function markKeys() {
+  if (!root) return;
+  const has = remoteApi.hasKeys() && keysToRemote();
+  const w = wins.get('session');
+  for (const o of wins.values()) o.el.classList.toggle('keys', o === w && has);
+  const k = $('#dkKeys', root); if (!k) return;
+  k.hidden = !w; k.classList.toggle('on', has);
+  k.querySelector('span').textContent = has ? 'Tastatur → ' + ((sessionConn && sessionConn.name) || 'Sitzung') : 'Tastatur → keins';
+  k.title = has ? 'Alle Tasten gehen an das Fernfenster.' : 'Die Tasten gehen an kein Fernfenster. Klicke das Fernfenster an (oder wähle es im Dock).';
+}
+
+/** Das Fernfenster ist vorn und sichtbar: dann zeigt die Leiste seine Menues statt der normalen (wie das Programm-Menue am Mac) */
+function remoteActive() {
+  const w = wins.get('session');
+  return !!(w && sessionConn && !w.minimized && w.el.classList.contains('active'));
+}
+const remoteDeps = {
+  win: () => wins.get('session'),
+  toggleMax: () => { const w = wins.get('session'); if (w) toggleMax(w); },
+  fullscreen: () => {
+    const w = wins.get('session'); if (!w) return;
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else w.el.requestFullscreen({ navigationUI: 'hide' }).catch(() => notify('Vollbild geht hier nicht.'));
+  },
+  end: () => { const w = wins.get('session'); if (w) closeWin(w); },
+};
+/** Fernmenues laufen, danach bekommt das Fernbild die Tastatur zurueck */
+const afterRemote = (items) => items && (items.then ? items.then(afterRemote) : items.map((it) => (it.run ? { ...it, run: () => { it.run(); setTimeout(() => remoteApi.focus(), 80); } } : it.sub ? { ...it, sub: afterRemote(it.sub) } : it)));
+let barKey = '';
+function renderMenus() {
+  const box = $('#dkMenus', root); if (!box) return;
+  const remote = remoteActive();
+  const key = remote ? 'r:' + sessionConn.id + ':' + sessionConn.kind + ':' + sessionConn.name : 'n';
+  if (key === barKey) return;
+  barKey = key; closeMenu(); box.replaceChildren();
+  const add = (name, cls, items) => {
+    const b = btn('dk-mi' + (cls ? ' ' + cls : ''), ''); b.textContent = name; b.dataset.menu = name;
+    const open = async () => { const list = await items(); if (barKey === key) showMenu(b, list); };
+    b.addEventListener('click', () => (menuOwner === b ? closeMenu() : open()));
+    b.addEventListener('mouseenter', () => { if (menuEl && menuOwner && menuOwner !== b) open(); });   // wie in einer Menueleiste: bei offenem Menue wechselt Darueberfahren
+    box.appendChild(b);
+  };
+  if (!remote) { const menus = MENUS(); for (const name of Object.keys(menus)) add(name, '', () => MENUS()[name]); return; }
+  add(sessionConn.name, 'dk-appname', () => afterRemote(sessionMenu(remoteDeps)));
+  for (const name of remoteMenuNames(sessionConn.kind)) add(name, '', () => afterRemote(remoteMenuItems(name, remoteDeps)));
+}
 function renderBar() {
+  renderMenus();
+  syncKeys();
   const s = $('#dkSess', root); if (!s) return;
   const w = wins.get('session');
   s.hidden = !w;
@@ -376,6 +460,8 @@ function buildDock() {
     el('div', 'dk-dsep'),
     item('settings', 'Einstellungen', appById('settings')),
   );
+  dock.addEventListener('contextmenu', (e) => { e.preventDefault(); dockMenu(dock); });
+  dock.addEventListener('focusin', showDock);
   return dock;
 }
 function dockClick(id, anchor) {
@@ -393,6 +479,64 @@ function renderDock() {
     const w = state[b.dataset.dock];
     b.classList.toggle('run', !!w); b.classList.toggle('hid', !!w && w.minimized);
   }
+}
+
+
+/* ---------- Dock: drei Modi (localStorage "pd.dockMode"): auto = erscheint am unteren Rand (Standard), always = immer sichtbar, toggle = per Knopf einklappbar ---------- */
+const DOCK_MODES = [['auto', 'Automatisch ausblenden'], ['always', 'Immer sichtbar'], ['toggle', 'Einklappbar per Knopf']];
+const EDGE_PX = 6, EDGE_DWELL = 300, HIDE_DELAY = 700;
+let dockMode = 'auto', dockCollapsed = false, dockShown = false, edgeTimer = null, hideTimer = null;
+function readDockMode() { try { const v = JSON.parse(localStorage.getItem('pd.dockMode')); return DOCK_MODES.some((m) => m[0] === v) ? v : 'auto'; } catch { return 'auto'; } }
+/** Platz am unteren Rand, den Fenster freihalten (maximiert und beim Oeffnen): nur wenn der Dock dort steht */
+function dockReserve() { return dockMode === 'always' || (dockMode === 'toggle' && !dockCollapsed) ? 96 : dockMode === 'toggle' ? 30 : 12; }
+function applyDock() {
+  const dock = $('.dk-dock', root), knob = $('.dk-knob', root); if (!dock) return;
+  const away = dockMode === 'auto' ? !dockShown : dockMode === 'toggle' && dockCollapsed;
+  dock.classList.toggle('away', away);
+  knob.hidden = dockMode !== 'toggle'; knob.classList.toggle('closed', dockCollapsed);
+  knob.setAttribute('aria-label', dockCollapsed ? 'Dock ausklappen' : 'Dock einklappen'); knob.setAttribute('aria-expanded', dockCollapsed ? 'false' : 'true');
+  root.style.setProperty('--dk-reserve', (dockMode === 'auto' ? 0 : dockReserve()) + 'px');
+  root.dataset.dock = dockMode;
+}
+function setDockMode(m, quiet) {
+  if (!DOCK_MODES.some((x) => x[0] === m)) return;
+  try { localStorage.setItem('pd.dockMode', JSON.stringify(m)); } catch { /* egal */ }
+  dockMode = m; dockShown = m !== 'auto'; clearTimeout(edgeTimer); clearTimeout(hideTimer); edgeTimer = hideTimer = null;
+  applyDock(); renderHome_ifOpen();
+  if (!quiet && m === 'auto') notify('Der Dock erscheint, wenn du die Maus an den unteren Bildschirmrand hältst.', 4200);
+}
+function showDock() { if (dockMode === 'auto' && !dockShown) { dockShown = true; applyDock(); } }
+function hideDock() {
+  hideTimer = null;
+  if (dockMode !== 'auto' || !dockShown) return;
+  if (launcher || (menuEl && !menuOwner)) { hideTimer = setTimeout(hideDock, HIDE_DELAY); return; }   // Menue oder Launcher vom Dock offen: dableiben
+  dockShown = false; applyDock();
+}
+/** Hover am Rand: nur ein schmaler Streifen (6 px) unten und nur nach kurzer Verweilzeit; ohne gedrueckte Taste, damit Ziehen im Fernbild nichts ausloest.
+ *  Kein eigenes Element ueber dem Fenster, das Fernfenster bekommt die Maus bis zum letzten Pixel. */
+function wireDockHover() {
+  document.addEventListener('pointermove', (e) => {
+    if (dockMode !== 'auto' || !root || root.hidden) return;
+    const edge = e.clientY >= innerHeight - EDGE_PX;
+    const keep = edge || (e.target.closest && e.target.closest('.dk-dock, .dk-menu, .dk-launch'));
+    if (dockShown) {
+      if (keep) { clearTimeout(hideTimer); hideTimer = null; } else if (!hideTimer) hideTimer = setTimeout(hideDock, HIDE_DELAY);
+    } else if (edge && e.buttons === 0) { if (!edgeTimer) edgeTimer = setTimeout(() => { edgeTimer = null; showDock(); }, EDGE_DWELL); }
+    else { clearTimeout(edgeTimer); edgeTimer = null; }
+  }, true);
+  document.documentElement.addEventListener('mouseleave', () => { clearTimeout(edgeTimer); edgeTimer = null; if (dockShown && !hideTimer) hideTimer = setTimeout(hideDock, HIDE_DELAY); });
+}
+function dockMenu(anchor) {
+  const items = [{ cap: 'Dock' }, ...DOCK_MODES.map(([id, label]) => ({ label, icon: id === dockMode ? 'check' : 'blank', run: () => setDockMode(id) }))];
+  if (dockMode === 'toggle') items.push({ sep: true }, { label: dockCollapsed ? 'Ausklappen' : 'Einklappen', icon: 'blank', run: toggleDockCollapsed });
+  showMenu(anchor, items, 'above');
+}
+function toggleDockCollapsed() { dockCollapsed = !dockCollapsed; ls.set('dockCollapsed', dockCollapsed); applyDock(); }
+function buildKnob() {
+  const k = btn('dk-knob', ic('chev'), 'Dock einklappen'); k.hidden = true;
+  k.addEventListener('click', toggleDockCollapsed);
+  k.addEventListener('contextmenu', (e) => { e.preventDefault(); dockMenu(k); });
+  return k;
 }
 
 /** Startet ein Programm: Fenster oeffnen oder nach vorn holen, Verbindung waehlen */
@@ -421,7 +565,7 @@ function pickConnection(kind, anchor) {
  *  Launcher
  * ===================================================================== */
 let launcher = null;
-function closeLauncher() { launcher?.remove(); launcher = null; }
+function closeLauncher() { launcher?.remove(); launcher = null; syncKeys(); }
 function openLauncher() {
   closeMenu(); closeLauncher();
   const L = el('div', 'dk-launch'); L.setAttribute('role', 'dialog'); L.setAttribute('aria-label', 'JulOS Launcher');
@@ -429,7 +573,7 @@ function openLauncher() {
     <label class="dk-q">${ic('search')}<input type="text" placeholder="Programme und Verbindungen suchen …" autocomplete="off" spellcheck="false"></label>
     <div class="dk-res"></div>
     <div class="dk-foot"><button type="button" class="dk-b" data-f="signout" aria-label="Abmelden" title="Abmelden">${ic('power')}</button><button type="button" class="dk-b" data-f="devices" aria-label="Geräte und Sitzungen" title="Geräte und Sitzungen">${ic('user')}</button></div>`;
-  root.appendChild(L); launcher = L;
+  root.appendChild(L); launcher = L; syncKeys();
   const input = $('input', L), res = $('.dk-res', L);
   let sel = 0, hits = [];
   const render = () => {
@@ -627,13 +771,16 @@ function renderSettings(m) {
   m.innerHTML = `<h3 style="margin-top:14px">Einstellungen</h3>
     <div class="dk-card"><h4>Konto</h4><p>Angemeldet als <b>${ctx.esc(ctx.state.user || '')}</b>.</p>
       <div class="dk-btns"><button type="button" class="dk-b dk-btn" data-act="devices">${ic('shield')}Geräte und Sitzungen</button><button type="button" class="dk-b dk-btn" data-act="signout">${ic('power')}Abmelden</button></div></div>
-    <div class="dk-card"><h4>Fernsteuerung</h4><p>Zoom, Tastatur, Farben und Text senden findest du im Menü (⋯) unten in jedem Sitzungsfenster.</p></div>
+    <div class="dk-card"><h4>Fernsteuerung</h4><p>Solange ein Sitzungsfenster vorn ist, zeigt die obere Leiste seine Menüs: Tasten, Kombinationen (frei belegbar), Ansicht (Zoom, Vollbild) und Fenster (Programme der Ziel-Maschine). Der Name der Verbindung öffnet Neu verbinden, Text senden und Beenden.</p></div>
+    <div class="dk-card"><h4>Dock</h4><p>Wann der Dock unten zu sehen ist. Du erreichst die Wahl auch mit Rechtsklick auf den Dock.</p>
+      <div class="dk-btns">${DOCK_MODES.map(([id, label]) => `<button type="button" class="dk-b dk-btn${id === dockMode ? ' pri' : ''}" data-dockmode="${id}" aria-pressed="${id === dockMode}">${label}</button>`).join('')}</div></div>
     <div class="dk-card"><h4>Darstellung</h4><p>Die Desktop-Oberfläche ist zurzeit immer hell. Ein dunkles Design folgt später.</p></div>`;
 }
 function onMainClick(e) {
-  const t = e.target.closest('[data-conn],[data-edit],[data-act],[data-go],[data-app]'); if (!t) return;
+  const t = e.target.closest('[data-conn],[data-edit],[data-act],[data-go],[data-app],[data-dockmode]'); if (!t) return;
   const find = (id) => ctx.state.connections.find((c) => c.id === id);
-  if (t.dataset.conn) { const c = find(t.dataset.conn); c && ctx.connect(c); }
+  if (t.dataset.dockmode) setDockMode(t.dataset.dockmode);
+  else if (t.dataset.conn) { const c = find(t.dataset.conn); c && ctx.connect(c); }
   else if (t.dataset.edit) { const c = find(t.dataset.edit); c && ctx.edit(c); }
   else if (t.dataset.go) goto(t.dataset.go);
   else if (t.dataset.app) runApp(t.dataset.app, t);
@@ -714,16 +861,25 @@ export async function init(context) {
   root.replaceChildren();
   const wp = el('div', 'dk-wp'); wp.innerHTML = scene(true);
   root.insertAdjacentHTML('afterbegin', DEFS);
-  root.append(wp, buildBar(), buildDock());
+  dockMode = readDockMode(); dockCollapsed = ls.get('dockCollapsed', false); dockShown = dockMode !== 'auto';
+  root.append(wp, buildBar(), buildDock(), buildKnob());
+  applyDock(); renderBar(); wireDockHover();
+  remoteApi.setKeyOwner(() => keysToRemote(), () => setTimeout(markKeys, 0));
+  document.addEventListener('focusin', () => setTimeout(markKeys, 0));
+  document.addEventListener('focusout', () => setTimeout(markKeys, 0));
+  document.addEventListener('close', () => syncKeys(), true);      // ein Dialog (zum Beispiel Text senden, Kombination bearbeiten) wurde geschlossen
+  // Ein Klick auf einen Knopf, die Leiste, den Dock oder eine Titelleiste darf den Fokus nicht vom Tastaturfeld wegnehmen
+  root.addEventListener('mousedown', (e) => { if (e.target.closest && e.target.closest('button, .dk-bar, .dk-dock, .dk-wh, .dk-menu') && !e.target.closest('input, textarea, select, [contenteditable="true"]')) e.preventDefault(); });
   const hint = $('#toLoginBtn'); if (hint) hint.textContent = 'Fenster schließen';
   setInterval(tickClock, 15000); tickClock();
   // Beim Wegklicken auf den Hintergrund: Menues zu (Fenster nehmen den Fokus selbst)
-  wp.addEventListener('pointerdown', () => { for (const w of wins.values()) w.el.classList.remove('active'); });
+  wp.addEventListener('pointerdown', () => { for (const w of wins.values()) w.el.classList.remove('active'); renderBar(); });
 }
 /** Nach Anmeldung (oder wenn die Seite die Startansicht zeigt): Konto setzen, Home-Fenster oeffnen */
 export function userChanged(user, message) {
   const av = $('#dkUser .dk-avatar', root); if (av) av.textContent = (user || '?').slice(0, 1);
   if (!wins.has('home') && !wins.size) openHome();
+  if (dockMode === 'auto' && !dockHinted) { dockHinted = true; showDock(); hideTimer = setTimeout(hideDock, 3500); }
   notify(message);
 }
 export function connectionsChanged() { if (root) renderHome_ifOpen(); }

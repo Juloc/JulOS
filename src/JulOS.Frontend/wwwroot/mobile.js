@@ -1,0 +1,533 @@
+import { ico, setTheme } from './app.js';
+
+/* =====================================================================
+ * Handy-Oberflaeche im Stil von Material 3 (Expressive): Home, Dienste, Server, Monitoring, Profil.
+ * shell.js laedt diese Datei nur auf schmalen oder Touch-Bildschirmen (der Desktop nimmt desktop.js) und meldet Ereignisse
+ * (Anmeldung, Verbindungen, Sitzungsende). Die Fernsteuerung (app.js) bleibt vollbild und unveraendert: beim Verbinden blendet shell.js
+ * diese Oberflaeche aus (setShown), beim Verlassen wieder ein.
+ *
+ * Echte Daten: Name, gespeicherte Verbindungen, Geraete und Sitzungen, Auslastung nur wenn /api/system/overview antwortet.
+ * Nur auf diesem Geraet gemerkt (localStorage, "pd.m.*"): Favoriten, Nutzung, letzte Verbindungen (fuer "Aktivitaeten"), Standard-Engine.
+ * Platzhalter (klar beschriftet): die Seiten Server (ohne Auslastungs-API) und Monitoring.
+ * ===================================================================== */
+
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const ls = {
+  get(k, d) { try { const v = localStorage.getItem('pd.m.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('pd.m.' + k, JSON.stringify(v)); } catch { /* egal */ } },
+};
+const readStore = (k, d) => { try { const v = localStorage.getItem('pd.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } };
+
+/* ---------- Symbole: die vorhandenen aus app.js, dazu die wenigen neuen (Material, 24 px, gefuellt) ---------- */
+const X = {
+  home: 'M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z',
+  dns: 'M20 13H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 19c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM20 3H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1V4c0-.55-.45-1-1-1zM7 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z',
+  chart: 'M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z',
+  person: 'M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z',
+  search: 'M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z',
+  star: 'M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z',
+  star_o: 'M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z',
+  history: 'M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z',
+  check: 'M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z',
+  check_circle: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z',
+  phone: 'M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z',
+  shield: 'M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z',
+  play: 'M8 5v14l11-7z',
+  cpu: 'M15 9H9v6h6V9zm-2 4h-2v-2h2v2zm8-2V9h-2V7c0-1.1-.9-2-2-2h-2V3h-2v2h-2V3H9v2H7c-1.1 0-2 .9-2 2v2H3v2h2v2H3v2h2v2c0 1.1.9 2 2 2h2v2h2v-2h2v2h2v-2h2c1.1 0 2-.9 2-2v-2h2v-2h-2v-2h2zm-4 6H7V7h10v10z',
+  disk: 'M2 20h20v-4H2v4zm2-3h2v2H4v-2zM2 4v4h20V4H2zm4 3H4V5h2v2zm-4 7h20v-4H2v4zm2-3h2v2H4v-2z',
+  mem: 'M2 6h20v12H2V6zm2 2v8h16V8H4zm2 2h2v4H6v-4zm4 0h2v4h-2v-4zm4 0h2v4h-2v-4z',
+  lock: 'M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM9 8V6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9z',
+  info: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z',
+  construction: 'M13.78 15.3l6 6 2.11-2.16-6-6zM17.5 10c1.93 0 3.5-1.57 3.5-3.5 0-.58-.16-1.12-.41-1.6l-2.7 2.7-1.49-1.49 2.7-2.7c-.48-.25-1.02-.41-1.6-.41C15.57 3 14 4.57 14 6.5c0 .41.08.8.21 1.16l-1.85 1.85-1.78-1.78.71-.71-1.41-1.41L12 3.49c-1.17-1.17-3.07-1.17-4.24 0L4.22 7.03l1.41 1.41H2.81l-.71.71 3.54 3.54.71-.71V9.15l1.41 1.41.71-.71 1.78 1.78-7.41 7.41 2.12 2.12L16.34 11.8c.36.13.75.2 1.16.2z',
+};
+const icon = (n) => (X[n] ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${X[n]}"/></svg>` : ico(n));
+const kindIcon = (k) => icon(k === 'terminal' ? 'terminal' : 'desktop');
+const LOGO = `<svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="mlg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--m3-primary)"/><stop offset="1" stop-color="var(--m3-tertiary)"/></linearGradient></defs><rect width="32" height="32" rx="10" fill="url(#mlg)"/><path d="M12 9.5v13l11-6.5z" fill="var(--m3-on-primary)"/></svg>`;
+// Zierbild im Kopf der Startseite: Berg und See in den Toenen des Themas (keine Bilddatei)
+const ART = `<svg class="art" viewBox="0 0 400 96" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+  <path d="M0 96V70l60-18 50 14 70-40 36-12 50 34 40-10 94 40v18z" fill="var(--m3-secondary-container)" opacity=".75"/>
+  <path d="M150 38l30-12 22 14-14-3-10 7-8-6-12 6z" fill="var(--m3-surface-lowest)" opacity=".85"/>
+  <path d="M0 96V80l70-14 64 12 90-18 70 14 106-6v28z" fill="var(--m3-primary-container)" opacity=".9"/>
+  <path d="M0 96V88c60-8 120-6 200-2s140 0 200-6v16z" fill="var(--m3-tertiary-container)" opacity=".9"/></svg>`;
+
+const DEST = [
+  { id: 'home', label: 'Home', ic: 'home' },
+  { id: 'services', label: 'Dienste', ic: 'apps', title: 'Dienste' },
+  { id: 'server', label: 'Server', ic: 'dns', title: 'Server' },
+  { id: 'monitoring', label: 'Monitoring', ic: 'chart', title: 'Monitoring' },
+  { id: 'profile', label: 'Profil', ic: 'person', title: 'Profil' },
+];
+const SWATCHES = [['#9a67ea', 'Violett'], ['#4f86f7', 'Blau'], ['#00a67e', 'Grün'], ['#0aa5b8', 'Türkis'], ['#e5599a', 'Pink'], ['#e5484d', 'Rot'], ['#f5a524', 'Orange']];
+const DEFAULT_SEED = '#9a67ea';
+
+let ctx = null, root = null, ready = null;
+let current = 'home', shown = false;
+let user = '';
+let overview = null, overviewOk = null, overviewAt = 0, overviewTimer = 0;   // overviewOk: null = unbekannt, true/false
+const view = { q: '', kind: 'all', allActs: false };
+let snackTimer = 0;
+
+const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const conns = () => (ctx ? ctx.state.connections : []);
+const byId = (id) => conns().find((c) => c.id === id);
+const showPlaceholders = () => ls.get('planned', true);
+
+/* ---------- Start ---------- */
+export function init(c) {
+  ctx = c;
+  ready = (async () => {
+    await Promise.all(['m3.css', 'mobile.css'].map((href) => new Promise((res) => {
+      const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; l.onload = l.onerror = res; document.head.appendChild(l);
+    })));
+    document.documentElement.classList.add('m3');
+    build();
+    applyShellTheme();
+    enhanceSheets();
+  })();
+  return ready;
+}
+
+function build() {
+  root = $('#mobile');
+  root.innerHTML = `
+    <header class="m3-bar" id="mBar">
+      <div class="logo"><span class="m3-ic" style="width:30px;height:30px;display:block">${LOGO}</span><span class="bt" id="mBarName">JulOS</span><span class="bt sub" id="mBarTitle" aria-hidden="true"></span></div>
+      <button type="button" class="mb m3-iconbtn m3-state" id="mSearchBtn" aria-label="Dienste durchsuchen">${icon('search')}</button>
+      <button type="button" class="mb avatar m3-state" id="mAvatar" aria-label="Profil"></button>
+    </header>
+    <div class="m3-stage" id="mStage">
+      <section class="m3-page" id="pg-home" data-page="home" aria-label="Home"></section>
+      <section class="m3-page" id="pg-services" data-page="services" aria-label="Dienste" hidden></section>
+      <section class="m3-page" id="pg-server" data-page="server" aria-label="Server" hidden></section>
+      <section class="m3-page" id="pg-monitoring" data-page="monitoring" aria-label="Monitoring" hidden></section>
+      <section class="m3-page" id="pg-profile" data-page="profile" aria-label="Profil" hidden></section>
+    </div>
+    <button type="button" class="mb m3-fab m3-state" id="mFab" aria-label="Verbindung hinzufügen">${icon('add')}<span class="fl">Hinzufügen</span></button>
+    <nav class="m3-nav" id="mNav" aria-label="Hauptnavigation"></nav>
+    <div class="m3-snack" id="mSnack" role="status" aria-live="polite"><span class="st" id="mSnackText"></span><button type="button" class="mb m3-state" id="mSnackAct" hidden></button></div>`;
+  root.hidden = true;
+
+  buildServicesPage();
+  renderNav();
+  $('#mNav').addEventListener('click', (e) => { const b = e.target.closest('[data-go]'); if (b) go(b.dataset.go); });
+  $('#mNav').addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const bs = $$('#mNav .mb'), i = bs.indexOf(document.activeElement);
+    if (i < 0) return;
+    bs[(i + (e.key === 'ArrowRight' ? 1 : bs.length - 1)) % bs.length].focus(); e.preventDefault();
+  });
+  $('#mSearchBtn').addEventListener('click', () => go('services', { focusSearch: true }));
+  $('#mAvatar').addEventListener('click', () => go('profile'));
+  $('#mFab').addEventListener('click', () => ctx.add());
+  for (const pg of $$('.m3-page')) {
+    let last = 0;
+    pg.addEventListener('scroll', () => {
+      const top = pg.scrollTop;
+      const head = pg.querySelector('[data-head]');
+      $('#mBar').classList.toggle('scrolled', top > 4);
+      $('#mBar').classList.toggle('titled', !!head && top > head.offsetTop + head.offsetHeight - 8);
+      if (top > last + 6 && top > 48) $('#mFab').classList.add('small'); else if (top < last - 6 || top < 24) $('#mFab').classList.remove('small');
+      last = top;
+    }, { passive: true });
+  }
+  // Delegation fuer alles, was in den Seiten gezeichnet wird
+  root.addEventListener('click', onClick);
+  root.addEventListener('contextmenu', (e) => { const t = e.target.closest('[data-conn]'); if (t) { e.preventDefault(); actionSheet(byId(t.dataset.conn)); } });
+  window.addEventListener('popstate', (e) => { if (shown) go((e.state && e.state.m3) || 'home', { push: false }); });
+  history.replaceState({ m3: 'home' }, '');
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => queueMicrotask(applyShellTheme));
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) pollOverview(); });
+}
+
+function renderNav() {
+  const items = DEST.filter((d) => showPlaceholders() || (d.id !== 'server' && d.id !== 'monitoring') || (d.id === 'server' && overviewOk));
+  $('#mNav').innerHTML = items.map((d) => `<button type="button" class="mb m3-state" data-go="${d.id}" ${d.id === current ? 'aria-current="page"' : ''}><span class="pill">${icon(d.ic)}</span><span>${d.label}</span></button>`).join('');
+}
+
+/* ---------- Sichtbarkeit (von shell.js): Fernsteuerung an, Oberflaeche aus und umgekehrt ---------- */
+export function setShown(on) {
+  if (!root || on === shown) return;
+  shown = on;
+  root.classList.remove('leaving', 'entering');
+  if (on) {
+    root.hidden = false; root.classList.add('entering');
+    root.addEventListener('animationend', () => root.classList.remove('entering'), { once: true });
+    renderAll(); pollOverview();
+  } else {
+    // Ausblenden ueber der Fernsteuerung, damit deren Layout sofort stimmt (sie misst ihre Bildflaeche beim Verbinden)
+    root.classList.add('leaving'); root.style.position = 'absolute'; root.style.inset = '0'; root.style.zIndex = '60'; root.style.pointerEvents = 'none';
+    setTimeout(() => { if (!shown) { root.hidden = true; root.classList.remove('leaving'); root.removeAttribute('style'); } }, 170);
+    clearTimeout(overviewTimer);
+  }
+}
+export function reset() { overview = null; overviewOk = null; user = ''; current = 'home'; view.q = ''; view.kind = 'all'; setShown(false); if (root) { root.hidden = true; root.removeAttribute('style'); } }
+
+export function userChanged(name, message) {
+  user = name;
+  if (!root) return;
+  $('#mAvatar').textContent = (name || '?').trim().slice(0, 1);
+  if (message) snack(message);
+  renderAll();
+}
+export function connectionsChanged() { if (root) renderAll(); }
+export function defaultEngine() { return ls.get('engine', 'guac'); }
+
+/** Merkt sich (nur auf diesem Geraet), was gestartet wurde: Grundlage fuer Favoriten ("meist genutzt"), "Aktivitaeten" und "Zuletzt geoeffnet". */
+export function started(c) {
+  const use = ls.get('use', {}); use[c.id] = (use[c.id] || 0) + 1; ls.set('use', use);
+  const log = ls.get('log', []); log.unshift({ t: Date.now(), id: c.id, name: c.name, kind: c.kind, type: 'start' }); ls.set('log', log.slice(0, 40));
+}
+export function ended(message, reason) {
+  if (!message || reason === 'auth') return;
+  const log = ls.get('log', []); const last = log.find((l) => l.type === 'start');
+  log.unshift({ t: Date.now(), id: last ? last.id : null, name: last ? last.name : '', kind: last ? last.kind : 'desktop', type: 'end', msg: message }); ls.set('log', log.slice(0, 40));
+}
+
+/* ---------- Navigation: Fade-through, Verlauf fuer die Zurueck-Geste ---------- */
+export function go(id, { push = true, focusSearch = false } = {}) {
+  if (!DEST.some((d) => d.id === id)) id = 'home';
+  const from = current;
+  if (id !== from) {
+    if (push) { if (from === 'home') history.pushState({ m3: id }, ''); else if (id === 'home') { if (history.state && history.state.m3 && history.state.m3 !== 'home') { history.back(); return; } } else history.replaceState({ m3: id }, ''); }
+    const a = $('#pg-' + from), b = $('#pg-' + id);
+    current = id;
+    $$('#mNav .mb').forEach((n) => { if (n.dataset.go === id) n.setAttribute('aria-current', 'page'); else n.removeAttribute('aria-current'); });
+    a.classList.remove('in'); a.classList.add('out');
+    setTimeout(() => { a.hidden = true; a.classList.remove('out'); }, 90);
+    setTimeout(() => {
+      b.hidden = false; b.classList.add('in'); b.addEventListener('animationend', () => b.classList.remove('in'), { once: true });
+      b.dispatchEvent(new Event('scroll'));
+    }, 90);
+    renderPage(id);
+    $('#mFab').classList.toggle('gone', !(id === 'home' || id === 'services'));
+    $('#mFab').classList.remove('small');
+    const d = DEST.find((x) => x.id === id);
+    $('#mBar').classList.toggle('home', id === 'home');
+    $('#mBarName').hidden = id !== 'home'; $('#mBarTitle').textContent = d.title || ''; $('#mBarTitle').hidden = id === 'home';
+    $('#mBar').classList.remove('titled', 'scrolled');
+    if (id === 'server' || id === 'home') pollOverview();
+    if (id === 'profile') loadSessions();
+  }
+  if (focusSearch) setTimeout(() => $('#mSearch').focus(), 330);
+}
+
+function renderAll() { if (!root) return; renderNav(); renderPage(current); $('#mFab').classList.toggle('gone', !(current === 'home' || current === 'services')); }
+function renderPage(id) {
+  if (id === 'home') renderHome(); else if (id === 'services') renderServices(); else if (id === 'server') renderServer();
+  else if (id === 'monitoring') renderMonitoring(); else if (id === 'profile') renderProfile();
+  // Seitentitel in der Leiste: auf Home bleibt "JulOS", sonst der Titel der Seite
+  $('#mBar').classList.toggle('home', current === 'home');
+}
+
+/* =====================================================================
+ * Auslastung des Servers: nur wenn /api/system/overview existiert (Adapter fuer dessen JSON)
+ * ===================================================================== */
+const num = (v) => (typeof v === 'number' && isFinite(v) ? v : null);
+function adaptOverview(o) {
+  if (!o || typeof o !== 'object') return null;
+  const ratio = (used, total) => (num(used) !== null && num(total) > 0 ? Math.round((used / total) * 1000) / 10 : null);
+  const cpu = num(o.cpuPercent ?? o.cpu?.percent), ram = ratio(o.memoryUsed ?? o.memory?.used, o.memoryTotal ?? o.memory?.total) ?? num(o.memory?.percent);
+  const disk = ratio(o.diskUsed ?? o.disk?.used, o.diskTotal ?? o.disk?.total) ?? num(o.disk?.percent);
+  if (cpu === null && ram === null && disk === null) return null;
+  return { cpu, ram, disk, cores: num(o.cores ?? o.cpu?.cores), name: o.name || o.host?.name || o.hostname || null, os: o.os || o.host?.os || null,
+    memTotal: num(o.memoryTotal ?? o.memory?.total), memUsed: num(o.memoryUsed ?? o.memory?.used), diskTotal: num(o.diskTotal ?? o.disk?.total), diskUsed: num(o.diskUsed ?? o.disk?.used),
+    rx: num(o.rxBytesPerSecond), tx: num(o.txBytesPerSecond) };
+}
+async function pollOverview() {
+  clearTimeout(overviewTimer);
+  if (!shown || document.hidden || !ctx || (overviewOk === false && Date.now() - overviewAt < 300000)) return;
+  if (current !== 'home' && current !== 'server') { overviewTimer = setTimeout(pollOverview, 15000); return; }
+  try {
+    const o = adaptOverview(await ctx.api('/api/system/overview'));
+    overviewOk = !!o; overview = o;
+  } catch (e) { overviewOk = e.status === 401 ? overviewOk : false; overview = null; }
+  overviewAt = Date.now();
+  if (shown) { renderNav(); if (current === 'home' || current === 'server') renderPage(current); }
+  if (overviewOk) overviewTimer = setTimeout(pollOverview, 15000);
+}
+const fmtBytes = (b) => (b >= 1e12 ? (b / 1e12).toFixed(1) + ' TB' : b >= 1e9 ? (b / 1e9).toFixed(1) + ' GB' : b >= 1e6 ? Math.round(b / 1e6) + ' MB' : Math.round(b / 1e3) + ' kB');
+const pct = (v) => (v === null ? '–' : Math.round(v) + ' %');
+function metersHtml(o) {
+  const m = (ic, label, v, extra = '') => `<div class="meter${v !== null && v >= 90 ? ' warn' : ''}"><div class="ml">${icon(ic)}${label}</div><div class="mv">${pct(v)}${extra}</div><div class="bar" role="progressbar" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${v === null ? '' : Math.round(v)}"><i style="width:${v === null ? 0 : Math.max(0, Math.min(100, v))}%"></i></div></div>`;
+  return `<div class="meters">${m('cpu', 'CPU', o.cpu)}${m('mem', 'RAM', o.ram)}${m('disk', 'Speicher', o.disk)}</div>`;
+}
+const serverTitle = (o) => o.name || 'Server';
+const serverSub = (o) => [o.os, o.cores ? `${o.cores} Kerne` : '', o.memTotal ? fmtBytes(o.memTotal) + ' RAM' : ''].filter(Boolean).join(' · ') || 'Dieser Server';
+
+/* =====================================================================
+ * Home
+ * ===================================================================== */
+function greeting() { const h = new Date().getHours(); return h < 5 ? 'Gute Nacht' : h < 11 ? 'Guten Morgen' : h < 17 ? 'Guten Tag' : h < 22 ? 'Guten Abend' : 'Gute Nacht'; }
+const dayFmt = new Intl.DateTimeFormat('de', { hour: '2-digit', minute: '2-digit' });
+function whenLabel(t) {
+  const d = new Date(t), n = new Date();
+  const day = Math.round((new Date(n.getFullYear(), n.getMonth(), n.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5);
+  const time = dayFmt.format(d);
+  return day === 0 ? `Heute, ${time}` : day === 1 ? `Gestern, ${time}` : `${d.toLocaleDateString('de', { day: '2-digit', month: '2-digit' })}., ${time}`;
+}
+function favourites() {
+  const fav = ls.get('fav', []).map(byId).filter(Boolean);
+  const use = ls.get('use', {});
+  const used = conns().filter((c) => !fav.includes(c) && use[c.id] > 0).sort((a, b) => use[b.id] - use[a.id]);
+  return [...fav, ...used].slice(0, 6);
+}
+const tileHtml = (c, pinned) => `<button type="button" class="mb tile m3-state ${c.kind}" data-conn="${c.id}" data-act="start" aria-label="${esc(c.name)} (${esc(c.kind === 'terminal' ? 'Terminal' : 'Desktop')}), tippen zum Verbinden, gedrückt halten für mehr">
+  ${pinned ? `<span class="fav" title="Favorit">${icon('star')}</span>` : ''}${c.hasPassword ? `<span class="badge" title="Passwort gespeichert">${icon('key')}</span>` : ''}
+  <span class="ti">${kindIcon(c.kind)}</span><span class="tn">${esc(c.name)}</span></button>`;
+
+function activityRows(limit) {
+  const log = ls.get('log', []).filter((l) => l.type !== 'start' || byId(l.id)).slice(0, limit);
+  return log.map((l) => {
+    const c = byId(l.id);
+    const lead = l.type === 'end' ? `<span class="lead warn">${icon('info')}</span>` : `<span class="lead ok">${icon('check_circle')}</span>`;
+    const sub = l.type === 'end' ? esc(l.msg) : `Verbindung gestartet · ${esc(l.kind === 'terminal' ? 'Terminal' : 'Desktop')}`;
+    return `<div class="m3-li static">${lead}<span class="txt"><span class="hl">${esc(c ? c.name : l.name || 'Verbindung')}</span><span class="sl">${sub}</span></span><span class="tr">${esc(whenLabel(l.t))}</span></div>`;
+  }).join('');
+}
+
+function renderHome() {
+  const pg = $('#pg-home'), top = pg.scrollTop;
+  const list = conns(), favs = favourites(), pinned = new Set(ls.get('fav', []));
+  let chip;
+  if (overviewOk && overview) {
+    const hot = (overview.cpu ?? 0) >= 90 || (overview.ram ?? 0) >= 90 || (overview.disk ?? 0) >= 95;
+    chip = `<button type="button" class="mb m3-chip status m3-state" data-go="server"><span class="m3-dot ${hot ? '' : 'ok'}" style="${hot ? 'background:var(--m3-error)' : ''}"></span><span>${hot ? 'Dein Server ist stark ausgelastet' : 'Dein Server läuft stabil'}</span>${icon('chevron_right')}</button>`;
+  } else if (!list.length) {
+    chip = `<button type="button" class="mb m3-chip status m3-state" data-act="add"><span class="m3-dot"></span><span>Noch keine Verbindung: jetzt hinzufügen</span>${icon('chevron_right')}</button>`;
+  } else {
+    chip = `<button type="button" class="mb m3-chip status m3-state" data-go="services"><span class="m3-dot"></span><span>${list.length} ${list.length === 1 ? 'Verbindung' : 'Verbindungen'} gespeichert</span>${icon('chevron_right')}</button>`;
+  }
+  const server = overviewOk && overview ? `<button type="button" class="mb m3-card srv m3-state" data-go="server" aria-label="Server, Details öffnen">
+      <div class="top"><span class="lead">${icon('dns')}</span><span class="t">${esc(serverTitle(overview))}<small>${esc(serverSub(overview))}</small></span>${icon('chevron_right')}</div>${metersHtml(overview)}</button>` : '';
+  const favHtml = favs.length
+    ? `<div class="grid3">${favs.map((c) => tileHtml(c, pinned.has(c.id))).join('')}</div>`
+    : `<div class="m3-card empty-card"><span class="lead">${icon('star_o')}</span><span>${list.length ? 'Halte eine Verbindung gedrückt, um sie hier anzuheften. Häufig genutzte erscheinen von selbst.' : 'Lege deine erste Verbindung an, dann erscheint sie hier.'}</span></div>`;
+  const actsAll = ls.get('log', []).filter((l) => l.type !== 'start' || byId(l.id));
+  const acts = actsAll.length
+    ? `<div class="m3-card acts">${activityRows(view.allActs ? 15 : 4)}</div><p class="note">Zuletzt gestartete und beendete Verbindungen, nur auf diesem Gerät gemerkt.</p>`
+    : '<div class="m3-card empty-card"><span class="lead">' + icon('history') + '</span><span>Noch nichts passiert. Gestartete Verbindungen erscheinen hier.</span></div>';
+  pg.innerHTML = `
+    <div class="hero">${ART}
+      <div class="greet" data-head>${greeting()}, ${esc(user)}</div>
+      <h1>Schön, dass du da bist.</h1>
+      ${chip}
+    </div>
+    ${server}
+    <div class="m3-sec">${icon('star_o')}<span>Meine Favoriten</span><span class="sp"></span><button type="button" class="mb m3-btn text m3-state" data-go="services">Alle Dienste${icon('chevron_right')}</button></div>
+    ${favHtml}
+    <div class="m3-sec">${icon('history')}<span>Aktivitäten</span><span class="sp"></span>${actsAll.length > 4 ? `<button type="button" class="mb m3-btn text m3-state" data-act="allacts">${view.allActs ? 'Weniger' : 'Alle anzeigen'}${icon('chevron_right')}</button>` : ''}</div>
+    ${acts}`;
+  pg.scrollTop = top;
+}
+
+/* =====================================================================
+ * Dienste
+ * ===================================================================== */
+function buildServicesPage() {
+  $('#pg-services').innerHTML = `
+    <div class="m3-h" data-head><h1>Dienste</h1><p>Deine Desktops und Terminals</p></div>
+    <label class="m3-search"><span class="m3-ic" aria-hidden="true">${icon('search')}</span><input id="mSearch" type="search" placeholder="Dienste durchsuchen …" autocomplete="off" autocapitalize="none" spellcheck="false" enterkeyhint="search" aria-label="Dienste durchsuchen"></label>
+    <div class="chips" role="group" aria-label="Filter" id="mChips"></div>
+    <div id="mGrid"></div>
+    <div class="m3-sec">${icon('bolt')}<span>Schnellaktionen</span></div>
+    <div class="quick" id="mQuick"></div>`;
+  $('#mSearch').addEventListener('input', (e) => { view.q = e.target.value; renderGrid(); });
+  $('#mChips').addEventListener('click', (e) => { const b = e.target.closest('[data-kind]'); if (b) { view.kind = b.dataset.kind; renderServices(); } });
+}
+function filtered() {
+  const q = view.q.trim().toLowerCase();
+  return conns().filter((c) => (view.kind === 'all' || c.kind === view.kind) && (!q || `${c.name} ${c.host} ${c.username}`.toLowerCase().includes(q)));
+}
+function renderServices() {
+  if (!$('#mChips')) return;
+  const cnt = (k) => conns().filter((c) => k === 'all' || c.kind === k).length;
+  $('#mChips').innerHTML = [['all', 'Alle', 'apps'], ['desktop', 'Desktop', 'desktop'], ['terminal', 'Terminal', 'terminal']].map(([k, l, ic]) =>
+    `<button type="button" class="mb m3-chip m3-state" data-kind="${k}" aria-pressed="${view.kind === k}">${view.kind === k ? icon('check') : icon(ic)}${l} <span style="opacity:.7">${cnt(k)}</span></button>`).join('');
+  renderGrid();
+  const last = lastConnection();
+  $('#mQuick').innerHTML = `
+    <button type="button" class="mb m3-btn filled m3-state" data-act="add">${icon('add')}Neue Verbindung</button>
+    <button type="button" class="mb m3-btn tonal m3-state" data-act="last" ${last ? '' : 'disabled'} ${last ? `aria-label="Zuletzt geöffnet: ${esc(last.name)}"` : ''}>${icon('history')}${last ? 'Zuletzt: ' + esc(last.name.length > 14 ? last.name.slice(0, 13) + '…' : last.name) : 'Zuletzt geöffnet'}</button>
+    <button type="button" class="mb m3-btn tonal m3-state" data-act="ssh">${icon('terminal')}SSH öffnen</button>`;
+}
+function renderGrid() {
+  const list = filtered(), pinned = new Set(ls.get('fav', []));
+  $('#mGrid').innerHTML = list.length
+    ? `<div class="grid4">${list.map((c) => tileHtml(c, pinned.has(c.id))).join('')}</div>`
+    : `<p class="empty-hint">${conns().length ? 'Keine Verbindung passt zur Suche.' : 'Noch keine Verbindung. Lege den Computer an, den du steuern willst.'}</p>`;
+}
+function lastConnection() {
+  for (const l of ls.get('log', [])) if (l.type === 'start') { const c = byId(l.id); if (c) return c; }
+  return null;
+}
+
+/* =====================================================================
+ * Server und Monitoring
+ * ===================================================================== */
+function soonHtml(ic, title, text) {
+  return `<div class="m3-h" data-head><h1>${title}</h1></div>
+    <div class="m3-card soon"><span class="big">${icon(ic)}</span><h2>${title}</h2><span class="m3-chip status"><span class="m3-dot"></span>bald verfügbar</span><p>${text}</p></div>`;
+}
+function renderServer() {
+  const pg = $('#pg-server');
+  if (overviewOk && overview) {
+    const o = overview;
+    const net = (o.rx !== null || o.tx !== null) ? `<div class="m3-card acts" style="margin-top:12px"><div class="m3-li static"><span class="lead">${icon('download')}</span><span class="txt"><span class="hl">Netzwerk</span><span class="sl">Empfangen ${o.rx !== null ? fmtBytes(o.rx) + '/s' : '–'} · Gesendet ${o.tx !== null ? fmtBytes(o.tx) + '/s' : '–'}</span></span></div></div>` : '';
+    pg.innerHTML = `<div class="m3-h" data-head><h1>Server</h1><p>${esc(serverSub(o))}</p></div>
+      <div class="m3-card srv" style="margin-top:0"><div class="top"><span class="lead">${icon('dns')}</span><span class="t">${esc(serverTitle(o))}<small>Auslastung, alle 15 Sekunden aktualisiert</small></span></div>${metersHtml(o)}</div>
+      <div class="m3-card acts" style="margin-top:12px">
+        <div class="m3-li static"><span class="lead">${icon('mem')}</span><span class="txt"><span class="hl">Arbeitsspeicher</span><span class="sl">${o.memUsed !== null && o.memTotal !== null ? fmtBytes(o.memUsed) + ' von ' + fmtBytes(o.memTotal) : '–'}</span></span></div>
+        <div class="m3-li static"><span class="lead">${icon('disk')}</span><span class="txt"><span class="hl">Speicher</span><span class="sl">${o.diskUsed !== null && o.diskTotal !== null ? fmtBytes(o.diskUsed) + ' von ' + fmtBytes(o.diskTotal) : '–'}</span></span></div>
+      </div>${net}`;
+  } else {
+    pg.innerHTML = soonHtml('dns', 'Server', overviewOk === false ? 'Hier erscheinen CPU, Arbeitsspeicher und Speicher deines Servers, sobald der Server diese Daten liefert. Dieser Server tut das noch nicht.' : 'Auslastung wird geprüft …');
+  }
+}
+function renderMonitoring() {
+  $('#pg-monitoring').innerHTML = soonHtml('chart', 'Monitoring', 'Verläufe, Warnungen und Dienste im Blick. Das kommt in einem späteren Schritt; heute gibt es dafür noch keine Daten.');
+}
+
+/* =====================================================================
+ * Profil: Konto, Darstellung, Verbindungen, Geraete, Abmelden
+ * ===================================================================== */
+const seg = (id, opts, val) => `<div class="m3-seg" role="radiogroup" id="${id}">${opts.map(([v, l]) => `<button type="button" class="mb m3-state" role="radio" aria-checked="${v === val}" data-v="${v}"><span class="m3-seg-check">${icon('check')}</span>${l}</button>`).join('')}</div>`;
+function curSeed() { const s = readStore('seed', DEFAULT_SEED); return /^#[0-9a-f]{6}$/i.test(s) ? s.toLowerCase() : DEFAULT_SEED; }
+function renderProfile() {
+  const pg = $('#pg-profile'), top = pg.scrollTop, seed = curSeed(), scheme = readStore('scheme', 'auto');
+  const planned = showPlaceholders();
+  pg.innerHTML = `
+    <div class="m3-h" data-head><h1>Profil</h1><p>Konto, Darstellung und Sicherheit</p></div>
+    <div class="m3-card me"><span class="avatar">${esc((user || '?').trim().slice(0, 1))}</span><span class="t">${esc(user)}<small>Angemeldet mit Passwort und Authenticator-Code</small></span></div>
+
+    <div class="grp-t">Darstellung</div>
+    <div class="m3-card grp">
+      <div class="setrow"><div class="lab">Helligkeit</div>${seg('mScheme', [['auto', 'Automatisch'], ['light', 'Hell'], ['dark', 'Dunkel']], scheme)}</div>
+      <div class="setrow"><div class="lab">Farbe</div><div class="swatches2" role="radiogroup" aria-label="Farbe" id="mSwatches">${SWATCHES.map(([h, n]) => `<button type="button" class="mb sw" role="radio" aria-checked="${h === seed}" aria-label="${n}" data-seed="${h}" style="background:${h}">${icon('check')}</button>`).join('')}</div></div>
+      <div class="setrow line"><div class="lab">Server und Monitoring zeigen<small>Seiten, für die es noch keine Daten gibt</small></div><button type="button" class="mb m3-switch m3-state" role="switch" aria-checked="${planned}" id="mPlanned" aria-label="Server und Monitoring zeigen"></button></div>
+    </div>
+
+    <div class="grp-t">Verbindungen</div>
+    <div class="m3-card grp">
+      <div class="setrow"><div class="lab">Bildübertragung für neue Desktops<small>Der Stream ist flüssiger, braucht aber H.264 im Browser und HTTPS. Geht er nicht, nimmt die App automatisch den Standard.</small></div>${seg('mEngine', [['guac', 'Standard'], ['stream', 'Stream (H.264)']], ls.get('engine', 'guac'))}</div>
+    </div>
+
+    <div class="grp-t">Geräte und Sitzungen</div>
+    <div class="m3-card grp"><div class="sessions" id="mSessions"><p class="empty-hint">Wird geladen …</p></div></div>
+    <p class="note" id="mSessMsg" role="status"></p>
+    <button type="button" class="mb m3-btn danger block big logout m3-state" id="mOut">${icon('logout')}Abmelden</button>`;
+  pg.scrollTop = top;
+  $('#mScheme').addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (!b) return; setTheme({ scheme: b.dataset.v }); applyShellTheme(); renderProfile(); });
+  $('#mSwatches').addEventListener('click', (e) => { const b = e.target.closest('[data-seed]'); if (!b) return; setTheme({ seed: b.dataset.seed }); applyShellTheme(); renderProfile(); });
+  $('#mEngine').addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (!b) return; ls.set('engine', b.dataset.v); $$('#mEngine .mb').forEach((x) => x.setAttribute('aria-checked', x === b)); });
+  $('#mPlanned').addEventListener('click', (e) => { const on = e.currentTarget.getAttribute('aria-checked') !== 'true'; ls.set('planned', on); e.currentTarget.setAttribute('aria-checked', on); renderNav(); });
+  $('#mOut').addEventListener('click', () => ctx.signOut());
+  if (current === 'profile') loadSessions();
+}
+async function loadSessions() {
+  const box = $('#mSessions'); if (!box || !ctx) return;
+  try {
+    const { sessions } = await ctx.api('/api/auth/sessions');
+    box.innerHTML = sessions.map((s) => `<div class="m3-li static"><span class="lead ${s.current ? 'cur' : ''}">${icon('phone')}</span><span class="txt"><span class="hl">${esc(ctx.describeAgent(s.userAgent))}${s.current ? ' · dieses Gerät' : ''}</span><span class="sl">${esc(s.ip || '')} · zuletzt ${esc(ctx.ago(s.lastSeen))}</span></span></div>`).join('')
+      + (sessions.length > 1 ? `<div style="padding:4px 12px 10px"><button type="button" class="mb m3-btn tonal block m3-state" id="mOthers">Alle anderen abmelden</button></div>` : '');
+    const o = $('#mOthers');
+    if (o) o.addEventListener('click', async () => {
+      try { const r = await ctx.api('/api/auth/logout-others', { method: 'POST' }); snack(`${r.ended} Sitzung(en) abgemeldet.`); loadSessions(); } catch (e) { snack(e.message); }
+    });
+  } catch (e) { box.innerHTML = `<p class="empty-hint">${esc(e.message)}</p>`; }
+}
+
+/* =====================================================================
+ * Aktionen, Sheets, Snackbar
+ * ===================================================================== */
+function onClick(e) {
+  const g = e.target.closest('[data-go]'); if (g && !g.closest('#mNav')) { go(g.dataset.go); return; }
+  const a = e.target.closest('[data-act]'); if (!a) return;
+  const act = a.dataset.act;
+  if (act === 'start') { const c = byId(a.dataset.conn); if (c) ctx.connect(c); }
+  else if (act === 'add') ctx.add();
+  else if (act === 'allacts') { view.allActs = !view.allActs; renderHome(); }
+  else if (act === 'last') { const c = lastConnection(); if (c) ctx.connect(c); }
+  else if (act === 'ssh') {
+    const t = conns().filter((c) => c.kind === 'terminal');
+    if (t.length === 1) ctx.connect(t[0]);
+    else if (t.length > 1) { view.kind = 'terminal'; renderServices(); snack('Wähle ein Terminal.'); $('#mGrid').scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+    else ctx.add('terminal');
+  }
+}
+
+/** Menue zu einer Verbindung (lange tippen): verbinden, Favorit, bearbeiten */
+function actionSheet(c) {
+  if (!c) return;
+  let dlg = $('#mActDlg');
+  if (!dlg) { dlg = document.createElement('dialog'); dlg.id = 'mActDlg'; dlg.className = 'm3sheet'; $('#app').appendChild(dlg); wireSheet(dlg); }
+  const fav = ls.get('fav', []).includes(c.id);
+  dlg.innerHTML = `<h2>${esc(c.name)}</h2><p class="hint">${esc(c.kind === 'terminal' ? 'Terminal' : 'Desktop')} · ${esc(c.username ? c.username + '@' : '')}${esc(c.host)}:${c.port}</p>
+    <div class="m3-list" style="margin:0 -18px">
+      <button type="button" class="mb m3-li m3-state" data-a="start"><span class="lead">${icon('play')}</span><span class="txt"><span class="hl">Verbinden</span></span></button>
+      <button type="button" class="mb m3-li m3-state" data-a="fav"><span class="lead">${icon(fav ? 'star' : 'star_o')}</span><span class="txt"><span class="hl">${fav ? 'Aus den Favoriten nehmen' : 'Als Favorit anheften'}</span><span class="sl">Nur auf diesem Gerät</span></span></button>
+      <button type="button" class="mb m3-li m3-state" data-a="edit"><span class="lead">${icon('edit')}</span><span class="txt"><span class="hl">Bearbeiten</span></span></button>
+    </div>`;
+  dlg.onclick = (e) => {
+    const b = e.target.closest('[data-a]'); if (!b) return;
+    dlg.close();
+    if (b.dataset.a === 'start') ctx.connect(c);
+    else if (b.dataset.a === 'edit') ctx.edit(c);
+    else { const l = ls.get('fav', []); ls.set('fav', fav ? l.filter((x) => x !== c.id) : [...l, c.id]); renderAll(); snack(fav ? 'Aus den Favoriten genommen' : 'Als Favorit angeheftet'); }
+  };
+  dlg.showModal();
+}
+
+export function snack(text, action) {
+  if (!text || !root) return;
+  const s = $('#mSnack'), b = $('#mSnackAct');
+  $('#mSnackText').textContent = text;
+  b.hidden = !action; if (action) { b.textContent = action.label; b.onclick = () => { s.classList.remove('show'); root.classList.remove('snacking'); action.run(); }; }
+  s.classList.add('show'); root.classList.add('snacking');
+  clearTimeout(snackTimer); snackTimer = setTimeout(() => { s.classList.remove('show'); root.classList.remove('snacking'); }, action ? 6000 : 4000);
+}
+
+/* ---------- Die vorhandenen Dialoge werden zu Bottom Sheets ---------- */
+function wireSheet(dlg) {
+  // Tippen auf den Hintergrund schliesst
+  dlg.addEventListener('click', (e) => { if (e.target === dlg) { const r = dlg.getBoundingClientRect(); if (e.clientY < r.top || e.clientX < r.left || e.clientX > r.right) dlg.close(); } });
+  // Nach unten wischen am oberen Rand (Griff) schliesst
+  let y0 = null, dy = 0;
+  dlg.addEventListener('pointerdown', (e) => { const r = dlg.getBoundingClientRect(); if (e.clientY - r.top < 36 && dlg.scrollTop === 0) { y0 = e.clientY; dy = 0; dlg.setPointerCapture(e.pointerId); dlg.classList.add('dragging'); } });
+  dlg.addEventListener('pointermove', (e) => { if (y0 === null) return; dy = Math.max(0, e.clientY - y0); dlg.style.transform = `translateY(${dy}px)`; });
+  const end = () => { if (y0 === null) return; y0 = null; dlg.classList.remove('dragging'); dlg.style.transform = ''; if (dy > 90) dlg.close(); };
+  dlg.addEventListener('pointerup', end); dlg.addEventListener('pointercancel', end);
+}
+function enhanceSheets() {
+  for (const id of ['connDlg', 'startDlg', 'devicesDlg']) { const d = $('#' + id); if (!d) continue; d.classList.add('m3sheet'); wireSheet(d); }
+  // Art und Bildübertragung: segmentierte Tasten statt Auswahlliste; das select bleibt als Wertspeicher bestehen (shell.js liest und setzt es)
+  const segFor = (sel) => {
+    const label = sel.closest('label'), box = document.createElement('div');
+    box.className = 'm3-seg'; box.setAttribute('role', 'radiogroup');
+    box.innerHTML = [...sel.options].map((o) => `<button type="button" class="mb m3-state" role="radio" data-v="${o.value}"><span class="m3-seg-check">${icon('check')}</span>${esc(o.textContent)}</button>`).join('');
+    label.classList.add('m3-seglabel'); label.appendChild(box); sel.hidden = true;
+    const sync = () => $$('.mb', box).forEach((b) => b.setAttribute('aria-checked', b.dataset.v === sel.value));
+    box.addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (!b) return; sel.value = b.dataset.v; sel.dispatchEvent(new Event('change')); sync(); });
+    new MutationObserver(sync).observe(sel.closest('dialog'), { attributes: true, attributeFilter: ['open'] });
+    sel.addEventListener('change', sync); sync();
+    // das Wort vor dem Feld ist keine Beschriftung zum Ausfuellen mehr
+    const lbl = [...label.childNodes].find((n) => n.nodeType === 3 && n.textContent.trim());
+    if (lbl) { const sp = document.createElement('span'); sp.textContent = lbl.textContent.trim(); label.replaceChild(sp, lbl); }
+  };
+  segFor($('#connKind')); segFor($('#connEngine'));
+}
+
+/* ---------- Thema: Grundfarbe und Theme-Color ---------- */
+export function applyShellTheme() {
+  document.documentElement.style.setProperty('--m3-seed', curSeed());
+  const probe = document.createElement('div'); probe.style.cssText = 'position:fixed;left:-9px;top:0;width:1px;height:1px;background:var(--m3-surface)';
+  document.body.appendChild(probe);
+  try {
+    const c = document.createElement('canvas'); c.width = c.height = 1; const g = c.getContext('2d', { willReadFrequently: true });
+    g.fillStyle = '#000'; g.fillStyle = getComputedStyle(probe).backgroundColor; g.fillRect(0, 0, 1, 1);
+    const [r, gg, b] = g.getImageData(0, 0, 1, 1).data;
+    const hex = '#' + [r, gg, b].map((x) => x.toString(16).padStart(2, '0')).join('');
+    for (const m of $$('meta[name=theme-color]')) m.setAttribute('content', hex);
+  } finally { probe.remove(); }
+}

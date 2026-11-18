@@ -1,0 +1,245 @@
+/* Material 3 (Expressive) fuer die Handy-Oberflaeche: Design-Tokens und allgemeine Bausteine.
+ * Wird nur von mobile.js nachgeladen (Handy, schmaler oder Touch-Bildschirm). Die Fernsteuerung nutzt weiter style.css.
+ *
+ * Farben: Rollen wie in M3 (primary, secondary, tertiary, surface-container ..., outline, error), berechnet aus EINER Grundfarbe
+ * (--m3-seed, Standard Violett; mobile.js setzt sie aus der gespeicherten Wahl). oklch(from ...) hebt die Helligkeit auf die Tonstufe der Rolle,
+ * light-dark() waehlt hell oder dunkel nach color-scheme (das setzt app.js aus "Hell / Dunkel / Automatisch").
+ * Tonstufe T (Material) entspricht in OKLab etwa L = (T + 16) / 116. */
+:root {
+  --m3-seed: #9a67ea;
+
+  --m3-primary: light-dark(oklch(from var(--m3-seed) .483 .15 h), oklch(from var(--m3-seed) .828 .105 h));
+  --m3-on-primary: light-dark(oklch(1 0 0), oklch(from var(--m3-seed) .31 .085 h));
+  --m3-primary-container: light-dark(oklch(from var(--m3-seed) .914 .06 h), oklch(from var(--m3-seed) .397 .12 h));
+  --m3-on-primary-container: light-dark(oklch(from var(--m3-seed) .224 .1 h), oklch(from var(--m3-seed) .914 .06 h));
+  --m3-secondary: light-dark(oklch(from var(--m3-seed) .483 .05 h), oklch(from var(--m3-seed) .828 .05 h));
+  --m3-on-secondary: light-dark(oklch(1 0 0), oklch(from var(--m3-seed) .31 .045 h));
+  --m3-secondary-container: light-dark(oklch(from var(--m3-seed) .914 .035 h), oklch(from var(--m3-seed) .397 .05 h));
+  --m3-on-secondary-container: light-dark(oklch(from var(--m3-seed) .224 .05 h), oklch(from var(--m3-seed) .914 .035 h));
+  --m3-tertiary: light-dark(oklch(from var(--m3-seed) .483 .1 calc(h - 55)), oklch(from var(--m3-seed) .828 .09 calc(h - 55)));
+  --m3-on-tertiary: light-dark(oklch(1 0 0), oklch(from var(--m3-seed) .31 .07 calc(h - 55)));
+  --m3-tertiary-container: light-dark(oklch(from var(--m3-seed) .914 .055 calc(h - 55)), oklch(from var(--m3-seed) .397 .08 calc(h - 55)));
+  --m3-on-tertiary-container: light-dark(oklch(from var(--m3-seed) .224 .07 calc(h - 55)), oklch(from var(--m3-seed) .914 .055 calc(h - 55)));
+
+  --m3-surface: light-dark(oklch(from var(--m3-seed) .983 .008 h), oklch(from var(--m3-seed) .188 .012 h));
+  --m3-surface-dim: light-dark(oklch(from var(--m3-seed) .888 .014 h), oklch(from var(--m3-seed) .188 .012 h));
+  --m3-surface-lowest: light-dark(oklch(1 0 0), oklch(from var(--m3-seed) .164 .012 h));
+  --m3-surface-low: light-dark(oklch(from var(--m3-seed) .966 .012 h), oklch(from var(--m3-seed) .224 .014 h));
+  --m3-surface-container: light-dark(oklch(from var(--m3-seed) .948 .016 h), oklch(from var(--m3-seed) .241 .016 h));
+  --m3-surface-high: light-dark(oklch(from var(--m3-seed) .931 .018 h), oklch(from var(--m3-seed) .284 .018 h));
+  --m3-surface-highest: light-dark(oklch(from var(--m3-seed) .914 .02 h), oklch(from var(--m3-seed) .328 .02 h));
+  --m3-on-surface: light-dark(oklch(from var(--m3-seed) .224 .02 h), oklch(from var(--m3-seed) .914 .01 h));
+  --m3-on-surface-variant: light-dark(oklch(from var(--m3-seed) .397 .03 h), oklch(from var(--m3-seed) .828 .03 h));
+  --m3-outline: light-dark(oklch(from var(--m3-seed) .569 .03 h), oklch(from var(--m3-seed) .655 .03 h));
+  --m3-outline-variant: light-dark(oklch(from var(--m3-seed) .828 .03 h), oklch(from var(--m3-seed) .397 .03 h));
+  --m3-scrim: oklch(0 0 0 / .32);
+  --m3-inverse-surface: light-dark(oklch(from var(--m3-seed) .31 .02 h), oklch(from var(--m3-seed) .914 .01 h));
+  --m3-inverse-on-surface: light-dark(oklch(from var(--m3-seed) .948 .016 h), oklch(from var(--m3-seed) .31 .02 h));
+  --m3-inverse-primary: light-dark(oklch(from var(--m3-seed) .828 .105 h), oklch(from var(--m3-seed) .483 .15 h));
+
+  --m3-error: light-dark(#b3261e, #f2b8b5);
+  --m3-on-error: light-dark(#ffffff, #601410);
+  --m3-error-container: light-dark(#f9dedc, #8c1d18);
+  --m3-on-error-container: light-dark(#410e0b, #f9dedc);
+  /* kein M3-Rolle: Zustandsfarbe fuer "in Ordnung" */
+  --m3-ok: light-dark(#1b873f, #6dd58c);
+
+  /* Glas: halbtransparente getonte Flaechen ueber dem Verlauf */
+  --m3-glass: color-mix(in oklab, var(--m3-surface-lowest) 66%, transparent);
+  --m3-glass-edge: color-mix(in oklab, var(--m3-surface-lowest) 70%, var(--m3-outline-variant) 30%);
+  --m3-glass-strong: color-mix(in oklab, var(--m3-surface-lowest) 86%, transparent);
+
+  /* Formen: Skala, dazu die "expressiven" groesseren Radien fuer Kacheln und Karten */
+  --m3-shape-xs: 4px; --m3-shape-sm: 8px; --m3-shape-md: 12px; --m3-shape-lg: 16px; --m3-shape-xl: 28px; --m3-shape-full: 999px;
+  --m3-shape-tile: 22px; --m3-shape-card: 26px; --m3-shape-sheet: 28px;
+
+  /* Typografie (M3-Skala, kompakt). Systemschrift, keine Webfonts. */
+  --m3-font: "Roboto Flex", Roboto, "Google Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --m3-headline-m: 600 1.375rem/1.75rem var(--m3-font);
+  --m3-title-l: 500 1.25rem/1.625rem var(--m3-font);
+  --m3-title-m: 500 1rem/1.375rem var(--m3-font);
+  --m3-title-s: 500 .875rem/1.25rem var(--m3-font);
+  --m3-body-l: 400 1rem/1.5rem var(--m3-font);
+  --m3-body-m: 400 .875rem/1.25rem var(--m3-font);
+  --m3-body-s: 400 .75rem/1rem var(--m3-font);
+  --m3-label-l: 500 .875rem/1.25rem var(--m3-font);
+  --m3-label-m: 500 .75rem/1rem var(--m3-font);
+  --m3-label-s: 500 .6875rem/1rem var(--m3-font);
+
+  /* Bewegung (M3): betonte Kurven, kurze Dauern */
+  --m3-ease: cubic-bezier(.2, 0, 0, 1);
+  --m3-ease-decel: cubic-bezier(.05, .7, .1, 1);
+  --m3-ease-accel: cubic-bezier(.3, 0, .8, .15);
+  --m3-ease-std: cubic-bezier(.2, 0, 0, 1);
+  --m3-dur-short: 150ms; --m3-dur-medium: 250ms; --m3-dur-long: 400ms;
+
+  /* Dichte: kompakt */
+  --m3-touch: 44px;          /* kleinste Tippflaeche */
+  --m3-nav-h: 56px;
+  --m3-bar-h: 52px;
+  --m3-gap: 12px;
+  --m3-pad: 14px;
+  --m3-elev-1: 0 1px 2px color-mix(in oklab, var(--m3-primary) 22%, transparent), 0 1px 3px color-mix(in oklab, var(--m3-primary) 12%, transparent);
+  --m3-elev-2: 0 2px 6px color-mix(in oklab, var(--m3-primary) 22%, transparent), 0 6px 14px color-mix(in oklab, var(--m3-primary) 12%, transparent);
+  --m3-elev-3: 0 8px 22px color-mix(in oklab, var(--m3-primary) 30%, transparent);
+}
+
+/* ---------- Grundbausteine ---------- */
+/* Zuruecksetzen der grossen Schaltflaechen aus style.css; jede Schaltflaeche der Handy-Oberflaeche traegt .mb */
+.mb { appearance: none; background: none; color: inherit; border: 0; border-radius: 0; min-height: 0; padding: 0; margin: 0; font: inherit; letter-spacing: normal; cursor: pointer; position: relative; overflow: hidden;
+  text-align: inherit; touch-action: manipulation; -webkit-user-select: none; user-select: none; }
+.mb:disabled { cursor: default; opacity: .38; }
+.mb svg, .m3-ic svg { width: 24px; height: 24px; fill: currentColor; display: block; pointer-events: none; flex: 0 0 auto; }
+/* Zustandsebene (hover .08, fokus/druck .10) */
+.m3-state::before { content: ""; position: absolute; inset: 0; background: currentColor; opacity: 0; border-radius: inherit; pointer-events: none; transition: opacity var(--m3-dur-short) linear; }
+@media (hover: hover) { .m3-state:hover::before { opacity: .08; } }
+.m3-state:focus-visible::before, .m3-state:active::before { opacity: .10; }
+.mb:focus-visible, .m3-focus:focus-visible { outline: 3px solid var(--m3-primary); outline-offset: 2px; }
+.mb .rip { z-index: 0; }
+.mb > :not(.rip) { position: relative; }
+
+/* Tasten: gefuellt, getont, umrandet, Text */
+.m3-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 40px; padding: 0 20px; border-radius: var(--m3-shape-full); font: var(--m3-label-l); letter-spacing: .1px; white-space: nowrap; transition: border-radius var(--m3-dur-medium) var(--m3-ease), box-shadow var(--m3-dur-short); }
+.m3-btn svg { width: 18px; height: 18px; }
+.m3-btn:active { border-radius: var(--m3-shape-lg); }  /* Expressive: die Taste "formt" sich beim Druck */
+.m3-btn.filled { background: var(--m3-primary); color: var(--m3-on-primary); }
+.m3-btn.tonal { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
+.m3-btn.outlined { color: var(--m3-primary); box-shadow: inset 0 0 0 1px var(--m3-outline); }
+.m3-btn.text { color: var(--m3-primary); padding: 0 12px; }
+.m3-btn.danger { background: var(--m3-error-container); color: var(--m3-on-error-container); }
+.m3-btn.block { width: 100%; }
+.m3-btn.big { height: 48px; }
+.m3-iconbtn { width: 40px; height: 40px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: var(--m3-on-surface-variant); }
+.m3-iconbtn.tonal { background: var(--m3-surface-container); color: var(--m3-on-surface-variant); }
+/* Tippflaeche mindestens 44 px, auch wenn die Taste kleiner aussieht */
+.m3-iconbtn::after, .m3-chip::after { content: ""; position: absolute; inset: -3px; }
+
+/* Chips (Filter): Haken im gewaehlten Zustand */
+.m3-chip { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: var(--m3-shape-md); font: var(--m3-label-l); color: var(--m3-on-surface-variant);
+  box-shadow: inset 0 0 0 1px var(--m3-outline-variant); background: var(--m3-glass); flex: 0 0 auto; transition: background var(--m3-dur-short), color var(--m3-dur-short), border-radius var(--m3-dur-medium) var(--m3-ease); }
+.m3-chip svg { width: 18px; height: 18px; }
+.m3-chip[aria-pressed="true"], .m3-chip[aria-checked="true"], .m3-chip.sel { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); box-shadow: none; border-radius: var(--m3-shape-full); }
+.m3-chip.status { height: 32px; padding: 0 12px 0 10px; border-radius: var(--m3-shape-full); background: var(--m3-glass-strong); box-shadow: inset 0 0 0 1px var(--m3-glass-edge); color: var(--m3-on-surface); font: var(--m3-label-m); }
+.m3-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--m3-primary); flex: 0 0 auto; }
+.m3-dot.ok { background: var(--m3-ok); }
+
+/* Segmentierte Tasten (ersetzen select bei wenigen Optionen) */
+.m3-seg { display: flex; height: 40px; border-radius: var(--m3-shape-full); border: 1px solid var(--m3-outline); overflow: hidden; }
+.m3-seg .mb { flex: 1 1 0; display: flex; align-items: center; justify-content: center; gap: 6px; font: var(--m3-label-l); color: var(--m3-on-surface); padding: 0 8px; min-width: 0; transition: background var(--m3-dur-short), color var(--m3-dur-short); }
+.m3-seg .mb + .mb { box-shadow: inset 1px 0 0 var(--m3-outline); }
+.m3-seg .mb { font-size: .8125rem; line-height: 1.1; text-align: center; }
+.m3-seg .mb[aria-checked="true"] { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
+.m3-seg .mb svg { width: 18px; height: 18px; }
+.m3-seg .mb[aria-checked="true"] .m3-seg-check { display: block; }
+.m3-seg-check { display: none; }
+
+/* Schalter */
+.m3-switch { width: 52px; height: 32px; border-radius: var(--m3-shape-full); background: var(--m3-surface-highest); box-shadow: inset 0 0 0 2px var(--m3-outline); position: relative; flex: 0 0 auto; transition: background var(--m3-dur-short), box-shadow var(--m3-dur-short); overflow: visible; }
+.m3-switch::after { content: ""; position: absolute; left: 8px; top: 8px; width: 16px; height: 16px; border-radius: 50%; background: var(--m3-outline); transition: all var(--m3-dur-medium) var(--m3-ease); }
+.m3-switch[aria-checked="true"] { background: var(--m3-primary); box-shadow: none; }
+.m3-switch[aria-checked="true"]::after { left: 24px; top: 4px; width: 24px; height: 24px; background: var(--m3-on-primary); }
+
+/* Suchfeld */
+.m3-search { display: flex; flex-direction: row; align-items: center; gap: 10px; height: 48px; padding: 0 16px; border-radius: var(--m3-shape-full); background: var(--m3-glass-strong); box-shadow: inset 0 0 0 1px var(--m3-glass-edge), var(--m3-elev-1); color: var(--m3-on-surface-variant); }
+.m3-search:focus-within { box-shadow: inset 0 0 0 2px var(--m3-primary); }
+.m3-search input { flex: 1; min-width: 0; height: 100%; border: 0; background: transparent; color: var(--m3-on-surface); font: var(--m3-body-l); padding: 0; outline: none; border-radius: 0; -webkit-appearance: none; appearance: none; }
+.m3-search input::placeholder { color: var(--m3-on-surface-variant); opacity: .8; }
+.m3-search input::-webkit-search-cancel-button { display: none; }
+
+/* Karten, Listen */
+.m3-card { background: var(--m3-glass); border: 1px solid var(--m3-glass-edge); border-radius: var(--m3-shape-card); backdrop-filter: blur(16px) saturate(1.3); -webkit-backdrop-filter: blur(16px) saturate(1.3); box-shadow: var(--m3-elev-1); }
+.m3-list { display: flex; flex-direction: column; }
+.m3-li { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 8px 16px; width: 100%; color: var(--m3-on-surface); text-align: left; }
+.m3-li .lead { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--m3-primary-container); color: var(--m3-on-primary-container); flex: 0 0 auto; }
+.m3-li .lead svg { width: 22px; height: 22px; }
+.m3-li .txt { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.m3-li .hl { font: var(--m3-title-s); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m3-li .sl { font: var(--m3-body-s); color: var(--m3-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m3-li .tr { font: var(--m3-label-s); color: var(--m3-on-surface-variant); flex: 0 0 auto; text-align: right; }
+.m3-li > svg { color: var(--m3-on-surface-variant); }
+.m3-li + .m3-li { box-shadow: inset 0 1px 0 var(--m3-outline-variant); }
+.m3-li.static { cursor: default; }
+
+/* FAB, erweitert: schrumpft beim Scrollen */
+.m3-fab { position: absolute; right: 16px; bottom: calc(var(--m3-nav-h) + 16px); z-index: 4; display: inline-flex; align-items: center; justify-content: center; gap: 12px; height: 56px; min-width: 56px; padding: 0 20px 0 16px; border-radius: 18px;
+  background: var(--m3-primary-container); color: var(--m3-on-primary-container); box-shadow: var(--m3-elev-3); font: var(--m3-label-l); letter-spacing: .1px; transition: padding var(--m3-dur-medium) var(--m3-ease), gap var(--m3-dur-medium) var(--m3-ease), transform var(--m3-dur-medium) var(--m3-ease), opacity var(--m3-dur-short); }
+.m3-fab .fl { display: inline-block; max-width: 140px; overflow: hidden; white-space: nowrap; transition: max-width var(--m3-dur-medium) var(--m3-ease), opacity var(--m3-dur-short); }
+.m3-fab.small { padding: 0 16px; gap: 0; }
+.m3-fab.small .fl { max-width: 0; opacity: 0; }
+.m3-fab.gone { transform: scale(.6) translateY(24px); opacity: 0; pointer-events: none; }
+
+/* Navigationsleiste: Pille hinter dem gewaehlten Symbol */
+.m3-nav { display: flex; height: var(--m3-nav-h); flex: 0 0 auto; background: var(--m3-glass-strong); backdrop-filter: blur(20px) saturate(1.4); -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  box-shadow: 0 -1px 0 var(--m3-outline-variant); position: relative; z-index: 5; }
+.m3-nav .mb { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; color: var(--m3-on-surface-variant); font: var(--m3-label-s); min-width: 0; overflow: visible; padding-top: 2px; }
+.m3-nav .pill { position: relative; width: 56px; height: 28px; border-radius: var(--m3-shape-full); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.m3-nav .pill::before { content: ""; position: absolute; inset: 0; border-radius: inherit; background: var(--m3-secondary-container); transform: scaleX(.3); opacity: 0; transition: transform var(--m3-dur-medium) var(--m3-ease), opacity var(--m3-dur-short) linear; }
+.m3-nav .pill svg { position: relative; width: 22px; height: 22px; transition: color var(--m3-dur-short); }
+.m3-nav .mb[aria-current="page"] { color: var(--m3-on-surface); font-weight: 700; }
+.m3-nav .mb[aria-current="page"] .pill::before { transform: none; opacity: 1; }
+.m3-nav .mb[aria-current="page"] .pill svg { color: var(--m3-on-secondary-container); }
+@media (hover: hover) { .m3-nav .mb:hover .pill::after { content: ""; position: absolute; inset: 0; background: currentColor; opacity: .08; } }
+.m3-nav .mb:focus-visible { outline-offset: -3px; }
+
+/* Snackbar */
+.m3-snack { position: absolute; left: 12px; right: 12px; bottom: calc(var(--m3-nav-h) + 12px); z-index: 30; display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 6px 8px 6px 16px; border-radius: var(--m3-shape-md);
+  background: var(--m3-inverse-surface); color: var(--m3-inverse-on-surface); font: var(--m3-body-m); box-shadow: var(--m3-elev-2); max-width: 560px; margin: 0 auto;
+  transform: translateY(24px); opacity: 0; pointer-events: none; transition: transform var(--m3-dur-medium) var(--m3-ease), opacity var(--m3-dur-short) linear; }
+.m3-snack.show { transform: none; opacity: 1; pointer-events: auto; }
+.m3-snack .st { flex: 1; min-width: 0; padding: 4px 0; }
+.m3-snack .mb { color: var(--m3-inverse-primary); font: var(--m3-label-l); height: 40px; padding: 0 12px; border-radius: var(--m3-shape-full); }
+
+/* Bottom Sheets: die vorhandenen Dialoge (Verbindung, Passwort, Geraete) bekommen die Klasse m3sheet */
+dialog.m3sheet { background: var(--m3-surface-container); color: var(--m3-on-surface); font: var(--m3-body-m); border: 0; border-radius: var(--m3-shape-sheet) var(--m3-shape-sheet) 0 0; padding: 22px 18px calc(16px + env(safe-area-inset-bottom));
+  width: 100%; max-width: 560px; margin: auto auto 0; max-height: min(92dvh, 100% - 24px); overflow-y: auto; overscroll-behavior: contain; box-shadow: var(--m3-elev-3);
+  transform: translateY(0); opacity: 1; animation: none;
+  transition: transform var(--m3-dur-long) var(--m3-ease-decel), opacity var(--m3-dur-short) linear, overlay var(--m3-dur-long) allow-discrete, display var(--m3-dur-long) allow-discrete; }
+dialog.m3sheet:not([open]) { transform: translateY(100%); opacity: 0; transition-timing-function: var(--m3-ease-accel); }
+@starting-style { dialog.m3sheet[open] { transform: translateY(100%); opacity: 0; } }
+dialog.m3sheet[open] { animation: none; }
+dialog.m3sheet::backdrop { background: var(--m3-scrim); backdrop-filter: blur(2px); transition: opacity var(--m3-dur-medium) linear, overlay var(--m3-dur-medium) allow-discrete, display var(--m3-dur-medium) allow-discrete; opacity: 1; animation: none; }
+dialog.m3sheet:not([open])::backdrop { opacity: 0; }
+@starting-style { dialog.m3sheet[open]::backdrop { opacity: 0; } }
+dialog.m3sheet::before { content: ""; position: absolute; left: 50%; top: 8px; width: 32px; height: 4px; margin-left: -16px; border-radius: 2px; background: var(--m3-outline); opacity: .6; }
+dialog.m3sheet.dragging { transition: none; }
+dialog.m3sheet h2 { margin: 0 0 14px; font: var(--m3-title-l); }
+dialog.m3sheet .hint { font: var(--m3-body-s); color: var(--m3-on-surface-variant); margin: 2px 4px 10px; }
+dialog.m3sheet .msg { font: var(--m3-body-s); min-height: 0; margin: 0 4px 6px; }
+dialog.m3sheet .msg:empty { display: none; }
+dialog.m3sheet .msg.ok { color: var(--m3-primary); }
+/* Textfelder: gefuellt, die Beschriftung steht klein im Feld */
+dialog.m3sheet label { position: relative; display: flex; flex-direction: column; gap: 0; margin: 0 0 8px; padding: 7px 16px 3px; border-radius: var(--m3-shape-md) var(--m3-shape-md) var(--m3-shape-xs) var(--m3-shape-xs);
+  background: var(--m3-surface-highest); color: var(--m3-on-surface-variant); font: var(--m3-label-m); box-shadow: inset 0 -1px 0 var(--m3-outline); transition: box-shadow var(--m3-dur-short); }
+dialog.m3sheet label:focus-within { box-shadow: inset 0 -2px 0 var(--m3-primary); color: var(--m3-primary); }
+dialog.m3sheet label input, dialog.m3sheet label select { background: transparent; border: 0; border-radius: 0; padding: 2px 0 6px; font: var(--m3-body-l); color: var(--m3-on-surface); outline: none; width: 100%; min-height: 28px; }
+dialog.m3sheet label input::placeholder { color: var(--m3-on-surface-variant); opacity: .7; }
+dialog.m3sheet label input[readonly] { opacity: .7; }
+dialog.m3sheet label .opt { font-size: inherit; opacity: .8; }
+dialog.m3sheet label.check { flex-direction: row; align-items: center; gap: 12px; background: none; box-shadow: none; padding: 6px 4px; font: var(--m3-body-m); color: var(--m3-on-surface); }
+dialog.m3sheet label.check input { width: 20px; height: 20px; min-height: 0; accent-color: var(--m3-primary); }
+dialog.m3sheet label.m3-seglabel { background: none; box-shadow: none; padding: 4px 0 6px; }
+dialog.m3sheet label.m3-seglabel > span { padding: 0 4px 6px; }
+/* Tasten in den Sheets */
+dialog.m3sheet form { display: grid; grid-template-columns: 1fr 104px; column-gap: 8px; }
+dialog.m3sheet form > * { grid-column: 1 / -1; }
+dialog.m3sheet form > label:has(#connHost) { grid-column: 1; }
+dialog.m3sheet form > label:has(#connPort) { grid-column: 2; }
+/* Tastenreihe bleibt unten sichtbar, auch wenn das Formular laenger ist als das Sheet */
+dialog.m3sheet .row { display: flex; flex-wrap: nowrap; gap: 8px; margin: 10px -18px calc(-16px - env(safe-area-inset-bottom)); padding: 10px 18px calc(16px + env(safe-area-inset-bottom)); position: sticky; bottom: 0; background: var(--m3-surface-container); z-index: 2; }
+dialog.m3sheet .row button, dialog.m3sheet button.close { flex: 1 1 0; min-height: 0; height: 44px; padding: 0 16px; border-radius: var(--m3-shape-full); font: var(--m3-label-l); letter-spacing: .1px; color: var(--m3-primary); background: none; box-shadow: none; width: auto; }
+dialog.m3sheet button.primary, dialog.m3sheet .row button[type="submit"] { background: var(--m3-primary); color: var(--m3-on-primary); order: 2; flex-grow: 1.4; }
+dialog.m3sheet button.danger { background: var(--m3-error-container); color: var(--m3-on-error-container); }
+dialog.m3sheet button.ghost { background: none; color: var(--m3-primary); box-shadow: inset 0 0 0 1px var(--m3-outline); }
+dialog.m3sheet .devlist { gap: 8px; }
+dialog.m3sheet .dev { background: var(--m3-surface-highest); border-radius: var(--m3-shape-lg); padding: 10px 14px; font: var(--m3-title-s); }
+dialog.m3sheet .dev span { font: var(--m3-body-s); color: var(--m3-on-surface-variant); }
+dialog.m3sheet .dev.current { box-shadow: inset 0 0 0 2px var(--m3-primary); }
+
+@keyframes m3-fade-out { to { opacity: 0; } }
+@keyframes m3-fade-through { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
+@keyframes m3-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes m3-shell-out { to { opacity: 0; transform: scale(1.04); } }
+@keyframes m3-shell-in { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .m3-fab, .m3-fab .fl, .m3-snack, .m3-nav .pill::before, dialog.m3sheet, dialog.m3sheet::backdrop { transition-duration: .01ms !important; }
+}

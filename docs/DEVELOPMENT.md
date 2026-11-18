@@ -68,7 +68,8 @@ dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj    # 
 | `JULOS_GUACD` | `host:port` of guacd, default `guacd:4822` |
 | `JULOS_ALLOWED_HOSTS` | optional comma-separated list of hosts the signed-in user may connect to; empty means any host the server can reach |
 | `JULOS_AGENT_SOCKET` | Unix socket of the agent, default `/uploads/.agent/agent.sock` |
-| `JULOS_UPLOAD_DIR` | shared folder for photo uploads, default `/uploads` |
+| `JULOS_UPLOAD_DIR` | shared folder for photo uploads, default `/uploads`; its disk is the one the system overview shows |
+| `JULOS_FILES_ROOT` | the one folder the read-only file browser shows, default `JULOS_UPLOAD_DIR`; `off` disables the file browser |
 | `JULOS_SETUP_CODE` | optional fixed setup code (otherwise a random one is logged while no account exists) |
 | `JULOS_TRUSTED_PROXIES` | networks whose `X-Forwarded-*` headers are trusted (default: private networks) |
 

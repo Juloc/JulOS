@@ -8,7 +8,9 @@ using JulOS.Frontend.Agent;
 using JulOS.Frontend.Auth;
 using JulOS.Frontend.Cli;
 using JulOS.Frontend.Connections;
+using JulOS.Frontend.Files;
 using JulOS.Frontend.Remote;
+using JulOS.Frontend.SystemInfo;
 using JulOS.Integrations.Agent;
 using JulOS.Integrations.Display;
 using JulOS.Integrations.Guacamole;
@@ -56,6 +58,11 @@ builder.Services.AddSingleton<AgentClient>();
 builder.Services.AddSingleton(new UploadOptions(builder.Configuration["JULOS_UPLOAD_DIR"] ?? "/uploads"));
 builder.Services.AddSingleton<ClipboardUploader>();
 builder.Services.AddSingleton<HitCounter>();
+// Auslastung des Rechners (CPU, Speicher, Datentraeger des Upload-Ordners, Netzwerk), alle 2 s gemessen
+builder.Services.AddSingleton(new HostMonitor(HostSource.Linux(builder.Configuration["JULOS_UPLOAD_DIR"] ?? "/uploads")));
+builder.Services.AddHostedService<HostSamplerWorker>();
+// Dateien (nur lesen): genau ein Ordner, Standard der Upload-Ordner; "off" schaltet ab
+builder.Services.AddSingleton(new FileBrowser(builder.Configuration["JULOS_FILES_ROOT"] ?? builder.Configuration["JULOS_UPLOAD_DIR"] ?? "/uploads"));
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJson.Default));
 
 // Hinter einem Proxy im eigenen Netz (zum Beispiel Caddy) kommen Client-Adresse, Protokoll und Host aus den X-Forwarded-Kopfzeilen
@@ -120,6 +127,8 @@ app.MapAuth();
 app.MapRemote();
 app.MapConnections();
 app.MapAgent();
+app.MapSystem();
+app.MapFiles();
 
 app.Run();
 return 0;

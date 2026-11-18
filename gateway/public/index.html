@@ -147,6 +147,16 @@
       <button class="ghost close" data-act="close" type="button">Schließen</button>
     </dialog>
 
+    <!-- Bild einfügen: Galerie/Kamera, Zwischenablage (auch Google-Tastatur) -->
+    <dialog id="photoDlg">
+      <h2>Bild einfügen</h2>
+      <div class="row"><button id="photoPick" type="button">Foto wählen (Galerie, Kamera)</button></div>
+      <div class="row"><button id="photoClip" type="button" class="ghost">Aus Zwischenablage einfügen</button></div>
+      <p class="hint">Geht das nicht (zum Beispiel ohne HTTPS): Das Feld unten lange antippen und „Einfügen“ wählen, oder in der Google-Tastatur das Bild aus der Zwischenablage antippen. Das Bild wird sofort gesendet.</p>
+      <div id="pasteBox" contenteditable="true" role="textbox" aria-label="Bild hier einfügen" autocapitalize="none" autocorrect="off" spellcheck="false" data-ph="Hier einfügen"></div>
+      <button class="ghost close" data-act="close" type="button">Schließen</button>
+    </dialog>
+
     <!-- Programme starten (Fensterleiste) -->
     <dialog id="appsDlg">
       <h2>Programm starten</h2>

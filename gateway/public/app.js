@@ -414,7 +414,7 @@ const ACTIONS = {
   fullscreen: toggleFullscreen,
   menu: () => (el.menuSheet.hidden ? openMenu() : closeMenu()),
   expand: toggleExpanded,
-  photo: () => pickPhoto(),
+  photo: () => openPhotoDlg(),
   clip: () => el.clipDlg.showModal(),
   password: () => openPwDialog(),
 };
@@ -590,6 +590,23 @@ function backToLogin(msg) {
   el.pw.value = ''; setTimeout(() => el.pw.focus(), 50);
 }
 
+/* Mauszeiger der VM auswerten: ist es der Text-Zeiger (I-Balken)? Zeigerbilder sind oft 32x32 mit viel Rand,
+   deshalb zaehlt nur das Rechteck um die sichtbaren Pixel. I-Balken: schmal und hoch, Hotspot in der Mitte. Pfeil/Hand: Hotspot an der Ecke. */
+let cursorLogN = 0;
+function cursorInfo(canvas, hx, hy) {
+  const w = canvas.width, h = canvas.height;
+  let x0 = 0, y0 = 0, bw = w, bh = h;
+  try {
+    const d = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
+    let minX = w, minY = h, maxX = -1, maxY = -1;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (d[(y * w + x) * 4 + 3] > 40) { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
+    if (maxX >= 0) { x0 = minX; y0 = minY; bw = maxX - minX + 1; bh = maxY - minY + 1; }
+  } catch { /* Pixel nicht lesbar: ganzes Bild nehmen */ }
+  const rx = (hx - x0) / Math.max(1, bw), ry = (hy - y0) / Math.max(1, bh);
+  const ibeam = bw >= 2 && bh >= 10 && bw / bh <= 0.65 && rx >= 0.2 && rx <= 0.8 && ry >= 0.2 && ry <= 0.8;
+  return { w, h, bw, bh, hx, hy, ibeam, sig: `${w}x${h}:${bw}x${bh}@${hx},${hy}` };
+}
+
 async function connect() {
   S.intentional = false;
   teardown();
@@ -617,10 +634,9 @@ async function connect() {
   display.onresize = () => { fitDisplay(); dbg('remote-size', { w: display.getWidth(), h: display.getHeight() }); };
   // Textfeld-Erkennung: Der Mauszeiger der VM wird zum "I-Balken" (schmal, hoch, Hotspot mittig)
   display.oncursor = (canvas, hx, hy) => {
-    const w = canvas.width, h = canvas.height;
-    const ibeam = w >= 3 && h >= 10 && w / h <= 0.8 && hx >= w * 0.2 && hx <= w * 0.8 && hy >= h * 0.2 && hy <= h * 0.8;
-    if (ibeam !== S.cursor.ibeam) dbg('cursor', { w, h, hx, hy, ibeam });
-    S.cursor = { w, h, hx, hy, ibeam };
+    const c = cursorInfo(canvas, hx, hy);
+    if (c.sig !== S.cursor.sig && cursorLogN++ < 40) dbg('cursor', { w: c.w, h: c.h, bw: c.bw, bh: c.bh, hx: c.hx, hy: c.hy, ibeam: c.ibeam });
+    S.cursor = c;
   };
 
   client.onstatechange = (st) => {
@@ -672,20 +688,22 @@ function waitForFrame(client) {
   showBusy('Bild wird geladen …');
   const probe = document.createElement('canvas'); probe.width = probe.height = 8;
   const pc = probe.getContext('2d', { willReadFrequently: true });
+  let seen = { w: 0, h: 0, max: 0 };
   const hasContent = () => {
     try {
-      const cv = S.display.getDefaultLayer().getCanvas();
+      const cv = S.display.flatten();                       // alle Ebenen zusammengesetzt (die Standardebene allein kann leer sein)
+      seen = { w: cv.width, h: cv.height, max: 0 };
       if (!cv.width || !cv.height) return false;
-      pc.drawImage(cv, 0, 0, 8, 8);
+      pc.clearRect(0, 0, 8, 8); pc.drawImage(cv, 0, 0, 8, 8);
       const d = pc.getImageData(0, 0, 8, 8).data;
-      for (let i = 0; i < d.length; i += 4) if (d[i] > 10 || d[i + 1] > 10 || d[i + 2] > 10) return true;
-      return false;
+      for (let i = 0; i < d.length; i += 4) seen.max = Math.max(seen.max, d[i], d[i + 1], d[i + 2]);
+      return seen.max > 10;
     } catch { return true; }                                // Pruefung nicht moeglich: nicht blockieren
   };
   const tick = () => {
     if (S.client !== client || !S.connected) return;
     const age = Date.now() - started;
-    if (hasContent() || age > 5000) { dbg('firstframe', { ms: age, nudged }); el.overlay.hidden = true; el.spinner.hidden = true; return; }
+    if (hasContent() || age > 3000) { dbg('firstframe', { ms: age, nudged, ...seen }); el.overlay.hidden = true; el.spinner.hidden = true; return; }
     if (!nudged && age > 1200) { nudged = true; nudgeSize(); }
     setTimeout(tick, 250);
   };
@@ -742,6 +760,7 @@ function setupMouse(client, display) {
 const G = { pts: new Map(), mode: 'idle', timer: null, sx: 0, sy: 0, st: 0, lx: 0, ly: 0, d0: 0, k0: 0, mid0: null, midLast: null,
   decided: null, scrollAcc: 0, pressed: false, px: 0, py: 0, newK: 0, moved: false };
 
+let tapLogN = 0;
 const dist2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const mid2 = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 
@@ -835,9 +854,12 @@ async function endTouch(e) {
     const dur = Date.now() - G.st;
     if (G.mode === 'pending' && dur < 380) {
       // Tippen auf ein Textfeld (Zeiger ist ein I-Balken): Tastatur gleich in der Geste oeffnen
-      if (S.autoKb && S.cursor.ibeam && !kbOpen) { dbg('autokb', { ibeam: true }); el.kb.blur(); el.kb.focus(); }
+      if (tapLogN++ < 40) dbg('tap', { ibeam: S.cursor.ibeam, kb: kbOpen, auto: S.autoKb, cur: S.cursor.sig || '' });
+      if (S.autoKb && S.cursor.ibeam && !kbOpen) { dbg('autokb', { when: 'tap' }); el.kb.blur(); el.kb.focus(); }
       if (S.touchMode === 'pad') { const q = padPoint(); await clickAt(q.x, q.y, 'left'); }
       else { const q = remoteXY(G.sx, G.sy); await clickAt(q.x, q.y, 'left'); }
+      // Zeigerform kommt erst nach der Mausbewegung an: kurz danach noch einmal pruefen (z. B. Feld, das vorher nicht erkannt wurde)
+      setTimeout(() => { if (S.autoKb && S.connected && S.cursor.ibeam && !kbOpen) { dbg('autokb', { when: 'late' }); el.kb.focus(); } }, 280);
     } else if (G.mode === 'long') {
       if (S.touchMode === 'pad') { const q = padPoint(); await clickAt(q.x, q.y, 'right'); }
       else { const q = remoteXY(G.sx, G.sy); await clickAt(q.x, q.y, 'right'); }
@@ -1099,6 +1121,49 @@ el.schemeSel.addEventListener('change', () => { S.scheme = el.schemeSel.value; s
  *  Foto einfuegen: hochladen, Helfer legt es in die Zwischenablage der VM-Sitzung, dann Strg+V
  * ===================================================================== */
 function pickPhoto() { el.photoInput.value = ''; el.photoInput.click(); }
+
+/* Bild-Dialog: Galerie/Kamera, echte Zwischenablage (nur mit HTTPS), oder Einfuegen ins Feld (Gboard, langes Tippen) */
+const photoDlg = $('#photoDlg'), pasteBox = $('#pasteBox');
+function openPhotoDlg() {
+  pasteBox.textContent = '';
+  $('#photoClip').hidden = !(window.isSecureContext && navigator.clipboard && navigator.clipboard.read);
+  photoDlg.showModal();
+}
+async function sendPhotoFiles(files) {
+  const ok = await handleKbFiles(files);
+  if (ok && photoDlg.open) photoDlg.close();
+  return ok;
+}
+$('#photoPick').addEventListener('click', () => { photoDlg.close(); pickPhoto(); });
+$('#photoClip').addEventListener('click', async () => {
+  try {
+    for (const item of await navigator.clipboard.read()) {
+      const type = item.types.find((t) => t.startsWith('image/'));
+      if (type) { const b = await item.getType(type); await sendPhotoFiles([new File([b], 'zwischenablage', { type })]); return; }
+    }
+    toast('In der Zwischenablage ist kein Bild', 2600);
+  } catch (e) { toast('Zwischenablage nicht lesbar: ' + (e.message || e.name), 3600); }
+});
+pasteBox.addEventListener('paste', (e) => {
+  const dt = e.clipboardData; dbg('pastebox', { files: dt && dt.files ? dt.files.length : 0, types: dt ? [...dt.types].join(',').slice(0, 60) : '' });
+  if (dt && dt.files && dt.files.length) { e.preventDefault(); sendPhotoFiles(dt.files); }
+});
+pasteBox.addEventListener('beforeinput', (e) => {
+  const f = e.dataTransfer && e.dataTransfer.files;
+  dbg('pastebox-input', { it: e.inputType, files: f ? f.length : 0 });
+  if (f && f.length) { e.preventDefault(); sendPhotoFiles(f); }
+});
+pasteBox.addEventListener('drop', (e) => { const f = e.dataTransfer && e.dataTransfer.files; if (f && f.length) { e.preventDefault(); sendPhotoFiles(f); } });
+// Tastaturen, die ein Bild als <img> in das Feld legen
+new MutationObserver((list) => {
+  for (const m of list) for (const n of m.addedNodes) {
+    const imgs = n.nodeType === 1 ? (n.tagName === 'IMG' ? [n] : [...n.querySelectorAll('img')]) : [];
+    for (const im of imgs) {
+      const src = im.currentSrc || im.src;
+      if (src) fetch(src).then((r) => r.blob()).then((b) => sendPhotoFiles([new File([b], 'tastatur-bild', { type: b.type || 'image/png' })])).catch(() => toast('Bild konnte nicht gelesen werden', 3000));
+    }
+  }
+}).observe(pasteBox, { childList: true, subtree: true });
 el.photoInput.addEventListener('change', async () => {
   const f = el.photoInput.files && el.photoInput.files[0];
   if (!f) return;
@@ -1169,7 +1234,7 @@ document.addEventListener('pointerdown', (e) => {
 }, { passive: true });
 
 // nur mit ?debug in der Adresse: Zugriff fuer Tests
-if (location.search.includes('debug')) window.__pd = { W, S, rows: () => rows, renderWindows, renderRows, mods };
+if (location.search.includes('debug')) window.__pd = { W, S, rows: () => rows, renderWindows, renderRows, mods, cursorInfo, openPhotoDlg };
 
 /* ---------- PWA: Service Worker und Installation ---------- */
 let installEvent = null;

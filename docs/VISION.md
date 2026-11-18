@@ -41,6 +41,10 @@ DDNS (current address, updates), plus things like Proxmox, files and monitoring.
 its API and leaves that tool in charge of its domain. Notifications from hosts and quick actions (run a script, restart a
 container, open a project) live here too. Modules are adapters, not hard dependencies of the core.
 
+Modules are designed fresh and kept simple. They do **not** inherit the package, catalog, manifest and signature scheme of the
+earlier .NET JulOS (that code is only in the Git history). A module is whatever is the smallest thing that works for one tool;
+the shape of the module core is decided when milestone 2 starts, not before.
+
 ### 6. One look
 Material You colours from your phone, installable PWA, fast reconnect, works offline as a shell.
 

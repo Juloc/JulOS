@@ -20,6 +20,8 @@ internal sealed class FakeGuacd : IAsyncDisposable
     public (string Message, int Status)? Reject { get; init; }
     /// <summary>Wird gleich nach "ready" gesendet.</summary>
     public byte[] Greeting { get; init; } = [];
+    /// <summary>Mehrere Verbindungen nacheinander oder gleichzeitig annehmen (Standard: genau eine).</summary>
+    public bool AcceptMany { get; init; }
     public TaskCompletionSource Closed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public FakeGuacd()
@@ -32,7 +34,22 @@ internal sealed class FakeGuacd : IAsyncDisposable
     {
         try
         {
-            using var tcp = await _listener.AcceptTcpClientAsync(ct);
+            do
+            {
+                var accepted = await _listener.AcceptTcpClientAsync(ct);
+                if (AcceptMany) _ = Task.Run(() => ServeAsync(accepted, ct), ct);
+                else await ServeAsync(accepted, ct);
+            }
+            while (AcceptMany);
+        }
+        catch (Exception e) when (e is OperationCanceledException or IOException or ObjectDisposedException or SocketException) { }
+    }
+
+    private async Task ServeAsync(TcpClient accepted, CancellationToken ct)
+    {
+        try
+        {
+            using var tcp = accepted;
             var stream = tcp.GetStream();
             using var reader = new GuacReader(stream);
 

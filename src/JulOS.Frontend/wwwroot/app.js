@@ -47,6 +47,7 @@ const ICONS = {
   close: 'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z',
   minimize: 'M6 19h12v2H6z',
   window: 'M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v10z',
+  bolt: 'M11 21h-1l1-7H7.5c-.58 0-.57-.32-.38-.66.19-.34.05-.08.07-.12C8.48 10.94 10.42 7.54 13 3h1l-1 7h3.5c.49 0 .56.33.47.51l-.07.15C12.96 17.55 11 21 11 21z',
   backspace: 'M22 3H7c-.69 0-1.23.35-1.59.88L0 12l5.41 8.11c.36.53.9.89 1.59.89h15c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-3 12.59L17.59 17 14 13.41 10.41 17 9 15.59 12.59 12 9 8.41 10.41 7 14 10.59 17.59 7 19 8.41 15.41 12 19 15.59z',
 };
 export const ico = (name) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${ICONS[name] || ''}"/></svg>`;
@@ -207,16 +208,16 @@ const typeText = (str) => enqueue(async () => {
 const ITEM = (label, type, value) => ({ label, type, value });
 const ACT = (icon, action) => ITEM(':' + icon, 'action', action);
 const DEFAULT_ROWS = [
-  // drei Gruppen, je eine Zeile kleiner Tasten; ueber der Leiste waehlt man per schmalem Reiter, welche Gruppe zu sehen ist
-  { id: 'keys', title: 'Tasten', items: [
+  // drei Gruppen (Akkordeon): nur Symbol und Pfeil als Kopf, darunter die Tasten der geoeffneten Gruppe
+  { id: 'keys', title: 'Tasten', icon: 'keyboard', items: [
     ITEM('Alt', 'mod', 'alt'), ITEM('Shift', 'mod', 'shift'),
     ITEM('←', 'chord', 'left'), ITEM('↑', 'chord', 'up'), ITEM('↓', 'chord', 'down'), ITEM('→', 'chord', 'right'),
     ITEM(':ret', 'chord', 'enter'), ITEM(':backspace', 'chord', 'backspace'), ITEM('Entf', 'chord', 'delete'),
     ITEM('Pos1', 'chord', 'home'), ITEM('Ende', 'chord', 'end'), ITEM('Bild↑', 'chord', 'pageup'), ITEM('Bild↓', 'chord', 'pagedown'), ITEM('⇧Tab', 'chord', 'shift+tab') ] },
-  { id: 'combos', title: 'Combos', items: [
+  { id: 'combos', title: 'Combos', icon: 'bolt', items: [
     ITEM('Strg+C', 'chord', 'ctrl+c'), ITEM('Strg+V', 'chord', 'ctrl+v'), ITEM('Strg+X', 'chord', 'ctrl+x'), ITEM('Strg+A', 'chord', 'ctrl+a'),
     ITEM('Strg+Z', 'chord', 'ctrl+z'), ITEM('Strg+F', 'chord', 'ctrl+f'), ITEM('Alt+Tab', 'chord', 'alt+tab'), ITEM('Strg+⇧+T', 'chord', 'ctrl+shift+t') ] },
-  { id: 'funcs', title: 'Funktionen', items: [
+  { id: 'funcs', title: 'Funktionen', icon: 'apps', items: [
     ITEM('Bild einfügen', 'action', 'pasteimg'), ITEM('Foto wählen', 'action', 'photo'), ITEM('Text senden', 'action', 'clip'), ITEM('Passwort', 'action', 'password') ] },
   // die Leiste: immer sichtbar, eine Zeile, ganz unten
   { id: 'bar', title: 'Leiste', fixed: true, items: [
@@ -227,7 +228,10 @@ const DEFAULT_ROWS = [
 const clone = (o) => JSON.parse(JSON.stringify(o));
 function loadRows() {
   const saved = store.get('rows4', null);
-  if (Array.isArray(saved) && saved.some((r) => r.fixed) && ['keys', 'combos', 'funcs'].every((id) => saved.some((r) => r.id === id))) return saved;
+  if (Array.isArray(saved) && saved.some((r) => r.fixed) && ['keys', 'combos', 'funcs'].every((id) => saved.some((r) => r.id === id))) {
+    for (const r of saved) { const d = DEFAULT_ROWS.find((x) => x.id === r.id); if (d && !r.icon) r.icon = d.icon; }
+    return saved;
+  }
   // Aus der alten Aufteilung (Mehr/Tasten) nur die eigene untere Leiste mitnehmen
   const fresh = clone(DEFAULT_ROWS);
   const old = store.get('rows3', null);
@@ -306,21 +310,22 @@ function groupRow(row, r, label) {
   wrap.append(rk);
   return wrap;
 }
-/* Oben: schmale Reiter (Tasten | Combos | Funktionen) und darunter nur die gewaehlte Gruppe. Beim Bearbeiten sind alle Gruppen sichtbar. */
+/* Oben: Akkordeon aus drei schmalen Koepfen (nur Symbol und Pfeil) und darunter die Tasten der geoeffneten Gruppe. Beim Bearbeiten sind alle Gruppen offen. */
 function renderRows() {
   const top = $('#rowsTop'), bottom = $('#rowsBottom');
   top.replaceChildren(); bottom.replaceChildren();
   const groups = rows.map((row, r) => ({ row, r })).filter((g) => !g.row.fixed);
-  if (!groups.some((g) => g.row.id === S.group)) S.group = groups[0].row.id;
+  if (S.group && !groups.some((g) => g.row.id === S.group)) S.group = groups[0].row.id;
   if (!S.editing) {
-    const tabs = document.createElement('div'); tabs.className = 'tabs'; tabs.setAttribute('role', 'tablist');
+    const heads = document.createElement('div'); heads.className = 'acc'; heads.setAttribute('role', 'tablist');
     for (const { row } of groups) {
-      const t = document.createElement('div'); t.setAttribute('role', 'tab'); t.className = 'tab' + (row.id === S.group ? ' sel' : ''); t.textContent = row.title;
-      t.setAttribute('aria-selected', row.id === S.group ? 'true' : 'false');
-      t.addEventListener('click', () => { S.group = row.id; store.set('group', S.group); renderRows(); });
-      tabs.appendChild(t);
+      const open = row.id === S.group;
+      const h = document.createElement('div'); h.setAttribute('role', 'tab'); h.className = 'acch' + (open ? ' sel' : ''); h.setAttribute('aria-label', row.title); h.setAttribute('aria-expanded', open ? 'true' : 'false');
+      h.innerHTML = ico(row.icon || 'apps') + ico(open ? 'expand_less' : 'expand_more');
+      h.addEventListener('click', () => { S.group = open ? '' : row.id; store.set('group', S.group); renderRows(); });
+      heads.appendChild(h);
     }
-    top.appendChild(tabs);
+    top.appendChild(heads);
   }
   for (const { row, r } of groups) if (S.editing || row.id === S.group) top.appendChild(groupRow(row, r, S.editing));
   rows.forEach((row, r) => {
@@ -448,7 +453,7 @@ const ACTIONS = {
 };
 
 /* Tippen auf Dock-Knoepfe darf den Fokus (und damit die Tastatur) nicht wegnehmen */
-el.dock.addEventListener('mousedown', (e) => { if (e.target.closest('.hb, .k, .tab, .chip, button')) e.preventDefault(); });
+el.dock.addEventListener('mousedown', (e) => { if (e.target.closest('.hb, .k, .acch, .chip, button')) e.preventDefault(); });
 
 /* =====================================================================
  *  Fensterleiste und Programm-Modus (braucht den Agenten auf dem Zielrechner)
@@ -599,7 +604,7 @@ function setK(k, announce = true) {
  *  Verbindung
  * ===================================================================== */
 function teardown() {
-  clearTimeout(S.retryTimer); stopWindowBar(); el.topbar.hidden = true;
+  clearTimeout(S.retryTimer); clearTimeout(S.connectTimer); stopWindowBar(); el.topbar.hidden = true;
   try { S.client && S.client.disconnect(); } catch { /* egal */ }
   S.client = null; S.tunnel = null; S.display = null; S.mouse = null; S.connected = false;
   el.display.replaceChildren();
@@ -615,6 +620,7 @@ function showBusy(msg) { // Fortschritt mit Animation, ohne Knoepfe
 const ERROR_TEXT = {
   513: 'Der Server ist gerade ausgelastet.', 514: 'Das Ziel antwortet nicht (Zeitüberschreitung).', 515: 'Die Verbindung zum Ziel ist fehlgeschlagen.',
   519: 'Das Ziel wurde nicht gefunden.', 520: 'Das Ziel ist nicht erreichbar.', 769: 'Anmeldung am Ziel abgelehnt. Bitte Benutzername und Passwort prüfen.',
+  777: 'Die Sitzung wurde in einem anderen Fenster oder auf einem anderen Gerät übernommen.',
 };
 let leaveHandler = () => {};
 /** Verbindung beenden und zur Startseite (die Seite zeigt die Meldung). reason: 'auth' = Sitzung der App ist abgelaufen. */
@@ -643,7 +649,7 @@ function cursorInfo(canvas, hx, hy) {
 }
 
 async function connect() {
-  S.intentional = false;
+  S.intentional = false; S.fatal = false; S.connectStarted = Date.now();
   teardown();
   el.remote.hidden = false;
   showBusy(S.everConnected ? 'Verbinde neu …' : 'Verbinde …');
@@ -651,15 +657,16 @@ async function connect() {
   const { w, h } = computeRemote();
   let ticket;
   try {
-    const resp = await fetch('/api/remote/ticket', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' },
+    const resp = await fetch('/api/remote/ticket', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, signal: AbortSignal.timeout(10000),
       body: JSON.stringify({ connection: S.conn.id, password: S.password || undefined, width: w, height: h, dpi: 96 }) });
     const data = await resp.json().catch(() => ({}));
     if (resp.status === 401) return leave('Die Sitzung ist abgelaufen. Bitte neu anmelden.', 'auth');
     if (!resp.ok) throw new Error(data.error || 'Fehler ' + resp.status);
     ticket = data.ticket;
   } catch (e) {
-    if (!S.everConnected) return leave(e.message);
-    return showOverlay(e.message);
+    const msg = e.name === 'TimeoutError' || e.name === 'TypeError' ? 'Keine Verbindung zum Server. Netz prüfen.' : e.message;
+    if (!S.everConnected) return leave(msg);
+    return showOverlay(msg);
   }
 
   const tunnel = new Guacamole.WebSocketTunnel((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/remote/ws');
@@ -678,11 +685,13 @@ async function connect() {
   client.onstatechange = (st) => {
     if (S.client !== client) return;
     if (st === 3) { // verbunden
-      S.connected = true; S.everConnected = true; S.retry = 0; S.connectedAt = Date.now(); startWindowBar(); fitDisplay(); pushSize(true); waitForFrame(client);
-      setTimeout(() => { if (S.client === client) S.firstLogin = false; }, 12000);
+      clearTimeout(S.connectTimer);
+      S.connected = true; S.everConnected = true; S.connectedAt = Date.now(); startWindowBar(); fitDisplay(); pushSize(true); waitForFrame(client);
+      // Die Zaehler der Wiederholung gelten erst als zurueckgesetzt, wenn die Verbindung wirklich haelt (sonst endlos: verbunden, sofort getrennt, neu ...)
+      setTimeout(() => { if (S.client === client && S.connected) { S.firstLogin = false; S.retry = 0; } }, 12000);
     } else if (st === 5) { // getrennt
       S.connected = false;
-      if (S.intentional) return;
+      if (S.intentional || S.fatal) return;
       if (!S.everConnected) return; // Fehler wird von onerror gemeldet
       // sofort nach dem Anmelden getrennt = xrdp hat das Passwort abgelehnt: nicht wiederholen
       if (S.firstLogin && Date.now() - S.connectedAt < 12000) return leave('Anmeldung fehlgeschlagen. Bitte Passwort prüfen.');
@@ -695,6 +704,7 @@ async function connect() {
     const known = ERROR_TEXT[err && err.code];
     const msg = known || ((err && err.message) ? err.message : 'Verbindungsfehler');
     S.connected = false;
+    if (err && err.code === 777) { S.fatal = true; clearTimeout(S.retryTimer); clearTimeout(S.connectTimer); return showOverlay(msg); }   // anderswo uebernommen: nicht zurueckholen, sonst streiten sich zwei Fenster
     if (!S.everConnected) leave(known || 'Verbindung nicht möglich: ' + msg);
     else if (S.firstLogin && Date.now() - S.connectedAt < 12000) leave('Anmeldung fehlgeschlagen. Bitte Passwort prüfen.');
     else showOverlay(msg);
@@ -710,6 +720,13 @@ async function connect() {
 
   setupMouse(client, display);
   client.connect('ticket=' + encodeURIComponent(ticket));
+  // kommt innerhalb von 20 s keine Verbindung zustande: nicht ewig "Verbinde ..." zeigen
+  clearTimeout(S.connectTimer);
+  S.connectTimer = setTimeout(() => {
+    if (S.client !== client || S.connected) return;
+    S.fatal = true; try { client.disconnect(); } catch { /* egal */ }
+    showOverlay('Die Verbindung kommt nicht zustande. Netz prüfen und „Neu verbinden“ tippen.');
+  }, 20000);
 }
 
 /* Nach dem Verbinden bleibt die Ladeanzeige stehen, bis wirklich ein Bild da ist (sonst ist alles schwarz).
@@ -763,7 +780,7 @@ function waitForFrame(client) {
 }
 
 function scheduleReconnect() {
-  if (S.retry >= 3) { showOverlay('Verbindung getrennt'); return; }
+  if (S.retry >= 3) { showOverlay('Verbindung getrennt. Läuft die Sitzung noch in einem anderen Fenster oder auf einem anderen Gerät?'); return; }
   S.retry += 1;
   const wait = 1500 * S.retry;
   showBusy(`Verbindung getrennt – neuer Versuch in ${Math.round(wait / 1000)} s …`);
@@ -1278,7 +1295,17 @@ el.pwDlg.addEventListener('close', () => { el.pwUser.value = ''; el.pwPass.value
  *  Start
  * ===================================================================== */
 window.addEventListener('beforeunload', () => { try { S.client && S.client.disconnect(); } catch { /* egal */ } });
-document.addEventListener('visibilitychange', () => { if (!document.hidden && hasCredentials() && !S.connected && !S.intentional && S.everConnected) { S.retry = 0; connect(); } });
+// Handy gesperrt oder App im Hintergrund: die Verbindung ist danach meist tot, das Bild aber noch da. Beim Zurueckkommen sofort neu verbinden
+// (nach laengerer Pause) oder, wenn schon getrennt, ebenfalls. Kurzes Wegwischen (unter 4 s) laesst die Verbindung in Ruhe.
+let hiddenAt = 0;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { hiddenAt = Date.now(); return; }
+  const away = hiddenAt ? Date.now() - hiddenAt : 0;
+  hiddenAt = 0;
+  if (!hasCredentials() || S.intentional || !S.everConnected || S.fatal) return;
+  if (S.client && !S.connected && Date.now() - S.connectStarted < 10000) return;   // es wird gerade verbunden: nicht noch einmal von vorn
+  if (!S.connected || away > 4000) { S.retry = 0; connect(); }
+});
 
 (async function init() {
   renderIcons(); applyTheme(); applyKbMode(); applyKeysOpen(); renderKeys();

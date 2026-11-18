@@ -3,6 +3,9 @@ namespace JulOS.Integrations.Guacamole;
 /// <summary>Was guacd verbinden soll: Protokoll, dessen Einstellungen und die Bildgroesse des Browsers.</summary>
 public sealed record GuacSpec(string Protocol, IReadOnlyDictionary<string, string> Args, int Width, int Height, int Dpi)
 {
+    /// <summary>Kennung "Benutzer + Verbindung": pro Kennung ist nur eine Browser-Verbindung offen, eine neue loest die alte ab.</summary>
+    public string? Slot { get; init; }
+
     /// <summary>Desktop ueber RDP. Die Werte stammen aus dem bewaehrten Node-Gateway.</summary>
     public static GuacSpec Desktop(string host, int port, string user, string password, int width, int height, int dpi) => new("rdp",
         new Dictionary<string, string>

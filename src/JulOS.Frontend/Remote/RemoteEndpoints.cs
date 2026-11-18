@@ -49,6 +49,7 @@ internal static class RemoteEndpoints
                 _ => null,
             };
             if (spec is null) return Error(400, "Diese Art von Verbindung wird noch nicht unterstützt.");
+            spec = spec with { Slot = $"{id.UserId}:{c.Id}" };
             var ticket = tickets.Create(id.UserId, spec);
             return ticket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(ticket, c.Kind, w, h), AppJson.Default.TicketResponse);
         });

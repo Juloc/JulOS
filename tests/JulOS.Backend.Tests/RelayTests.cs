@@ -235,4 +235,38 @@ public sealed class RelayTests
         var until = DateTime.UtcNow + Wait;
         while (!condition()) { Assert.True(DateTime.UtcNow < until, "Zeit abgelaufen"); await Task.Delay(20); }
     }
+
+    [Fact]
+    public async Task A_newer_connection_of_the_same_slot_replaces_the_older_one_and_tells_it_so()
+    {
+        await using var guacd = new FakeGuacd { AcceptMany = true };
+        var relay = NewRelay(guacd);
+        var spec = GuacSpec.Terminal("h", 22, "u", "p", 800, 600, 96) with { Slot = "jul:pc" };
+
+        var (browser1, server1) = await SocketPairAsync();
+        var first = relay.RunAsync(server1, spec, Alive, CancellationToken.None);
+        Assert.StartsWith("0.,", await ReceiveTextAsync(browser1));
+
+        var (browser2, server2) = await SocketPairAsync();
+        var second = relay.RunAsync(server2, spec, Alive, CancellationToken.None);
+        Assert.StartsWith("0.,", await ReceiveTextAsync(browser2));
+
+        // das alte Fenster bekommt "Sitzung uebernommen" (Code 777), das neue laeuft weiter
+        var told = await ReceiveTextAsync(browser1);
+        Assert.Contains("5.error", told);
+        Assert.Contains("3.777", told);
+        await first.WaitAsync(Wait);
+        Assert.False(second.IsCompleted);
+
+        // eine andere Kennung stoert nicht
+        var (browser3, server3) = await SocketPairAsync();
+        var third = relay.RunAsync(server3, spec with { Slot = "jul:anderer-pc" }, Alive, CancellationToken.None);
+        Assert.StartsWith("0.,", await ReceiveTextAsync(browser3));
+        Assert.False(second.IsCompleted);
+
+        await browser2.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+        await browser3.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+        await second.WaitAsync(Wait);
+        await third.WaitAsync(Wait);
+    }
 }

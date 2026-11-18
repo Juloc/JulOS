@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net.Sockets;
 using System.Net.WebSockets;
@@ -17,7 +18,12 @@ public sealed class GuacRelay(GuacdOptions options, ILogger<GuacRelay> log)
     public const int MaxMessage = 64 * 1024;
     public static readonly TimeSpan SessionCheck = TimeSpan.FromSeconds(60);
 
+    /// <summary>Statuscode "Sitzung uebernommen" (Guacamole: SESSION_CONFLICT).</summary>
+    public const int Taken = 777;
+
     private readonly SemaphoreSlim _slots = new(options.MaxConnections);
+    private sealed class Active { public CancellationTokenSource Soft = null!; public volatile bool Replaced; }
+    private readonly ConcurrentDictionary<string, Active> _active = new();
 
     /// <param name="sessionAlive">Wird regelmaessig gefragt; bei false wird die Verbindung beendet (Abmeldung, abgelaufene Sitzung).</param>
     public async Task RunAsync(WebSocket ws, GuacSpec spec, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan? sessionCheck = null)
@@ -45,11 +51,20 @@ public sealed class GuacRelay(GuacdOptions options, ILogger<GuacRelay> log)
         {
             log.LogInformation("Remote-Verbindung offen ({Protocol}, Handshake {Ms} ms)", spec.Protocol, clock.ElapsedMilliseconds);
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            // Pro Benutzer und Verbindung nur ein Browser: ein zweites Fenster (oder ein Geraet) uebernimmt, das alte bekommt eine Meldung und bleibt ruhig.
+            // Sonst riss jede neue Verbindung die alte beim Ziel hinaus, und zwei Fenster haetten sich endlos gegenseitig verdraengt.
+            // Abgebrochen wird nur das Lesen von guacd ("weich"): wer ein WebSocket-Lesen abbricht, reisst das WebSocket ein, dann ginge die Meldung verloren
+            using var soft = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
+            var mine = new Active { Soft = soft };
+            if (spec.Slot is { } slot)
+            {
+                _active.AddOrUpdate(slot, mine, (_, old) => { old.Replaced = true; try { old.Soft.Cancel(); } catch (ObjectDisposedException) { /* war schon fertig */ } return mine; });
+            }
             try
             {
                 // interne Anweisung: der Browser-Tunnel erwartet als Erstes seine Kennung
                 await ws.SendAsync(GuacProtocol.Encode("", conn.Id), WebSocketMessageType.Text, true, cts.Token).ConfigureAwait(false);
-                var down = DownAsync(ws, conn, cts.Token);
+                var down = DownAsync(ws, conn, soft.Token, mine);
                 var up = UpAsync(ws, conn, cts.Token);
                 var watch = WatchAsync(sessionAlive, sessionCheck, cts.Token);
                 var first = await Task.WhenAny(down, up, watch).ConfigureAwait(false);
@@ -63,20 +78,29 @@ public sealed class GuacRelay(GuacdOptions options, ILogger<GuacRelay> log)
             catch (Exception e) when (e is OperationCanceledException or WebSocketException or ObjectDisposedException) { /* Browser weg */ }
             finally
             {
-                log.LogInformation("Remote-Verbindung beendet nach {Seconds} s", (int)clock.Elapsed.TotalSeconds);
+                if (spec.Slot is { } slot2) _active.TryRemove(new KeyValuePair<string, Active>(slot2, mine));
+                log.LogInformation("Remote-Verbindung beendet nach {Seconds} s{Replaced}", (int)clock.Elapsed.TotalSeconds, mine.Replaced ? " (von einer neuen Verbindung abgelöst)" : "");
                 await CloseAsync(ws).ConfigureAwait(false);
             }
         }
     }
 
     /// <summary>guacd -> Browser: Bloecke mit ganzen Anweisungen.</summary>
-    private static async Task DownAsync(WebSocket ws, GuacdConnection conn, CancellationToken ct)
+    private static async Task DownAsync(WebSocket ws, GuacdConnection conn, CancellationToken ct, Active mine)
     {
-        while (true)
+        try
         {
-            var block = await conn.Reader.ReadBlockAsync(ct).ConfigureAwait(false);
-            if (block.IsEmpty) return;
-            await ws.SendAsync(block, WebSocketMessageType.Text, true, ct).ConfigureAwait(false);
+            while (true)
+            {
+                var block = await conn.Reader.ReadBlockAsync(ct).ConfigureAwait(false);
+                if (block.IsEmpty) return;
+                await ws.SendAsync(block, WebSocketMessageType.Text, true, ct).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (mine.Replaced)
+        {
+            // eine neuere Verbindung hat uebernommen: dem Browser sagen warum (er holt die Sitzung dann nicht automatisch zurueck)
+            await ws.SendAsync(GuacProtocol.Encode("error", "Sitzung übernommen.", Taken.ToString()), WebSocketMessageType.Text, true, CancellationToken.None).ConfigureAwait(false);
         }
     }
 

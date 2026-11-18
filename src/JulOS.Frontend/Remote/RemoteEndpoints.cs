@@ -5,6 +5,7 @@ using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
 using JulOS.Backend.Services;
 using JulOS.Frontend.Auth;
+using JulOS.Integrations;
 using JulOS.Integrations.Display;
 using JulOS.Integrations.Display.Rdp;
 using JulOS.Integrations.Guacamole;
@@ -56,7 +57,7 @@ internal static class RemoteEndpoints
                     Host = c.Host, Port = c.Port, UserName = c.Username, Password = password, Width = w & ~1, Height = h & ~1,
                     KeyboardLayout = 0x407,
                 };
-                var screenTicket = screenTickets.Create(id.UserId, new ScreenTarget(options, $"{id.UserId}:{c.Id}"));
+                var screenTicket = screenTickets.Create(id.UserId, new ScreenTarget(options, SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid)));
                 return screenTicket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(screenTicket, c.Kind, w & ~1, h & ~1, "stream"), AppJson.Default.TicketResponse);
             }
 
@@ -67,7 +68,7 @@ internal static class RemoteEndpoints
                 _ => null,
             };
             if (spec is null) return Error(400, "Diese Art von Verbindung wird noch nicht unterstützt.");
-            spec = spec with { Slot = $"{id.UserId}:{c.Id}" };
+            spec = spec with { Slot = SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid) };
             var ticket = tickets.Create(id.UserId, spec);
             return ticket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(ticket, c.Kind, w, h), AppJson.Default.TicketResponse);
         });
@@ -85,7 +86,7 @@ internal static class RemoteEndpoints
             // Der Guacamole-Tunnel im Browser fragt das Unterprotokoll "guacamole" an und bricht ab, wenn der Server keins waehlt
             var accept = new WebSocketAcceptContext { SubProtocol = ctx.WebSockets.WebSocketRequestedProtocols.Contains("guacamole") ? "guacamole" : null };
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync(accept);
-            await relay.RunAsync(ws, spec, ct => auth.IsSessionAliveAsync(id.Id, ct), ctx.RequestAborted);
+            await relay.RunAsync(ws, spec, ct => auth.IsSessionAliveAsync(id.Id, ct), ctx.RequestAborted, owner: id.UserId);
             return Results.Empty;
         });
         // Bildschirm-Stream: dasselbe Ticket-Verfahren, aber ohne Unterprotokoll, nur binaere Nachrichten (siehe ScreenProtocol)
@@ -97,7 +98,7 @@ internal static class RemoteEndpoints
             var target = tickets.Take(ctx.Request.Query["ticket"].ToString(), id.UserId);
             if (target is null) return Error(403, "Ticket ungültig oder abgelaufen.");
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
-            await relay.RunAsync(ws, target, ct => auth.IsSessionAliveAsync(id.Id, ct), ctx.RequestAborted);
+            await relay.RunAsync(ws, target, ct => auth.IsSessionAliveAsync(id.Id, ct), ctx.RequestAborted, owner: id.UserId);
             return Results.Empty;
         });
     }

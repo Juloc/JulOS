@@ -1,6 +1,5 @@
 using System.Buffers;
 using System.Buffers.Binary;
-using System.Collections.Concurrent;
 using System.Net.Sockets;
 using System.Net.WebSockets;
 using JulOS.Integrations.Display.Rdp;
@@ -10,10 +9,11 @@ namespace JulOS.Integrations.Display;
 
 /// <summary>
 /// Verbindet einen Browser-WebSocket mit einer <see cref="ScreenStream"/>-Sitzung: Bilder, Mauszeiger und Groesse gehen binaer zum Browser,
-/// seine Eingaben (siehe <see cref="ScreenProtocol"/>) an den fernen Rechner. Pro Benutzer und Verbindung ist nur ein Browser offen: ein
-/// neuer loest den alten ab, der alten Seite wird das gesagt (sonst bliebe dort ein Standbild stehen).
+/// seine Eingaben (siehe <see cref="ScreenProtocol"/>) an den fernen Rechner. Pro Slot (Benutzer, Verbindung, Sitzung des Browsers) ist nur ein
+/// WebSocket offen: ein neuer loest den alten ab, der alten Seite wird das gesagt (sonst bliebe dort ein Standbild stehen). Andere Sitzungen
+/// bleiben unberuehrt; die Obergrenze pro Benutzer steckt in der <see cref="SessionRegistry"/>.
 /// </summary>
-public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16)
+public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, SessionRegistry? registry = null)
 {
     public static readonly TimeSpan SessionCheck = TimeSpan.FromSeconds(60);
 
@@ -22,17 +22,11 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16)
 
     private const int ReceiveBuffer = 256;
     private readonly SemaphoreSlim _slots = new(maxSessions);
-
-    private sealed class Active
-    {
-        public CancellationTokenSource Stop = null!;
-        public volatile bool Replaced;
-    }
-
-    private readonly ConcurrentDictionary<string, Active> _active = new();
+    private readonly SessionRegistry _sessions = registry ?? new SessionRegistry(int.MaxValue);   // ohne Angabe (Tests): keine Obergrenze, aber Ablosen je Slot
 
     /// <param name="sessionAlive">Wird regelmaessig gefragt; bei false endet die Sitzung (Abmeldung, abgelaufene Sitzung der App).</param>
-    public async Task RunAsync(WebSocket ws, ScreenTarget target, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan? sessionCheck = null)
+    /// <param name="owner">Der Benutzer (fuer die Obergrenze offener Sitzungen und das Ablosen im selben Slot).</param>
+    public async Task RunAsync(WebSocket ws, ScreenTarget target, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan? sessionCheck = null, Guid? owner = null)
     {
         if (!await _slots.WaitAsync(0, ct).ConfigureAwait(false))
         {
@@ -42,7 +36,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16)
 
         try
         {
-            await RunCoreAsync(ws, target, sessionAlive, ct, sessionCheck ?? SessionCheck).ConfigureAwait(false);
+            await RunCoreAsync(ws, target, sessionAlive, ct, sessionCheck ?? SessionCheck, owner).ConfigureAwait(false);
         }
         finally
         {
@@ -50,7 +44,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16)
         }
     }
 
-    private async Task RunCoreAsync(WebSocket ws, ScreenTarget target, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan sessionCheck)
+    private async Task RunCoreAsync(WebSocket ws, ScreenTarget target, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan sessionCheck, Guid? owner)
     {
         if (!ScreenStream.IsAvailable)
         {
@@ -60,15 +54,11 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16)
         }
 
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var mine = new Active { Stop = stop };
-        if (target.Slot is { } slot)
+        var mine = _sessions.TryOpen(owner ?? Guid.Empty, target.Slot, () => stop.Cancel());
+        if (mine is null)
         {
-            _active.AddOrUpdate(slot, mine, (_, old) =>
-            {
-                old.Replaced = true;
-                try { old.Stop.Cancel(); } catch (ObjectDisposedException) { /* war schon fertig */ }
-                return mine;
-            });
+            await FinishAsync(ws, ScreenProtocol.Error(SessionRegistry.TooManyStatus, _sessions.LimitMessage), ct).ConfigureAwait(false);
+            return;
         }
 
         var started = Environment.TickCount64;
@@ -123,11 +113,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16)
         }
         finally
         {
-            if (target.Slot is { } slot2)
-            {
-                _active.TryRemove(new KeyValuePair<string, Active>(slot2, mine));
-            }
-
+            mine.Dispose();
             log.LogInformation("Bildschirm-Verbindung beendet nach {Seconds} s{Replaced}", (Environment.TickCount64 - started) / 1000, mine.Replaced ? " (von einer neuen Verbindung abgelöst)" : "");
             await CloseAsync(ws).ConfigureAwait(false);
         }

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Text;
+using JulOS.Integrations;
 using JulOS.Integrations.Guacamole;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -301,5 +302,48 @@ public sealed class RelayTests
 
         fast.Abort();                                              // die zweite Verbindung wird hier ebenfalls geflutet und liest nicht: hart beenden
         await second.WaitAsync(Wait);
+    }
+
+    [Fact]
+    public async Task Sessions_of_one_user_to_the_same_target_do_not_replace_each_other_and_the_limit_is_friendly()
+    {
+        await using var guacd = new FakeGuacd { AcceptMany = true };
+        var registry = new SessionRegistry(2);
+        var relay = new GuacRelay(new GuacdOptions("127.0.0.1", guacd.Port), NullLogger<GuacRelay>.Instance, registry);
+        var me = Guid.NewGuid();
+        var conn = Guid.NewGuid();
+        GuacSpec Spec(string sid) => GuacSpec.Terminal("h", 22, "u", "p", 800, 600, 96) with { Slot = SessionRegistry.SlotOf(me, conn, sid) };
+
+        var (b1, s1) = await SocketPairAsync();
+        var first = relay.RunAsync(s1, Spec("sitzung-eins"), Alive, CancellationToken.None, owner: me);
+        Assert.StartsWith("0.,", await ReceiveTextAsync(b1));
+        var (b2, s2) = await SocketPairAsync();
+        var second = relay.RunAsync(s2, Spec("sitzung-zwei"), Alive, CancellationToken.None, owner: me);
+        Assert.StartsWith("0.,", await ReceiveTextAsync(b2));
+        Assert.False(first.IsCompleted);                          // die zweite hat die erste nicht abgeloest
+
+        // dritte Sitzung: Obergrenze, mit Meldung im Klartext (Code 797), guacd wird gar nicht erst gefragt
+        var (b3, s3) = await SocketPairAsync();
+        await relay.RunAsync(s3, Spec("sitzung-drei"), Alive, CancellationToken.None, owner: me);
+        await ReceiveTextAsync(b3);
+        var refused = await ReceiveTextAsync(b3);
+        Assert.Contains("Es sind schon 2 Sitzungen offen", refused);
+        Assert.EndsWith(",3.797;", refused);
+
+        // ein Neuladen der ersten (gleiche Kennung) loest nur die erste ab, auch an der Obergrenze
+        var (b1b, s1b) = await SocketPairAsync();
+        var firstAgain = relay.RunAsync(s1b, Spec("sitzung-eins"), Alive, CancellationToken.None, owner: me);
+        Assert.StartsWith("0.,", await ReceiveTextAsync(b1b));
+        Assert.Contains("3.777", await ReceiveTextAsync(b1));
+        await first.WaitAsync(Wait);
+        Assert.False(second.IsCompleted);
+
+        // eine Sitzung weg: wieder Platz
+        await b2.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+        await second.WaitAsync(Wait);
+        Assert.Equal(1, registry.CountOf(me));
+        await b1b.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+        await firstAgain.WaitAsync(Wait);
+        Assert.Equal(0, registry.CountOf(me));
     }
 }

@@ -46,6 +46,15 @@ interface instead of the phone home: menu bar, dock, launcher, a Home window and
 is moved into it; the engines are untouched). The phone never loads these two files. `?desktop` forces the desktop view and `?phone` the phone view
 (useful in a browser whose pointer is not reported as "fine"). The system overview (CPU, RAM, disk, network tiles on Start and the System view, `GET /api/system/overview`, see ARCHITECTURE.md for what it measures) is real. Docker, Caddy and DDNS have no backend yet and are only
 shown as "bald verfügbar" (design notes in `IDEAS.md`).
+On every other screen (phone, tablet, narrow window) `shell.js` loads `mobile.js`, `m3.css` and `mobile.css`: the phone shell in Material 3 style with a bottom
+navigation bar (Home, Dienste, Server, Monitoring, Profil), bottom sheets for add, edit and start (the existing dialogs, restyled and with segmented buttons for
+kind and engine) and a snackbar. `m3.css` holds the design tokens (colour roles computed from one seed colour with `oklch(from ...)` and `light-dark()`, shape,
+type, motion, density) and the components, `mobile.css` the screens. The seed colour and Hell/Dunkel are the same settings `app.js` uses (`pd.seed`, `pd.scheme`),
+so the remote view's own colours follow. `?classic` shows the old plain list instead (fallback for testing). The remote view is not touched: connecting hides
+the shell, leaving shows it again. Real data: user name, saved connections, devices and sessions, and the server card only if `GET /api/system/overview`
+answers (an adapter in `mobile.js` reads `cpuPercent`, `memoryUsed/Total`, `diskUsed/Total`, ...; a 404 hides the card for five minutes). Kept on the device only
+(localStorage `pd.m.*`): favourites, how often and when a connection was started (for "Meine Favoriten" and "Aktivitäten"), the default engine for new desktops.
+Server (without the API) and Monitoring are marked "bald verfügbar"; a switch in Profil hides them. Test it at 375x812 and 412x915, light and dark.
 To test next to other sessions, start your own compose project with other ports and your `wwwroot` mounted over `/app/wwwroot` (no rebuild after
 frontend changes), for example an override file with `ports: !override ["127.0.0.1:18280:8080"]` and `docker compose -p my-ui -f deploy/dev/compose.yaml -f override.yaml up -d`.
 Cookies belong to the host name, not the port: two stacks opened as `127.0.0.1:...` in one browser overwrite each other's login, so open yours as

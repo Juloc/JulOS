@@ -1,0 +1,24 @@
+# Stufe 1: HTTPS, aber nur aus dem eigenen Netz. Zum Testen von PWA-Installation und Bild-Einfuegen,
+# bevor die Seite aus dem Internet erreichbar ist. Danach auf caddy/Caddyfile.example (mTLS + Proxy-Secret) umstellen.
+# Anpassen: Domain und die IP des Rechners, auf dem das Gateway laeuft.
+app.example.com {
+	# nur private Adressen durchlassen, alles andere wird ohne Antwort abgebrochen
+	@lan remote_ip 192.168.0.0/16 10.0.0.0/8 172.16.0.0/12
+	handle @lan {
+		reverse_proxy <IP-des-Gateway-Rechners>:8080 {
+			flush_interval -1
+			transport http {
+				read_timeout 1h
+				write_timeout 1h
+			}
+		}
+	}
+	handle {
+		abort
+	}
+}
+
+# Optional: eine zweite, kurze Adresse, die nur weiterleitet (temporaer, damit der Browser sie nicht dauerhaft merkt)
+short.example.com {
+	redir https://app.example.com{uri}
+}

@@ -53,8 +53,8 @@ so running on the same machine is the supported setup for now.
 
 ## Installing the PWA, HTTPS
 
-Browsers only install PWAs and allow the clipboard API on **HTTPS**. Put a reverse proxy in front (Caddy example in
-[caddy/Caddyfile.example](caddy/Caddyfile.example)). Over plain HTTP in the LAN the page works but passwords travel unencrypted.
+Browsers only install PWAs and allow the clipboard API on **HTTPS**. Put a reverse proxy in front (Caddy examples: [caddy/Caddyfile.lan-first.example](caddy/Caddyfile.lan-first.example) for a first HTTPS test inside your network,
+[caddy/Caddyfile.example](caddy/Caddyfile.example) with client certificate and proxy secret for internet access). Over plain HTTP in the LAN the page works but passwords travel unencrypted.
 
 ## Security
 

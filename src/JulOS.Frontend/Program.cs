@@ -94,7 +94,8 @@ app.Use(async (ctx, next) =>
 
 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
 app.UseDefaultFiles();
-app.UseStaticFiles();
+// Der Browser fragt bei jedem Start nach, ob sich eine Datei geaendert hat (ETag), damit Updates sofort ankommen
+app.UseStaticFiles(new StaticFileOptions { OnPrepareResponse = c => c.Context.Response.Headers.CacheControl = "no-cache" });
 app.UseMiddleware<ApiGuard>();
 
 var version = typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion?.Split('+')[0] ?? "0";

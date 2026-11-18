@@ -78,7 +78,7 @@ const S = {
   touchMode: store.get('touchMode', 'direct'),// 'direct' (Tippen = Klick an der Stelle) | 'pad' (Touchpad)
   lastSent: { w: 0, h: 0 },
   retry: 0, retryTimer: null, resizeTimer: null, toastTimer: null,
-  expanded: store.get('expanded', false), actOn: {}, zoomTimer: null, editing: false,
+  expanded: store.get('expanded', false), group: store.get('group', 'keys'), actOn: {}, zoomTimer: null, editing: false,
   autoKb: store.get('autoKb', true),   // Tastatur oeffnet sich beim Tippen auf ein Textfeld (Erkennung am Mauszeiger)
   debug: store.get('debug', true),     // sendet nur Messwerte (Groessen, Ereignisarten), nie getippten Text
   cursor: { ibeam: false },
@@ -207,16 +207,17 @@ const typeText = (str) => enqueue(async () => {
 const ITEM = (label, type, value) => ({ label, type, value });
 const ACT = (icon, action) => ITEM(':' + icon, 'action', action);
 const DEFAULT_ROWS = [
-  { id: 'more', title: 'Mehr', open: false, items: [
-    ITEM('⇧Tab', 'chord', 'shift+tab'), ITEM('Bild↑', 'chord', 'pageup'), ITEM('Bild↓', 'chord', 'pagedown'), ITEM('Pos1', 'chord', 'home'),
-    ITEM('Ende', 'chord', 'end'), ITEM('Entf', 'chord', 'delete'), ITEM('Strg+C', 'chord', 'ctrl+c'), ITEM('Strg+V', 'chord', 'ctrl+v'),
-    ITEM('Strg+X', 'chord', 'ctrl+x'), ITEM('Strg+A', 'chord', 'ctrl+a'), ITEM('Strg+Z', 'chord', 'ctrl+z'), ITEM('Strg+F', 'chord', 'ctrl+f'),
-    ITEM('Alt+Tab', 'chord', 'alt+tab'), ITEM('Strg+⇧+T', 'chord', 'ctrl+shift+t'),
-    ACT('image', 'photo'), ACT('paste', 'clip'), ACT('key', 'password') ] },
-  { id: 'quick', title: 'Tasten', open: true, items: [
-    ITEM('Alt', 'mod', 'alt'), ITEM('Shift', 'mod', 'shift'), ACT('add_photo', 'pasteimg'),
+  // drei Gruppen, je eine Zeile kleiner Tasten; ueber der Leiste waehlt man per schmalem Reiter, welche Gruppe zu sehen ist
+  { id: 'keys', title: 'Tasten', items: [
+    ITEM('Alt', 'mod', 'alt'), ITEM('Shift', 'mod', 'shift'),
     ITEM('←', 'chord', 'left'), ITEM('↑', 'chord', 'up'), ITEM('↓', 'chord', 'down'), ITEM('→', 'chord', 'right'),
-    ITEM(':ret', 'chord', 'enter'), ITEM(':backspace', 'chord', 'backspace') ] },
+    ITEM(':ret', 'chord', 'enter'), ITEM(':backspace', 'chord', 'backspace'), ITEM('Entf', 'chord', 'delete'),
+    ITEM('Pos1', 'chord', 'home'), ITEM('Ende', 'chord', 'end'), ITEM('Bild↑', 'chord', 'pageup'), ITEM('Bild↓', 'chord', 'pagedown'), ITEM('⇧Tab', 'chord', 'shift+tab') ] },
+  { id: 'combos', title: 'Combos', items: [
+    ITEM('Strg+C', 'chord', 'ctrl+c'), ITEM('Strg+V', 'chord', 'ctrl+v'), ITEM('Strg+X', 'chord', 'ctrl+x'), ITEM('Strg+A', 'chord', 'ctrl+a'),
+    ITEM('Strg+Z', 'chord', 'ctrl+z'), ITEM('Strg+F', 'chord', 'ctrl+f'), ITEM('Alt+Tab', 'chord', 'alt+tab'), ITEM('Strg+⇧+T', 'chord', 'ctrl+shift+t') ] },
+  { id: 'funcs', title: 'Funktionen', items: [
+    ITEM('Bild einfügen', 'action', 'pasteimg'), ITEM('Foto wählen', 'action', 'photo'), ITEM('Text senden', 'action', 'clip'), ITEM('Passwort', 'action', 'password') ] },
   // die Leiste: immer sichtbar, eine Zeile, ganz unten
   { id: 'bar', title: 'Leiste', fixed: true, items: [
     ITEM('Esc', 'chord', 'esc'), ITEM('Strg', 'mod', 'ctrl'), ITEM('Tab', 'chord', 'tab'),
@@ -225,19 +226,19 @@ const DEFAULT_ROWS = [
 ];
 const clone = (o) => JSON.parse(JSON.stringify(o));
 function loadRows() {
-  const saved = store.get('rows3', null);
-  if (Array.isArray(saved) && saved.some((r) => r.fixed)) {
-    // neue Standardtaste nachtragen, ohne eigene Anpassungen zu verlieren
-    const has = saved.some((r) => r.items.some((i) => i.type === 'action' && i.value === 'pasteimg'));
-    if (!has) { const q = saved.find((r) => r.id === 'quick') || saved.find((r) => !r.fixed); if (q) q.items.splice(Math.min(2, q.items.length), 0, ACT('add_photo', 'pasteimg')); }
-    return saved;
-  }
-  return clone(DEFAULT_ROWS);
+  const saved = store.get('rows4', null);
+  if (Array.isArray(saved) && saved.some((r) => r.fixed) && ['keys', 'combos', 'funcs'].every((id) => saved.some((r) => r.id === id))) return saved;
+  // Aus der alten Aufteilung (Mehr/Tasten) nur die eigene untere Leiste mitnehmen
+  const fresh = clone(DEFAULT_ROWS);
+  const old = store.get('rows3', null);
+  const oldBar = Array.isArray(old) && old.find((r) => r.fixed);
+  if (oldBar) fresh[fresh.findIndex((r) => r.fixed)] = oldBar;
+  return fresh;
 }
 let rows = loadRows();
 let suppressClick = false;
 let editRow = 0, editIndex = -1;      // editIndex -1 = neue Taste
-const saveRows = () => store.set('rows3', rows);
+const saveRows = () => store.set('rows4', rows);
 
 function refreshModButtons() {
   document.querySelectorAll('#rowsTop .k[data-mod], #rowsBottom .k[data-mod]').forEach((b) => {
@@ -288,32 +289,53 @@ function keyEl(def, r, i) {
   return b;
 }
 
+function groupRow(row, r, label) {
+  const wrap = document.createElement('div');
+  wrap.className = 'row grp' + (S.editing ? ' editing' : '');
+  const rk = document.createElement('div'); rk.className = 'rk'; rk.dataset.r = String(r);
+  if (label) { const t = document.createElement('div'); t.className = 'gt'; t.textContent = row.title; rk.appendChild(t); }
+  row.items.forEach((def, i) => rk.appendChild(keyEl(def, r, i)));
+  if (S.editing) {
+    const add = document.createElement('div'); add.setAttribute('role', 'button'); add.className = 'k add'; add.textContent = '＋ Taste';
+    add.addEventListener('click', () => openKeyEditor(r, -1)); rk.appendChild(add);
+    if (r === rows.length - 1) {
+      const done = document.createElement('div'); done.setAttribute('role', 'button'); done.className = 'k'; done.textContent = '✓ Fertig';
+      done.addEventListener('click', () => { S.editing = false; renderRows(); toast('Tasten gespeichert'); }); rk.appendChild(done);
+    }
+  }
+  wrap.append(rk);
+  return wrap;
+}
+/* Oben: schmale Reiter (Tasten | Combos | Funktionen) und darunter nur die gewaehlte Gruppe. Beim Bearbeiten sind alle Gruppen sichtbar. */
 function renderRows() {
   const top = $('#rowsTop'), bottom = $('#rowsBottom');
   top.replaceChildren(); bottom.replaceChildren();
+  const groups = rows.map((row, r) => ({ row, r })).filter((g) => !g.row.fixed);
+  if (!groups.some((g) => g.row.id === S.group)) S.group = groups[0].row.id;
+  if (!S.editing) {
+    const tabs = document.createElement('div'); tabs.className = 'tabs'; tabs.setAttribute('role', 'tablist');
+    for (const { row } of groups) {
+      const t = document.createElement('div'); t.setAttribute('role', 'tab'); t.className = 'tab' + (row.id === S.group ? ' sel' : ''); t.textContent = row.title;
+      t.setAttribute('aria-selected', row.id === S.group ? 'true' : 'false');
+      t.addEventListener('click', () => { S.group = row.id; store.set('group', S.group); renderRows(); });
+      tabs.appendChild(t);
+    }
+    top.appendChild(tabs);
+  }
+  for (const { row, r } of groups) if (S.editing || row.id === S.group) top.appendChild(groupRow(row, r, S.editing));
   rows.forEach((row, r) => {
-    const fixed = !!row.fixed;
-    const open = S.editing || fixed ? true : row.open;
+    if (!row.fixed) return;
     const wrap = document.createElement('div');
-    wrap.className = 'row' + (open ? '' : ' collapsed') + (fixed ? ' bar' : '') + (S.editing ? ' editing' : '');
+    wrap.className = 'row bar' + (S.editing ? ' editing' : '');
     const rk = document.createElement('div'); rk.className = 'rk'; rk.dataset.r = String(r);
     row.items.forEach((def, i) => rk.appendChild(keyEl(def, r, i)));
     if (S.editing) {
       const add = document.createElement('div'); add.setAttribute('role', 'button'); add.className = 'k add'; add.textContent = '＋ Taste';
       add.addEventListener('click', () => openKeyEditor(r, -1)); rk.appendChild(add);
-      if (r === rows.length - 1) {
-        const done = document.createElement('div'); done.setAttribute('role', 'button'); done.className = 'k'; done.textContent = '✓ Fertig';
-        done.addEventListener('click', () => { S.editing = false; renderRows(); toast('Tasten gespeichert'); }); rk.appendChild(done);
-      }
+      const done = document.createElement('div'); done.setAttribute('role', 'button'); done.className = 'k'; done.textContent = '✓ Fertig';
+      done.addEventListener('click', () => { S.editing = false; renderRows(); toast('Tasten gespeichert'); }); rk.appendChild(done);
     }
-    if (fixed) wrap.append(rk);
-    else {
-      const rh = document.createElement('div'); rh.className = 'rh'; rh.setAttribute('role', 'button');
-      rh.innerHTML = ico(open ? 'expand_more' : 'chevron_right') + `<span>${row.title}</span>`;
-      rh.addEventListener('click', () => { if (S.editing) return; row.open = !row.open; saveRows(); renderRows(); });
-      wrap.append(rh, rk);
-    }
-    (fixed ? bottom : top).appendChild(wrap);
+    wrap.append(rk); bottom.appendChild(wrap);
   });
   applyKeysOpen(); refreshModButtons();
 }
@@ -426,7 +448,7 @@ const ACTIONS = {
 };
 
 /* Tippen auf Dock-Knoepfe darf den Fokus (und damit die Tastatur) nicht wegnehmen */
-el.dock.addEventListener('mousedown', (e) => { if (e.target.closest('.hb, .k, .chip, .rh, button')) e.preventDefault(); });
+el.dock.addEventListener('mousedown', (e) => { if (e.target.closest('.hb, .k, .tab, .chip, button')) e.preventDefault(); });
 
 /* =====================================================================
  *  Fensterleiste und Programm-Modus (braucht den Agenten auf dem Zielrechner)

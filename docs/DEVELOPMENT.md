@@ -72,6 +72,7 @@ dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj    # 
 - The Guacamole tunnel in the browser asks for the WebSocket subprotocol `guacamole` and aborts if the server does not select it. A plain test client does not notice, so this one was only found in a real browser; the server now selects it and a test checks it.
 - A `u8` string literal such as `"\x89PNG"u8` encodes `\x89` as two UTF-8 bytes; binary signatures must be byte arrays.
 - The browser's tunnel only handles whole instructions per WebSocket message, so the relay splits the guacd stream on instruction boundaries (a `;` can appear inside a value, for example in copied text).
+- Reconnecting from the client: disconnect the old Guacamole client only after detaching it (`S.client = null`). Its "disconnected" event fires at once; if the handler still sees itself as the current client it arms a retry timer that kills the fresh connection after 1.5 s, 3 s, 4.5 s. The server log shows it as three short connections (1 s, 2 s, 4 s) before one holds.
 
 ## Layout
 

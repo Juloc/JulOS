@@ -607,9 +607,12 @@ function setK(k, announce = true) {
  *  Verbindung
  * ===================================================================== */
 function teardown() {
-  clearTimeout(S.retryTimer); clearTimeout(S.connectTimer); stopWindowBar(); el.topbar.hidden = true;
-  try { S.client && S.client.disconnect(); } catch { /* egal */ }
+  // Erst den alten Client abkoppeln, dann trennen: sein "getrennt"-Ereignis kommt sofort und wuerde sonst (S.client waere noch er selbst)
+  // einen neuen Wiederholungs-Timer setzen, der die frische Verbindung nach 1,5/3/4,5 s wieder abschiesst.
+  const old = S.client;
   S.client = null; S.tunnel = null; S.display = null; S.mouse = null; S.connected = false;
+  try { old && old.disconnect(); } catch { /* egal */ }
+  clearTimeout(S.retryTimer); clearTimeout(S.connectTimer); stopWindowBar(); el.topbar.hidden = true;
   el.display.replaceChildren();
   resetMods();
 }

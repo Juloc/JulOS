@@ -169,7 +169,7 @@ input[type=search] { background: var(--md-surface-high); color: var(--text); bor
 
 /* ===== Programmleiste oben, Leiste unten als eine Zeile, Zoom-Anzeige ===== */
 #topbar { position: relative; z-index: 11; background: var(--panel); border-radius: 0 0 22px 22px; box-shadow: 0 2px 10px rgba(0,0,0,.35); }
-#topbar #rowWin { padding: 6px 8px; }
+#topbar #rowWin { padding: 6px 8px; min-height: 52px; }   /* feste Hoehe auch solange die Leiste noch leer ist */
 #topbar #winSheet { bottom: auto; top: calc(100% + 6px); z-index: 40; }
 #zoomPop { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(.9); z-index: 21; pointer-events: none; opacity: 0; transition: opacity .18s, transform .18s;
   background: color-mix(in srgb, var(--md-surface) 82%, transparent); color: var(--md-on-surface); padding: 12px 22px; border-radius: 999px; font-size: 1.4rem; font-weight: 500; box-shadow: 0 2px 12px rgba(0,0,0,.4); }

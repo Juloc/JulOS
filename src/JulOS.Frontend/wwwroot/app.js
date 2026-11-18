@@ -78,7 +78,7 @@ const S = {
   k: clamp(store.get('k', 0.8), 0.35, 1.8),   // Remote-Pixel pro Handy-Pixel (kleiner = Inhalt groesser)
   kbMode: store.get('kbMode2', 'rich'),       // 'rich' (Bilder aus der Tastatur) | 'normal' (mit Vorschlaegen) | 'direct' (ohne Vorschlaege)
   touchMode: store.get('touchMode', 'direct'),// 'direct' (Tippen = Klick an der Stelle) | 'pad' (Touchpad)
-  lastSent: { w: 0, h: 0 },
+  lastSent: { w: 0, h: 0 }, sizeTimes: [],
   retry: 0, retryTimer: null, resizeTimer: null, toastTimer: null,
   expanded: store.get('expanded', false), group: store.get('group', 'keys'), actOn: {}, zoomTimer: null, editing: false,
   autoKb: store.get('autoKb', true),   // Tastatur oeffnet sich beim Tippen auf ein Textfeld (Erkennung am Mauszeiger)
@@ -474,11 +474,12 @@ async function startWindowBar() {
   // Der Agent gehoert zur Maschine, neben der der Server laeuft: nur fuer Desktop-Verbindungen anbieten
   if (S.conn && S.conn.kind === 'desktop') { try { const h = await (await fetch('/api/agent/health')).json(); W.available = !!h.available; } catch { W.available = false; } }
   dbg('agent', { available: W.available });
+  if (S.conn && S.conn.kind === 'desktop') store.set('winbar', W.available);
   renderWindows();
   if (!W.available) return;
   pollWindows(); W.timer = setInterval(pollWindows, 2000);
 }
-function stopWindowBar() { clearInterval(W.timer); W.timer = null; W.list = []; W.lastCls = null; }
+function stopWindowBar() { clearInterval(W.timer); W.timer = null; W.list = []; W.lastCls = null; winSig = ''; }
 async function pollWindows() {
   if (!S.connected || !W.available || document.hidden) return;
   try {
@@ -499,9 +500,16 @@ function rememberProfile() {                               // Zoom von Hand: fue
   if (W.mode !== 'apps' || !W.lastCls) return;
   profiles[W.lastCls] = S.k; store.set('profiles', profiles);
 }
+let winSig = '';
 function renderWindows() {
   const row = $('#rowWin');
-  if (!W.available) { el.topbar.hidden = true; return; }
+  if (!W.available) { el.topbar.hidden = true; winSig = ''; return; }
+  // Die Leiste wird alle 2 s abgefragt. Nur neu aufbauen, wenn sich etwas geaendert hat: sonst springt sie waehrenddessen an den Anfang
+  // (Scrollstand weg), Symbole flackern und ein gerade begonnener Fingertipp trifft ein schon ersetztes Element.
+  const sig = W.mode + '|' + W.list.map((w) => [w.id, w.active ? 1 : 0, w.minimized ? 1 : 0, w.title, w.app, (w.icon || '').length].join(':')).join('|');
+  if (!el.topbar.hidden && sig === winSig) return;
+  winSig = sig;
+  const keepScroll = row.scrollLeft;
   el.topbar.hidden = false; row.replaceChildren();
   const mode = document.createElement('div'); mode.className = 'chip mode'; mode.setAttribute('role', 'button');
   mode.innerHTML = ico(W.mode === 'apps' ? 'apps' : 'desktop') + `<span>${W.mode === 'apps' ? 'Apps' : 'Desktop'}</span>`;
@@ -520,6 +528,7 @@ function renderWindows() {
   }
   const add = document.createElement('div'); add.className = 'chip add'; add.setAttribute('role', 'button'); add.innerHTML = ico('add');
   add.addEventListener('click', openApps); row.appendChild(add);
+  row.scrollLeft = keepScroll;
 }
 async function activateWindow(id, maximize) {
   try { await agent(`/windows/${id}/activate`, 'POST', { maximize }); setTimeout(pollWindows, 350); } catch (e) { toast('Fenster: ' + e.message); }
@@ -579,18 +588,27 @@ function fitDisplay() {
   if (!rw) return;
   S.display.scale(el.stage.getBoundingClientRect().width / rw);
 }
+// Kleine Schwankungen (ein paar Pixel durch Rundung, Leiste, Systemleiste) sind keine neue Groesse wert.
+const SIZE_TOL = { w: 8, h: 16 };                  // Geraetepixel
+const SIZE_STORM = { max: 4, window: 20000, pause: 5000 };   // hoechstens 4 Aenderungen in 20 s, danach 5 s Pause
 function pushSize(force = false) {
   if (!S.client || !S.connected) return;
   // Waehrend der VM ihr erstes Bild aufbaut, keine Groessenaenderungen schicken: jede startet beim Ziel das Anzeigen neu und verzoegert das erste Bild
   // (die Groesse steht schon im Verbindungsaufbau). Spaetestens nach 6 s geht es normal weiter.
   if (!S.frameSeen && Date.now() - S.connectedAt < 6000) { scheduleSize(); return; }
   const { w, h } = computeRemote();
-  if (!force && w === S.lastSent.w && h === S.lastSent.h) return;
+  if (!force && Math.abs(w - S.lastSent.w) <= SIZE_TOL.w && Math.abs(h - S.lastSent.h) <= SIZE_TOL.h) return;
+  // Sicherung gegen Rueckkopplung: jede Groessenaenderung baut das Bild der VM neu auf. Kommen es in kurzer Zeit zu viele, wird nur noch
+  // selten gesendet (und im Log vermerkt), damit das Handy nie in einer Dauerschleife landet.
+  const now = Date.now();
+  S.sizeTimes = S.sizeTimes.filter((t) => now - t < SIZE_STORM.window);
+  if (!force && S.sizeTimes.length >= SIZE_STORM.max) { dbg('size-storm', { w, h, last: S.lastSent, n: S.sizeTimes.length }); scheduleSize(SIZE_STORM.pause); return; }
+  S.sizeTimes.push(now);
   S.lastSent = { w, h };
   dbg('sendSize', { w, h, k: S.k, dpr: window.devicePixelRatio });
   S.client.sendSize(w, h);
 }
-function scheduleSize() { clearTimeout(S.resizeTimer); S.resizeTimer = setTimeout(() => { pushSize(); fitDisplay(); }, 380); }
+function scheduleSize(delay = 380) { clearTimeout(S.resizeTimer); S.resizeTimer = setTimeout(() => { pushSize(); fitDisplay(); }, delay); }
 new ResizeObserver(() => { fitDisplay(); scheduleSize(); }).observe(el.stage);
 
 const zoomPercent = () => Math.round(100 / S.k);
@@ -660,6 +678,9 @@ async function connect() {
   teardown();
   el.remote.hidden = false;
   showBusy(S.everConnected ? 'Verbinde neu …' : 'Verbinde …');
+  // Hatte der letzte Desktop eine Fensterleiste, den Platz dafuer schon jetzt freihalten: sonst schrumpft die Stage kurz nach dem Verbinden
+  // und die VM bekommt gleich nach dem Start eine zweite Groesse.
+  el.topbar.hidden = !(S.conn.kind === 'desktop' && store.get('winbar', false));
   await sleep(30); // Layout setzen, damit die Stage-Groesse stimmt
   // Eine noch offene Tastatur (Fokus aus der vorigen Sitzung) darf die Groesse nicht bestimmen: sonst bekommt die VM ein flaches Bild
   if (kbFocused()) el.kb.blur();
@@ -687,7 +708,7 @@ async function connect() {
   const client = isStream ? new StreamClient(wsBase + '/api/remote/screen') : new Guacamole.Client(tunnel);
   S.engine = engine;
   const display = client.getDisplay();
-  S.tunnel = tunnel; S.client = client; S.display = display; S.lastSent = { w, h };
+  S.tunnel = tunnel; S.client = client; S.display = display; S.lastSent = { w, h }; S.sizeTimes = [];
   el.display.appendChild(display.getElement());
   display.onresize = () => { fitDisplay(); dbg('remote-size', { w: display.getWidth(), h: display.getHeight() }); };
   // Textfeld-Erkennung: Der Mauszeiger der VM wird zum "I-Balken" (schmal, hoch, Hotspot mittig)

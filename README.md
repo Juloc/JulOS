@@ -11,8 +11,9 @@ nothing is stored in the cloud.
 [Deutsche Version](README.de.md)
 
 ```
-phone (PWA)  --HTTPS-->  your reverse proxy  -->  gateway (Node + guacamole-lite)  -->  guacd  --RDP-->  xrdp (your Linux desktop)
-                                                          \--> agent (unix socket) in the desktop session: windows, apps, photo paste
+phone (PWA)  --HTTPS-->  your reverse proxy  -->  JulOS server (.NET, own login)  -->  guacd  --RDP/SSH-->  your machine
+                                                        |--> PostgreSQL (accounts, sessions, saved connections)
+                                                        \--> agent (unix socket) in the desktop session: windows, apps, photo paste
 ```
 
 Status: Linux (X11, XFCE tested) first. Windows is planned and the agent API is built for it (see [docs/AGENT_API.md](docs/AGENT_API.md)).
@@ -40,16 +41,19 @@ On the Docker host (can be the same machine): Docker with Compose.
 
 ```bash
 git clone <your fork or this repo> julos && cd julos
-cp .env.example .env            # set TOKEN_KEY (32 chars: openssl rand -hex 16) and RDP_USER
+cp .env.example .env            # set JULOS_DB_PASSWORD (openssl rand -hex 16); set JULOS_UID/JULOS_GID if your desktop user is not 1000
 docker compose up -d --build    # or: docker compose -f docker-compose.image.yml up -d  (ghcr.io image)
+docker compose logs julos       # shows the one-time setup code
 tools/install-linux-agent.sh    # in the graphical session of the target machine
 ```
 
-Open `http://<BIND_IP>:8080`, log in with the Linux user's password (typed by you, never stored).
+Open `http://<BIND_IP>:8080` (on `localhost` or over HTTPS; the session cookie needs a secure context), enter the setup code, choose a user name and password and
+confirm the authenticator code. Then add a connection (Desktop = RDP, Terminal = SSH) and tap it. The target's password is typed per connection, never stored.
+To reach the machine the server runs on, use the host name `host.docker.internal`.
 
-`BIND_IP` in `.env` is the address the gateway listens on: `127.0.0.1` (default, behind a reverse proxy) or the LAN address.
-If the Docker host is not the target machine, set `RDP_HOST`. The agent files live in `~/julos-uploads` of the target user,
-so running on the same machine is the supported setup for now.
+`BIND_IP` in `.env` is the address the server listens on: `127.0.0.1` (default, behind a reverse proxy) or the LAN address.
+The agent files live in `~/julos-uploads` of the target user and the server runs as that user (`JULOS_UID`/`JULOS_GID`),
+so running on the same machine is the supported setup for now. Lost your password or authenticator? `tools/julos-user.sh` resets them on the console.
 
 ## Installing the PWA, HTTPS
 
@@ -60,17 +64,16 @@ Browsers only install PWAs and allow the clipboard API on **HTTPS**. Put a rever
 
 Remote control must not be protected by the desktop password alone.
 
-- The target (host, port, user) is fixed on the server; the browser only supplies the password, passed on in an AES-encrypted token valid 30 s.
-- `guacd` has no published port. Login attempts are rate limited.
-- **Proxy mode**: with `PROXY_SECRET` the gateway (HTTP and WebSocket) only answers requests carrying the header `X-Proxy-Secret`
-  that your reverse proxy adds. Enable with `tools/enable-proxy-mode.sh`.
-- **mTLS** in the proxy: only your phone with a client certificate reaches the login page. Create one with
+- **Own login:** password (Argon2id) plus authenticator code, ten recovery codes, long-lived rotating sessions kept as hashes in PostgreSQL, lockout with growing delay. Every API and the WebSocket need a session; see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+- **First start:** the first account is created in the browser with a one-time setup code from the server log. Afterwards the setup is closed.
+- **Connections** use one-time tickets (30 s). The target password is typed per connection, held in memory for at most 30 s, never stored or logged.
+- `guacd` and PostgreSQL have no published port. Open connections end when their session ends.
+- **mTLS** in the proxy (optional extra layer): only your phone with a client certificate reaches the login page. Create one with
   `tools/make-client-cert.sh <name>` (you type the passphrase yourself); the Caddy example has the `client_auth` block.
-- The agent API is only reachable through the gateway with a live session, over a Unix socket (mode 0600).
-- Never expose xrdp (3389) or the gateway port directly to the internet.
+- The agent API is only reachable through the server with a live session, over a Unix socket (mode 0600).
+- Never expose xrdp (3389) or the server port directly to the internet without the proxy in front.
 
-Roll-out order: certificate, proxy config, `tools/enable-proxy-mode.sh`, port forward 443 to the proxy, DNS.
-To undo proxy mode, empty `PROXY_SECRET` in `.env` and run `docker compose up -d`.
+Roll-out order: proxy config, port forward 443 to the proxy, DNS; optionally a client certificate on top.
 
 ## Photos
 
@@ -80,11 +83,10 @@ Guacamole cannot transfer image clipboards over RDP, hence this path.
 
 ## Layout
 
-- `gateway/server.js` token server, WebSocket tunnel, upload, agent proxy
-- `gateway/public/` the web client (`index.html`, `app.js`, `style.css`, `sw.js`, `manifest.webmanifest`)
+- `src/JulOS.Frontend` host: web client (`wwwroot`: PWA), HTTP API, WebSocket; `src/JulOS.Backend` accounts, sessions, connections (PostgreSQL); `src/JulOS.Integrations` guacd relay and agent client; `src/JulOS.Workers` background jobs
+- `tests/`, `database/` (SQL migrations), `deploy/dev/` the test instance with throwaway SSH and RDP targets (see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md))
 - `tools/julos-agent.py` Linux agent (windows, apps, app mode), `tools/julos-clip.py` photo clipboard helper
-- `tools/install-linux-agent.sh`, `tools/make-client-cert.sh`, `tools/enable-proxy-mode.sh`
-- `src/`, `tests/`, `database/`, `deploy/dev/` the .NET server (in progress, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)); `gateway/` is the current Node gateway until it is replaced
+- `tools/install-linux-agent.sh`, `tools/julos-user.sh`, `tools/make-client-cert.sh`
 - `docs/AGENT_API.md` the agent API, `docs/ARCHITECTURE.md` the stack and security design, `caddy/Caddyfile.example`
 - `.github/workflows/docker.yml` builds the image for `ghcr.io/<owner>/<repo>` (amd64 + arm64)
 
@@ -94,4 +96,4 @@ Now: the Remote module (see [docs/SCOPE.md](docs/SCOPE.md)). Next: a module core
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Built on Apache Guacamole (guacd, guacamole-common-js) and guacamole-lite.
+MIT, see [LICENSE](LICENSE). Built on Apache Guacamole (guacd, guacamole-common-js).

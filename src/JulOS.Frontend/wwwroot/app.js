@@ -93,7 +93,7 @@ function toast(msg, ms = 1400) {
   clearTimeout(S.toastTimer); S.toastTimer = setTimeout(() => el.toast.classList.remove('show'), ms);
 }
 
-/* ---------- Diagnose: sendet nur Messwerte an das Gateway-Log (keine Eingaben) ---------- */
+/* ---------- Diagnose: sendet nur Messwerte an das Server-Log (keine Eingaben) ---------- */
 const dbgQueue = [];
 let dbgTimer = null;
 function dbg(evt, data = {}) {

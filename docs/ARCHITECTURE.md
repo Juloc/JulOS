@@ -36,7 +36,6 @@ database/               numbered SQL migrations
 deploy/                 compose files, Caddy examples
 docs/                   vision, scope, ideas, architecture, agent API
 tools/                  Linux agent, installers, user tool
-gateway/                the Node gateway and its client, kept running until step 6, then removed
 ```
 
 Inside a project, code is grouped by feature (Auth, Remote, Files) and, in the backend, by Services / Logic / Data as in the siblings.
@@ -94,6 +93,4 @@ Production and the test instance differ only in ports, volumes and secrets.
 3. ~~Relay: ticket endpoint and WebSocket to `guacd`, tested against a real `guacd`.~~ Done (`POST /api/remote/ticket`, `GET /api/remote/ws`).
 4. ~~Agent client, upload and log endpoints.~~ Done (`/api/agent/*`, `/api/upload`, `/api/log`; tested against the real agent on the test instance).
 5. ~~Client: setup and login screens, home with connections (Desktop and Terminal), sign out, device list.~~ Done (`src/JulOS.Frontend/wwwroot`; checked in a real browser against the test instance, not yet on the phone).
-6. Switch the compose file over, remove the Node gateway.
-
-Until step 6 the Node gateway keeps running, so nothing breaks in between.
+6. ~~Switch the compose file over, remove the Node gateway.~~ Done (`docker-compose.yml`: PostgreSQL, guacd, server running as the desktop user; the Node gateway is gone, see git history before this change).

@@ -4,29 +4,53 @@
 name: julos
 
 services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: julos
+      POSTGRES_USER: julos
+      POSTGRES_PASSWORD: "${JULOS_DB_PASSWORD:?Bitte JULOS_DB_PASSWORD in .env setzen (zum Beispiel: openssl rand -hex 16)}"
+    volumes:
+      - julos-postgres:/var/lib/postgresql
+    # kein veroeffentlichter Port: nur der Server im internen Netz erreicht die Datenbank
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U julos -d julos"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   guacd:
     image: guacamole/guacd:1.6.0
     restart: unless-stopped
+    # kein veroeffentlichter Port: guacd ist nur fuer den Server im internen Netz erreichbar
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-  gateway:
+  julos:
     image: ghcr.io/juloc/julos:latest
     restart: unless-stopped
-    depends_on: [guacd]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      guacd:
+        condition: service_started
     environment:
-      PORT: "8080"
-      TOKEN_KEY: "${TOKEN_KEY:?TOKEN_KEY in .env setzen}"
-      GUACD_HOST: guacd
-      RDP_HOST: "${RDP_HOST:-host.docker.internal}"
-      RDP_PORT: "${RDP_PORT:-3389}"
-      RDP_USER: "${RDP_USER:?RDP_USER in .env setzen}"
-      PROXY_SECRET: "${PROXY_SECRET:-}"
-      UPLOAD_DIR: /uploads
-      AGENT_SOCKET: /uploads/.agent/agent.sock
+      JULOS_DB: "Host=postgres;Database=julos;Username=julos;Password=${JULOS_DB_PASSWORD}"
+      JULOS_GUACD: guacd:4822
+      # optional: Verbindungsziele auf diese Namen oder Adressen beschraenken (kommagetrennt)
+      JULOS_ALLOWED_HOSTS: "${JULOS_ALLOWED_HOSTS:-}"
+      # optional: Proxys, deren X-Forwarded-* geglaubt wird (Standard: alle privaten Netze)
+      JULOS_TRUSTED_PROXIES: "${JULOS_TRUSTED_PROXIES:-}"
+    # Der Server muss als derselbe Benutzer laufen wie die grafische Sitzung der Ziel-Maschine (Agent-Socket, Foto-Ordner)
+    user: "${JULOS_UID:-1000}:${JULOS_GID:-1000}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ${HOME}/julos-uploads:/uploads
+    # BIND_IP = LAN-Adresse des Docker-Hosts (nur Heimnetz); Standard ist nur lokal (127.0.0.1)
     ports:
       - "${BIND_IP:-127.0.0.1}:${BIND_PORT:-8080}:8080"
+
+volumes:
+  julos-postgres:

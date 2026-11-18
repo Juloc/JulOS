@@ -2,7 +2,7 @@
 """JulOS: Zwischenablage-Helfer fuer Fotos.
 
 Laeuft in der grafischen VM-Sitzung (DISPLAY :10). Beobachtet ~/julos-uploads: kommt dort ein Bild an
-(vom Gateway hochgeladen), wird es in die Zwischenablage gelegt, sodass Strg+V in Claude & Co. es einfuegt.
+(vom Server hochgeladen), wird es in die Zwischenablage gelegt, sodass Strg+V in Claude & Co. es einfuegt.
 Quittiert mit <datei>.ok bzw. <datei>.err. Alte Dateien werden nach 30 Minuten geloescht.
 """
 import glob, os, sys, time

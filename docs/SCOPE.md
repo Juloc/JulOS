@@ -42,7 +42,7 @@ They are the point of JulOS later (see the vision), but they come after 1.0.
 
 1. ~~Push the repo, let the image build.~~ Done. Make the package public once the image exists.
 1a. **Own login and the server on the shared stack** (C#/.NET, PostgreSQL): see [ARCHITECTURE.md](ARCHITECTURE.md). The login replaces the reverse proxy's access portal, which blocks installing the PWA.
-2. Caddy: subdomain to the gateway, client certificate, proxy mode (`tools/enable-proxy-mode.sh`).
+2. Caddy: subdomain to the server, public once the own login is verified (optionally a client certificate on top).
 3. Test on the phone against the checklist above and write down what fails.
 4. Fix only what that list shows.
 5. Tag 1.0. Then plan milestone 2 (the module core) on purpose, with its own page like this one.

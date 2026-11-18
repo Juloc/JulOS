@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """JulOS Agent fuer Linux (X11, XFCE getestet)
 
-Laeuft in der grafischen Sitzung und stellt dem Gateway die "Agent-API v1" bereit
+Laeuft in der grafischen Sitzung und stellt dem Server die "Agent-API v1" bereit
 (siehe docs/AGENT_API.md): Fensterliste, Fenster aktivieren/schliessen, Programmliste und
 Programmstart sowie den Programm-Modus (Taskleiste der Sitzung ausblenden).
 
@@ -14,7 +14,7 @@ gi.require_version("Gtk", "3.0"); gi.require_version("Wnck", "3.0"); gi.require_
 from gi.repository import Gtk, Gdk, Wnck, GLib, GdkPixbuf, Gio
 
 API_VERSION = 1
-SOCK_DIR = os.environ.get("JULOS_AGENT_DIR") or os.path.expanduser("~/julos-uploads/.agent")   # im Upload-Ordner, den das Gateway schon eingebunden hat
+SOCK_DIR = os.environ.get("JULOS_AGENT_DIR") or os.path.expanduser("~/julos-uploads/.agent")   # im Upload-Ordner, den der Server schon eingebunden hat
 SOCK = os.path.join(SOCK_DIR, "agent.sock")
 STATE = os.path.expanduser("~/.cache/julos-agent-panels.json")
 IDLE_RESTORE_S = 90          # Programm-Modus faellt zurueck, wenn so lange niemand mehr anfragt

@@ -1,4 +1,4 @@
-# JulOS-Server (.NET). Der Node-Vorgaenger liegt noch in gateway/ und wird in Schritt 6 entfernt.
+# JulOS-Server (.NET), siehe docs/ARCHITECTURE.md
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 COPY global.json Directory.Build.props Directory.Packages.props JulOS.slnx ./

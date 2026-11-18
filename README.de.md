@@ -11,7 +11,8 @@ auf den eigenen Rechner, nichts liegt in einer Cloud.
 [English version](README.md)
 
 ```
-Handy (PWA)  --HTTPS-->  dein Reverse-Proxy  -->  Gateway (Node + guacamole-lite)  -->  guacd  --RDP-->  xrdp (dein Linux-Desktop)
+Handy (PWA)  --HTTPS-->  dein Reverse-Proxy  -->  JulOS-Server (.NET, eigene Anmeldung)  -->  guacd  --RDP/SSH-->  dein Rechner
+                                                         |--> PostgreSQL (Konten, Sitzungen, gespeicherte Verbindungen)
                                                          \--> Agent (Unix-Socket) in der Sitzung: Fenster, Programme, Foto-Paste
 ```
 
@@ -40,16 +41,19 @@ Auf dem Docker-Host (darf derselbe Rechner sein): Docker mit Compose.
 
 ```bash
 git clone <dein Fork oder dieses Repo> julos && cd julos
-cp .env.example .env            # TOKEN_KEY (32 Zeichen: openssl rand -hex 16) und RDP_USER setzen
+cp .env.example .env            # JULOS_DB_PASSWORD setzen (openssl rand -hex 16); JULOS_UID/JULOS_GID setzen, falls dein Desktop-Benutzer nicht 1000 ist
 docker compose up -d --build    # oder: docker compose -f docker-compose.image.yml up -d  (Image aus ghcr.io)
+docker compose logs julos       # zeigt den einmaligen Setup-Code
 tools/install-linux-agent.sh    # in der grafischen Sitzung des Zielrechners
 ```
 
-`http://<BIND_IP>:8080` oeffnen und mit dem Passwort des Linux-Benutzers anmelden (tippst du selbst, wird nie gespeichert).
+`http://<BIND_IP>:8080` oeffnen (auf `localhost` oder ueber HTTPS; das Sitzungs-Cookie braucht einen sicheren Kontext), Setup-Code eingeben, Benutzername und Passwort waehlen und den
+Authenticator-Code bestaetigen. Danach eine Verbindung anlegen (Desktop = RDP, Terminal = SSH) und antippen. Das Passwort des Ziels tippst du bei jeder Verbindung ein, es wird nie gespeichert.
+Fuer den Rechner, auf dem der Server selbst laeuft, den Hostnamen `host.docker.internal` verwenden.
 
-`BIND_IP` in `.env` ist die Adresse, auf der das Gateway lauscht: `127.0.0.1` (Standard, hinter einem Reverse-Proxy) oder die LAN-Adresse.
-Ist der Docker-Host nicht der Zielrechner, `RDP_HOST` setzen. Die Agent-Dateien liegen in `~/julos-uploads` des Zielbenutzers,
-unterstuetzt ist deshalb zunaechst derselbe Rechner.
+`BIND_IP` in `.env` ist die Adresse, auf der der Server lauscht: `127.0.0.1` (Standard, hinter einem Reverse-Proxy) oder die LAN-Adresse.
+Die Agent-Dateien liegen in `~/julos-uploads` des Zielbenutzers und der Server laeuft als dieser Benutzer (`JULOS_UID`/`JULOS_GID`),
+unterstuetzt ist deshalb zunaechst derselbe Rechner. Passwort oder Authenticator verloren? `tools/julos-user.sh` setzt sie auf der Konsole zurueck.
 
 ## PWA installieren, HTTPS
 
@@ -60,17 +64,16 @@ Browser installieren PWAs und erlauben die Zwischenablage-API nur ueber **HTTPS*
 
 Eine Fernsteuerung darf nicht allein durch das Desktop-Passwort geschuetzt sein.
 
-- Das Ziel (Host, Port, Benutzer) steht fest auf dem Server; der Browser liefert nur das Passwort, weitergereicht in einem AES-verschluesselten Token, 30 s gueltig.
-- `guacd` hat keinen veroeffentlichten Port. Anmeldeversuche sind begrenzt.
-- **Proxy-Modus**: mit `PROXY_SECRET` antwortet das Gateway (HTTP und WebSocket) nur auf Anfragen mit dem Header `X-Proxy-Secret`,
-  den dein Reverse-Proxy setzt. Einschalten mit `tools/enable-proxy-mode.sh`.
-- **mTLS** im Proxy: nur dein Handy mit Client-Zertifikat erreicht die Anmeldeseite. Erzeugen mit
+- **Eigene Anmeldung:** Passwort (Argon2id) plus Authenticator-Code, zehn Wiederherstellungscodes, langlebige rotierende Sitzungen (in PostgreSQL nur als Hash), Sperre mit wachsender Wartezeit. Jede API und der WebSocket brauchen eine Sitzung, siehe [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+- **Erster Start:** das erste Konto legst du im Browser an, mit einem einmaligen Setup-Code aus dem Server-Log. Danach ist die Einrichtung geschlossen.
+- **Verbindungen** laufen ueber Einmal-Tickets (30 s). Das Passwort des Ziels tippst du pro Verbindung, es liegt hoechstens 30 s im Speicher und wird nie gespeichert oder geloggt.
+- `guacd` und PostgreSQL haben keinen veroeffentlichten Port. Offene Verbindungen enden mit ihrer Sitzung.
+- **mTLS** im Proxy (optionale Zusatzschicht): nur dein Handy mit Client-Zertifikat erreicht die Anmeldeseite. Erzeugen mit
   `tools/make-client-cert.sh <name>` (Passphrase tippst du selbst); das Caddy-Beispiel enthaelt den `client_auth`-Block.
-- Die Agent-API ist nur ueber das Gateway mit gueltiger Sitzung erreichbar, per Unix-Socket (Rechte 0600).
-- xrdp (3389) und den Gateway-Port nie direkt ins Internet stellen.
+- Die Agent-API ist nur ueber den Server mit gueltiger Sitzung erreichbar, per Unix-Socket (Rechte 0600).
+- xrdp (3389) und den Server-Port nie ohne Proxy davor ins Internet stellen.
 
-Reihenfolge: Zertifikat, Proxy-Konfiguration, `tools/enable-proxy-mode.sh`, Port 443 auf den Proxy, DNS.
-Rueckgaengig: `PROXY_SECRET` in `.env` leeren und `docker compose up -d`.
+Reihenfolge: Proxy-Konfiguration, Port 443 auf den Proxy, DNS; optional ein Client-Zertifikat obendrauf.
 
 ## Fotos
 
@@ -80,11 +83,11 @@ Guacamole kann Bild-Zwischenablagen nicht ueber RDP senden, deshalb dieser Weg.
 
 ## Aufbau
 
-- `gateway/server.js` Token-Server, WebSocket-Tunnel, Upload, Agent-Proxy
-- `gateway/public/` Web-Client (`index.html`, `app.js`, `style.css`, `sw.js`, `manifest.webmanifest`)
+- `src/JulOS.Frontend` Host: Web-Client (`wwwroot`: PWA), HTTP-API, WebSocket; `src/JulOS.Backend` Konten, Sitzungen, Verbindungen (PostgreSQL); `src/JulOS.Integrations` guacd-Relay und Agent-Client; `src/JulOS.Workers` Hintergrundjobs
+- `tests/`, `database/` (SQL-Migrationen), `deploy/dev/` die Test-Instanz mit Wegwerf-Zielen fuer SSH und RDP (siehe [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md))
 - `tools/julos-agent.py` Linux-Agent (Fenster, Programme, Programm-Modus), `tools/julos-clip.py` Foto-Helfer
-- `tools/install-linux-agent.sh`, `tools/make-client-cert.sh`, `tools/enable-proxy-mode.sh`
-- `docs/AGENT_API.md` Agent-API, `caddy/Caddyfile.example`
+- `tools/install-linux-agent.sh`, `tools/julos-user.sh`, `tools/make-client-cert.sh`
+- `docs/AGENT_API.md` Agent-API, `docs/ARCHITECTURE.md` Stack und Sicherheitskonzept, `caddy/Caddyfile.example`
 - `.github/workflows/docker.yml` baut das Image fuer `ghcr.io/<owner>/<repo>` (amd64 + arm64)
 
 ## Ausblick
@@ -93,4 +96,4 @@ Jetzt: das Remote-Modul (siehe [docs/SCOPE.md](docs/SCOPE.md)). Danach: ein Modu
 
 ## Lizenz
 
-MIT, siehe [LICENSE](LICENSE). Basiert auf Apache Guacamole (guacd, guacamole-common-js) und guacamole-lite.
+MIT, siehe [LICENSE](LICENSE). Basiert auf Apache Guacamole (guacd, guacamole-common-js).

@@ -1,27 +1,23 @@
 # Agent API v1
 
-The gateway never talks to the desktop directly for window management. A small **agent** runs inside the graphical session
-of the remote machine and answers a tiny HTTP API. The gateway proxies it to the browser (`/api/agent/*`, only for a valid
+The server never talks to the desktop directly for window management. A small **agent** runs inside the graphical session
+of the remote machine and answers a tiny HTTP API. The server proxies it to the browser (`/api/agent/*`, only for a valid
 session, see below). The Linux agent (`tools/julos-agent.py`) is the reference implementation; a Windows agent is planned
 and has to offer the same endpoints.
 
 ## Transport
 
 - Linux: HTTP over a Unix socket, `~/julos-uploads/.agent/agent.sock` (directory 0700, socket 0600). The folder is mounted
-  into the gateway container as `/uploads`, so no network port exists.
-- Windows (planned): the agent connects **outbound** to the gateway (WebSocket, enrolled with a one-time code) and answers the same
+  into the server container as `/uploads`, so no network port exists.
+- Windows (planned): the agent connects **outbound** to the server (WebSocket, enrolled with a one-time code) and answers the same
   requests through that channel. Nothing listens on the Windows machine.
 
-## Authorisation in the gateway
+## Authorisation in the server
 
-**Node gateway (until it is removed):** `/api/agent/*` requires the header `X-Session: <sid>`. The `sid` is returned by `/api/token`
-and only becomes valid once the Guacamole WebSocket of that session has been open for more than 8 seconds. Without it the gateway
-answers 401. With `PROXY_SECRET` set, the usual `X-Proxy-Secret` check applies first.
-
-**.NET server:** every `/api` route needs the signed-in session of the app (cookie), and changing requests need the `X-JulOS` header
+Every `/api` route needs the signed-in session of the app (cookie), and changing requests need the `X-JulOS` header
 and the app's own origin. There is no separate agent session any more.
 
-| Browser route (.NET server) | Agent request |
+| Browser route | Agent request |
 | --- | --- |
 | `GET /api/agent/health` | `GET /v1/health`, answer gets `available: true`; `{available:false}` when there is no agent |
 | `GET /api/agent/windows`, `GET /api/agent/apps` | `GET /v1/windows`, `GET /v1/apps` |

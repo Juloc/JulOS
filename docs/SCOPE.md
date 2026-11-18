@@ -6,7 +6,7 @@ disagree.** The vision tells us where we are going, this file tells us what we a
 
 ## Milestone 1: the Remote module (release 1.0)
 
-**Goal:** From my Pixel, in an installed PWA over HTTPS, I use Claude Desktop and other programs on my Linux machine comfortably
+**Goal:** From my phone, in an installed PWA over HTTPS, I use Claude Desktop and other programs on my Linux machine comfortably
 and securely, with my normal Android keyboard.
 
 ### Done when all of this works on the phone
@@ -40,6 +40,6 @@ They are the point of JulOS later (see the vision), but they come after 1.0.
 
 1. Push the repo, let the image build, make the package public.
 2. Caddy: subdomain to the gateway, client certificate, proxy mode (`tools/enable-proxy-mode.sh`).
-3. Test on the Pixel against the checklist above and write down what fails.
+3. Test on the phone against the checklist above and write down what fails.
 4. Fix only what that list shows.
 5. Tag 1.0. Then plan milestone 2 (the module core) on purpose, with its own page like this one.

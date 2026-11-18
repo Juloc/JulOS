@@ -38,6 +38,8 @@ services:
     environment:
       JULOS_DB: "Host=postgres;Database=julos;Username=julos;Password=${JULOS_DB_PASSWORD}"
       JULOS_GUACD: guacd:4822
+      # optional: Schluessel zum Speichern von Verbindungs-Passwoertern (openssl rand -base64 32); ohne ihn wird nichts gespeichert
+      JULOS_SECRET_KEY: "${JULOS_SECRET_KEY:-}"
       # optional: Verbindungsziele auf diese Namen oder Adressen beschraenken (kommagetrennt)
       JULOS_ALLOWED_HOSTS: "${JULOS_ALLOWED_HOSTS:-}"
       # optional: Proxys, deren X-Forwarded-* geglaubt wird (Standard: alle privaten Netze)

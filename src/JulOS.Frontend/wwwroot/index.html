@@ -148,7 +148,11 @@
         <label>Adresse <input id="connHost" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Name oder IP-Adresse" required></label>
         <label>Port <input id="connPort" type="text" inputmode="numeric" autocomplete="off" placeholder="3389"></label>
         <label>Benutzername auf dem Ziel <input id="connUser" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
-        <p class="hint">Das Passwort wird nicht gespeichert. Du gibst es bei jeder Verbindung ein, auch ein Passwortmanager kann es einfügen.</p>
+        <label><span>Passwort <span class="opt">(optional)</span></span>
+          <input id="connPw" type="password" autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="leer = bei jeder Verbindung tippen">
+        </label>
+        <label id="connForgetRow" class="check" hidden><input id="connForget" type="checkbox"> Gespeichertes Passwort löschen</label>
+        <p id="connPwHint" class="hint"></p>
         <p id="connMsg" class="msg" role="alert"></p>
         <div class="row">
           <button id="connSave" type="submit" class="primary">Speichern</button>

@@ -48,7 +48,7 @@ tools/install-linux-agent.sh    # in der grafischen Sitzung des Zielrechners
 ```
 
 `http://<BIND_IP>:8080` oeffnen (auf `localhost` oder ueber HTTPS; das Sitzungs-Cookie braucht einen sicheren Kontext), Setup-Code eingeben, Benutzername und Passwort waehlen und den
-Authenticator-Code bestaetigen. Danach eine Verbindung anlegen (Desktop = RDP, Terminal = SSH) und antippen. Das Passwort des Ziels tippst du bei jeder Verbindung ein, es wird nie gespeichert.
+Authenticator-Code bestaetigen. Danach eine Verbindung anlegen (Desktop = RDP, Terminal = SSH) und antippen. Das Passwort des Ziels tippst du bei jeder Verbindung ein, oder es wird auf Wunsch verschluesselt gespeichert (braucht `JULOS_SECRET_KEY` in `.env`: `openssl rand -base64 32`, sichern wie ein Passwort).
 Fuer den Rechner, auf dem der Server selbst laeuft, den Hostnamen `host.docker.internal` verwenden.
 
 `BIND_IP` in `.env` ist die Adresse, auf der der Server lauscht: `127.0.0.1` (Standard, hinter einem Reverse-Proxy) oder die LAN-Adresse.
@@ -66,7 +66,7 @@ Eine Fernsteuerung darf nicht allein durch das Desktop-Passwort geschuetzt sein.
 
 - **Eigene Anmeldung:** Passwort (Argon2id) plus Authenticator-Code, zehn Wiederherstellungscodes, langlebige rotierende Sitzungen (in PostgreSQL nur als Hash), Sperre mit wachsender Wartezeit. Jede API und der WebSocket brauchen eine Sitzung, siehe [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **Erster Start:** das erste Konto legst du im Browser an, mit einem einmaligen Setup-Code aus dem Server-Log. Danach ist die Einrichtung geschlossen.
-- **Verbindungen** laufen ueber Einmal-Tickets (30 s). Das Passwort des Ziels tippst du pro Verbindung, es liegt hoechstens 30 s im Speicher und wird nie gespeichert oder geloggt.
+- **Verbindungen** laufen ueber Einmal-Tickets (30 s). Das Passwort des Ziels tippst du pro Verbindung (hoechstens 30 s im Speicher, nie geloggt) oder es wird auf Wunsch AES-256-GCM-verschluesselt gespeichert, mit einem Schluessel nur in den Server-Einstellungen; es geht nie zurueck zum Browser.
 - `guacd` und PostgreSQL haben keinen veroeffentlichten Port. Offene Verbindungen enden mit ihrer Sitzung.
 - **mTLS** im Proxy (optionale Zusatzschicht): nur dein Handy mit Client-Zertifikat erreicht die Anmeldeseite. Erzeugen mit
   `tools/make-client-cert.sh <name>` (Passphrase tippst du selbst); das Caddy-Beispiel enthaelt den `client_auth`-Block.

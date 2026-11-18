@@ -652,7 +652,7 @@ async function connect() {
   let ticket;
   try {
     const resp = await fetch('/api/remote/ticket', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' },
-      body: JSON.stringify({ connection: S.conn.id, password: S.password, width: w, height: h, dpi: 96 }) });
+      body: JSON.stringify({ connection: S.conn.id, password: S.password || undefined, width: w, height: h, dpi: 96 }) });
     const data = await resp.json().catch(() => ({}));
     if (resp.status === 401) return leave('Die Sitzung ist abgelaufen. Bitte neu anmelden.', 'auth');
     if (!resp.ok) throw new Error(data.error || 'Fehler ' + resp.status);
@@ -768,10 +768,11 @@ function scheduleReconnect() {
   const wait = 1500 * S.retry;
   showBusy(`Verbindung getrennt – neuer Versuch in ${Math.round(wait / 1000)} s …`);
   clearTimeout(S.retryTimer);
-  S.retryTimer = setTimeout(() => { if (!S.intentional && S.password) connect(); }, wait);
+  S.retryTimer = setTimeout(() => { if (!S.intentional && hasCredentials()) connect(); }, wait);
 }
 
-el.reconnectBtn.addEventListener('click', () => { S.retry = 0; if (S.password) connect(); else leave(); });
+const hasCredentials = () => !!(S.password || (S.conn && S.conn.stored));   // Passwort im Speicher des Browsers oder auf dem Server gespeichert
+el.reconnectBtn.addEventListener('click', () => { S.retry = 0; if (hasCredentials()) connect(); else leave(); });
 el.toLoginBtn.addEventListener('click', () => leave());
 
 /* =====================================================================
@@ -1052,7 +1053,7 @@ el.menuSheet.addEventListener('click', (e) => {
     applyKbMode(); return;
   }
   closeMenu();
-  if (act === 'reconnect') { S.retry = 0; if (S.password) connect(); }
+  if (act === 'reconnect') { S.retry = 0; if (hasCredentials()) connect(); }
   else if (act === 'editKeys') { S.editing = true; renderRows(); applyKeysOpen(); toast('Taste antippen = bearbeiten, gedrückt halten = verschieben (auch in andere Zeilen)', 3600); }
   else if (act === 'resetKeys') { if (confirm('Sondertasten auf Standard zurücksetzen?')) { rows = clone(DEFAULT_ROWS); saveRows(); renderRows(); applyKeysOpen(); } }
   else if (act === 'password') openPwDialog();
@@ -1277,7 +1278,7 @@ el.pwDlg.addEventListener('close', () => { el.pwUser.value = ''; el.pwPass.value
  *  Start
  * ===================================================================== */
 window.addEventListener('beforeunload', () => { try { S.client && S.client.disconnect(); } catch { /* egal */ } });
-document.addEventListener('visibilitychange', () => { if (!document.hidden && S.password && !S.connected && !S.intentional && S.everConnected) { S.retry = 0; connect(); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && hasCredentials() && !S.connected && !S.intentional && S.everConnected) { S.retry = 0; connect(); } });
 
 (async function init() {
   renderIcons(); applyTheme(); applyKbMode(); applyKeysOpen(); renderKeys();

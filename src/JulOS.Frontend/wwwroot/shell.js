@@ -34,7 +34,7 @@ async function api(path, { method = 'GET', body } = {}) {
 const setMsg = (el, text, ok = false) => { el.textContent = text || ''; el.classList.toggle('ok', ok && !!text); };
 const busy = (form, on) => { for (const b of form.querySelectorAll('button[type=submit]')) b.disabled = on; };
 
-const state = { user: null, connections: [], editing: null, starting: null };
+const state = { user: null, connections: [], canStore: false, editing: null, starting: null };
 
 /* ---------- Start: wo stehen wir? ---------- */
 async function boot() {
@@ -119,7 +119,7 @@ async function showHome(user, message = '') {
 }
 
 async function loadConnections() {
-  try { state.connections = (await api('/api/connections')).connections; }
+  try { const r = await api('/api/connections'); state.connections = r.connections; state.canStore = !!r.canStorePasswords; }
   catch (e) { if (e.status === 401) return showLogin('Die Sitzung ist abgelaufen. Bitte neu anmelden.'); setMsg($('#homeMsg'), e.message); return; }
   renderConnections();
 }
@@ -135,7 +135,7 @@ function renderConnections() {
     const row = document.createElement('div');
     row.className = 'conn';
     row.innerHTML = `<button type="button" class="connmain"><span class="connic">${ico(c.kind === 'terminal' ? 'terminal' : 'desktop')}</span>
-        <span class="conntext"><span class="connname">${esc(c.name)}</span><span class="connsub">${esc(KIND_LABEL[c.kind] || c.kind)} · ${esc(c.username ? c.username + '@' : '')}${esc(c.host)}:${c.port}</span></span></button>
+        <span class="conntext"><span class="connname">${esc(c.name)}</span><span class="connsub">${esc(KIND_LABEL[c.kind] || c.kind)} · ${esc(c.username ? c.username + '@' : '')}${esc(c.host)}:${c.port}${c.hasPassword ? ' · 🔑' : ''}</span></span></button>
       <button type="button" class="connedit ghost" aria-label="Bearbeiten">${ico('edit')}</button>`;
     row.querySelector('.connmain').addEventListener('click', () => startDialog(c));
     row.querySelector('.connedit').addEventListener('click', () => editDialog(c));
@@ -175,6 +175,13 @@ function editDialog(c) {
   $('#connPort').placeholder = DEFAULT_PORT[$('#connKind').value];
   $('#connUser').value = c ? c.username : '';
   $('#connDelete').hidden = !c; $('#connDelete').textContent = 'Löschen';
+  $('#connPw').value = ''; $('#connPw').disabled = !state.canStore;
+  $('#connForget').checked = false; $('#connForgetRow').hidden = !(c && c.hasPassword);
+  $('#connPwHint').textContent = !state.canStore
+    ? 'Passwörter speichern ist am Server nicht eingerichtet (JULOS_SECRET_KEY). Du tippst das Passwort bei jeder Verbindung.'
+    : c && c.hasPassword
+      ? 'Ein Passwort ist verschlüsselt gespeichert und wird nie angezeigt. Ein neues hier überschreibt es. Ändert sich Adresse, Port, Art oder Benutzer, wird es gelöscht.'
+      : 'Auf Wunsch wird es verschlüsselt auf dem Server gespeichert, dann genügt ein Tipp zum Verbinden. Leer lassen: du tippst es jedes Mal.';
   setMsg($('#connMsg'), '');
   $('#connDlg').showModal();
 }
@@ -185,10 +192,14 @@ $('#connForm').addEventListener('submit', async (e) => {
   const portText = $('#connPort').value.trim();
   if (portText && !/^\d{1,5}$/.test(portText)) return setMsg(msg, 'Der Port muss eine Zahl sein.');
   const body = { name: $('#connName').value, kind: $('#connKind').value, host: $('#connHost').value, port: portText ? Number(portText) : null, username: $('#connUser').value };
+  const pw = $('#connPw').value;
+  if (pw) body.password = pw;
+  if ($('#connForget').checked && !pw) body.forgetPassword = true;
   busy(form, true); setMsg(msg, '');
   try {
     const c = state.editing;
     await api(c ? `/api/connections/${c.id}` : '/api/connections', { method: c ? 'PUT' : 'POST', body });
+    $('#connPw').value = '';
     $('#connDlg').close();
     await loadConnections();
   } catch (err) { setMsg(msg, err.message); }
@@ -207,6 +218,8 @@ $('#connDelete').addEventListener('click', async (e) => {
 /* ---------- Verbinden ---------- */
 function startDialog(c) {
   state.starting = c;
+  // Mit gespeichertem Passwort genuegt ein Tipp: der Server nimmt es aus dem verschluesselten Speicher
+  if (c.hasPassword) { show('remote'); openRemote({ id: c.id, name: c.name, kind: c.kind, stored: true }, ''); return; }
   $('#startTitle').textContent = c.name;
   $('#startUser').value = c.username;
   $('#startPw').value = '';

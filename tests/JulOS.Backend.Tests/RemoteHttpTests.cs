@@ -23,7 +23,7 @@ public sealed class RemoteHttpTests
     private const string SetupCode = "TEST-CODE-0000";
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
 
-    private sealed class Server(TestDb db, string guacd, string? allowed = null, Action<IServiceCollection>? configure = null) : WebApplicationFactory<Program>
+    private sealed class Server(TestDb db, string guacd, string? allowed = null, Action<IServiceCollection>? configure = null, string? secretKey = null) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -31,6 +31,7 @@ public sealed class RemoteHttpTests
             builder.UseSetting("JULOS_SETUP_CODE", SetupCode);
             builder.UseSetting("JULOS_GUACD", guacd);
             if (allowed is not null) builder.UseSetting("JULOS_ALLOWED_HOSTS", allowed);
+            if (secretKey is not null) builder.UseSetting("JULOS_SECRET_KEY", secretKey);
             builder.ConfigureServices(s => s.AddTransient<IStartupFilter, LoopbackFilter>());
             if (configure is not null) builder.ConfigureTestServices(configure);
         }
@@ -426,6 +427,73 @@ public sealed class RemoteHttpTests
         req.Headers.Add("Origin", "http://localhost");
         req.Headers.Add("Cookie", cookie);
         return req;
+    }
+
+    private static readonly string TestKey = Convert.ToBase64String(new byte[32].Select((_, i) => (byte)(i + 1)).ToArray());
+
+    [Fact]
+    public async Task A_stored_password_is_kept_encrypted_used_by_the_server_and_never_sent_back()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var guacd = new FakeGuacd();
+        await using var app = new Server(db, $"127.0.0.1:{guacd.Port}", secretKey: TestKey);
+        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (cookie, _) = await SignedInAsync(app, c, db);
+        const string stored = "Gespeichert-Passwort-123";
+
+        var created = await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "PC", kind = "desktop", host = "ziel", username = "jul", password = stored }, cookie));
+        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        var createdText = await created.Content.ReadAsStringAsync();
+        Assert.DoesNotContain(stored, createdText);
+        var id = JsonDocument.Parse(createdText).RootElement.GetProperty("id").GetGuid();
+        Assert.True(JsonDocument.Parse(createdText).RootElement.GetProperty("hasPassword").GetBoolean());
+
+        // in der Datenbank steht nur Chiffre, nie das Passwort; die Liste sagt nur "ist da"
+        var raw = await db.ScalarAsync<byte[]>("select secret from connections where id = $1", id);
+        Assert.DoesNotContain(stored, Encoding.UTF8.GetString(raw));
+        var listText = await (await c.SendAsync(GetWith("/api/connections", cookie))).Content.ReadAsStringAsync();
+        Assert.DoesNotContain(stored, listText);
+        var list = JsonDocument.Parse(listText).RootElement;
+        Assert.True(list.GetProperty("canStorePasswords").GetBoolean());
+        Assert.True(list.GetProperty("connections")[0].GetProperty("hasPassword").GetBoolean());
+
+        // Ticket ohne getipptes Passwort: der Server nimmt das gespeicherte und gibt es an guacd
+        var noPassword = await c.SendAsync(Post("/api/remote/ticket", new { connection = id, width = 856, height = 1448 }, cookie));
+        Assert.Equal(HttpStatusCode.OK, noPassword.StatusCode);
+        var ticket = JsonDocument.Parse(await noPassword.Content.ReadAsStringAsync()).RootElement.GetProperty("ticket").GetString()!;
+        Assert.DoesNotContain(stored, await noPassword.Content.ReadAsStringAsync());
+        using (var ws = await OpenAsync(app, ticket, cookie)) { await ReadAsync(ws); }
+        await guacd.Closed.Task.WaitAsync(Wait);
+        Assert.Contains(stored, guacd.Handshake[5]);
+
+        // unveraendertes Ziel behaelt das Passwort, anderes Ziel oder "vergessen" entfernt es
+        var same = await Json(await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{id}", new { name = "Neuer Name", kind = "desktop", host = "ziel", username = "jul" }, cookie)));
+        Assert.True(same.GetProperty("hasPassword").GetBoolean());
+        var moved = await Json(await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{id}", new { name = "Neuer Name", kind = "desktop", host = "anderes", username = "jul" }, cookie)));
+        Assert.False(moved.GetProperty("hasPassword").GetBoolean());
+        Assert.True(await db.ScalarAsync<bool>("select secret is null from connections where id = $1", id));
+        Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Post("/api/remote/ticket", new { connection = id }, cookie))).StatusCode);
+
+        // neu setzen und mit "vergessen" wieder loeschen
+        await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{id}", new { name = "x", kind = "desktop", host = "anderes", username = "jul", password = "neu" }, cookie));
+        Assert.False(await db.ScalarAsync<bool>("select secret is null from connections where id = $1", id));
+        var forgotten = await Json(await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{id}", new { name = "x", kind = "desktop", host = "anderes", username = "jul", forgetPassword = true }, cookie)));
+        Assert.False(forgotten.GetProperty("hasPassword").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Without_a_secret_key_passwords_cannot_be_stored()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var guacd = new FakeGuacd();
+        await using var app = new Server(db, $"127.0.0.1:{guacd.Port}");
+        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (cookie, _) = await SignedInAsync(app, c, db);
+
+        var r = await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "PC", kind = "desktop", host = "ziel", username = "jul", password = "x" }, cookie));
+        Assert.Equal(HttpStatusCode.BadRequest, r.StatusCode);
+        Assert.Equal(0, await db.ScalarAsync<long>("select count(*) from connections"));
+        Assert.False((await Json(await c.SendAsync(GetWith("/api/connections", cookie)))).GetProperty("canStorePasswords").GetBoolean());
     }
 
     [Fact]

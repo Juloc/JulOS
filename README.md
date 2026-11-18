@@ -48,7 +48,7 @@ tools/install-linux-agent.sh    # in the graphical session of the target machine
 ```
 
 Open `http://<BIND_IP>:8080` (on `localhost` or over HTTPS; the session cookie needs a secure context), enter the setup code, choose a user name and password and
-confirm the authenticator code. Then add a connection (Desktop = RDP, Terminal = SSH) and tap it. The target's password is typed per connection, never stored.
+confirm the authenticator code. Then add a connection (Desktop = RDP, Terminal = SSH) and tap it. The target's password is typed per connection, or stored encrypted on request (needs `JULOS_SECRET_KEY` in `.env`: `openssl rand -base64 32`, back it up like a password).
 To reach the machine the server runs on, use the host name `host.docker.internal`.
 
 `BIND_IP` in `.env` is the address the server listens on: `127.0.0.1` (default, behind a reverse proxy) or the LAN address.
@@ -66,7 +66,7 @@ Remote control must not be protected by the desktop password alone.
 
 - **Own login:** password (Argon2id) plus authenticator code, ten recovery codes, long-lived rotating sessions kept as hashes in PostgreSQL, lockout with growing delay. Every API and the WebSocket need a session; see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **First start:** the first account is created in the browser with a one-time setup code from the server log. Afterwards the setup is closed.
-- **Connections** use one-time tickets (30 s). The target password is typed per connection, held in memory for at most 30 s, never stored or logged.
+- **Connections** use one-time tickets (30 s). The target password is typed per connection (held in memory for at most 30 s, never logged) or, on request, stored AES-256-GCM encrypted with a key that lives only in the server settings; it is never sent back to the browser.
 - `guacd` and PostgreSQL have no published port. Open connections end when their session ends.
 - **mTLS** in the proxy (optional extra layer): only your phone with a client certificate reaches the login page. Create one with
   `tools/make-client-cert.sh <name>` (you type the passphrase yourself); the Caddy example has the `client_auth` block.

@@ -111,6 +111,111 @@ public sealed class ScreenStreamTests
         await run;
     }
 
+    // Bestaetigt alles, was kommt, bis eine Weile nichts mehr kommt (der Bildschirm steht still und ist scharf); gibt die letzte Folgenummer zurueck.
+    private static async Task<int> SettleAsync(ScreenStream stream, CancellationToken ct)
+    {
+        var last = 0;
+        while (true)
+        {
+            using var quiet = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            quiet.CancelAfter(TimeSpan.FromSeconds(2.5));
+            try
+            {
+                var picture = await NextAsync<ScreenPicture>(stream, quiet.Token);
+                last = picture.Sequence;
+                stream.Acknowledge(picture.Sequence);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                return last;
+            }
+        }
+    }
+
+    [Fact]
+    public async Task A_key_frame_request_is_answered_even_when_the_screen_is_still_and_sharp()
+    {
+        // Der Browser verliert den Faden (Dekodierer ausgestiegen): ruht der Bildschirm, kam frueher nie ein neues Schluesselbild
+        var host = Host();
+        await using var stream = new ScreenStream(Options(host, 1280, 720));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(75));
+        var run = stream.RunAsync(cts.Token);
+        await NextAsync<ScreenSize>(stream, cts.Token);
+        // Erst warten, bis der Desktop wirklich ruht (der frisch gestartete tut es nicht gleich, und ein laufendes Video nie)
+        var settled = 0;
+        var quiet = false;
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
+        for (var round = 0; round < 6 && !quiet; round++)
+        {
+            var last = await SettleAsync(stream, budget.Token);
+            settled = Math.Max(settled, last);
+            quiet = last == 0 && settled > 0;                                       // eine ganze Ruhephase ohne ein Bild
+        }
+
+        Assert.SkipUnless(quiet, "der Test-Desktop kommt nicht zur Ruhe (laeuft dort ein Video?)");
+        stream.RequestKeyFrame();
+        using var soon = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
+        soon.CancelAfter(TimeSpan.FromSeconds(3));                                   // nicht erst, wenn sich zufaellig etwas aendert
+        var key = await NextAsync<ScreenPicture>(stream, soon.Token, p => p.IsKey);
+        Assert.True(key.Sequence > settled);
+        Assert.Equal(7, key.Data[4] & 0x1f);
+        await cts.CancelAsync();
+        await run;
+    }
+
+    [Fact]
+    public async Task Lost_acknowledgements_stall_the_stream_only_until_the_watchdog_resets_the_window()
+    {
+        var host = Host();
+        await using var stream = new ScreenStream(Options(host, 1280, 720));
+        using var cts = new CancellationTokenSource(Wait);
+        var run = stream.RunAsync(cts.Token);
+        await NextAsync<ScreenSize>(stream, cts.Token);
+        await NextAsync<ScreenPicture>(stream, cts.Token);                        // ohne je zu bestaetigen
+
+        // Hoechstens drei Bilder ohne Bestaetigung ...
+        var unacknowledged = 1;
+        using (var quiet = CancellationTokenSource.CreateLinkedTokenSource(cts.Token))
+        {
+            quiet.CancelAfter(TimeSpan.FromSeconds(1.2));
+            try
+            {
+                while (true)
+                {
+                    await NextAsync<ScreenPicture>(stream, quiet.Token);
+                    unacknowledged++;
+                }
+            }
+            catch (OperationCanceledException) when (!cts.IsCancellationRequested) { /* still */ }
+        }
+
+        Assert.True(unacknowledged <= ScreenStream.MaxPicturesInFlight, $"{unacknowledged} Bilder ohne Bestaetigung");
+
+        // ... und nach einigen Sekunden Stille kommt von selbst ein Schluesselbild
+        var key = await NextAsync<ScreenPicture>(stream, cts.Token, p => p.IsKey);
+        Assert.True(key.Sequence > unacknowledged || unacknowledged == 1);
+        await cts.CancelAsync();
+        await run;
+    }
+
+    [Fact]
+    public async Task One_acknowledgement_by_number_frees_the_window_for_pictures_that_were_dropped()
+    {
+        var host = Host();
+        await using var stream = new ScreenStream(Options(host, 1280, 720));
+        using var cts = new CancellationTokenSource(Wait);
+        var run = stream.RunAsync(cts.Token);
+        await NextAsync<ScreenSize>(stream, cts.Token);
+        var first = await NextAsync<ScreenPicture>(stream, cts.Token);
+        // Alles, was der Browser (zum Beispiel wegen eines Dekodiererwechsels) nie zeichnet, wird mit einer einzigen Nummer bestaetigt
+        stream.Acknowledge(first.Sequence + 100);                                  // weit ueber das Gesendete hinaus: gilt nur bis dahin
+        stream.RequestKeyFrame();
+        var key = await NextAsync<ScreenPicture>(stream, cts.Token, p => p.IsKey && p.Sequence > first.Sequence);
+        Assert.True(key.Sequence > first.Sequence);
+        await cts.CancelAsync();
+        await run;
+    }
+
     [Fact]
     public async Task A_wrong_password_ends_the_session_with_an_error_not_a_hang()
     {

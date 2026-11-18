@@ -5,7 +5,7 @@
  *
  * Nachrichten (alle binaer, Zahlen big endian), siehe ScreenProtocol auf dem Server:
  *   Server -> Browser: 1 Bild (flags, folge u32, H.264), 2 Zeiger, 3 Groesse, 4 Fehler, 5 uebernommen, 6 Zwischenablage (UTF-8-Text)
- *   Browser -> Server: 1 Bestaetigung, 2 Maus bewegt, 3 Maustaste, 4 Mausrad, 5 Taste (Scancode), 6 Zeichen, 7 Fenstergroesse, 8 Schluesselbild,
+ *   Browser -> Server: 1 Bestaetigung (Folgenummer u32: alle Bilder bis dahin), 2 Maus bewegt, 3 Maustaste, 4 Mausrad, 5 Taste (Scancode), 6 Zeichen, 7 Fenstergroesse, 8 Schluesselbild,
  *                      9 Zwischenablage (UTF-8-Text, bis 1 MiB; der ferne Rechner holt ihn, wenn er einfuegt)
  *
  * Zwischenablage: wie bei Guacamole als Strom (onclipboard(stream, 'text/plain') mit onblob/onend, createClipboardStream() mit sendBlob/sendEnd),
@@ -124,12 +124,20 @@ export class StreamClient {
     this.last = { x: -1, y: -1, left: false, middle: false, right: false, up: false, down: false };
     this.mods = { ctrl: false, alt: false, super: false };
     this.layout = layout;
-    this.stats = { pictures: 0, dropped: 0 };
+    this.stats = { pictures: 0, dropped: 0, bytes: 0 };
     this.failures = 0;
+    this.submitted = 0; this.output = 0; this.activityAt = 0;   // Folgenummern: dem Dekodierer gegeben, von ihm geliefert; Zeit des letzten Wechsels
+    this.received = 0;                  // Folgenummer des zuletzt empfangenen Bildes (der Server zaehlt aufsteigend, ohne Luecken)
     this.drawn = false;                 // ob schon ein Bild gezeichnet wurde (davor darf app.js auf Guacamole ausweichen)
   }
 
   getDisplay() { return this.display; }
+
+  // Ein Dekodierer, der Bilder angenommen hat und sie nicht mehr herausgibt (manche halten Bilder zurueck, weil sie auf spaetere warten):
+  // nach einer Sekunde neu oeffnen und ein Schluesselbild holen, statt dass der Server auf die Bestaetigung wartet.
+  watchDecoder() {
+    if (this.decoder && this.submitted > this.output && performance.now() - this.activityAt > 1000) { this.stats.stalls = (this.stats.stalls || 0) + 1; this.decoderFailed(); }
+  }
 
   setState(s) { if (this.state === s) return; this.state = s; if (this.onstatechange) this.onstatechange(s); }
 
@@ -138,12 +146,14 @@ export class StreamClient {
     const socket = new WebSocket(this.url + '?' + query);
     socket.binaryType = 'arraybuffer';
     this.socket = socket;
+    this.watch = setInterval(() => this.watchDecoder(), 500);
     socket.onmessage = (e) => { if (this.socket === socket) this.receive(e.data); };
     socket.onclose = () => { if (this.socket === socket) this.finish(); };
     socket.onerror = () => { if (this.socket === socket && !this.connected && this.onerror) this.onerror({ code: 520, message: 'Keine Verbindung zum Server.' }); };
   }
 
   disconnect() {
+    clearInterval(this.watch);
     this.closing = true;
     const s = this.socket; this.socket = null;
     if (s) { try { s.close(); } catch { /* egal */ } }
@@ -152,11 +162,13 @@ export class StreamClient {
   }
 
   finish() {
+    clearInterval(this.watch);
     this.socket = null; this.closeDecoder();
     if (!this.closing) this.setState(5);
   }
 
   closeDecoder() {
+    this.submitted = this.output = 0;
     const d = this.decoder; this.decoder = null; this.codec = '';
     if (d && d.state !== 'closed') { try { d.close(); } catch { /* egal */ } }
   }
@@ -217,19 +229,27 @@ export class StreamClient {
     return 'avc1.42e01f';
   }
 
+  // Jede Bestaetigung gilt fuer das Bild mit dieser Folgenummer und alle davor. So steht jedes Bild, das nie gezeichnet wird (verworfen,
+  // Dekodierer neu geoeffnet oder ausgestiegen), nicht dauerhaft im Fenster des Servers: ein spaeteres Bild oder diese Notbestaetigung
+  // raeumt es auf.
+  ack(sequence) { const b = new DataView(new ArrayBuffer(5)); b.setUint8(0, OUT.ack); b.setInt32(1, sequence); this.send(b.buffer); }
+
   picture(v, buffer) {
     const isKey = (v.getUint8(1) & 1) !== 0;
     const sequence = v.getInt32(2);
+    this.received = sequence;
     const data = new Uint8Array(buffer, 6);
     if (isKey) {
       const codec = this.codecOf(data);
-      if (!this.decoder || this.decoder.state === 'closed' || codec !== this.codec) this.openDecoder(codec);
+      if (!this.decoder || this.decoder.state === 'closed' || codec !== this.codec) this.openDecoder(codec, sequence - 1);
     }
     const d = this.decoder;
-    if (!d || d.state !== 'configured') { this.stats.dropped++; this.send1(OUT.keyframe); return; }   // ohne Schluesselbild nichts zu dekodieren: eins anfordern
+    if (!d || d.state !== 'configured') { this.stats.dropped++; this.ack(sequence); this.send1(OUT.keyframe); return; }   // ohne Schluesselbild nichts zu dekodieren: eins anfordern
     try {
       d.decode(new EncodedVideoChunk({ type: isKey ? 'key' : 'delta', timestamp: sequence, data }));
-      this.stats.pictures++;
+      if (this.submitted <= this.output) this.activityAt = performance.now();
+      this.submitted = sequence;
+      this.stats.pictures++; this.stats.bytes += data.length;
     } catch {
       this.decoderFailed();
     }
@@ -239,6 +259,7 @@ export class StreamClient {
   // hier nicht (Browser ohne passenden H.264-Dekodierer): dann Fehler melden, damit app.js auf Guacamole ausweichen kann.
   decoderFailed() {
     this.stats.dropped++; this.closeDecoder();
+    this.ack(this.received);                       // was im Dekodierer steckte, kommt nie heraus
     if (!this.drawn && ++this.failures >= 3) {
       this.closing = true;
       const s = this.socket; this.socket = null;
@@ -250,16 +271,21 @@ export class StreamClient {
     this.send1(OUT.keyframe);
   }
 
-  openDecoder(codec) {
+  // lostUpTo: die Bilder bis zu dieser Nummer, die im alten Dekodierer steckten (sie werden nie gezeichnet)
+  openDecoder(codec, lostUpTo) {
+    const hadDecoder = !!this.decoder;
     this.closeDecoder();
+    if (hadDecoder && lostUpTo > 0) this.ack(lostUpTo);
     const d = new VideoDecoder({
       output: (frame) => {
         const g = this.display;
+        const sequence = frame.timestamp;
         if (frame.displayWidth !== g.width || frame.displayHeight !== g.height) g.resize(frame.displayWidth, frame.displayHeight);
         g.ctx.drawImage(frame, 0, 0);
         frame.close();
         this.drawn = true;
-        this.send1(OUT.ack);                       // erst nach dem Zeichnen: so laeuft der Server dem Browser nie davon
+        this.output = sequence; this.activityAt = performance.now();
+        this.ack(sequence);                        // erst nach dem Zeichnen: so laeuft der Server dem Browser nie davon
       },
       error: () => { if (this.decoder === d) this.decoderFailed(); },
     });

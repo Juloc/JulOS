@@ -41,6 +41,15 @@ To start over: `docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/
 connection list, devices), `app.js` is the remote view (display, touch, keyboard, key bar, window bar), `lib/` the unmodified
 Guacamole JS client. After changing it, `deploy/dev/up.sh` rebuilds the image; then open `http://127.0.0.1:18080` in a browser (phone
 size in the browser's device mode). A fresh database starts at the setup screen; the setup code is in the server log (see above).
+On a wide screen with a mouse (`min-width: 1000px` and `pointer: fine`) `shell.js` loads `desktop.js` and `desktop.css` and shows the desktop
+interface instead of the phone home: menu bar, dock, launcher, a Home window and one window for the running session (the remote view of `app.js`
+is moved into it; the engines are untouched). The phone never loads these two files. `?desktop` forces the desktop view and `?phone` the phone view
+(useful in a browser whose pointer is not reported as "fine"). Docker, Caddy, DDNS, Files and the system overview have no backend yet and are only
+shown as "bald verfügbar" (see `IDEAS.md`).
+To test next to other sessions, start your own compose project with other ports and your `wwwroot` mounted over `/app/wwwroot` (no rebuild after
+frontend changes), for example an override file with `ports: !override ["127.0.0.1:18280:8080"]` and `docker compose -p my-ui -f deploy/dev/compose.yaml -f override.yaml up -d`.
+Cookies belong to the host name, not the port: two stacks opened as `127.0.0.1:...` in one browser overwrite each other's login, so open yours as
+`my-ui.localhost:18280`.
 To connect, add a Desktop connection to `rdp-target` (login `ubuntu` / `ubuntu`) and a Terminal connection to `test-ssh` port `2222`
 (user `tester`, password `DEV_TARGET_PASSWORD` from `deploy/dev/.env`).
 

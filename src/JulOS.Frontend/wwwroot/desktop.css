@@ -61,7 +61,7 @@ html.desktop body { background: #d9d4f2; }
   border: 1px solid var(--dk-edge); box-shadow: 0 8px 26px rgba(78, 62, 140, .14); animation: dkwin .2s cubic-bezier(.2, .8, .3, 1); transition: opacity .18s, transform .18s, box-shadow .18s; }
 .dk-win.active { box-shadow: var(--dk-shadow); }
 @keyframes dkwin { from { opacity: 0; transform: scale(.965) translateY(8px); } to { opacity: 1; transform: none; } }
-.dk-win.min { opacity: 0; transform: translateY(60px) scale(.9); pointer-events: none; visibility: hidden; transition: opacity .18s, transform .18s, visibility 0s .18s; }
+.dk-win.min { opacity: 0; transform: translateY(60px); pointer-events: none; visibility: hidden; transition: opacity .18s, transform .18s, visibility 0s .18s; }   /* ohne scale: die Groesse der Anzeige darf sich beim Minimieren nicht aendern */
 .dk-win.max { left: 0 !important; top: 34px !important; width: 100% !important; height: calc(100% - 34px - 96px) !important; border-radius: 0; }
 .dk-win.dragging, .dk-win.resizing { transition: none; }
 .dk-wh { flex: 0 0 auto; height: 42px; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 14px; cursor: default; border-radius: 16px 16px 0 0; }
@@ -186,10 +186,10 @@ html.desktop #remote #overlay .box { border-radius: 20px; background: rgba(255, 
   border: 1px solid var(--dk-edge); box-shadow: var(--dk-shadow); animation: dkpop .16s ease-out; }
 .dk-launch h2 { margin: 0 0 12px; display: flex; align-items: center; gap: 10px; font-size: 16.5px; font-weight: 650; color: #25284a; }
 .dk-launch h2 svg { width: 24px; height: 24px; }
-.dk-launch .dk-q { height: 38px; width: 100%; border-radius: 11px; border: 1px solid rgba(90, 80, 150, .16); background: rgba(255, 255, 255, .85); display: flex; align-items: center; gap: 8px; padding: 0 12px; color: #7a7ea0; }
+.dk-launch .dk-q { flex-direction: row; align-items: center; margin: 0; height: 38px; width: 100%; border-radius: 11px; border: 1px solid rgba(90, 80, 150, .16); background: rgba(255, 255, 255, .85); display: flex; align-items: center; gap: 8px; padding: 0 12px; color: #7a7ea0; }
 .dk-launch input { all: unset; flex: 1; min-width: 0; color: #25284a; font-size: 14px; user-select: text; -webkit-user-select: text; }
 .dk-launch input::placeholder { color: #8a8eae; }
-.dk-launch .dk-grid { grid-template-columns: repeat(4, 1fr); gap: 4px; padding-top: 12px; max-height: 300px; overflow-y: auto; }
+.dk-launch .dk-grid { grid-template-columns: repeat(4, 1fr); gap: 2px; padding-top: 10px; }
 .dk-launch .dk-app .dk-ti { width: 50px; height: 50px; }
 .dk-launch .dk-sl { margin-top: 8px; display: flex; flex-direction: column; gap: 2px; max-height: 300px; overflow-y: auto; }
 .dk-launch .dk-sl button { display: flex; align-items: center; gap: 11px; height: 44px; padding: 0 8px; border-radius: 10px; width: 100%; color: #25284a; }

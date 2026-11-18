@@ -14,3 +14,5 @@ Everything that is not in [SCOPE.md](SCOPE.md) goes here, one line each, with th
 - 2026-11-18 Docker module, Caddy module, DDNS status (milestone 3 in the vision)
 - 2026-11-18 Module shell/core with module list (milestone 2)
 - 2026-11-18 VNC connections, SSH key login, saved connection groups, QR code for the authenticator secret, passkeys (WebAuthn)
+- 2026-11-18 Desktop layout: physical keyboard goes straight to the remote (today keys only work through the phone input field), top bar with the buttons that make sense on a PC (zoom, fullscreen, menu), program bar at the bottom or hidden, no touch-only buttons
+- 2026-11-18 Measure and reduce lag over the internet: show round-trip time in the client log, try lower colour depth or no RDP graphics pipeline, compare with the direct LAN path

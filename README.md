@@ -87,7 +87,7 @@ Guacamole cannot transfer image clipboards over RDP, hence this path.
 
 ## Layout
 
-- `src/JulOS.Frontend` host: web client (`wwwroot`: PWA), HTTP API, WebSocket; `src/JulOS.Backend` accounts, sessions, connections (PostgreSQL); `src/JulOS.Integrations` guacd relay and agent client; `src/JulOS.Workers` background jobs
+- `src/JulOS.Frontend` host: web client (`wwwroot`: PWA for the phone, desktop interface with windows for wide screens with a mouse), HTTP API, WebSocket; `src/JulOS.Backend` accounts, sessions, connections (PostgreSQL); `src/JulOS.Integrations` guacd relay and agent client; `src/JulOS.Workers` background jobs
 - `tests/`, `database/` (SQL migrations), `deploy/dev/` the test instance with throwaway SSH and RDP targets (see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md))
 - `tools/julos-agent.py` Linux agent (windows, apps, app mode), `tools/julos-clip.py` photo clipboard helper
 - `tools/install-linux-agent.sh`, `tools/julos-user.sh`, `tools/make-client-cert.sh`

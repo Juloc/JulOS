@@ -8,7 +8,22 @@ import { openRemote, setLeaveHandler, disconnectRemote, ico } from './app.js';
 
 const $ = (s) => document.querySelector(s);
 const SCREENS = ['boot', 'setup', 'login', 'home', 'remote'];
-const show = (name) => { for (const n of SCREENS) $('#' + n).hidden = n !== name; };
+
+// Breiter Bildschirm mit Maus: die Desktop-Oberflaeche (desktop.js) ersetzt Startseite und Fernsteuerungs-Ansicht. Auf dem Handy wird sie nicht geladen.
+// ?desktop und ?phone erzwingen eine der beiden Ansichten (zum Testen, zum Beispiel in einem Browser ohne "feinen" Zeiger)
+const FORCE = new URLSearchParams(location.search);
+const WIDE = FORCE.has('phone') ? false : FORCE.has('desktop') ? innerWidth >= 1000 : matchMedia('(min-width: 1000px) and (pointer: fine)').matches;
+const D = WIDE ? await import('./desktop.js').catch(() => null) : null;
+
+const show = (name) => {
+  if (D) {   // Desktop: Startseite und Fernsteuerung sind Fenster in #desktop (die Fernsteuerung zeigt und versteckt app.js selbst)
+    const desk = name === 'home' || name === 'remote';
+    for (const n of ['boot', 'setup', 'login', 'home']) $('#' + n).hidden = n !== name;
+    $('#desktop').hidden = !desk;
+    return;
+  }
+  for (const n of SCREENS) $('#' + n).hidden = n !== name;
+};
 
 class ApiError extends Error {
   constructor(status, message, retryAfter) { super(message); this.status = status; this.retryAfter = retryAfter; }
@@ -91,6 +106,7 @@ $('#setupSecretForm').addEventListener('submit', async (e) => {
 
 /* ---------- Anmeldung ---------- */
 function showLogin(message = '') {
+  if (D) D.reset();
   show('login'); setMsg($('#loginMsg'), message);
   $('#loginPw').value = ''; $('#loginCode').value = '';
   setTimeout(() => ($('#loginUser').value ? $('#loginPw') : $('#loginUser')).focus(), 50);
@@ -116,12 +132,14 @@ async function showHome(user, message = '') {
   setMsg($('#homeMsg'), message);
   show('home');
   await loadConnections();
+  if (D) D.userChanged(user, message);
 }
 
 async function loadConnections() {
   try { const r = await api('/api/connections'); state.connections = r.connections; state.canStore = !!r.canStorePasswords; }
   catch (e) { if (e.status === 401) return showLogin('Die Sitzung ist abgelaufen. Bitte neu anmelden.'); setMsg($('#homeMsg'), e.message); return; }
   renderConnections();
+  if (D) D.connectionsChanged();
 }
 
 const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -220,14 +238,22 @@ $('#connDelete').addEventListener('click', async (e) => {
 
 /* ---------- Verbinden ---------- */
 function startDialog(c) {
+  if (D && D.isRunning(c)) return;   // Desktop: die Sitzung laeuft schon, ihr Fenster kommt nach vorn
   state.starting = c;
   // Mit gespeichertem Passwort genuegt ein Tipp: der Server nimmt es aus dem verschluesselten Speicher
-  if (c.hasPassword) { show('remote'); openRemote({ id: c.id, name: c.name, kind: c.kind, engine: c.engine, stored: true }, ''); return; }
+  if (c.hasPassword) { launch(c, ''); return; }
   $('#startTitle').textContent = c.name;
   $('#startUser').value = c.username;
   $('#startPw').value = '';
   $('#startDlg').showModal();
   setTimeout(() => $('#startPw').focus(), 150);
+}
+
+/** Verbindung starten. Desktop: erst das Sitzungsfenster anlegen, dann verbindet app.js in dessen Anzeige. */
+function launch(c, password) {
+  if (D && !D.beforeConnect(c)) return;
+  show('remote');
+  openRemote({ id: c.id, name: c.name, kind: c.kind, engine: c.engine, stored: c.hasPassword ? true : undefined }, password);
 }
 
 $('#startForm').addEventListener('submit', (e) => {
@@ -236,16 +262,17 @@ $('#startForm').addEventListener('submit', (e) => {
   if (!password) return;
   $('#startPw').value = '';
   $('#startDlg').close();
-  const c = state.starting;
-  show('remote');
-  openRemote({ id: c.id, name: c.name, kind: c.kind, engine: c.engine }, password);
+  launch(state.starting, password);
 });
 
 // Verbindung zu Ende (Fehler, Abbruch, "Zur Startseite"): zurueck zur Liste, mit Hinweis
 setLeaveHandler((message, reason) => {
   if (reason === 'auth') return showLogin(message);
+  if (D) return D.remoteLeft(message);   // Desktop: nur das Sitzungsfenster schliessen, die Startseite bleibt
   showHome(state.user, message);
 });
+
+if (D) await D.init({ state, esc, connect: startDialog, edit: editDialog, add: () => editDialog(null), devices: openDevices, signOut });
 
 /* ---------- Geraete und Sitzungen ---------- */
 function describeAgent(ua) {

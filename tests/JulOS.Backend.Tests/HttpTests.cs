@@ -16,7 +16,7 @@ public sealed class HttpTests
     private const string Password = "korrektes pferd batterie";
     private const string SetupCode = "TEST-CODE-0000";
 
-    private sealed class Server(TestDb db) : WebApplicationFactory<Program>
+    private sealed class Server(TestDb db, string? filesRoot = null) : WebApplicationFactory<Program>
     {
         /// <summary>Ohne eigene Cookie-Verwaltung des Test-Clients: die Tests setzen das Cookie selbst.</summary>
         public HttpClient Client() => CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
@@ -25,6 +25,7 @@ public sealed class HttpTests
         {
             builder.UseSetting("JULOS_DB", db.ConnectionString);
             builder.UseSetting("JULOS_SETUP_CODE", SetupCode);
+            if (filesRoot is not null) builder.UseSetting("JULOS_FILES_ROOT", filesRoot);
             // der Test-Server hat keine Client-Adresse; wie hinter einem Proxy im eigenen Netz tun
             builder.ConfigureServices(s => s.AddTransient<Microsoft.AspNetCore.Hosting.IStartupFilter, LoopbackFilter>());
         }
@@ -87,7 +88,7 @@ public sealed class HttpTests
         Assert.True(me.GetProperty("setupNeeded").GetBoolean());
         Assert.True((await Json(await c.GetAsync("/api/setup/status"))).GetProperty("needed").GetBoolean());
 
-        foreach (var path in new[] { "/api/auth/sessions", "/api/connections", "/api/irgendwas" })
+        foreach (var path in new[] { "/api/auth/sessions", "/api/connections", "/api/system/overview", "/api/files/list", "/api/files/search?q=a", "/api/files/download?path=a", "/api/irgendwas" })
             Assert.Equal(HttpStatusCode.Unauthorized, (await c.GetAsync(path)).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await c.SendAsync(Post("/api/auth/logout", new { }))).StatusCode);
 
@@ -97,6 +98,94 @@ public sealed class HttpTests
         Assert.Equal("nosniff", page.Headers.GetValues("X-Content-Type-Options").Single());
         Assert.False(page.Headers.Contains("Server"));
         Assert.Contains("no-store", (await c.GetAsync("/api/health")).Headers.GetValues("Cache-Control").Single());
+    }
+
+    [Fact]
+    public async Task The_system_overview_is_read_only_and_answers_a_signed_in_user()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db);
+        var c = app.Client();
+        var (cookie, _, _) = await SetupAsync(c);
+
+        // der Sampler hat beim Start mindestens einmal gemessen; Speicher und Datentraeger kommen aus dem Test-Rechner
+        JsonElement o = default;
+        for (var i = 0; i < 20; i++)
+        {
+            var r = await c.SendAsync(Get("/api/system/overview", cookie));
+            Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+            o = await Json(r);
+            if (o.TryGetProperty("memoryTotal", out _)) break;
+            await Task.Delay(100);
+        }
+        Assert.True(o.GetProperty("memoryTotal").GetInt64() > 0);
+        Assert.InRange(o.GetProperty("memoryUsed").GetInt64(), 0, o.GetProperty("memoryTotal").GetInt64());
+        Assert.True(o.GetProperty("cores").GetInt32() > 0);
+        Assert.False(o.TryGetProperty("host", out _));
+
+        // nichts schreibbar
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, (await c.SendAsync(Post("/api/system/overview", new { }, cookie: cookie))).StatusCode);
+    }
+
+    [Fact]
+    public async Task Files_are_read_only_need_a_session_and_stay_inside_the_root()
+    {
+        var dir = Directory.CreateTempSubdirectory("julos-http-files-");
+        try
+        {
+            var root = Directory.CreateDirectory(Path.Combine(dir.FullName, "root")).FullName;
+            File.WriteAllText(Path.Combine(dir.FullName, "geheim.txt"), "GEHEIM");
+            File.WriteAllText(Path.Combine(root, "seite.html"), "<script>alert(1)</script>");
+            Directory.CreateDirectory(Path.Combine(root, "Media"));
+            File.WriteAllText(Path.Combine(root, "Media", "a b.txt"), "inhalt");
+            File.CreateSymbolicLink(Path.Combine(root, "raus.txt"), Path.Combine(dir.FullName, "geheim.txt"));
+
+            await using var db = await TestDb.CreateAsync();
+            await using var app = new Server(db, root);
+            var c = app.Client();
+            Assert.Equal(HttpStatusCode.Unauthorized, (await c.GetAsync("/api/files/list")).StatusCode);
+            var (cookie, _, _) = await SetupAsync(c);
+
+            var list = await Json(await c.SendAsync(Get("/api/files/list", cookie)));
+            Assert.Equal(["Media", "seite.html"], list.GetProperty("entries").EnumerateArray().Select(e => e.GetProperty("name").GetString()!));
+            Assert.Equal("Media/a b.txt", (await Json(await c.SendAsync(Get("/api/files/search?q=a%20b", cookie)))).GetProperty("results")[0].GetProperty("path").GetString());
+
+            var down = await c.SendAsync(Get("/api/files/download?path=Media/a%20b.txt", cookie));
+            Assert.Equal("inhalt", await down.Content.ReadAsStringAsync());
+            Assert.Equal("attachment", down.Content.Headers.ContentDisposition!.DispositionType);
+            // eine Seite wird nie als Seite geliefert
+            var html = await c.SendAsync(Get("/api/files/download?path=seite.html", cookie));
+            Assert.Equal("application/octet-stream", html.Content.Headers.ContentType!.MediaType);
+            Assert.Equal("attachment", html.Content.Headers.ContentDisposition!.DispositionType);
+            Assert.Equal("nosniff", html.Headers.GetValues("X-Content-Type-Options").Single());
+
+            foreach (var bad in new[] { "../geheim.txt", "%2e%2e/geheim.txt", "raus.txt", "/etc/passwd", "Media", "gibt-es-nicht" })
+                Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Get("/api/files/download?path=" + bad, cookie))).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Get("/api/files/list?path=..", cookie))).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Get("/api/files/search?q=", cookie))).StatusCode);
+
+            // nur lesen: keine schreibende Methode
+            foreach (var path in new[] { "/api/files/list", "/api/files/download?path=seite.html", "/api/files/upload" })
+            {
+                var r = await c.SendAsync(Post(path, new { }, cookie: cookie));
+                Assert.True(r.StatusCode is HttpStatusCode.MethodNotAllowed or HttpStatusCode.NotFound, path);
+            }
+            Assert.Equal(HttpStatusCode.MethodNotAllowed, (await c.SendAsync(new HttpRequestMessage(HttpMethod.Delete, "/api/files/download?path=seite.html") { Headers = { { "X-JulOS", "1" }, { "Origin", "http://localhost" }, { "Cookie", cookie } } })).StatusCode);
+            Assert.True(File.Exists(Path.Combine(root, "seite.html")));
+        }
+        finally { dir.Delete(true); }
+    }
+
+    [Fact]
+    public async Task Files_can_be_switched_off()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db, "off");
+        var c = app.Client();
+        var (cookie, _, _) = await SetupAsync(c);
+        var r = await c.SendAsync(Get("/api/files/list", cookie));
+        Assert.Equal(HttpStatusCode.NotFound, r.StatusCode);
+        Assert.Contains("abgeschaltet", (await Json(r)).GetProperty("error").GetString());
     }
 
     [Fact]

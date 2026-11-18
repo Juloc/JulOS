@@ -1,5 +1,7 @@
 using System.Text.Json.Serialization;
 using JulOS.Frontend.Auth;
+using JulOS.Frontend.Files;
+using JulOS.Frontend.SystemInfo;
 
 namespace JulOS.Frontend;
 
@@ -25,4 +27,7 @@ namespace JulOS.Frontend;
 [JsonSerializable(typeof(ConnectionRequest))]
 [JsonSerializable(typeof(TicketRequest))]
 [JsonSerializable(typeof(TicketResponse))]
+[JsonSerializable(typeof(OverviewResponse))]
+[JsonSerializable(typeof(FileListingDto))]
+[JsonSerializable(typeof(FileSearchDto))]
 internal sealed partial class AppJson : JsonSerializerContext;

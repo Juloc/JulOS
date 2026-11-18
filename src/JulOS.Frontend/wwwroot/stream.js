@@ -8,11 +8,15 @@
  *   Browser -> Server: 1 Bestaetigung, 2 Maus bewegt, 3 Maustaste, 4 Mausrad, 5 Taste (Scancode), 6 Zeichen, 7 Fenstergroesse, 8 Schluesselbild,
  *                      9 Zwischenablage (UTF-8-Text, bis 1 MiB; der ferne Rechner holt ihn, wenn er einfuegt)
  *
+ * Ton (32 und 33 in beide Richtungen: Ton vom fernen Rechner, Zustand, "Ton an", Mikrofon): siehe stream-audio.js, erreichbar als client.audio.
+ *
  * Zwischenablage: wie bei Guacamole als Strom (onclipboard(stream, 'text/plain') mit onblob/onend, createClipboardStream() mit sendBlob/sendEnd),
  * damit Guacamole.StringReader und StringWriter in app.js unveraendert funktionieren. Nur Text.
  * ===================================================================== */
 
-const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6 };
+import { StreamAudio } from './stream-audio.js';
+
+const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, audio: 32, audioStatus: 33 };
 const OUT = { ack: 1, move: 2, button: 3, wheel: 4, key: 5, unicode: 6, resize: 7, keyframe: 8, clipboard: 9 };
 
 /* ---------- Tasten: X11-Keysyms (so arbeitet app.js) -> RDP-Scancodes ---------- */
@@ -126,6 +130,7 @@ export class StreamClient {
     this.layout = layout;
     this.stats = { pictures: 0, dropped: 0 };
     this.failures = 0;
+    this.audio = new StreamAudio((bytes) => this.send(bytes));
     this.drawn = false;                 // ob schon ein Bild gezeichnet wurde (davor darf app.js auf Guacamole ausweichen)
   }
 
@@ -148,11 +153,12 @@ export class StreamClient {
     const s = this.socket; this.socket = null;
     if (s) { try { s.close(); } catch { /* egal */ } }
     this.closeDecoder();
+    this.audio.close();
     this.setState(5);
   }
 
   finish() {
-    this.socket = null; this.closeDecoder();
+    this.socket = null; this.closeDecoder(); this.audio.close();
     if (!this.closing) this.setState(5);
   }
 
@@ -192,6 +198,8 @@ export class StreamClient {
         this.setState(5);
         break;
       case IN.clipboard: this.incomingClipboard(new Uint8Array(buffer, 1)); break;
+      case IN.audio: this.audio.frame(buffer); break;
+      case IN.audioStatus: this.audio.status(buffer); break;
       default: break;
     }
   }

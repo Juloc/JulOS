@@ -122,4 +122,123 @@ public sealed class ScreenStreamTests
         // und die Sitzung laeuft weiter, bis wir abbrechen. Beides ist kein Haengen.
         Assert.True(error is null or OperationCanceledException or RdpException, error?.ToString());
     }
+
+    /// <summary>
+    /// Der Ton des Desktops (RDPSND, vom xrdp-Ziel aus PipeWire oder PulseAudio) kommt als PCM an, sobald er eingeschaltet ist. Braucht einen Ton im
+    /// Desktop: deploy/dev/test-display.sh spielt ihn (JULOS_TEST_RDP_TONE=1) mit deploy/dev/play-tone.sh, sobald die Sitzung steht.
+    /// </summary>
+    [Fact]
+    public async Task Sound_played_on_the_desktop_arrives_as_pcm()
+    {
+        var host = Host();
+        Assert.SkipWhen(Environment.GetEnvironmentVariable("JULOS_TEST_RDP_TONE") is null, "JULOS_TEST_RDP_TONE nicht gesetzt (deploy/dev/test-display.sh benutzen)");
+        await using var stream = new ScreenStream(Options(host, 1280, 720));
+        stream.Audio.OutputOn = true;
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var run = stream.RunAsync(cts.Token);
+
+        var loud = 0;
+        var total = 0;
+        short peak = 0;
+        AudioBlock? sample = null;
+        var statuses = new List<AudioStatus>();
+        try
+        {
+            while (loud < 20 && await stream.Events.WaitToReadAsync(cts.Token))
+            {
+                while (stream.Events.TryRead(out var evt))
+                {
+                    switch (evt)
+                    {
+                        case ScreenPicture:
+                            stream.Acknowledge();
+                            break;
+                        case ScreenAudioStatus status:
+                            statuses.Add(status.Status);
+                            break;
+                        case ScreenAudioReady:
+                            while (stream.Audio.TryTake(out var block))
+                            {
+                                total++;
+                                sample ??= block;
+                                var pcm = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, short>(block.Pcm.Span);
+                                var top = pcm.IsEmpty ? (short)0 : pcm.ToArray().Max(Math.Abs);
+                                peak = Math.Max(peak, top);
+                                if (top > 1000)
+                                {
+                                    loud++;
+                                }
+                            }
+
+                            break;
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException) { /* unten melden */ }
+
+        Assert.True(loud >= 20, $"nur {loud} laute von {total} Tonbloecken, lauteste Stelle {peak}, Zustaende: " + string.Join(" | ", statuses));
+        Assert.True(statuses.Any(s => s.Output), "der Zustand meldete nie, dass der ferne Rechner Ton liefert");
+        Assert.Equal(2, sample!.Channels);
+        Assert.InRange(sample.Rate, 8000, 96000);
+        await cts.CancelAsync();
+        await Record.ExceptionAsync(() => run);
+    }
+
+    /// <summary>
+    /// Das Mikrofon: der Browser schickt einen Ton, im Desktop nimmt ein Programm auf (deploy/dev/record-mic.sh, gestartet von test-display.sh,
+    /// die Rohdaten landen in der Datei JULOS_TEST_RDP_REC) und muss ihn hoeren. Braucht den Mikrofon-Kanal des Ziels (pipewire-module-xrdp).
+    /// </summary>
+    [Fact]
+    public async Task The_microphone_reaches_a_program_recording_on_the_desktop()
+    {
+        var host = Host();
+        var recording = Environment.GetEnvironmentVariable("JULOS_TEST_RDP_REC");
+        Assert.SkipWhen(recording is null, "JULOS_TEST_RDP_REC nicht gesetzt (deploy/dev/test-display.sh benutzen)");
+        await using var stream = new ScreenStream(Options(host, 1280, 720));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(50));
+        var run = stream.RunAsync(cts.Token);
+
+        // 25 Sekunden lang alle 20 ms ein Stueck eines 600-Hz-Tons (16 kHz, Mono); verworfen wird es, solange niemand im Desktop aufnimmt
+        var phase = 0;
+        var statuses = new List<AudioStatus>();
+        var end = DateTime.UtcNow.AddSeconds(25);
+        var sent = 0;
+        while (DateTime.UtcNow < end && !cts.IsCancellationRequested)
+        {
+            while (stream.Events.TryRead(out var evt))
+            {
+                switch (evt)
+                {
+                    case ScreenPicture:
+                        stream.Acknowledge();
+                        break;
+                    case ScreenAudioStatus status:
+                        statuses.Add(status.Status);
+                        break;
+                }
+            }
+
+            var chunk = new byte[320 * 2];
+            for (var i = 0; i < 320; i++, phase++)
+            {
+                System.Buffers.Binary.BinaryPrimitives.WriteInt16LittleEndian(chunk.AsSpan(i * 2), (short)(12000 * Math.Sin(2 * Math.PI * 600 * phase / 16000)));
+            }
+
+            stream.Audio.Microphone(chunk, 16000);
+            sent++;
+            await Task.Delay(20, cts.Token);
+        }
+
+        Assert.True(statuses.Any(s => s.MicrophoneAvailable), "der Desktop hat den Mikrofon-Kanal nie angeboten, Zustaende: " + string.Join(" | ", statuses));
+        Assert.True(statuses.Any(s => s.MicrophoneRecording), "der Desktop hat nie Ton verlangt, Zustaende: " + string.Join(" | ", statuses));
+        await cts.CancelAsync();
+        await Record.ExceptionAsync(() => run);
+
+        // die Aufnahme: es muss der Ton darin sein, nicht nur Stille (die Aufnahme laeuft noch ein paar Sekunden, die Datei ist aber schon voll genug)
+        var bytes = File.ReadAllBytes(recording!);
+        var samples = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, short>(bytes.AsSpan(0, bytes.Length & ~1)).ToArray();
+        var loud = samples.Count(sample => Math.Abs(sample) > 4000);
+        Assert.True(loud > 8000, $"in der Aufnahme ({samples.Length} Samples, {sent} Stuecke gesendet) nur {loud} laute Samples");
+    }
 }

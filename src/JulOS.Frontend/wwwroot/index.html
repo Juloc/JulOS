@@ -122,6 +122,7 @@
         </div>
       </div>
 
+      <button id="micLive" type="button" hidden title="Mikrofon beenden"><span class="dot"></span>Mikrofon an</button>
       <div id="menuScrim" hidden></div>
       <nav id="dock">
         <!-- Menü: kein Dialog, damit die Tastatur offen bleibt -->
@@ -131,6 +132,9 @@
           <div class="mi" role="menuitem" data-act="autoKb"><span class="mic" data-ic="auto_kb"></span><span class="mt">Auto-Tastatur bei Textfeld</span><span class="mv" id="autoKbLabel"></span></div>
           <div class="mi" role="menuitem" data-act="touchMode"><span class="mic" data-ic="touch"></span><span class="mt">Finger</span><span class="mv" id="touchModeLabel"></span></div>
           <div class="mi" role="menuitem" data-act="autoPaste"><span class="mic" data-ic="image"></span><span class="mt">Foto sofort einfügen</span><span class="mv" id="autoPasteLabel"></span></div>
+          <div class="mi" role="menuitem" data-act="sound" hidden><span class="mic" data-ic="volume"></span><span class="mt">Ton vom Rechner</span><span class="mv" id="soundLabel"></span></div>
+          <div class="mi" role="menuitem" data-act="volume" hidden><span class="mic" data-ic="volume"></span><span class="mt">Lautstärke</span><span class="mv" id="volumeLabel"></span></div>
+          <div class="mi" role="menuitem" data-act="mic" hidden><span class="mic" data-ic="mic"></span><span class="mt">Mikrofon</span><span class="mv" id="micLabel"></span></div>
           <div class="mi" role="menuitem" data-act="password"><span class="mic" data-ic="key"></span><span class="mt">Passwort aus Passwortmanager</span></div>
           <div class="mi" role="menuitem" data-act="theme"><span class="mic" data-ic="palette"></span><span class="mt">Farben und Design</span></div>
           <div class="mi" role="menuitem" data-act="editKeys"><span class="mic" data-ic="edit"></span><span class="mt">Sondertasten bearbeiten</span></div>

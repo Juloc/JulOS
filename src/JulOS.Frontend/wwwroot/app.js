@@ -657,6 +657,9 @@ async function connect() {
   el.remote.hidden = false;
   showBusy(S.everConnected ? 'Verbinde neu …' : 'Verbinde …');
   await sleep(30); // Layout setzen, damit die Stage-Groesse stimmt
+  // Eine noch offene Tastatur (Fokus aus der vorigen Sitzung) darf die Groesse nicht bestimmen: sonst bekommt die VM ein flaches Bild
+  if (kbFocused()) el.kb.blur();
+  for (let i = 0; i < 12 && kbOpen; i++) await sleep(50);
   const { w, h } = computeRemote();
   let ticket;
   try {

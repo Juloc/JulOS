@@ -1,4 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Display/Video: H.264 ueber libopenh264 (P/Invoke, Zeiger auf native Speicherbloecke) -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="JulOS.Display.Tests" />
+  </ItemGroup>
   <ItemGroup>
     <!-- Nur fuer Logging-Schnittstellen; die Bibliothek kennt weder Datenbank noch Konten -->
     <FrameworkReference Include="Microsoft.AspNetCore.App" />

@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>JulOS.Display.Tests</RootNamespace>
+    <!-- Testvektoren und Pruefsummen dieser Tests brauchen weder Docker noch einen RDP-Server; kurze Tests ohne Abbruch-Token -->
+    <NoWarn>$(NoWarn);xUnit1051</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <ProjectReference Include="..\..\src\JulOS.Integrations\JulOS.Integrations.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Testdaten, die die Tests von der Platte lesen (Pfad relativ zum Ausgabeordner: Graphics/TestData, Orders/TestData, Video/abi) -->
+    <None Include="Graphics\TestData\**;Orders\TestData\**;Video\abi\**" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Testdaten, die in die Test-Assembly eingebettet werden -->
+    <EmbeddedResource Include="Channels\Spec\*.txt" LogicalName="Spec/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Security\TestData\rfc6229-rc4.txt" LogicalName="rfc6229-rc4.txt" />
+  </ItemGroup>
+</Project>

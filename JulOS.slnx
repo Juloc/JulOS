@@ -7,5 +7,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj" />
+    <Project Path="tests/JulOS.Display.Tests/JulOS.Display.Tests.csproj" />
   </Folder>
 </Solution>

@@ -5,6 +5,8 @@ using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
 using JulOS.Backend.Services;
 using JulOS.Frontend.Auth;
+using JulOS.Integrations.Display;
+using JulOS.Integrations.Display.Rdp;
 using JulOS.Integrations.Guacamole;
 
 namespace JulOS.Frontend.Remote;
@@ -12,6 +14,7 @@ namespace JulOS.Frontend.Remote;
 internal static class RemoteEndpoints
 {
     public const string WebSocketPath = "/api/remote/ws";
+    public const string ScreenWebSocketPath = "/api/remote/screen";
 
     private static IResult Error(int status, string message) =>
         Results.Text(JsonSerializer.Serialize(new ErrorBody(message), AppJson.Default.ErrorBody), "application/json", Encoding.UTF8, status);
@@ -19,7 +22,7 @@ internal static class RemoteEndpoints
     public static void MapRemote(this IEndpointRouteBuilder app)
     {
         // Schritt 1: Verbindung waehlen und das Passwort tippen -> Einmal-Ticket (30 s, nur im Speicher)
-        app.MapPost("/api/remote/ticket", async (TicketRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, GuacTickets tickets, SecretBox box) =>
+        app.MapPost("/api/remote/ticket", async (TicketRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, GuacTickets tickets, ScreenTickets screenTickets, SecretBox box) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (body.Connection is not { } connectionId) return Error(400, "Verbindung fehlt.");
@@ -42,6 +45,18 @@ internal static class RemoteEndpoints
             var w = Math.Clamp(body.Width ?? 900, 400, 4096) & ~3;
             var h = Math.Clamp(body.Height ?? 1600, 300, 4096) & ~1;
             var dpi = Math.Clamp(body.Dpi ?? 96, 72, 288);
+            // Der Stream (eigener RDP-Client, H.264) ist nur fuer Desktops und nur, wenn der Kodierer da ist; sonst bleibt es bei Guacamole
+            if (c.Kind == "desktop" && string.Equals(body.Engine, "stream", StringComparison.Ordinal) && ScreenStream.IsAvailable)
+            {
+                var options = new RdpOptions
+                {
+                    Host = c.Host, Port = c.Port, UserName = c.Username, Password = password, Width = w & ~1, Height = h & ~1,
+                    KeyboardLayout = 0x407,
+                };
+                var screenTicket = screenTickets.Create(id.UserId, new ScreenTarget(options, $"{id.UserId}:{c.Id}"));
+                return screenTicket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(screenTicket, c.Kind, w & ~1, h & ~1, "stream"), AppJson.Default.TicketResponse);
+            }
+
             GuacSpec? spec = c.Kind switch
             {
                 "desktop" => GuacSpec.Desktop(c.Host, c.Port, c.Username, password, w, h, dpi),
@@ -68,6 +83,18 @@ internal static class RemoteEndpoints
             var accept = new WebSocketAcceptContext { SubProtocol = ctx.WebSockets.WebSocketRequestedProtocols.Contains("guacamole") ? "guacamole" : null };
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync(accept);
             await relay.RunAsync(ws, spec, ct => auth.IsSessionAliveAsync(id.Id, ct), ctx.RequestAborted);
+            return Results.Empty;
+        });
+        // Bildschirm-Stream: dasselbe Ticket-Verfahren, aber ohne Unterprotokoll, nur binaere Nachrichten (siehe ScreenProtocol)
+        app.Map(ScreenWebSocketPath, async (HttpContext ctx, ScreenTickets tickets, ScreenRelay relay, AuthService auth) =>
+        {
+            if (!ctx.WebSockets.IsWebSocketRequest) return Error(400, "WebSocket erwartet.");
+            if (!ApiGuard.SameOrigin(ctx.Request)) return Error(403, "Anfrage abgelehnt.");
+            var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
+            var target = tickets.Take(ctx.Request.Query["ticket"].ToString(), id.UserId);
+            if (target is null) return Error(403, "Ticket ungültig oder abgelaufen.");
+            using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
+            await relay.RunAsync(ws, target, ct => auth.IsSessionAliveAsync(id.Id, ct), ctx.RequestAborted);
             return Results.Empty;
         });
     }

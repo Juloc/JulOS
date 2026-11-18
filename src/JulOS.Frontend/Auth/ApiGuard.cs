@@ -32,7 +32,7 @@ internal sealed class ApiGuard(RequestDelegate next, AuthService auth)
         if (PublicPaths.Contains(ctx.Request.Path.Value ?? "")) { await next(ctx); return; }
 
         // Beim WebSocket-Aufbau gibt es keine Antwort, die ein neues Cookie tragen koennte
-        var identity = await ResolveAsync(ctx, auth, rotate: !ctx.Request.Path.Equals(Remote.RemoteEndpoints.WebSocketPath));
+        var identity = await ResolveAsync(ctx, auth, rotate: !ctx.Request.Path.Equals(Remote.RemoteEndpoints.WebSocketPath) && !ctx.Request.Path.Equals(Remote.RemoteEndpoints.ScreenWebSocketPath));
         if (identity is null) { await Reject(ctx, 401, "Nicht angemeldet."); return; }
         ctx.Items[IdentityKey] = identity;
         await next(ctx);

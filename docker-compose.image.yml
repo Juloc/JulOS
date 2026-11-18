@@ -1,0 +1,32 @@
+# Variante mit fertigem Image aus ghcr.io (statt lokal zu bauen):
+#   docker compose -f docker-compose.image.yml up -d
+# OWNER/REPO durch dein GitHub-Repo ersetzen (kleingeschrieben).
+name: julos
+
+services:
+  guacd:
+    image: guacamole/guacd:1.6.0
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  gateway:
+    image: ghcr.io/OWNER/REPO:latest
+    restart: unless-stopped
+    depends_on: [guacd]
+    environment:
+      PORT: "8080"
+      TOKEN_KEY: "${TOKEN_KEY:?TOKEN_KEY in .env setzen}"
+      GUACD_HOST: guacd
+      RDP_HOST: "${RDP_HOST:-host.docker.internal}"
+      RDP_PORT: "${RDP_PORT:-3389}"
+      RDP_USER: "${RDP_USER:?RDP_USER in .env setzen}"
+      PROXY_SECRET: "${PROXY_SECRET:-}"
+      UPLOAD_DIR: /uploads
+      AGENT_SOCKET: /uploads/.agent/agent.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${HOME}/julos-uploads:/uploads
+    ports:
+      - "${BIND_IP:-127.0.0.1}:${BIND_PORT:-8080}:8080"

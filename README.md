@@ -1,153 +1,96 @@
-﻿# JulOS
+# JulOS
 
-JulOS is a lightweight PWA-first desktop environment and application workspace for homelabs.
+**Your machines, your programs, your files: one personal workspace, in your pocket or in any browser.**
+Self-hosted and open source. What we build right now: [docs/SCOPE.md](docs/SCOPE.md). The bigger picture: [docs/VISION.md](docs/VISION.md). Parked ideas: [docs/IDEAS.md](docs/IDEAS.md).
 
-It provides a fast desktop shell with independent windows, snapping, widgets, applications, sessions and installable feature packages. Large management features remain in focused services such as Caddy UI. JulOS integrates them through stable package APIs instead of rebuilding every product inside the core.
+The first piece is a remote desktop built for **phones**: your own Android keyboard (suggestions, autocorrect, images), a
+customisable extra-key bar, an in-app window bar instead of the desktop taskbar, dynamic resolution, Material You colours
+and an installable PWA. Under the hood it is plain remote access to your own machine (RDP through Apache Guacamole),
+nothing is stored in the cloud.
 
-Initial deployment domain: `os.juloc.de`.
+[Deutsche Version](README.de.md)
 
-## Alpha release
-
-`0.3.0-alpha.1` is the first installable evaluation build. It is intended to verify installation, desktop interaction and the package architecture before the remaining 1.0 packages are implemented.
-
-Use the minimal [`deploy/alpha/compose.yaml`](deploy/alpha/compose.yaml) stack and follow the [`alpha installation guide`](deploy/alpha/README.md). The exact scope and known boundaries are documented in the [`0.3.0-alpha.1 release notes`](docs/releases/0.3.0-alpha.1.md).
-
-The alpha is not intended for direct public internet exposure. Docker, Proxmox, Files, Caddy, discovery, final hardening and Julgate migration remain outside this release.
-
-## Product principles
-
-- The core stays small and knows no Docker, Proxmox, Caddy, file or remote protocol details.
-- JulOS extensions use versioned capabilities; user applications can come from official, community or self-managed catalogs.
-- Unsigned application definitions are installable after a clear warning; integrity digests and runtime-right previews remain mandatory.
-- Applications run in independent desktop windows; iframe integration is not the general application runtime.
-- Phones, tablets, single-display desktops and multi-display desktops share one application model with separate persisted workspaces.
-- Browser access uses a real isolated Chromium runtime inside the configured target network.
-- Remote sessions reuse Julgate session and transport code through a controlled extraction, not source duplication.
-- Existing products remain authoritative for their domains.
-- Package workers and session runtimes are isolated from the core process.
-- Optional Host Connectors provide typed access to local host resources and are neither AI assistants nor general shells.
-- No workarounds, hidden fallbacks, temporary duplicate implementations or broad exception suppression.
-- Prefer small readable code and proven abstractions over generic frameworks and premature complexity.
-- Documentation changes are part of every functional change.
-
-## Planned official packages
-
-- Browser
-- Remote
-- Docker
-- Proxmox
-- Files
-- Caddy
-- Discovery
-
-## Documentation
-
-Start with the complete [documentation map](docs/README.md).
-
-Main specifications:
-
-- [`AGENTS.md`](AGENTS.md): mandatory engineering and AI-agent rules
-- [`docs/PRODUCT.md`](docs/PRODUCT.md): product identity, scope and 1.0 success criteria
-- [`docs/CONCEPT.md`](docs/CONCEPT.md): complete product and system concept
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): system boundaries and dependency direction
-- [`docs/TECHNICAL_SPECIFICATION.md`](docs/TECHNICAL_SPECIFICATION.md): concrete runtime and implementation rules
-- [`docs/UX_SPECIFICATION.md`](docs/UX_SPECIFICATION.md): desktop, windows, widgets and responsive behavior
-- [`docs/MOBILE_PWA.md`](docs/MOBILE_PWA.md): PWA, device layouts, split view, surface lifecycle and back behavior
-- [`docs/PACKAGES.md`](docs/PACKAGES.md): package format, lifecycle and package boundaries
-- [`docs/APPLICATION_CATALOG.md`](docs/APPLICATION_CATALOG.md): open catalogs, Docker/Compose apps, trust, update, backup and removal
-- [`docs/HOST_CONNECTOR.md`](docs/HOST_CONNECTOR.md): optional typed host access and Agent migration
-- [`docs/DATA_AND_API_CONTRACTS.md`](docs/DATA_AND_API_CONTRACTS.md): data model and API conventions
-- [`docs/SECURITY_AND_OPERATIONS.md`](docs/SECURITY_AND_OPERATIONS.md): security, deployment, backup and recovery
-- [`docs/QUALITY_AND_TESTING.md`](docs/QUALITY_AND_TESTING.md): validation and definition of done
-- [`docs/JULGATE_MIGRATION.md`](docs/JULGATE_MIGRATION.md): migration into JulOS Remote
-- [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md): milestone sequence
-- [`docs/WORK_BREAKDOWN.md`](docs/WORK_BREAKDOWN.md): junior-ready issue blueprint
-- [`docs/BACKLOG.md`](docs/BACKLOG.md): current implementation status
-- [`docs/DECISIONS.md`](docs/DECISIONS.md): accepted architecture decisions
-
-## Build and test
-
-Building requires the .NET SDK version pinned in [`global.json`](global.json).
-
-```bash
-dotnet restore JulOS.slnx
-dotnet build JulOS.slnx
-dotnet test --solution JulOS.slnx
+```
+phone (PWA)  --HTTPS-->  your reverse proxy  -->  gateway (Node + guacamole-lite)  -->  guacd  --RDP-->  xrdp (your Linux desktop)
+                                                          \--> agent (unix socket) in the desktop session: windows, apps, photo paste
 ```
 
-`dotnet test` runs on Microsoft.Testing.Platform, which `global.json` selects.
+Status: Linux (X11, XFCE tested) first. Windows is planned and the agent API is built for it (see [docs/AGENT_API.md](docs/AGENT_API.md)).
 
-The Desktop client is built from `src/JulOS.Desktop` with Node 24 or newer:
+## Features
 
-```bash
-npm ci
-npm run typecheck
-npm test
-npm run build
-```
+- **Android keyboard as it is**: every change (autocorrect, a suggestion replacing a word) is sent as backspaces plus new text.
+  Modes: with suggestions, without suggestions (password-style), rich (accepts images, stickers, GIFs from the keyboard).
+- **Extra keys**: two collapsible rows (quick: Esc, Tab, Ctrl, Alt, Shift, arrows, Enter, Backspace; more: Ctrl+C/V/X/A/Z/F,
+  Alt+Tab, Home, End, Page up/down, ...). Ctrl/Alt/Shift are sticky toggles. Edit mode: add, remove, move keys between rows,
+  own combos (`ctrl+shift+t`), text snippets.
+- **Window bar and app mode**: switch between *Desktop* and *Apps*. In Apps mode the session's panel is hidden, windows appear as
+  chips (with icons) in the app, a "+" starts any installed program. Windows are maximised. Per-application zoom profiles
+  (for example a narrow width for apps with a responsive layout).
+- **Photo paste**: pick a photo, it is downscaled, uploaded, put on the remote clipboard and pasted with Ctrl+V.
+- **Password managers**: the login form and a dedicated password dialog are autofill friendly (Bitwarden etc.).
+- **Touch**: tap = click, long press = right click, drag, two-finger scroll, pinch zoom (resolution adapts), touchpad mode.
+- **PWA**: installable (needs HTTPS), standalone/fullscreen, offline shell. Material You palette from a seed colour or from an image.
+- **Reconnect** with animation, keyboard auto-open on text fields, visual viewport aware layout.
 
-One command runs everything the repository can validate:
+## Quick start
 
-```bash
-sh tools/validate.sh
-```
-
-On Windows:
-
-```bash
-pwsh tools/validate.ps1
-```
-
-Both entry points call `tools/validate.mjs`, so they run identical checks. Add `--list` to see the stages, `--stage <name>` to run one. A failed stage exits non-zero and names itself. `node tools/normalize-encoding.mjs` corrects encoding-policy violations.
-
-The core database is migrated only by the explicit migration command:
+Requirements on the target machine: Linux with X11, **xrdp** (and xorgxrdp), `python3-gi gir1.2-gtk-3.0 gir1.2-wnck-3.0`.
+On the Docker host (can be the same machine): Docker with Compose.
 
 ```bash
-dotnet tool restore
-dotnet run --project src/JulOS.Server -- --migrate-database
+git clone <your fork or this repo> julos && cd julos
+cp .env.example .env            # set TOKEN_KEY (32 chars: openssl rand -hex 16) and RDP_USER
+docker compose up -d --build    # or: docker compose -f docker-compose.image.yml up -d  (ghcr.io image)
+tools/install-linux-agent.sh    # in the graphical session of the target machine
 ```
 
-Normal Server startup never changes the schema, on either provider. Both the development PostgreSQL stack and the alpha SQLite stack run this command in a one-shot `migrate` service before starting Server. PostgreSQL applies Entity Framework migrations; SQLite applies the ordered scripts recorded in `__julos_schema_history`. A schema this build does not recognise exits `4` instead of being repaired, and a database recording a newer migration is never downgraded.
+Open `http://<BIND_IP>:8080`, log in with the Linux user's password (typed by you, never stored).
 
-The default SQLite store is backed up and restored through the Server itself, so the runtime image needs no database command-line tool:
+`BIND_IP` in `.env` is the address the gateway listens on: `127.0.0.1` (default, behind a reverse proxy) or the LAN address.
+If the Docker host is not the target machine, set `RDP_HOST`. The agent files live in `~/julos-uploads` of the target user,
+so running on the same machine is the supported setup for now.
 
-```bash
-dotnet run --project src/JulOS.Server -- --backup-database ./artifacts/core.db
-dotnet run --project src/JulOS.Server -- --restore-database ./artifacts/core.db
-```
+## Installing the PWA, HTTPS
 
-After a fresh migration, `GET /api/v1/auth/status` reports that initial setup is required. Create the first administrator once through `POST /api/v1/auth/setup`; subsequent API calls use the secure `.JulOS.Session` cookie. Authenticated users read their current profile from `GET /api/v1/profile` and update validated language, time-zone, theme and motion preferences through `PUT /api/v1/profile/preferences` with an antiforgery token and current revision. Authentication and profile payloads, failures and operational defaults are specified in [`docs/DATA_AND_API_CONTRACTS.md`](docs/DATA_AND_API_CONTRACTS.md) and [`docs/SECURITY_AND_OPERATIONS.md`](docs/SECURITY_AND_OPERATIONS.md).
+Browsers only install PWAs and allow the clipboard API on **HTTPS**. Put a reverse proxy in front (Caddy example in
+[caddy/Caddyfile.example](caddy/Caddyfile.example)). Over plain HTTP in the LAN the page works but passwords travel unencrypted.
 
-## Run locally
+## Security
 
-For the released alpha, use [`deploy/alpha`](deploy/alpha/README.md). For source development:
+Remote control must not be protected by the desktop password alone.
 
-```bash
-cd deploy/compose
-cp .env.example .env
-docker compose up --build
-```
+- The target (host, port, user) is fixed on the server; the browser only supplies the password, passed on in an AES-encrypted token valid 30 s.
+- `guacd` has no published port. Login attempts are rate limited.
+- **Proxy mode**: with `PROXY_SECRET` the gateway (HTTP and WebSocket) only answers requests carrying the header `X-Proxy-Secret`
+  that your reverse proxy adds. Enable with `tools/enable-proxy-mode.sh`.
+- **mTLS** in the proxy: only your phone with a client certificate reaches the login page. Create one with
+  `tools/make-client-cert.sh <name>` (you type the passphrase yourself); the Caddy example has the `client_auth` block.
+- The agent API is only reachable through the gateway with a live session, over a Unix socket (mode 0600).
+- Never expose xrdp (3389) or the gateway port directly to the internet.
 
-Set `JULOS_POSTGRES_PASSWORD` in `.env` first; the stack refuses to start without it. See [`deploy/compose/README.md`](deploy/compose/README.md).
+Roll-out order: certificate, proxy config, `tools/enable-proxy-mode.sh`, port forward 443 to the proxy, DNS.
+To undo proxy mode, empty `PROXY_SECRET` in `.env` and run `docker compose up -d`.
 
-## Versioning
+## Photos
 
-[`VERSION`](VERSION) is the single version source. It drives every assembly, the container image label and `GET /api/v1/system/version`. No deployment depends on an unpinned `latest` reference.
+`POST /api/upload` saves the image in `~/julos-uploads`; `tools/julos-clip.py` (autostarted in the session) puts it on the GTK
+clipboard and acknowledges it, then the page sends Ctrl+V. Files are deleted after 30 minutes.
+Guacamole cannot transfer image clipboards over RDP, hence this path.
 
-[`docs/RELEASE_NOTES_TEMPLATE.md`](docs/RELEASE_NOTES_TEMPLATE.md) is the release-note template.
+## Layout
 
-## Repository status
+- `gateway/server.js` token server, WebSocket tunnel, upload, agent proxy
+- `gateway/public/` the web client (`index.html`, `app.js`, `style.css`, `sw.js`, `manifest.webmanifest`)
+- `tools/julos-agent.py` Linux agent (windows, apps, app mode), `tools/julos-clip.py` photo clipboard helper
+- `tools/install-linux-agent.sh`, `tools/make-client-cert.sh`, `tools/enable-proxy-mode.sh`
+- `docs/AGENT_API.md` the agent API, `caddy/Caddyfile.example`
+- `.github/workflows/docker.yml` builds the image for `ghcr.io/<owner>/<repo>` (amd64 + arm64)
 
-The foundation, core model, persistence, authentication, desktop shell and extension-package platform are implemented. The legacy Agent, Remote and Browser foundations are included in the beta with explicit deployment-validation limits. Host Connector migration, installable PWA/device workspaces and the open application catalog are accepted target work and are not yet implemented. The remaining work continues through the dependency order in [`docs/WORK_BREAKDOWN.md`](docs/WORK_BREAKDOWN.md); [`docs/BACKLOG.md`](docs/BACKLOG.md) remains the authoritative item status.
+## Roadmap
 
-## Initial repository strategy
-
-Core, Desktop, Host Connector, Package SDK, official packages and runtime images remain in this monorepo until the contracts and release process are stable. Separate official package repositories are not created during the initial implementation.
+Windows agent, drag and drop of files into a desktop web version, per-window profiles, multi-host.
 
 ## License
 
-No license has been selected yet. Until a license is added, all rights are reserved.
-
-## Durable operations
-
-Long-running control-plane work uses versioned operation resources backed by the core database (SQLite by default, PostgreSQL optional). Creation is idempotent, progress and cancellation survive reconnects, and success is recorded only after the owning executor verifies the requested state. See [`docs/DATA_AND_API_CONTRACTS.md`](docs/DATA_AND_API_CONTRACTS.md#7-background-operations).
+MIT, see [LICENSE](LICENSE). Built on Apache Guacamole (guacd, guacamole-common-js) and guacamole-lite.

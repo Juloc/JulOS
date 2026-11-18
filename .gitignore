@@ -1,39 +1,4 @@
-﻿# Build output
-bin/
-obj/
-artifacts/
-[Dd]ebug/
-[Rr]elease/
-*.user
-*.suo
-
-# Test and analysis output
-TestResults/
-*.trx
-*.coverage
-*.coverxml
-coverage/
-
-# Node and frontend build output
-node_modules/
-dist/
-src/JulOS.Desktop/build/
-
-# Local environment
 .env
-.env.*
-!.env.example
-!**/.env.example
-deploy/compose/secret-keys/
-
-# Transient agent worktrees
-.claude/worktrees/
-
-# Editor and operating system
-.vs/
-.vscode/*
-!.vscode/extensions.json
-.idea/
-*.swp
-.DS_Store
-Thumbs.db
+node_modules/
+pki/
+docker-compose.override.yml

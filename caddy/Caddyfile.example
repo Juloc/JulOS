@@ -1,0 +1,33 @@
+# Beispiel fuer DEIN vorhandenes Caddy (v2.7+). Anpassen: Domain, Pfade, IP der VM.
+# Voraussetzungen:
+#  1) tools/enable-proxy-mode.sh auf der VM ausgefuehrt (setzt PROXY_SECRET in .env)
+#  2) tools/make-client-cert.sh ausgefuehrt, pki/ca.crt auf den Caddy-Rechner kopiert
+#  3) in der Umgebung von Caddy: JULOS_PROXY_SECRET=<Wert aus .env, Zeile PROXY_SECRET>
+#  4) Router/UniFi: Port 443 auf den Caddy-Rechner weiterleiten, DNS der Domain auf deine IP
+desktop.example.com {
+	# Zusatzschutz fuer den Internetzugang: nur Geraete mit deinem Client-Zertifikat kommen durch (mTLS)
+	tls {
+		client_auth {
+			mode require_and_verify
+			trust_pool file /etc/caddy/julos-ca.crt
+			# aeltere Caddy-Versionen: trusted_ca_cert_file /etc/caddy/julos-ca.crt
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# WebSocket (guacamole) wird von reverse_proxy automatisch durchgereicht
+	reverse_proxy <IP-des-Docker-Hosts>:8080 {
+		header_up X-Proxy-Secret {env.JULOS_PROXY_SECRET}
+		flush_interval -1
+		transport http {
+			read_timeout 1h
+			write_timeout 1h
+		}
+	}
+}

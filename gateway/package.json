@@ -1,0 +1,13 @@
+{
+  "name": "julos-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Web-Zugang zum xrdp-Desktop fuer das Handy (guacd + guacamole-lite + eigener Client)",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "express": "^5.1.0",
+    "guacamole-lite": "^1.2.0",
+    "guacamole-common-js": "^1.5.0"
+  }
+}

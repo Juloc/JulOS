@@ -24,6 +24,37 @@ public sealed class SecretBox
 
     public bool Enabled => _key is not null;
 
+    /// <summary>
+    /// Welcher Schluessel gilt: JULOS_SECRET_KEY, wenn gesetzt. Sonst eine Schluesseldatei im Datenordner (JULOS_DATA): gibt es sie noch nicht,
+    /// wird sie einmalig erzeugt (32 Zufallsbytes, nur fuer den Server lesbar) und danach unveraendert weiterverwendet. Der Schluessel liegt so
+    /// getrennt von der Datenbank in einem eigenen Volume, und im Compose-File steht kein Geheimnis. Ohne beides ist das Speichern aus.
+    /// </summary>
+    public static string? ResolveKey(string? envValue, string? dataDir)
+    {
+        if (!string.IsNullOrWhiteSpace(envValue)) return envValue;
+        if (string.IsNullOrWhiteSpace(dataDir)) return null;
+        var path = Path.Combine(dataDir, "secret.key");
+        try
+        {
+            if (File.Exists(path)) return File.ReadAllText(path).Trim();
+            Directory.CreateDirectory(dataDir);
+            var key = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+            try
+            {
+                var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None };
+                if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;     // nur der Server darf lesen
+                using var fs = new FileStream(path, options);
+                fs.Write(Encoding.ASCII.GetBytes(key + "\n"));
+            }
+            catch (IOException) when (File.Exists(path)) { return File.ReadAllText(path).Trim(); }   // ein anderer Start war schneller
+            return key;
+        }
+        catch (Exception e) when (e is UnauthorizedAccessException or IOException)
+        {
+            return null;                                                                              // Ordner nicht beschreibbar: Speichern bleibt aus
+        }
+    }
+
     public byte[] Encrypt(string plain, Guid connectionId)
     {
         if (_key is null) throw new InvalidOperationException("Passwort-Speicher ist nicht eingerichtet.");

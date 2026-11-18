@@ -14,7 +14,9 @@ RUN dotnet publish src/JulOS.Frontend/JulOS.Frontend.csproj -c Release -o /app -
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine
 WORKDIR /app
 COPY --from=build /app .
-ENV ASPNETCORE_HTTP_PORTS=8080
+ENV ASPNETCORE_HTTP_PORTS=8080 JULOS_DATA=/data
+# Datenordner (Schluessel fuer gespeicherte Passwoerter): gehoert dem Benutzer des Servers, damit ein neues Volume ihn uebernimmt
+RUN mkdir /data && chown $APP_UID /data
 USER $APP_UID
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "JulOS.dll"]

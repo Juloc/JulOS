@@ -32,7 +32,7 @@ builder.Services.AddSingleton(dataSourceBuilder.Build());
 builder.Services.AddSingleton<Migrator>();
 builder.Services.AddSingleton<UserStore>();
 builder.Services.AddSingleton<ConnectionStore>();
-builder.Services.AddSingleton(new SecretBox(builder.Configuration["JULOS_SECRET_KEY"]));
+builder.Services.AddSingleton(new SecretBox(SecretBox.ResolveKey(builder.Configuration["JULOS_SECRET_KEY"], builder.Configuration["JULOS_DATA"])));
 builder.Services.AddSingleton(new HostPolicy(builder.Configuration["JULOS_ALLOWED_HOSTS"]));
 builder.Services.AddSingleton<SessionStore>();
 builder.Services.AddSingleton<PasswordHasher>();

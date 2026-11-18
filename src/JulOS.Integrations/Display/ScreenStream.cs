@@ -35,6 +35,10 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     private const int SharpenGapMs = 30;
     private const int IdleWaitMs = 250;
 
+    // Kommt bei vollem Fenster unbestaetigter Bilder so lange keine Bestaetigung, gilt das Fenster als verloren (der Browser dekodiert
+    // normalerweise in wenigen Millisekunden): zuruecksetzen und ein Schluesselbild senden, statt fuer immer zu warten.
+    private const int AckStallMs = 2000;
+
     private readonly RdpOptions _options;
     private readonly int _maxKilobitsPerSecond;
     private readonly ILogger? _log;
@@ -55,6 +59,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     private (int Width, int Height)? _pendingSize;
 
     private int _inFlight;
+    private long _lastAckAt, _lastSentAt, _lastUpdateAt;
     private int _sequence;
     private int _disposed;
 
@@ -131,6 +136,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     /// <summary>Der Browser hat ein Bild dekodiert.</summary>
     public void Acknowledge()
     {
+        Volatile.Write(ref _lastAckAt, Environment.TickCount64);
         while (true)
         {
             var current = Volatile.Read(ref _inFlight);
@@ -177,6 +183,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
     void IRdpHandler.Updated(int x, int y, int width, int height)
     {
+        Volatile.Write(ref _lastUpdateAt, Environment.TickCount64);
         lock (_gate)
         {
             if (_dirty)
@@ -243,6 +250,20 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
             var wait = IdleWaitMs;
             var encoder = _encoder;
             var frame = _frame;
+
+            var inFlight = Volatile.Read(ref _inFlight);
+            if (inFlight >= MaxPicturesInFlight)
+            {
+                var tick = Environment.TickCount64;
+                var quietFor = tick - Math.Max(Volatile.Read(ref _lastAckAt), Volatile.Read(ref _lastSentAt));
+                if (quietFor > AckStallMs)
+                {
+                    _log?.LogWarning("Keine Bestaetigung seit {Quiet} ms bei {InFlight} offenen Bildern (letztes Bild vor {Sent} ms, letzte Aenderung vor {Update} ms): Fenster zurueckgesetzt, Schluesselbild folgt",
+                        quietFor, inFlight, tick - Volatile.Read(ref _lastSentAt), tick - Volatile.Read(ref _lastUpdateAt));
+                    Volatile.Write(ref _inFlight, 0);
+                    needKey = true;
+                }
+            }
             if (encoder is not null && frame is not null && Volatile.Read(ref _inFlight) < MaxPicturesInFlight)
             {
                 var now = Environment.TickCount64;
@@ -339,6 +360,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
         var sequence = Interlocked.Increment(ref _sequence);
         Interlocked.Increment(ref _inFlight);
+        Volatile.Write(ref _lastSentAt, Environment.TickCount64);
         _events.Writer.TryWrite(new ScreenPicture(sequence, isKey, data.ToArray()));
         return true;
     }

@@ -1117,6 +1117,7 @@ function onKbBeforeInput(e) {
 }
 function syncDiff() {
   if (!S.connected) return;
+  if (!keyOwner()) { setKbVal(''); prevValue = ''; return; }   // Desktop-Layout: ein anderes Fenster hat die Tasten, nichts an die VM senden
   const cur = kbVal();
   const a = [...prevValue], b = [...cur];
   let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
@@ -1136,58 +1137,76 @@ function heldModifiers(e) {
   return m;
 }
 let pasteKeyAt = 0, pasteKeys = [];   // Einfuegen per Tastatur: Zeitpunkt und die danach an die VM zu sendende Kombination
+function onKbKeydown(e) {
+  if (kbEvCount++ < 60) dbg('keydown', { key: e.key.length === 1 ? 'char' : e.key, code: e.keyCode, comp: e.isComposing });
+  if (!S.connected || !keyOwner()) return;
+  // AltGr (auf Windows als Strg+Alt gemeldet) erzeugt Zeichen wie @ und {: die kommen ueber das Eingabefeld, nicht als Kombination
+  const altGr = e.getModifierState && e.getModifierState('AltGraph');
+  const held = altGr ? [] : heldModifiers(e);
+  // Einfuegen (Strg+V, Strg+Umschalt+V, Umschalt+Einfg): die Tastenkombination nicht abfangen, der Browser meldet dann das paste-Ereignis
+  // mit dem Text der lokalen Zwischenablage; onKbPaste legt ihn in die Zwischenablage der VM und sendet danach die Kombination
+  if (!altGr && ((e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'v') || (e.shiftKey && !e.ctrlKey && !e.altKey && e.key === 'Insert'))) {
+    pasteKeyAt = Date.now(); pasteKeys = [...held, e.key === 'Insert' ? KS.insert : charKeysym('v')]; return;
+  }
+  if (e.key in NAMED) {
+    // Backspace mit Text im Feld kommt ueber das input-Ereignis (Abgleich), nur bei leerem Feld oder mit Umschaltern direkt senden
+    if (e.key === 'Backspace' && kbVal().length > 0 && !held.length) return;
+    e.preventDefault(); lastNamedAt = Date.now();
+    if (e.key === 'Enter' || e.key === 'Tab' || (e.key === 'Backspace' && held.length)) { setKbVal(''); prevValue = ''; }
+    // mit gehaltenem Shift/Strg/Alt als Kombination, sonst geht Umschalt+Pfeil (Markieren), Strg+Pfeil (Wortsprung) usw. verloren
+    if (held.length) sendChord([...held, NAMED[e.key]], 3); else tapKey(NAMED[e.key]);
+    return;
+  }
+  // Hardware-Tastatur mit Strg/Alt: als Kombination weitergeben (Umschalt bleibt erhalten, Strg+Umschalt+C)
+  if ((e.ctrlKey || e.altKey || e.metaKey) && !altGr && e.key.length === 1) {
+    e.preventDefault();
+    sendChord([...held, charKeysym(e.key.toLowerCase())], 3);
+  }
+}
 function wireKb(node) {
-  node.addEventListener('keydown', (e) => {
-    if (kbEvCount++ < 60) dbg('keydown', { key: e.key.length === 1 ? 'char' : e.key, code: e.keyCode, comp: e.isComposing });
-    if (!S.connected) return;
-    // AltGr (auf Windows als Strg+Alt gemeldet) erzeugt Zeichen wie @ und {: die kommen ueber das Eingabefeld, nicht als Kombination
-    const altGr = e.getModifierState && e.getModifierState('AltGraph');
-    const held = altGr ? [] : heldModifiers(e);
-    // Einfuegen (Strg+V, Strg+Umschalt+V, Umschalt+Einfg): die Tastenkombination nicht abfangen, der Browser meldet dann das paste-Ereignis
-    // mit dem Text der lokalen Zwischenablage; onKbPaste legt ihn in die Zwischenablage der VM und sendet danach die Kombination
-    if (!altGr && ((e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'v') || (e.shiftKey && !e.ctrlKey && !e.altKey && e.key === 'Insert'))) {
-      pasteKeyAt = Date.now(); pasteKeys = [...held, e.key === 'Insert' ? KS.insert : charKeysym('v')]; return;
-    }
-    if (e.key in NAMED) {
-      // Backspace mit Text im Feld kommt ueber das input-Ereignis (Abgleich), nur bei leerem Feld oder mit Umschaltern direkt senden
-      if (e.key === 'Backspace' && kbVal().length > 0 && !held.length) return;
-      e.preventDefault(); lastNamedAt = Date.now();
-      if (e.key === 'Enter' || e.key === 'Tab' || (e.key === 'Backspace' && held.length)) { setKbVal(''); prevValue = ''; }
-      // mit gehaltenem Shift/Strg/Alt als Kombination, sonst geht Umschalt+Pfeil (Markieren), Strg+Pfeil (Wortsprung) usw. verloren
-      if (held.length) sendChord([...held, NAMED[e.key]], 3); else tapKey(NAMED[e.key]);
-      return;
-    }
-    // Hardware-Tastatur mit Strg/Alt: als Kombination weitergeben (Umschalt bleibt erhalten, Strg+Umschalt+C)
-    if ((e.ctrlKey || e.altKey || e.metaKey) && !altGr && e.key.length === 1) {
-      e.preventDefault();
-      sendChord([...held, charKeysym(e.key.toLowerCase())], 3);
-    }
-  });
+  node.addEventListener('keydown', onKbKeydown);
   node.addEventListener('beforeinput', onKbBeforeInput);
   node.addEventListener('paste', onKbPaste);
   node.addEventListener('drop', (e) => { if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) { e.preventDefault(); handleKbFiles(e.dataTransfer.files); } });
   node.addEventListener('compositionend', () => syncDiff());
   node.addEventListener('input', () => syncDiff());
-  node.addEventListener('blur', () => { holdSize(); setActOn('keyboard', kbOpen); if (node === el.kb) { setKbVal(''); prevValue = ''; } dbg('kbblur', {}); });
-  node.addEventListener('focus', () => { holdSize(); setActOn('keyboard', true); dbg('kbfocus', { mode: S.kbMode }); });
+  node.addEventListener('blur', () => { if (!HW_KB) holdSize(); setActOn('keyboard', kbOpen); if (node === el.kb) { setKbVal(''); prevValue = ''; } dbg('kbblur', {}); keyFocusHook(); });
+  node.addEventListener('focus', () => { if (!HW_KB) holdSize(); setActOn('keyboard', true); dbg('kbfocus', { mode: S.kbMode }); keyFocusHook(); });
 }
 wireKb(el.kbInput); wireKb(el.kbRich);
 
 // Desktop-Browser (Maus, echte Tastatur): Tasten gehen ohne Umweg ueber den Tastatur-Knopf an die Fernsteuerung.
 // Das versteckte Eingabefeld bekommt den Fokus beim Verbinden, bei jedem Klick ins Bild und bei der ersten Taste, die sonst ins Leere ginge.
 const HW_KB = matchMedia('(pointer: fine) and (hover: hover)').matches || location.search.includes('hwkb');   // ?hwkb: nur zum Testen
+// Wer bekommt die Tasten? Auf dem Handy immer die Fernsteuerung. Im Desktop-Layout nur, solange ein Fernfenster das aktive Fenster ist:
+// desktop.js meldet das ueber remoteApi.setKeyOwner (Menue oder Launcher offen, anderes Fenster vorn: nein).
+let keyOwner = () => true, keyFocusHook = () => {};
 function focusKbForHardware() {
-  if (!HW_KB || !S.connected || kbFocused()) return;
+  if (!HW_KB || !S.connected || !keyOwner() || kbFocused()) return;
   if (document.querySelector('dialog[open]') || !el.menuSheet.hidden) return;
   try { el.kb.focus({ preventScroll: true }); } catch { el.kb.focus(); }
+}
+/** Ein echtes Texteingabefeld (Eingabe, Auswahl, Textbereich, bearbeitbarer Inhalt)? Knoepfe und Haken zaehlen nicht. */
+function isTextField(a) {
+  if (!a || a === document.body || a === document.documentElement) return false;
+  if (a.isContentEditable) return true;
+  if (a.tagName === 'TEXTAREA' || a.tagName === 'SELECT') return true;
+  if (a.tagName === 'INPUT') return !['button', 'checkbox', 'radio', 'range', 'color', 'file', 'submit', 'reset', 'image'].includes((a.type || '').toLowerCase());
+  return false;
 }
 if (HW_KB) {
   el.touch.addEventListener('mousedown', () => focusKbForHardware());
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') return;
+    if (!S.connected || !keyOwner()) return;
+    if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta' || e.key === 'AltGraph') return;
+    if (document.querySelector('dialog[open]')) return;
     const a = document.activeElement;
-    if (a && a !== document.body && a !== document.documentElement) return;      // ein anderes Feld hat den Fokus: in Ruhe lassen
+    if (a === el.kbInput || a === el.kbRich) return;       // das Tastaturfeld verarbeitet die Taste selbst
+    if (isTextField(a)) return;                            // ein anderes Feld hat den Fokus: in Ruhe lassen
+    // Fokus steht auf einem Knopf oder auf nichts: das Tastaturfeld nehmen und diese Taste gleich selbst verarbeiten (sonst ginge sie verloren).
+    // Zeichen kommen danach als input-Ereignis im Tastaturfeld an, benannte Tasten und Kombinationen laufen ueber onKbKeydown.
     focusKbForHardware();
+    if (kbFocused()) onKbKeydown(e);
   }, true);
 }
 // Falls die Tastatur ein Bild als <img> in das Feld legt: Bild holen, hochladen, Element entfernen
@@ -1534,4 +1553,8 @@ export const remoteApi = {
   reconnect: () => { S.retry = 0; if (hasCredentials()) connect(); },
   action: (name) => ACTIONS[name] && ACTIONS[name](),
   focus: () => focusKbForHardware(),
+  /** Desktop-Layout: wer die Tasten bekommt (Funktion liefert true/false), den Fokus vom Tastaturfeld nehmen, hat das Tastaturfeld den Fokus */
+  setKeyOwner: (fn, onFocusChange) => { keyOwner = fn; if (onFocusChange) keyFocusHook = onFocusChange; },
+  blurKeys: () => { if (kbFocused()) el.kb.blur(); },
+  hasKeys: () => kbFocused(),
 };

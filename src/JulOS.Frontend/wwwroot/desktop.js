@@ -54,6 +54,7 @@ const P = {
   disk: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 14.5h6"/><circle cx="17" cy="14.5" r=".6"/>',
   network: '<path d="M7 4v16m0 0-3-3m3 3 3-3M17 20V4m0 0-3 3m3-3 3 3"/>',
   chev: '<path d="m6 9 6 6 6-6"/>',
+  keyboard: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
   file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
   download: '<path d="M12 3v12m0 0-4-4m4 4 4-4M5 21h14"/>',
   up: '<path d="m18 15-6-6-6 6"/>',
@@ -138,7 +139,7 @@ function scene(withBlossoms) {
  * ===================================================================== */
 let menuEl = null, menuOwner = null, subEl = null;
 function closeSub() { subEl?.remove(); subEl = null; }
-function closeMenu() { closeSub(); menuEl?.remove(); menuEl = null; if (menuOwner) menuOwner.classList.remove('open'); menuOwner = null; }
+function closeMenu() { closeSub(); menuEl?.remove(); menuEl = null; if (menuOwner) menuOwner.classList.remove('open'); menuOwner = null; syncKeys(); }
 /** Baut die Eintraege eines Menues. Eintrag: { label, icon, hint, disabled, run } | { sep: true } | { cap: 'Text' } | { label, sub: [Eintraege] } (Untermenue) */
 function menuBody(items, isSub) {
   const m = el('div', 'dk-menu' + (isSub ? ' sub' : '')); m.setAttribute('role', 'menu');
@@ -178,6 +179,7 @@ function showMenu(anchor, items, pos = 'below') {
   m.style.top = (pos === 'above' ? Math.max(BAR_H + 6, r.top - h - 14) : r.bottom + 4) + 'px';
   menuOwner = anchor.classList.contains('dk-mi') ? anchor : null;
   menuOwner?.classList.add('open');
+  syncKeys();
 }
 document.addEventListener('pointerdown', (e) => {
   if (menuEl && !e.target.closest('.dk-menu') && !e.target.closest('.dk-mi')) closeMenu();
@@ -357,9 +359,34 @@ function buildBar() {
     { sep: true },
     { label: 'Abmelden', icon: 'power', run: () => ctx.signOut() },
   ]));
-  bar.append(sess, search, clock, user);
+  const keys = el('div', 'dk-keys', ic('keyboard') + '<span></span>'); keys.id = 'dkKeys'; keys.hidden = true;
+  bar.append(keys, sess, search, clock, user);
   return bar;
 }
+
+/* ---------- Tastatur: wer bekommt die Tasten? ----------
+ * Solange ein Fernfenster das aktive Fenster ist (und kein Menue oder Launcher offen), gehen alle Tasten in die Fernsteuerung: app.js nimmt dazu das
+ * versteckte Tastaturfeld in den Fokus (auch wenn der Fokus auf einem Knopf lag). Hier wird der Fokus nach jedem Wechsel zurueckgegeben oder genommen
+ * und gezeigt, wohin getippt wird. */
+const keysToRemote = () => remoteActive() && !menuEl && !launcher;
+function syncKeys() {
+  setTimeout(() => {
+    if (!root) return;
+    if (keysToRemote()) remoteApi.focus(); else remoteApi.blurKeys();
+    markKeys();
+  }, 0);
+}
+function markKeys() {
+  if (!root) return;
+  const has = remoteApi.hasKeys() && keysToRemote();
+  const w = wins.get('session');
+  for (const o of wins.values()) o.el.classList.toggle('keys', o === w && has);
+  const k = $('#dkKeys', root); if (!k) return;
+  k.hidden = !w; k.classList.toggle('on', has);
+  k.querySelector('span').textContent = has ? 'Tastatur → ' + ((sessionConn && sessionConn.name) || 'Sitzung') : 'Tastatur → keins';
+  k.title = has ? 'Alle Tasten gehen an das Fernfenster.' : 'Die Tasten gehen an kein Fernfenster. Klicke das Fernfenster an (oder wähle es im Dock).';
+}
+
 /** Das Fernfenster ist vorn und sichtbar: dann zeigt die Leiste seine Menues statt der normalen (wie das Programm-Menue am Mac) */
 function remoteActive() {
   const w = wins.get('session');
@@ -397,6 +424,7 @@ function renderMenus() {
 }
 function renderBar() {
   renderMenus();
+  syncKeys();
   const s = $('#dkSess', root); if (!s) return;
   const w = wins.get('session');
   s.hidden = !w;
@@ -537,7 +565,7 @@ function pickConnection(kind, anchor) {
  *  Launcher
  * ===================================================================== */
 let launcher = null;
-function closeLauncher() { launcher?.remove(); launcher = null; }
+function closeLauncher() { launcher?.remove(); launcher = null; syncKeys(); }
 function openLauncher() {
   closeMenu(); closeLauncher();
   const L = el('div', 'dk-launch'); L.setAttribute('role', 'dialog'); L.setAttribute('aria-label', 'JulOS Launcher');
@@ -545,7 +573,7 @@ function openLauncher() {
     <label class="dk-q">${ic('search')}<input type="text" placeholder="Programme und Verbindungen suchen …" autocomplete="off" spellcheck="false"></label>
     <div class="dk-res"></div>
     <div class="dk-foot"><button type="button" class="dk-b" data-f="signout" aria-label="Abmelden" title="Abmelden">${ic('power')}</button><button type="button" class="dk-b" data-f="devices" aria-label="Geräte und Sitzungen" title="Geräte und Sitzungen">${ic('user')}</button></div>`;
-  root.appendChild(L); launcher = L;
+  root.appendChild(L); launcher = L; syncKeys();
   const input = $('input', L), res = $('.dk-res', L);
   let sel = 0, hits = [];
   const render = () => {
@@ -836,6 +864,12 @@ export async function init(context) {
   dockMode = readDockMode(); dockCollapsed = ls.get('dockCollapsed', false); dockShown = dockMode !== 'auto';
   root.append(wp, buildBar(), buildDock(), buildKnob());
   applyDock(); renderBar(); wireDockHover();
+  remoteApi.setKeyOwner(() => keysToRemote(), () => setTimeout(markKeys, 0));
+  document.addEventListener('focusin', () => setTimeout(markKeys, 0));
+  document.addEventListener('focusout', () => setTimeout(markKeys, 0));
+  document.addEventListener('close', () => syncKeys(), true);      // ein Dialog (zum Beispiel Text senden, Kombination bearbeiten) wurde geschlossen
+  // Ein Klick auf einen Knopf, die Leiste, den Dock oder eine Titelleiste darf den Fokus nicht vom Tastaturfeld wegnehmen
+  root.addEventListener('mousedown', (e) => { if (e.target.closest && e.target.closest('button, .dk-bar, .dk-dock, .dk-wh, .dk-menu') && !e.target.closest('input, textarea, select, [contenteditable="true"]')) e.preventDefault(); });
   const hint = $('#toLoginBtn'); if (hint) hint.textContent = 'Fenster schließen';
   setInterval(tickClock, 15000); tickClock();
   // Beim Wegklicken auf den Hintergrund: Menues zu (Fenster nehmen den Fokus selbst)

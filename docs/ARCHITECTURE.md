@@ -17,7 +17,7 @@ host, backend library, integrations, workers and tests, the folders around them)
 | Server | C# on .NET 10, ASP.NET Core host |
 | Browser | Plain ES modules and the Apache Guacamole JS client, served as static files (the PWA) |
 | Database | PostgreSQL, plain SQL through Npgsql, SQL migrations in `database/`, no ORM |
-| Remote display | `guacd` (container, no published port); the server relays the Guacamole protocol itself |
+| Remote display | `guacd` (container, no published port); the server relays the Guacamole protocol itself. Optional second engine per connection: own RDP client with H.264 (see "Display engines") |
 | Linux agent | Python (GTK/Wnck) behind the language-neutral agent API; a Windows agent later in C# |
 | Delivery | One image on ghcr.io (amd64, arm64) and a compose file |
 
@@ -84,6 +84,21 @@ Production and the test instance differ only in ports, volumes and secrets.
 - **Connections:** a user keeps a list of connections: name, kind (**Desktop** = RDP, **Terminal** = SSH, **Screen** = VNC later), host, port, user name. The password is typed per connection (a password manager can fill it) or, on request, stored encrypted (see the security model). A connection for the machine the server runs next to is offered at setup. The target host is chosen by the signed-in
   user, so the server may reach anything the signed-in user names; an optional allow-list in the configuration restricts that.
 - **Home:** after login the user sees the list, can add, edit and delete connections, and starts one with a tap. The remote view is the existing client.
+
+## Display engines (per connection)
+
+A desktop connection has an `engine` setting (`connections.engine`, migration 004; `guac` is the default, `stream` the new one). It is chosen in the
+connection dialog ("Bildübertragung"); terminals always use Guacamole.
+
+| Engine | Path | Picture | Clipboard |
+| --- | --- | --- | --- |
+| `guac` | browser, `/api/remote/ws`, relay, `guacd` | tiles through the Guacamole protocol | text both ways (Guacamole streams) |
+| `stream` | browser (WebCodecs), `/api/remote/screen`, `ScreenRelay`, `ScreenStream` (own RDP client, H.264 through libopenh264) | H.264, paced by the browser's acknowledgements | text both ways (`ClipboardBridge` on the RDP clipboard channel; images and files do not travel) |
+
+- **Choice at connect time:** the page asks for a ticket with the engine it wants: the browser override `localStorage` `pd.engine` (a JSON value, for testing) if set, else the connection's `engine`. The server grants `stream` only for desktops and only when the H.264 library is present (`ScreenStream.IsAvailable`); the ticket answer names the engine that was actually granted. The browser asks for `guac` when it cannot decode H.264 with WebCodecs (`StreamClient.supported()`, needs HTTPS or localhost).
+- **Fallback:** if a stream session never draws a picture (socket error, closed without a message, an error other than login refused / taken over / too many sessions, no picture within 10 s of the size message, or the decoder failing three times), `app.js` reconnects once with Guacamole and keeps using it until the connection is left (`fallBackFromStream`). A stream that has shown a picture is never swapped out silently.
+- **Wire protocol:** binary, documented in `ScreenProtocol.cs` and the header of `stream.js`. The clipboard is message 6 (server to browser, UTF-8 text, the remote desktop copied) and message 9 (browser to server, UTF-8 text, up to 1 MiB; the remote desktop fetches it when it pastes). `stream.js` presents it to `app.js` through the same stream objects as the Guacamole client (`onclipboard`, `createClipboardStream`), so the clipboard dialog is shared.
+- **The agent is independent of the engine.** `/api/agent/*` (health, windows, apps, launch, mode), the window bar and uploads talk to the agent through its Unix socket on the server and never see the picture path. They work the same with `guac` and `stream` (checked on the test instance with `stream`: health, window list, launch, window bar).
 
 ## Order of work (one step at a time, each tested before the next)
 

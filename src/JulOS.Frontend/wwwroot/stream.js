@@ -4,12 +4,16 @@
  * disconnect, getDisplay und die Rueckrufe onstatechange/onerror), damit Touch, Tastatur und Menues in app.js unveraendert bleiben.
  *
  * Nachrichten (alle binaer, Zahlen big endian), siehe ScreenProtocol auf dem Server:
- *   Server -> Browser: 1 Bild (flags, folge u32, H.264), 2 Zeiger, 3 Groesse, 4 Fehler, 5 uebernommen
- *   Browser -> Server: 1 Bestaetigung, 2 Maus bewegt, 3 Maustaste, 4 Mausrad, 5 Taste (Scancode), 6 Zeichen, 7 Fenstergroesse, 8 Schluesselbild
+ *   Server -> Browser: 1 Bild (flags, folge u32, H.264), 2 Zeiger, 3 Groesse, 4 Fehler, 5 uebernommen, 6 Zwischenablage (UTF-8-Text)
+ *   Browser -> Server: 1 Bestaetigung, 2 Maus bewegt, 3 Maustaste, 4 Mausrad, 5 Taste (Scancode), 6 Zeichen, 7 Fenstergroesse, 8 Schluesselbild,
+ *                      9 Zwischenablage (UTF-8-Text, bis 1 MiB; der ferne Rechner holt ihn, wenn er einfuegt)
+ *
+ * Zwischenablage: wie bei Guacamole als Strom (onclipboard(stream, 'text/plain') mit onblob/onend, createClipboardStream() mit sendBlob/sendEnd),
+ * damit Guacamole.StringReader und StringWriter in app.js unveraendert funktionieren. Nur Text.
  * ===================================================================== */
 
-const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5 };
-const OUT = { ack: 1, move: 2, button: 3, wheel: 4, key: 5, unicode: 6, resize: 7, keyframe: 8 };
+const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6 };
+const OUT = { ack: 1, move: 2, button: 3, wheel: 4, key: 5, unicode: 6, resize: 7, keyframe: 8, clipboard: 9 };
 
 /* ---------- Tasten: X11-Keysyms (so arbeitet app.js) -> RDP-Scancodes ---------- */
 // [scancode, erweitert]
@@ -121,6 +125,8 @@ export class StreamClient {
     this.mods = { ctrl: false, alt: false, super: false };
     this.layout = layout;
     this.stats = { pictures: 0, dropped: 0 };
+    this.failures = 0;
+    this.drawn = false;                 // ob schon ein Bild gezeichnet wurde (davor darf app.js auf Guacamole ausweichen)
   }
 
   getDisplay() { return this.display; }
@@ -185,8 +191,19 @@ export class StreamClient {
         if (this.onerror) this.onerror({ code: 777, message: 'Sitzung übernommen.' });
         this.setState(5);
         break;
+      case IN.clipboard: this.incomingClipboard(new Uint8Array(buffer, 1)); break;
       default: break;
     }
+  }
+
+  // Text vom fernen Rechner: als Guacamole-artiger Strom (ein Blob, base64, dann Ende) an onclipboard
+  incomingClipboard(bytes) {
+    if (!this.onclipboard || !bytes.length) return;
+    let bin = ''; for (let i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode(...bytes.subarray(i, i + 8192));
+    const stream = { onblob: null, onend: null };
+    this.onclipboard(stream, 'text/plain');
+    if (stream.onblob) stream.onblob(btoa(bin));
+    if (stream.onend) stream.onend();
   }
 
   // Codec-Zeichenfolge aus dem SPS des Schluesselbilds (Profil, Einschraenkungen, Stufe)
@@ -214,8 +231,23 @@ export class StreamClient {
       d.decode(new EncodedVideoChunk({ type: isKey ? 'key' : 'delta', timestamp: sequence, data }));
       this.stats.pictures++;
     } catch {
-      this.stats.dropped++; this.closeDecoder(); this.send1(OUT.keyframe);
+      this.decoderFailed();
     }
+  }
+
+  // Der Dekodierer ist ausgestiegen: ein neues Schluesselbild anfordern. Klappt es vor dem ersten gezeichneten Bild mehrmals nicht, geht es
+  // hier nicht (Browser ohne passenden H.264-Dekodierer): dann Fehler melden, damit app.js auf Guacamole ausweichen kann.
+  decoderFailed() {
+    this.stats.dropped++; this.closeDecoder();
+    if (!this.drawn && ++this.failures >= 3) {
+      this.closing = true;
+      const s = this.socket; this.socket = null;
+      if (s) { try { s.close(); } catch { /* egal */ } }
+      if (this.onerror) this.onerror({ code: 1001, message: 'Der Browser kann das Bild nicht dekodieren.' });
+      this.setState(5);
+      return;
+    }
+    this.send1(OUT.keyframe);
   }
 
   openDecoder(codec) {
@@ -226,9 +258,10 @@ export class StreamClient {
         if (frame.displayWidth !== g.width || frame.displayHeight !== g.height) g.resize(frame.displayWidth, frame.displayHeight);
         g.ctx.drawImage(frame, 0, 0);
         frame.close();
+        this.drawn = true;
         this.send1(OUT.ack);                       // erst nach dem Zeichnen: so laeuft der Server dem Browser nie davon
       },
-      error: () => { this.closeDecoder(); this.send1(OUT.keyframe); },
+      error: () => { if (this.decoder === d) this.decoderFailed(); },
     });
     d.configure({ codec, avc: { format: 'annexb' }, optimizeForLatency: true });
     this.decoder = d; this.codec = codec;
@@ -287,6 +320,25 @@ export class StreamClient {
 
   key(scancode, extended, pressed) { this.send(Uint8Array.of(OUT.key, scancode, (extended ? 1 : 0) | (pressed ? 2 : 0))); }
 
-  // Zwischenablage kommt mit dem Zwischenablage-Kanal des Servers; bis dahin nimmt dieser Strom Text entgegen, ohne etwas zu senden
-  createClipboardStream() { return { sendBlob() {}, sendEnd() {} }; }
+  // Text fuer die Zwischenablage des fernen Rechners: die base64-Teile (UTF-8) werden gesammelt und am Ende als eine Nachricht gesendet
+  createClipboardStream(mimetype) {
+    const parts = [];
+    const client = this;
+    return {
+      sendBlob(base64) {
+        if (!/^text\//.test(mimetype || 'text/plain')) return;
+        const bin = atob(base64); const part = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) part[i] = bin.charCodeAt(i);
+        parts.push(part);
+      },
+      sendEnd() {
+        const size = parts.reduce((n, p) => n + p.length, 0);
+        if (!size) return;
+        const message = new Uint8Array(1 + size); message[0] = OUT.clipboard;
+        let at = 1; for (const p of parts) { message.set(p, at); at += p.length; }
+        parts.length = 0;
+        client.send(message);
+      },
+    };
+  }
 }

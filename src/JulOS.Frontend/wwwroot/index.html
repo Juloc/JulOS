@@ -145,6 +145,10 @@
         <label>Art
           <select id="connKind"><option value="desktop">Desktop (RDP)</option><option value="terminal">Terminal (SSH)</option></select>
         </label>
+        <label id="connEngineRow">Bildübertragung
+          <select id="connEngine"><option value="guac">Standard (Guacamole)</option><option value="stream">Stream (H.264, neu)</option></select>
+        </label>
+        <p id="connEngineHint" class="hint" hidden>Der Stream ist flüssiger bei Bewegung, braucht aber einen Browser mit H.264-Dekodierer und HTTPS. Geht er nicht, verbindet die App automatisch mit Guacamole.</p>
         <label>Adresse <input id="connHost" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Name oder IP-Adresse" required></label>
         <label>Port <input id="connPort" type="text" inputmode="numeric" autocomplete="off" placeholder="3389"></label>
         <label>Benutzername auf dem Ziel <input id="connUser" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>

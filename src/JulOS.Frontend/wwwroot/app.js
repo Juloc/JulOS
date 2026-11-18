@@ -655,6 +655,21 @@ function cursorInfo(canvas, hx, hy) {
   return { w, h, bw, bh, hx, hy, ibeam, sig: `${w}x${h}:${bw}x${bh}@${hx},${hy}` };
 }
 
+/* Der Stream kam nicht zustande (es wurde nie ein Bild gezeichnet): einmal mit Guacamole neu verbinden, statt einen Fehler zu zeigen.
+   Gilt bis die Verbindung verlassen wird. Keine Ausweichung bei Fehlern, die Guacamole genauso haette (Anmeldung abgelehnt, uebernommen, zu viele). */
+function fallBackFromStream(client, err) {
+  if (!(client instanceof StreamClient)) return false;
+  if (client.drawn) S.streamWorked = true;
+  if (S.streamWorked || S.forceGuac || S.intentional || S.client !== client) return false;
+  if (err && [513, 769, 777].includes(err.code)) return false;
+  S.forceGuac = true;
+  dbg('stream-fallback', { code: err ? err.code : 0, message: err && err.message ? String(err.message).slice(0, 80) : '' });
+  toast('Der schnelle Stream geht hier nicht, verbinde mit Guacamole …', 3200);
+  teardown();                       // den Stream sofort abkoppeln: seine spaeteren Ereignisse zaehlen nicht mehr
+  setTimeout(connect, 0);
+  return true;
+}
+
 async function connect() {
   S.intentional = false; S.fatal = false; S.connectStarted = Date.now();
   teardown();
@@ -665,12 +680,14 @@ async function connect() {
   if (kbFocused()) el.kb.blur();
   for (let i = 0; i < 12 && kbOpen; i++) await sleep(50);
   const { w, h } = computeRemote();
-  // Welche Engine: der eigene Stream (H.264 im Browser) nur fuer Desktops und nur, wenn der Browser ihn dekodieren kann; sonst Guacamole
-  const wantStream = S.conn.kind === 'desktop' && store.get('engine', 'guac') === 'stream' && await StreamClient.supported();
+  // Welche Engine: der Test-Schalter pd.engine (localStorage, JSON) hat Vorrang vor der Wahl der Verbindung; der eigene Stream (H.264 im Browser)
+  // nur fuer Desktops und nur, wenn der Browser ihn dekodieren kann; sonst Guacamole (auch nach einem misslungenen Stream, siehe fallBackFromStream)
+  const choice = S.forceGuac ? 'guac' : store.get('engine', null) || S.conn.engine || 'guac';
+  const wantStream = S.conn.kind === 'desktop' && choice === 'stream' && await StreamClient.supported();
   let ticket, engine = 'guac';
   try {
     const resp = await fetch('/api/remote/ticket', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, signal: AbortSignal.timeout(10000),
-      body: JSON.stringify({ connection: S.conn.id, password: S.password || undefined, width: w, height: h, dpi: 96, engine: wantStream ? 'stream' : undefined }) });
+      body: JSON.stringify({ connection: S.conn.id, password: S.password || undefined, width: w, height: h, dpi: 96, engine: wantStream ? 'stream' : 'guac' }) });
     const data = await resp.json().catch(() => ({}));
     if (resp.status === 401) return leave('Die Sitzung ist abgelaufen. Bitte neu anmelden.', 'auth');
     if (!resp.ok) throw new Error(data.error || 'Fehler ' + resp.status);
@@ -702,10 +719,12 @@ async function connect() {
     if (st === 3) { // verbunden
       clearTimeout(S.connectTimer);
       S.connected = true; S.everConnected = true; S.connectedAt = Date.now(); S.frameSeen = false; startWindowBar(); fitDisplay(); pushSize(); waitForFrame(client); focusKbForHardware();
+      if (isStream) setTimeout(() => { if (S.client === client && !client.drawn) fallBackFromStream(client); }, 10000);   // Groesse gemeldet, aber nie ein Bild: der Dekodierer geht nicht
       // Die Zaehler der Wiederholung gelten erst als zurueckgesetzt, wenn die Verbindung wirklich haelt (sonst endlos: verbunden, sofort getrennt, neu ...)
       setTimeout(() => { if (S.client === client && S.connected) { S.firstLogin = false; S.retry = 0; } }, 12000);
     } else if (st === 5) { // getrennt
       S.connected = false;
+      if (!client.closing && fallBackFromStream(client)) return;   // ohne Fehlermeldung getrennt, bevor ein Bild kam
       if (S.intentional || S.fatal) return;
       if (!S.everConnected) return; // Fehler wird von onerror gemeldet
       // sofort nach dem Anmelden getrennt = xrdp hat das Passwort abgelehnt: nicht wiederholen
@@ -716,6 +735,7 @@ async function connect() {
   client.onerror = (err) => {
     if (S.client !== client) return;
     // guacd meldet meist nur "Aborted. See logs."; der Statuscode sagt mehr
+    if (fallBackFromStream(client, err)) return;
     const known = ERROR_TEXT[err && err.code];
     const msg = known || ((err && err.message) ? err.message : 'Verbindungsfehler');
     S.connected = false;
@@ -739,6 +759,7 @@ async function connect() {
   clearTimeout(S.connectTimer);
   S.connectTimer = setTimeout(() => {
     if (S.client !== client || S.connected) return;
+    if (fallBackFromStream(client)) return;
     S.fatal = true; try { client.disconnect(); } catch { /* egal */ }
     showOverlay('Die Verbindung kommt nicht zustande. Netz prüfen und „Neu verbinden“ tippen.');
   }, 20000);
@@ -1379,7 +1400,7 @@ if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWor
  * ===================================================================== */
 /** Startet die Verbindung. conn = {id, name, kind}; das Passwort bleibt nur im Arbeitsspeicher dieser Seite. */
 export function openRemote(conn, password) {
-  S.conn = conn; S.password = password; S.retry = 0; S.everConnected = false; S.firstLogin = true;
+  S.conn = conn; S.password = password; S.retry = 0; S.everConnected = false; S.firstLogin = true; S.forceGuac = false; S.streamWorked = false;
   return connect();
 }
 /** Wird mit (Meldung, Grund) gerufen, wenn die Verbindung beendet wird und die Startseite wieder dran ist. */

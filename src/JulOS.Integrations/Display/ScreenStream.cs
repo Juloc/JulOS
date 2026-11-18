@@ -15,6 +15,9 @@ public sealed record ScreenSize(int Width, int Height) : ScreenEvent;
 /// <summary>Ein Bild als H.264 (Annex B, SPS und PPS vor jedem Schluesselbild). Der Browser bestaetigt jedes Bild.</summary>
 public sealed record ScreenPicture(int Sequence, bool IsKey, byte[] Data) : ScreenEvent;
 
+/// <summary>Der ferne Rechner hat Text kopiert.</summary>
+public sealed record ScreenClipboardText(string Text) : ScreenEvent;
+
 public enum CursorKind { Shape, Hidden, Default }
 
 /// <summary>Die Form des Mauszeigers des fernen Rechners (RGBA, R zuerst, gerade Alpha, von oben nach unten).</summary>
@@ -43,6 +46,8 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     private readonly Lock _gate = new();
     private readonly CancellationTokenSource _stop = new();
 
+    private readonly ClipboardChannel _clipboardChannel = new();
+    private readonly ClipboardBridge _clipboard;
     private RdpClient? _rdp;
     private DisplayControlChannel? _display;
     private H264Encoder? _encoder;
@@ -68,6 +73,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         _options = options;
         _maxKilobitsPerSecond = maxKilobitsPerSecond;
         _log = log;
+        _clipboard = new ClipboardBridge(_clipboardChannel, text => _events.Writer.TryWrite(new ScreenClipboardText(text)));
     }
 
     /// <summary>Ob H.264 auf dieser Maschine kodiert werden kann (libopenh264 vorhanden).</summary>
@@ -91,6 +97,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         var display = new DisplayControlChannel();
         channels.Register(display);
         rdp.AddChannel(channels);
+        rdp.AddChannel(_clipboardChannel);
         _display = display;
         try
         {
@@ -127,6 +134,9 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     public void Key(int scancode, bool extended, bool down) => _rdp?.Key(scancode, extended, down);
 
     public void Unicode(char unit) => _rdp?.Unicode(unit);
+
+    /// <summary>Der Browser hat Text abgelegt; der ferne Rechner holt ihn, wenn dort eingefuegt wird.</summary>
+    public void SetClipboard(string text) => _clipboard.SetLocalText(text);
 
     /// <summary>Der Browser hat ein Bild dekodiert.</summary>
     public void Acknowledge()

@@ -153,6 +153,11 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16)
                         buffer = pool.Rent(ScreenProtocol.CursorHeader + (cursor.Rgba?.Length ?? 0));
                         length = ScreenProtocol.WriteCursor(buffer, cursor);
                         break;
+                    case ScreenClipboardText clip:
+                        buffer = pool.Rent(1 + System.Text.Encoding.UTF8.GetMaxByteCount(clip.Text.Length));
+                        buffer[0] = ScreenProtocol.ToBrowserClipboard;
+                        length = 1 + System.Text.Encoding.UTF8.GetBytes(clip.Text, buffer.AsSpan(1));
+                        break;
                     case ScreenSize size:
                         buffer = pool.Rent(5);
                         length = ScreenProtocol.WriteSize(buffer, size.Width, size.Height);
@@ -173,26 +178,56 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16)
         }
     }
 
-    /// <summary>Browser -> Stream: kleine binaere Nachrichten (siehe ScreenProtocol).</summary>
+    /// <summary>Browser -> Stream: kleine binaere Nachrichten (siehe ScreenProtocol); nur die Zwischenablage darf laenger sein und kommt dann in Teilen.</summary>
     private static async Task ReceiveFromBrowserAsync(WebSocket ws, ScreenStream stream, CancellationToken ct)
     {
+        const int maxMessage = 1 + ClipboardBridge.MaxTextBytes;
         var buffer = new byte[ReceiveBuffer];
         while (!ct.IsCancellationRequested)
         {
-            var result = await ws.ReceiveAsync(buffer, ct).ConfigureAwait(false);
-            if (result.MessageType == WebSocketMessageType.Close)
+            var used = 0;
+            ValueWebSocketReceiveResult result;
+            do
             {
-                return;
-            }
+                if (used == buffer.Length)
+                {
+                    if (used >= maxMessage)
+                    {
+                        await ws.CloseOutputAsync(WebSocketCloseStatus.MessageTooBig, "zu lang", CancellationToken.None).ConfigureAwait(false);
+                        return;
+                    }
 
-            // Eine Nachricht passt in den Puffer; groessere sind nicht von uns
-            if (!result.EndOfMessage || result.MessageType != WebSocketMessageType.Binary || result.Count == 0)
+                    Array.Resize(ref buffer, Math.Min(maxMessage, buffer.Length * 4));
+                }
+
+                result = await ws.ReceiveAsync(buffer.AsMemory(used), ct).ConfigureAwait(false);
+                if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    return;
+                }
+
+                used += result.Count;
+            }
+            while (!result.EndOfMessage);
+
+            if (result.MessageType != WebSocketMessageType.Binary || used == 0)
             {
                 await ws.CloseOutputAsync(WebSocketCloseStatus.PolicyViolation, "ungültig", CancellationToken.None).ConfigureAwait(false);
                 return;
             }
 
-            Handle(stream, buffer.AsSpan(0, result.Count));
+            // Zu lange Nachrichten, die nicht zur Zwischenablage gehoeren, sind nicht von uns
+            if (used > ReceiveBuffer && buffer[0] != ScreenProtocol.FromBrowserClipboard)
+            {
+                await ws.CloseOutputAsync(WebSocketCloseStatus.PolicyViolation, "ungültig", CancellationToken.None).ConfigureAwait(false);
+                return;
+            }
+
+            Handle(stream, buffer.AsSpan(0, used));
+            if (buffer.Length > ReceiveBuffer * 16)
+            {
+                buffer = new byte[ReceiveBuffer];                 // der grosse Puffer war nur fuer einen Text
+            }
         }
     }
 
@@ -220,6 +255,10 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16)
                 break;
             case ScreenProtocol.FromBrowserResize when m.Length >= 5:
                 stream.Resize(Math.Clamp((int)BinaryPrimitives.ReadUInt16BigEndian(m[1..]), 200, 4096), Math.Clamp((int)BinaryPrimitives.ReadUInt16BigEndian(m[3..]), 200, 4096));
+                break;
+            case ScreenProtocol.FromBrowserClipboard when m.Length >= 2:
+                // Ungueltiges UTF-8 wird zu U+FFFD, nie zu einer Ausnahme
+                stream.SetClipboard(System.Text.Encoding.UTF8.GetString(m[1..]));
                 break;
             case ScreenProtocol.FromBrowserKeyFrame:
                 stream.RequestKeyFrame();

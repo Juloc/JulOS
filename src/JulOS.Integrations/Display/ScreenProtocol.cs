@@ -12,6 +12,7 @@ namespace JulOS.Integrations.Display;
 ///   3 Groesse    breite(2) hoehe(2)
 ///   4 Fehler     code(2) UTF-8-Text ...            (Codes wie bei Guacamole: 769 Anmeldung abgelehnt, 515 Verbindung misslungen ...)
 ///   5 Uebernommen
+///   6 Zwischenablage UTF-8-Text ...          (der ferne Rechner hat Text kopiert; bis ClipboardBridge.MaxTextBytes)
 /// Browser an Server:
 ///   1 Bestaetigung   (ein Bild ist dekodiert)
 ///   2 Maus bewegt    x(2) y(2)
@@ -21,12 +22,13 @@ namespace JulOS.Integrations.Display;
 ///   6 Zeichen        utf16-einheit(2)
 ///   7 Fenstergroesse breite(2) hoehe(2)
 ///   8 Schluesselbild bitte
+///   9 Zwischenablage UTF-8-Text ...          (der Browser legt Text ab; der ferne Rechner holt ihn beim Einfuegen)
 /// </summary>
 public static class ScreenProtocol
 {
-    public const byte ToBrowserPicture = 1, ToBrowserCursor = 2, ToBrowserSize = 3, ToBrowserError = 4, ToBrowserTaken = 5;
+    public const byte ToBrowserPicture = 1, ToBrowserCursor = 2, ToBrowserSize = 3, ToBrowserError = 4, ToBrowserTaken = 5, ToBrowserClipboard = 6;
     public const byte FromBrowserAck = 1, FromBrowserMove = 2, FromBrowserButton = 3, FromBrowserWheel = 4, FromBrowserKey = 5,
-        FromBrowserUnicode = 6, FromBrowserResize = 7, FromBrowserKeyFrame = 8;
+        FromBrowserUnicode = 6, FromBrowserResize = 7, FromBrowserKeyFrame = 8, FromBrowserClipboard = 9;
 
     public const int PictureHeader = 6;
     public const int CursorHeader = 10;
@@ -73,6 +75,15 @@ public static class ScreenProtocol
         result[0] = ToBrowserError;
         BinaryPrimitives.WriteUInt16BigEndian(result.AsSpan(1), (ushort)code);
         text.CopyTo(result, 3);
+        return result;
+    }
+
+    public static byte[] Clipboard(string text)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+        var result = new byte[1 + bytes.Length];
+        result[0] = ToBrowserClipboard;
+        bytes.CopyTo(result, 1);
         return result;
     }
 

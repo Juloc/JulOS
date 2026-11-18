@@ -45,8 +45,11 @@ internal static class RemoteEndpoints
             var w = Math.Clamp(body.Width ?? 900, 400, 4096) & ~3;
             var h = Math.Clamp(body.Height ?? 1600, 300, 4096) & ~1;
             var dpi = Math.Clamp(body.Dpi ?? 96, 72, 288);
-            // Der Stream (eigener RDP-Client, H.264) ist nur fuer Desktops und nur, wenn der Kodierer da ist; sonst bleibt es bei Guacamole
-            if (c.Kind == "desktop" && string.Equals(body.Engine, "stream", StringComparison.Ordinal) && ScreenStream.IsAvailable)
+            // Die Engine der Verbindung gilt, ausser die Seite verlangt ausdruecklich eine andere (Test-Schalter im Browser oder Rueckfall nach
+            // einem misslungenen Stream). Der Stream (eigener RDP-Client, H.264) ist nur fuer Desktops und nur, wenn der Kodierer da ist; sonst
+            // bleibt es bei Guacamole, und die Antwort sagt, welche Engine es wurde.
+            var wanted = body.Engine ?? c.Engine;
+            if (c.Kind == "desktop" && string.Equals(wanted, ConnectionRules.EngineStream, StringComparison.Ordinal) && ScreenStream.IsAvailable)
             {
                 var options = new RdpOptions
                 {

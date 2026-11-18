@@ -12,7 +12,7 @@ internal static class ConnectionEndpoints
     private static IResult Error(int status, string message) =>
         Results.Text(JsonSerializer.Serialize(new ErrorBody(message), AppJson.Default.ErrorBody), "application/json", Encoding.UTF8, status);
 
-    private static ConnectionDto ToDto(ConnectionRecord c) => new(c.Id, c.Name, c.Kind, c.Host, c.Port, c.Username, c.HasPassword);
+    private static ConnectionDto ToDto(ConnectionRecord c) => new(c.Id, c.Name, c.Kind, c.Host, c.Port, c.Username, c.HasPassword, c.Engine);
 
     private static string? CheckPassword(string? password, SecretBox box)
     {
@@ -32,13 +32,13 @@ internal static class ConnectionEndpoints
         app.MapPost("/api/connections", async (ConnectionRequest body, HttpContext ctx, ConnectionStore store, HostPolicy policy, SecretBox box) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
-            var (v, error) = ConnectionRules.Validate(body.Name, body.Kind, body.Host, body.Port, body.Username);
+            var (v, error) = ConnectionRules.Validate(body.Name, body.Kind, body.Host, body.Port, body.Username, body.Engine);
             if (v is null) return Error(400, error!);
             if (!policy.Allows(v.Host)) return Error(403, "Dieses Ziel ist nicht erlaubt.");
             var passwordError = CheckPassword(body.Password, box);
             if (passwordError is not null) return Error(400, passwordError);
             if (await store.CountAsync(id.UserId, ctx.RequestAborted) >= ConnectionRules.MaxPerUser) return Error(400, "Zu viele Verbindungen.");
-            var c = await store.CreateAsync(id.UserId, v.Name, v.Kind, v.Host, v.Port, v.Username, ctx.RequestAborted);
+            var c = await store.CreateAsync(id.UserId, v.Name, v.Kind, v.Host, v.Port, v.Username, v.Engine, ctx.RequestAborted);
             if (!string.IsNullOrEmpty(body.Password))
             {
                 await store.SetSecretAsync(id.UserId, c.Id, box.Encrypt(body.Password, c.Id), ctx.RequestAborted);
@@ -50,14 +50,14 @@ internal static class ConnectionEndpoints
         app.MapPut("/api/connections/{connection:guid}", async (Guid connection, ConnectionRequest body, HttpContext ctx, ConnectionStore store, HostPolicy policy, SecretBox box) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
-            var (v, error) = ConnectionRules.Validate(body.Name, body.Kind, body.Host, body.Port, body.Username);
+            var before = await store.GetAsync(id.UserId, connection, ctx.RequestAborted);
+            if (before is null) return Error(404, "Verbindung nicht gefunden.");
+            var (v, error) = ConnectionRules.Validate(body.Name, body.Kind, body.Host, body.Port, body.Username, body.Engine, before.Engine);
             if (v is null) return Error(400, error!);
             if (!policy.Allows(v.Host)) return Error(403, "Dieses Ziel ist nicht erlaubt.");
             var passwordError = CheckPassword(body.Password, box);
             if (passwordError is not null) return Error(400, passwordError);
-            var before = await store.GetAsync(id.UserId, connection, ctx.RequestAborted);
-            if (before is null) return Error(404, "Verbindung nicht gefunden.");
-            var c = await store.UpdateAsync(id.UserId, connection, v.Name, v.Kind, v.Host, v.Port, v.Username, ctx.RequestAborted);
+            var c = await store.UpdateAsync(id.UserId, connection, v.Name, v.Kind, v.Host, v.Port, v.Username, v.Engine, ctx.RequestAborted);
             if (c is null) return Error(404, "Verbindung nicht gefunden.");
 
             // Ein gespeichertes Passwort gehoert zu genau diesem Ziel: wer Adresse, Port, Art oder Benutzer aendert, schickt es sonst an ein anderes Ziel

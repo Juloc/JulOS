@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 namespace JulOS.Workers;
 
 /// <summary>Raeumt stuendlich abgelaufene Sitzungen auf und vergisst alte Fehlversuche.</summary>
-public sealed class SessionPurgeWorker(SessionStore sessions, LoginLimiter limiter, ILogger<SessionPurgeWorker> log) : BackgroundService
+public sealed class SessionPurgeWorker(SessionStore sessions, LoginLimiter limiter, HitCounter hits, ILogger<SessionPurgeWorker> log) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -17,6 +17,7 @@ public sealed class SessionPurgeWorker(SessionStore sessions, LoginLimiter limit
             {
                 var n = await sessions.PurgeAsync(stoppingToken);
                 limiter.Sweep();
+                hits.Sweep(TimeSpan.FromMinutes(1));
                 if (n > 0) log.LogInformation("{Count} abgelaufene Sitzung(en) entfernt.", n);
             }
             catch (OperationCanceledException) { return; }

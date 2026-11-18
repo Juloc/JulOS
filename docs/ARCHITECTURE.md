@@ -92,7 +92,7 @@ Production and the test instance differ only in ports, volumes and secrets.
 1. Solution skeleton in the layout above: host, static files, headers, health, migration runner, PostgreSQL in compose.
 2. ~~Accounts: setup screen with setup code, Argon2id, TOTP, sessions, lockout, console tool, tests.~~ Done.
 3. ~~Relay: ticket endpoint and WebSocket to `guacd`, tested against a real `guacd`.~~ Done (`POST /api/remote/ticket`, `GET /api/remote/ws`).
-4. Agent client, upload and log endpoints.
+4. ~~Agent client, upload and log endpoints.~~ Done (`/api/agent/*`, `/api/upload`, `/api/log`; tested against the real agent on the test instance).
 5. Client: setup and login screens, home with connections (Desktop and Terminal), sign out, device list.
 6. Switch the compose file over, remove the Node gateway.
 

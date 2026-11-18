@@ -4,9 +4,11 @@ using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
 using JulOS.Backend.Services;
 using JulOS.Frontend;
+using JulOS.Frontend.Agent;
 using JulOS.Frontend.Auth;
 using JulOS.Frontend.Cli;
 using JulOS.Frontend.Remote;
+using JulOS.Integrations.Agent;
 using JulOS.Integrations.Guacamole;
 using JulOS.Workers;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -43,6 +45,12 @@ builder.Services.AddHostedService<TicketSweepWorker>();
 var guacd = (builder.Configuration["JULOS_GUACD"] ?? "guacd:4822").Split(':');
 builder.Services.AddSingleton(new GuacdOptions(guacd[0], guacd.Length > 1 ? int.Parse(guacd[1]) : 4822));
 builder.Services.AddSingleton<GuacRelay>();
+// Agent in der Sitzung der Ziel-Maschine (Unix-Socket) und der gemeinsame Ordner fuer Foto-Uploads, beide vom Host eingebunden
+builder.Services.AddSingleton(new AgentOptions(builder.Configuration["JULOS_AGENT_SOCKET"] ?? "/uploads/.agent/agent.sock"));
+builder.Services.AddSingleton<AgentClient>();
+builder.Services.AddSingleton(new UploadOptions(builder.Configuration["JULOS_UPLOAD_DIR"] ?? "/uploads"));
+builder.Services.AddSingleton<ClipboardUploader>();
+builder.Services.AddSingleton<HitCounter>();
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJson.Default));
 
 // Hinter einem Proxy im eigenen Netz (zum Beispiel Caddy) kommen Client-Adresse, Protokoll und Host aus den X-Forwarded-Kopfzeilen
@@ -104,6 +112,7 @@ app.MapGet("/api/health", async (NpgsqlDataSource data, CancellationToken ct) =>
 });
 app.MapAuth();
 app.MapRemote();
+app.MapAgent();
 
 app.Run();
 return 0;

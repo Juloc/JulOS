@@ -34,6 +34,10 @@ services:
         condition: service_healthy
     environment:
       JULOS_DB: Host=postgres;Database=julos;Username=julos;Password=${DEV_DB_PASSWORD}
+    # wie live: der Server laeuft als derselbe Benutzer wie die Sitzung der Ziel-Maschine (Socket-Ordner hat Rechte 0700)
+    user: "1020:1020"
+    volumes:
+      - julos-dev-share:/uploads
     ports:
       - "127.0.0.1:18080:8080"
 
@@ -51,9 +55,15 @@ services:
   # Wegwerf-Ziel fuer den Desktop (RDP mit xrdp und XFCE, wie die Linux-VM). Fester Test-Zugang "ubuntu" / "ubuntu";
   # es gibt keinen veroeffentlichten Port, nur guacd im selben Netz erreicht es (Host "rdp-target", Port 3389).
   rdp-target:
-    image: scottyhardy/docker-remote-desktop:latest
+    build:
+      context: ../..
+      dockerfile: deploy/dev/rdp-target/Dockerfile
     hostname: rdp-target
     shm_size: 1g
+    volumes:
+      # Agent-Socket und Foto-Upload, wie ~/julos-uploads auf der echten VM (der Server sieht denselben Ordner als /uploads)
+      - julos-dev-share:/home/ubuntu/julos-uploads
 
 volumes:
+  julos-dev-share:
   julos-dev-postgres:

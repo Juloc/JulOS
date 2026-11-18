@@ -9,6 +9,9 @@ using JulOS.Integrations.Guacamole;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.Logging;
+using JulOS.Integrations.Agent;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace JulOS.Backend.Tests;
@@ -20,7 +23,7 @@ public sealed class RemoteHttpTests
     private const string SetupCode = "TEST-CODE-0000";
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
 
-    private sealed class Server(TestDb db, string guacd, string? allowed = null) : WebApplicationFactory<Program>
+    private sealed class Server(TestDb db, string guacd, string? allowed = null, Action<IServiceCollection>? configure = null) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -29,6 +32,7 @@ public sealed class RemoteHttpTests
             builder.UseSetting("JULOS_GUACD", guacd);
             if (allowed is not null) builder.UseSetting("JULOS_ALLOWED_HOSTS", allowed);
             builder.ConfigureServices(s => s.AddTransient<IStartupFilter, LoopbackFilter>());
+            if (configure is not null) builder.ConfigureTestServices(configure);
         }
     }
 
@@ -221,5 +225,192 @@ public sealed class RemoteHttpTests
             await ws.SendAsync(GuacProtocol.Encode("key", key.ToString(), "0"), WebSocketMessageType.Text, true, CancellationToken.None);
         }
         await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+    }
+
+    // ---- Agent, Upload, Log ----
+
+    private static readonly byte[] Png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13];
+
+    private static HttpRequestMessage PostRaw(string url, byte[] body, string contentType, string cookie)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = new ByteArrayContent(body) };
+        req.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+        req.Headers.Add("X-JulOS", "1");
+        req.Headers.Add("Origin", "http://localhost");
+        req.Headers.Add("Cookie", cookie);
+        return req;
+    }
+
+    private static async Task<JsonElement> Json(HttpResponseMessage r) => JsonDocument.Parse(await r.Content.ReadAsStringAsync()).RootElement.Clone();
+
+    private static HttpRequestMessage GetWith(string url, string? cookie)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Get, url);
+        if (cookie is not null) req.Headers.Add("Cookie", cookie);
+        return req;
+    }
+
+    [Fact]
+    public async Task Agent_upload_and_log_need_a_session_and_the_own_page()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db, "127.0.0.1:1");
+        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        foreach (var path in new[] { "/api/agent/health", "/api/agent/windows", "/api/agent/apps" })
+            Assert.Equal(HttpStatusCode.Unauthorized, (await c.SendAsync(GetWith(path, null))).StatusCode);
+
+        var (cookie, _) = await SignedInAsync(app, c, db);
+        foreach (var path in new[] { "/api/agent/mode", "/api/agent/apps/launch", "/api/log" })
+        {
+            var noHeader = new HttpRequestMessage(HttpMethod.Post, path) { Content = JsonContent.Create(new { }) };
+            noHeader.Headers.Add("Cookie", cookie);
+            noHeader.Headers.Add("Origin", "http://localhost");
+            Assert.Equal(HttpStatusCode.Forbidden, (await c.SendAsync(noHeader)).StatusCode);       // ohne X-JulOS
+            Assert.Equal(HttpStatusCode.Unauthorized, (await c.SendAsync(Post(path, new { }))).StatusCode);  // ohne Sitzung
+        }
+        Assert.Equal(HttpStatusCode.Unauthorized, (await c.SendAsync(PostRaw("/api/upload", Png, "image/png", "julos_sid=falsch"))).StatusCode);
+    }
+
+    [Fact]
+    public async Task The_agent_api_is_passed_through_with_checked_values_only()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var agent = new FakeAgent();
+        await using var app = new Server(db, "127.0.0.1:1", configure: s => s.AddSingleton(new AgentOptions(agent.SocketPath)));
+        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (cookie, _) = await SignedInAsync(app, c, db);
+
+        var health = await Json(await c.SendAsync(GetWith("/api/agent/health", cookie)));
+        Assert.True(health.GetProperty("available").GetBoolean());
+        Assert.Equal("linux", health.GetProperty("platform").GetString());
+
+        var windows = await Json(await c.SendAsync(GetWith("/api/agent/windows", cookie)));
+        Assert.Equal("Claude", windows.GetProperty("windows")[0].GetProperty("title").GetString());
+        Assert.Equal("Claude", (await Json(await c.SendAsync(GetWith("/api/agent/apps", cookie)))).GetProperty("apps")[0].GetProperty("name").GetString());
+
+        Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Post("/api/agent/windows/12345/activate", new { maximize = true }, cookie))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Post("/api/agent/windows/12345/minimize", new { }, cookie))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Post("/api/agent/apps/launch", new { id = "claude.desktop" }, cookie))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Post("/api/agent/mode", new { mode = "apps" }, cookie))).StatusCode);
+        lock (agent.Requests)
+        {
+            Assert.Contains(("POST", "/v1/windows/12345/activate", """{"maximize":true}"""), agent.Requests);
+            Assert.Contains(("POST", "/v1/apps/launch", """{"id":"claude.desktop"}"""), agent.Requests);
+            Assert.Contains(("POST", "/v1/mode", """{"mode":"apps"}"""), agent.Requests);
+        }
+
+        // ungueltige Werte erreichen den Agenten nie
+        var before = agent.Requests.Count;
+        foreach (var (path, body) in new (string, object)[]
+        {
+            ("/api/agent/windows/abc/activate", new { }), ("/api/agent/windows/1;rm/close", new { }), ("/api/agent/windows/123/format", new { }),
+            ("/api/agent/windows/1234567890123/close", new { }), ("/api/agent/mode", new { mode = "x" }), ("/api/agent/apps/launch", new { id = "" }),
+            ("/api/agent/apps/launch", new { id = new string('a', 201) }),
+        })
+            Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Post(path, body, cookie))).StatusCode);
+        Assert.Equal(before, agent.Requests.Count);
+    }
+
+    [Fact]
+    public async Task Without_an_agent_the_window_bar_is_off_and_the_rest_answers_502()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db, "127.0.0.1:1", configure: s => s.AddSingleton(new AgentOptions("/tmp/julos-kein-agent.sock")));
+        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (cookie, _) = await SignedInAsync(app, c, db);
+
+        Assert.False((await Json(await c.SendAsync(GetWith("/api/agent/health", cookie)))).GetProperty("available").GetBoolean());
+        Assert.Equal(HttpStatusCode.BadGateway, (await c.SendAsync(GetWith("/api/agent/windows", cookie))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadGateway, (await c.SendAsync(Post("/api/agent/mode", new { mode = "desktop" }, cookie))).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_photo_goes_to_the_helper_and_bad_uploads_are_refused()
+    {
+        var dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "julos-up-" + Guid.NewGuid().ToString("N"))).FullName;
+        try
+        {
+            await using var db = await TestDb.CreateAsync();
+            await using var app = new Server(db, "127.0.0.1:1", configure: s => s.AddSingleton(new UploadOptions(dir, TimeSpan.FromMilliseconds(400))));
+            var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+            var (cookie, _) = await SignedInAsync(app, c, db);
+
+            // Helfer in der Sitzung: bestaetigt das Bild
+            var helper = Task.Run(async () =>
+            {
+                for (var i = 0; i < 100; i++)
+                {
+                    var f = Directory.GetFiles(dir).FirstOrDefault(x => x.EndsWith(".png"));
+                    if (f is not null) { await File.WriteAllTextAsync(f + ".ok", ""); return; }
+                    await Task.Delay(10);
+                }
+            });
+            var ok = await c.SendAsync(PostRaw("/api/upload", Png, "image/png", cookie));
+            Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+            Assert.True((await Json(ok)).GetProperty("ok").GetBoolean());
+            await helper;
+
+            // kein Bild (egal was der Absender behauptet), leer, kein Helfer
+            Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(PostRaw("/api/upload", Encoding.UTF8.GetBytes("<html>"), "image/png", cookie))).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(PostRaw("/api/upload", [], "image/png", cookie))).StatusCode);
+            Assert.Equal(HttpStatusCode.GatewayTimeout, (await c.SendAsync(PostRaw("/api/upload", Png, "image/png", cookie))).StatusCode);
+
+            // zu viele Uploads pro Minute
+            HttpStatusCode last = default;
+            for (var i = 0; i < 25; i++) last = (await c.SendAsync(PostRaw("/api/upload", [], "image/png", cookie))).StatusCode;
+            Assert.Equal(HttpStatusCode.TooManyRequests, last);
+        }
+        finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
+    }
+
+    private sealed class CaptureLogs : ILoggerProvider
+    {
+        public List<string> Lines { get; } = [];
+        public ILogger CreateLogger(string category) => new L(this, category);
+        public void Dispose() { }
+        private sealed class L(CaptureLogs o, string cat) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+            public bool IsEnabled(LogLevel level) => true;
+            public void Log<TState>(LogLevel level, EventId id, TState state, Exception? ex, Func<TState, Exception?, string> f) { lock (o.Lines) o.Lines.Add(cat + ": " + f(state, ex)); }
+        }
+    }
+
+    [Fact]
+    public async Task The_client_log_keeps_only_numbers_flags_and_short_words()
+    {
+        await using var db = await TestDb.CreateAsync();
+        var logs = new CaptureLogs();
+        await using var app = new Server(db, "127.0.0.1:1", configure: s => s.AddLogging(l => l.AddProvider(logs)));
+        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (cookie, _) = await SignedInAsync(app, c, db);
+
+        var body = new
+        {
+            events = new object[]
+            {
+                new Dictionary<string, object> { ["evt"] = "firstframe", ["ms"] = 1503, ["ok"] = true, ["text"] = new string('x', 25), ["mit leerzeichen"] = 1, ["verschachtelt"] = new { a = 1 }, ["liste"] = new[] { 1 } },
+                "kein objekt",
+            },
+        };
+        Assert.Equal(HttpStatusCode.NoContent, (await c.SendAsync(Post("/api/log", body, cookie))).StatusCode);
+        string[] lines;
+        lock (logs.Lines) lines = [.. logs.Lines.Where(l => l.StartsWith("Client:"))];
+        var line = Assert.Single(lines);
+        Assert.Contains("\"evt\":\"firstframe\"", line);
+        Assert.Contains("\"ms\":1503", line);
+        Assert.Contains("\"ok\":true", line);
+        Assert.DoesNotContain("xxxx", line);
+        Assert.DoesNotContain("leerzeichen", line);
+        Assert.DoesNotContain("verschachtelt", line);
+        Assert.DoesNotContain("liste", line);
+
+        // zu gross, kein JSON, zu oft
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, (await c.SendAsync(Post("/api/log", new { events = new[] { new { x = new string('a', 13000) } } }, cookie))).StatusCode);
+        var bad = PostRaw("/api/log", Encoding.UTF8.GetBytes("{kaputt"), "application/json", cookie);
+        Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(bad)).StatusCode);
+        HttpStatusCode last = default;
+        for (var i = 0; i < 65; i++) last = (await c.SendAsync(Post("/api/log", new { events = Array.Empty<object>() }, cookie))).StatusCode;
+        Assert.Equal(HttpStatusCode.TooManyRequests, last);
     }
 }

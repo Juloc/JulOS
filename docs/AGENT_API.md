@@ -14,9 +14,38 @@ and has to offer the same endpoints.
 
 ## Authorisation in the gateway
 
-`/api/agent/*` requires the header `X-Session: <sid>`. The `sid` is returned by `/api/token` and only becomes valid
-once the Guacamole WebSocket of that session has been open for more than 8 seconds. Without it the gateway answers 401.
-With `PROXY_SECRET` set, the usual `X-Proxy-Secret` check applies first.
+**Node gateway (until it is removed):** `/api/agent/*` requires the header `X-Session: <sid>`. The `sid` is returned by `/api/token`
+and only becomes valid once the Guacamole WebSocket of that session has been open for more than 8 seconds. Without it the gateway
+answers 401. With `PROXY_SECRET` set, the usual `X-Proxy-Secret` check applies first.
+
+**.NET server:** every `/api` route needs the signed-in session of the app (cookie), and changing requests need the `X-JulOS` header
+and the app's own origin. There is no separate agent session any more.
+
+| Browser route (.NET server) | Agent request |
+| --- | --- |
+| `GET /api/agent/health` | `GET /v1/health`, answer gets `available: true`; `{available:false}` when there is no agent |
+| `GET /api/agent/windows`, `GET /api/agent/apps` | `GET /v1/windows`, `GET /v1/apps` |
+| `POST /api/agent/windows/{id}/{activate\|minimize\|close}` | the same path; `id` must be digits, `activate` takes `{maximize?}` |
+| `POST /api/agent/apps/launch` `{id}` | `POST /v1/apps/launch` (id up to 200 characters) |
+| `POST /api/agent/mode` `{mode}` | `POST /v1/mode` (`apps` or `desktop` only) |
+
+The server sends only these fixed paths with checked values; the browser cannot send free requests to the agent. Answers are passed
+through if they are valid JSON and at most 600 kB; an agent that is missing, slow (8 s) or broken gives `502`.
+
+The socket directory is `0700` and the socket `0600`, owned by the user of the graphical session. The server (in its container) has
+to run as **that same user** (`user:` in the compose file), otherwise it cannot connect.
+
+## Photo upload
+
+`POST /api/upload` takes the image as the request body (png, jpg, webp or gif, up to 14 MB; the type is checked on the file header,
+20 per minute and user). The server writes it into the shared folder; the clipboard helper (`tools/julos-clip.py`) in the session
+puts it on the clipboard and answers with `<file>.ok` or `<file>.err`. No answer within 8 s gives `504` and the file is removed again.
+
+## Client log
+
+`POST /api/log` `{events:[{...}]}` (at most 12 kB, 40 events, 60 requests per minute and user) writes measurement values into the
+server log. Only keys of letters, digits, `_` and `-` (up to 16 characters) with a number, a boolean or a text of up to 24 characters
+are kept; everything else is dropped.
 
 ## Endpoints
 

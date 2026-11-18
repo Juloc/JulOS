@@ -494,7 +494,10 @@ export class RemoteSession extends Session {
     on = !!on;
     this.visible = on; this.element.hidden = !on;
     this.applyPause();
-    if (on) { this.fitDisplay(); this.scheduleSize(80); if (this.W.available) this.pollWindows(); this.refreshAll(); }
+    if (on) {
+      this.fitDisplay(); this.scheduleSize(80); if (this.W.available) this.pollWindows(); this.refreshAll();
+      if (cur() === this && prevValue) { setKbVal(''); prevValue = ''; }       // Text, der fuer die vorige Sitzung im Eingabefeld stand, nicht in diese uebertragen
+    }
     else { this.closeMenu(); this.closeWinSheet(); }
   }
   applyPause() { if (this.client instanceof StreamClient) this.client.setPaused(!this.visible || document.hidden); }

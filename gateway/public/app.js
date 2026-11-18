@@ -42,6 +42,7 @@ const ICONS = {
   apps: 'M4 8h4V4H4v4zm6 12h4v-4h-4v4zm-6 0h4v-4H4v4zm0-6h4v-4H4v4zm6 0h4v-4h-4v4zm6-10v4h4V4h-4zm-6 4h4V4h-4v4zm6 6h4v-4h-4v4zm0 6h4v-4h-4v4z',
   desktop: 'M21 2H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h7v2H8v2h8v-2h-2v-2h7c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H3V4h18v12z',
   add: 'M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z',
+  add_photo: 'M19 7v2.99s-1.99.01-2 0V7h-3s.01-1.99 0-2h3V2h2v3h3v2h-3zm-3 4V8h-3V5H5c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2v-8h-3zM5 19l3-4 2 3 3-4 4 5H5z',
   close: 'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z',
   minimize: 'M6 19h12v2H6z',
   window: 'M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v10z',
@@ -214,7 +215,7 @@ const DEFAULT_ROWS = [
     ITEM('Alt+Tab', 'chord', 'alt+tab'), ITEM('Strg+⇧+T', 'chord', 'ctrl+shift+t'),
     ACT('image', 'photo'), ACT('paste', 'clip'), ACT('key', 'password') ] },
   { id: 'quick', title: 'Tasten', open: true, items: [
-    ITEM('Alt', 'mod', 'alt'), ITEM('Shift', 'mod', 'shift'),
+    ITEM('Alt', 'mod', 'alt'), ITEM('Shift', 'mod', 'shift'), ACT('add_photo', 'pasteimg'),
     ITEM('←', 'chord', 'left'), ITEM('↑', 'chord', 'up'), ITEM('↓', 'chord', 'down'), ITEM('→', 'chord', 'right'),
     ITEM(':ret', 'chord', 'enter'), ITEM(':backspace', 'chord', 'backspace') ] },
   // die Leiste: immer sichtbar, eine Zeile, ganz unten
@@ -226,7 +227,12 @@ const DEFAULT_ROWS = [
 const clone = (o) => JSON.parse(JSON.stringify(o));
 function loadRows() {
   const saved = store.get('rows3', null);
-  if (Array.isArray(saved) && saved.some((r) => r.fixed)) return saved;
+  if (Array.isArray(saved) && saved.some((r) => r.fixed)) {
+    // neue Standardtaste nachtragen, ohne eigene Anpassungen zu verlieren
+    const has = saved.some((r) => r.items.some((i) => i.type === 'action' && i.value === 'pasteimg'));
+    if (!has) { const q = saved.find((r) => r.id === 'quick') || saved.find((r) => !r.fixed); if (q) q.items.splice(Math.min(2, q.items.length), 0, ACT('add_photo', 'pasteimg')); }
+    return saved;
+  }
   return clone(DEFAULT_ROWS);
 }
 let rows = loadRows();
@@ -415,6 +421,7 @@ const ACTIONS = {
   menu: () => (el.menuSheet.hidden ? openMenu() : closeMenu()),
   expand: toggleExpanded,
   photo: () => openPhotoDlg(),
+  pasteimg: () => pasteImageFromClipboard(),
   clip: () => el.clipDlg.showModal(),
   password: () => openPwDialog(),
 };
@@ -676,15 +683,15 @@ async function connect() {
 
 /* Nach dem Verbinden bleibt die Ladeanzeige stehen, bis wirklich ein Bild da ist (sonst ist alles schwarz).
    Kommt keins, fordert eine kleine Groessenaenderung vom Server ein neues Vollbild an. */
-function nudgeSize() {
+function nudgeSize(delta = 2) {
   if (!S.client || !S.connected) return;
   const { w, h } = computeRemote();
-  S.lastSent = { w, h: h - 2 }; S.client.sendSize(w, h - 2);
+  S.lastSent = { w, h: h - delta }; S.client.sendSize(w, h - delta);
   setTimeout(() => { if (S.client && S.connected) { S.lastSent = { w, h }; S.client.sendSize(w, h); } }, 350);
 }
 function waitForFrame(client) {
   const started = Date.now();
-  let nudged = false;
+  let nudges = 0, probes = 0;
   showBusy('Bild wird geladen …');
   const probe = document.createElement('canvas'); probe.width = probe.height = 8;
   const pc = probe.getContext('2d', { willReadFrequently: true });
@@ -703,8 +710,13 @@ function waitForFrame(client) {
   const tick = () => {
     if (S.client !== client || !S.connected) return;
     const age = Date.now() - started;
-    if (hasContent() || age > 3000) { dbg('firstframe', { ms: age, nudged, ...seen }); el.overlay.hidden = true; el.spinner.hidden = true; return; }
-    if (!nudged && age > 1200) { nudged = true; nudgeSize(); }
+    const ok = hasContent();
+    if (probes++ % 4 === 0 && probes < 40) dbg('frameprobe', { ms: age, nudges, ...seen });
+    if (ok || age > 12000) { dbg('firstframe', { ms: age, nudges, ok, ...seen }); el.overlay.hidden = true; el.spinner.hidden = true; return; }
+    // erst klein, dann deutlich anstupsen: der Server zeichnet nach einer echten Groessenaenderung alles neu
+    if (nudges === 0 && age > 1200) { nudges = 1; nudgeSize(2); }
+    else if (nudges === 1 && age > 3500) { nudges = 2; nudgeSize(64); }
+    else if (nudges === 2 && age > 7000) { nudges = 3; nudgeSize(128); }
     setTimeout(tick, 250);
   };
   tick();
@@ -1135,6 +1147,19 @@ function openPhotoDlg() {
   pasteBox.textContent = '';
   $('#photoClip').hidden = !(window.isSecureContext && navigator.clipboard && navigator.clipboard.read);
   photoDlg.showModal();
+}
+/* Eine Taste: Bild aus der Zwischenablage senden (Bild kopieren, dann tippen). Ohne HTTPS oder ohne Erlaubnis: Dialog. */
+async function pasteImageFromClipboard() {
+  if (!(window.isSecureContext && navigator.clipboard && navigator.clipboard.read)) { openPhotoDlg(); toast('Ohne HTTPS nur über das Einfügefeld', 3200); return; }
+  try {
+    const items = await navigator.clipboard.read();
+    dbg('clipread', { n: items.length, types: items.map((i) => i.types.join('+')).join(',').slice(0, 80) });
+    for (const item of items) {
+      const type = item.types.find((t) => t.startsWith('image/'));
+      if (type) { const b = await item.getType(type); await handleKbFiles([new File([b], 'zwischenablage', { type })]); return; }
+    }
+    toast('In der Zwischenablage ist kein Bild. Erst ein Bild kopieren.', 3200);
+  } catch (e) { dbg('clipread-error', { n: e.name }); openPhotoDlg(); toast('Zwischenablage nicht erlaubt, bitte Einfügefeld nutzen', 3200); }
 }
 async function sendPhotoFiles(files) {
   const ok = await handleKbFiles(files);

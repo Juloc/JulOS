@@ -20,6 +20,9 @@ namespace JulOS.Frontend;
 [JsonSerializable(typeof(LaunchRequest))]
 [JsonSerializable(typeof(ModeRequest))]
 [JsonSerializable(typeof(UploadResponse))]
+[JsonSerializable(typeof(ConnectionDto))]
+[JsonSerializable(typeof(ConnectionsResponse))]
+[JsonSerializable(typeof(ConnectionRequest))]
 [JsonSerializable(typeof(TicketRequest))]
 [JsonSerializable(typeof(TicketResponse))]
 internal sealed partial class AppJson : JsonSerializerContext;

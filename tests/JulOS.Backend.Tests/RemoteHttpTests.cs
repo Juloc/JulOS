@@ -76,6 +76,7 @@ public sealed class RemoteHttpTests
     private static async Task<WebSocket> OpenAsync(Server app, string ticket, string? cookie, string origin = "http://localhost")
     {
         var ws = app.Server.CreateWebSocketClient();
+        ws.SubProtocols.Add("guacamole");                 // wie der Tunnel der Guacamole-Bibliothek im Browser
         ws.ConfigureRequest = r =>
         {
             if (cookie is not null) r.Headers["Cookie"] = cookie;
@@ -104,6 +105,7 @@ public sealed class RemoteHttpTests
 
         var ticket = await TicketAsync(c, cookie, connection.Id);
         using var ws = await OpenAsync(app, ticket, cookie);
+        Assert.Equal("guacamole", ws.SubProtocol);        // ohne gewaehltes Unterprotokoll bricht der Browser den Aufbau ab
         Assert.StartsWith("0.,", await ReadAsync(ws));
         Assert.Equal("4.sync,1.7;", await ReadAsync(ws));
         Assert.Equal(["select", "rdp"], guacd.Handshake[0]);
@@ -412,5 +414,86 @@ public sealed class RemoteHttpTests
         HttpStatusCode last = default;
         for (var i = 0; i < 65; i++) last = (await c.SendAsync(Post("/api/log", new { events = Array.Empty<object>() }, cookie))).StatusCode;
         Assert.Equal(HttpStatusCode.TooManyRequests, last);
+    }
+
+    // ---- Verbindungen verwalten ----
+
+    private static HttpRequestMessage Send(HttpMethod method, string url, object? body, string cookie)
+    {
+        var req = new HttpRequestMessage(method, url);
+        if (body is not null) req.Content = JsonContent.Create(body);
+        req.Headers.Add("X-JulOS", "1");
+        req.Headers.Add("Origin", "http://localhost");
+        req.Headers.Add("Cookie", cookie);
+        return req;
+    }
+
+    [Fact]
+    public async Task Connections_can_be_created_listed_changed_and_deleted_by_their_owner_only()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db, "127.0.0.1:1", allowed: "erlaubt.example, 10.0.0.5, ziel");
+        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (cookie, userId) = await SignedInAsync(app, c, db);
+
+        Assert.Empty((await Json(await c.SendAsync(GetWith("/api/connections", cookie)))).GetProperty("connections").EnumerateArray());
+
+        var created = await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "  Mein PC ", kind = "desktop", host = "ziel", username = "jul" }, cookie));
+        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        var dto = await Json(created);
+        Assert.Equal("Mein PC", dto.GetProperty("name").GetString());           // bereinigt
+        Assert.Equal(3389, dto.GetProperty("port").GetInt32());                  // Standardport der Art
+        var id = dto.GetProperty("id").GetGuid();
+
+        var terminal = await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "Shell", kind = "terminal", host = "10.0.0.5" }, cookie)));
+        Assert.Equal(22, terminal.GetProperty("port").GetInt32());
+        var list = (await Json(await c.SendAsync(GetWith("/api/connections", cookie)))).GetProperty("connections");
+        Assert.Equal(new[] { "Mein PC", "Shell" }, list.EnumerateArray().Select(x => x.GetProperty("name").GetString()));   // in der Reihenfolge des Anlegens
+
+        var changed = await Json(await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{id}", new { name = "Büro", kind = "desktop", host = "erlaubt.example", port = 3390, username = "jul" }, cookie)));
+        Assert.Equal(("Büro", "erlaubt.example", 3390), (changed.GetProperty("name").GetString(), changed.GetProperty("host").GetString(), changed.GetProperty("port").GetInt32()));
+
+        // fremde Verbindungen sind unsichtbar und unveraenderlich
+        await db.ExecAsync("insert into users (name, password_hash, totp_secret, totp_confirmed) values ('anna', 'x', 'x', true)");
+        var annas = await new ConnectionStore(db.Data).CreateAsync(await db.ScalarAsync<Guid>("select id from users where name = 'anna'"), "Annas", "terminal", "ziel", 22, "a");
+        Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{annas.Id}", new { name = "x", kind = "terminal", host = "ziel" }, cookie))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Send(HttpMethod.Delete, $"/api/connections/{annas.Id}", null, cookie))).StatusCode);
+        Assert.Equal(2, (await Json(await c.SendAsync(GetWith("/api/connections", cookie)))).GetProperty("connections").GetArrayLength());
+        Assert.Equal(1, await db.ScalarAsync<long>("select count(*) from connections where id = $1", annas.Id));
+
+        Assert.Equal(HttpStatusCode.NoContent, (await c.SendAsync(Send(HttpMethod.Delete, $"/api/connections/{id}", null, cookie))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Send(HttpMethod.Delete, $"/api/connections/{id}", null, cookie))).StatusCode);
+        Assert.Equal(1, (await Json(await c.SendAsync(GetWith("/api/connections", cookie)))).GetProperty("connections").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Bad_connection_input_and_forbidden_targets_are_refused_with_a_reason()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db, "127.0.0.1:1", allowed: "ziel");
+        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (cookie, _) = await SignedInAsync(app, c, db);
+
+        foreach (var body in new object[]
+        {
+            new { name = "", kind = "desktop", host = "ziel" },
+            new { name = new string('a', 61), kind = "desktop", host = "ziel" },
+            new { name = "x", kind = "screen", host = "ziel" },                     // VNC kommt spaeter
+            new { name = "x", kind = "desktop", host = "ziel mit leerzeichen" },
+            new { name = "x", kind = "desktop", host = "ziel/pfad" },
+            new { name = "x", kind = "desktop", host = "" },
+            new { name = "x", kind = "desktop", host = "ziel", port = 0 },
+            new { name = "x", kind = "desktop", host = "ziel", port = 70000 },
+            new { name = "x", kind = "desktop", host = "ziel", username = new string('u', 65) },
+        })
+        {
+            var r = await c.SendAsync(Send(HttpMethod.Post, "/api/connections", body, cookie));
+            Assert.Equal(HttpStatusCode.BadRequest, r.StatusCode);
+            Assert.False(string.IsNullOrEmpty((await Json(r)).GetProperty("error").GetString()));
+        }
+        Assert.Equal(HttpStatusCode.Forbidden, (await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "x", kind = "desktop", host = "anderes" }, cookie))).StatusCode);
+
+        for (var i = 0; i < 50; i++) Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "n" + i, kind = "terminal", host = "ziel" }, cookie))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "zu viel", kind = "terminal", host = "ziel" }, cookie))).StatusCode);
     }
 }

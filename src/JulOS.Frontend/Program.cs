@@ -7,6 +7,7 @@ using JulOS.Frontend;
 using JulOS.Frontend.Agent;
 using JulOS.Frontend.Auth;
 using JulOS.Frontend.Cli;
+using JulOS.Frontend.Connections;
 using JulOS.Frontend.Remote;
 using JulOS.Integrations.Agent;
 using JulOS.Integrations.Guacamole;
@@ -112,6 +113,7 @@ app.MapGet("/api/health", async (NpgsqlDataSource data, CancellationToken ct) =>
 });
 app.MapAuth();
 app.MapRemote();
+app.MapConnections();
 app.MapAgent();
 
 app.Run();

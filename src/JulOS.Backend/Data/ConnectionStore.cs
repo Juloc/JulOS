@@ -21,6 +21,26 @@ public sealed class ConnectionStore(NpgsqlDataSource db)
         return Read(r);
     }
 
+    public async Task<ConnectionRecord?> UpdateAsync(Guid userId, Guid id, string name, string kind, string host, int port, string username, CancellationToken ct = default)
+    {
+        await using var cmd = db.Cmd($"update connections set name = $3, kind = $4, host = $5, port = $6, username = $7 where user_id = $1 and id = $2 returning {Columns}",
+            userId, id, name, kind, host, port, username);
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        return await r.ReadAsync(ct) ? Read(r) : null;
+    }
+
+    public async Task<bool> DeleteAsync(Guid userId, Guid id, CancellationToken ct = default)
+    {
+        await using var cmd = db.Cmd("delete from connections where user_id = $1 and id = $2", userId, id);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public async Task<int> CountAsync(Guid userId, CancellationToken ct = default)
+    {
+        await using var cmd = db.Cmd("select count(*) from connections where user_id = $1", userId);
+        return (int)(long)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
     public async Task<ConnectionRecord?> GetAsync(Guid userId, Guid id, CancellationToken ct = default)
     {
         await using var cmd = db.Cmd($"select {Columns} from connections where user_id = $1 and id = $2", userId, id);

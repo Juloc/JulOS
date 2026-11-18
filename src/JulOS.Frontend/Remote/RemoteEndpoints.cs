@@ -53,7 +53,9 @@ internal static class RemoteEndpoints
             var spec = tickets.Take(ctx.Request.Query["ticket"].ToString(), id.UserId);
             if (spec is null) return Error(403, "Ticket ungültig oder abgelaufen.");
 
-            using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
+            // Der Guacamole-Tunnel im Browser fragt das Unterprotokoll "guacamole" an und bricht ab, wenn der Server keins waehlt
+            var accept = new WebSocketAcceptContext { SubProtocol = ctx.WebSockets.WebSocketRequestedProtocols.Contains("guacamole") ? "guacamole" : null };
+            using var ws = await ctx.WebSockets.AcceptWebSocketAsync(accept);
             await relay.RunAsync(ws, spec, ct => auth.IsSessionAliveAsync(id.Id, ct), ctx.RequestAborted);
             return Results.Empty;
         });

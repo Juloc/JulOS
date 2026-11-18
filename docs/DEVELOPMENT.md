@@ -35,6 +35,15 @@ docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/.env exec -it ju
 `add`, `passwd`, `totp` (new authenticator and recovery codes), `logout` and `remove` are available too.
 To start over: `docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/.env down -v`.
 
+## The browser client
+
+`src/JulOS.Frontend/wwwroot` holds the client (plain ES modules, no build step): `shell.js` is the account and home part (setup, login,
+connection list, devices), `app.js` is the remote view (display, touch, keyboard, key bar, window bar), `lib/` the unmodified
+Guacamole JS client. After changing it, `deploy/dev/up.sh` rebuilds the image; then open `http://127.0.0.1:18080` in a browser (phone
+size in the browser's device mode). A fresh database starts at the setup screen; the setup code is in the server log (see above).
+To connect, add a Desktop connection to `rdp-target` (login `ubuntu` / `ubuntu`) and a Terminal connection to `test-ssh` port `2222`
+(user `tester`, password `DEV_TARGET_PASSWORD` from `deploy/dev/.env`).
+
 ## Build and test without Docker
 
 ```bash
@@ -58,6 +67,7 @@ dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj    # 
 
 - guacd treats a client that does not acknowledge `sync` instructions as gone ("User is not responding") and aborts after about 15 s. A browser does it by itself; hand-written test clients must echo every `sync`.
 - Connecting a second time to a disconnected xrdp session ("reconnected session") works, and a full picture (about 80 KB of image data) arrives about 1.3 s after connecting. The browser client hides its loading overlay as soon as the remote reports a picture size, not when the picture is "not black".
+- The Guacamole tunnel in the browser asks for the WebSocket subprotocol `guacamole` and aborts if the server does not select it. A plain test client does not notice, so this one was only found in a real browser; the server now selects it and a test checks it.
 - A `u8` string literal such as `"\x89PNG"u8` encodes `\x89` as two UTF-8 bytes; binary signatures must be byte arrays.
 - The browser's tunnel only handles whole instructions per WebSocket message, so the relay splits the guacd stream on instruction boundaries (a `;` can appear inside a value, for example in copied text).
 

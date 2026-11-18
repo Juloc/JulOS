@@ -2,13 +2,287 @@
 <html lang="de">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#0e1014">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="style.css">
   <title>JulOS</title>
-  <style>body{font:16px system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem}</style>
 </head>
 <body>
-  <h1>JulOS</h1>
-  <p id="state">Prüfe Server …</p>
-  <script src="status.js"></script>
+  <main id="app">
+
+    <!-- Start: kurz warten, bis klar ist, ob eingerichtet / angemeldet -->
+    <section id="boot" class="screen center"><div class="spinner" aria-hidden="true"></div></section>
+
+    <!-- Ersteinrichtung (nur solange es noch kein Konto gibt): Schritt 1, Konto anlegen -->
+    <section id="setup" class="screen center" hidden>
+      <form id="setupForm" class="card" autocomplete="on">
+        <h1>JulOS einrichten</h1>
+        <p class="sub">Lege das erste Konto an. Den Setup-Code findest du im Log des Servers.</p>
+        <label>Setup-Code
+          <input id="setupCode" type="text" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" required>
+        </label>
+        <label>Benutzername
+          <input id="setupUser" name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required>
+        </label>
+        <label>Passwort (mindestens 12 Zeichen)
+          <input id="setupPw" name="new-password" type="password" autocomplete="new-password" minlength="12" required>
+        </label>
+        <label>Passwort wiederholen
+          <input id="setupPw2" type="password" autocomplete="new-password" minlength="12" required>
+        </label>
+        <button type="submit" class="primary">Weiter</button>
+        <p id="setupMsg" class="msg" role="alert"></p>
+      </form>
+
+      <!-- Schritt 2: Authenticator und Wiederherstellungscodes -->
+      <form id="setupSecretForm" class="card" hidden autocomplete="off">
+        <h1>Authenticator</h1>
+        <p class="sub">Füge diesen Schlüssel in deine Authenticator-App ein (zum Beispiel Bitwarden, Aegis oder Google Authenticator).</p>
+        <a id="setupOtpLink" class="btn ghost" href="#">In der Authenticator-App öffnen</a>
+        <p class="hint">Oder den Schlüssel von Hand eintragen:</p>
+        <code id="setupSecret" class="mono"></code>
+        <h2>Wiederherstellungscodes</h2>
+        <p class="hint">Jeder Code gilt einmal und ersetzt den Authenticator, falls das Handy weg ist. Speichere sie jetzt, sie werden nicht noch einmal gezeigt.</p>
+        <pre id="setupRecovery" class="mono"></pre>
+        <div class="row"><button id="setupCopy" type="button" class="ghost">Codes kopieren</button></div>
+        <label>Code aus der App
+          <input id="setupTotp" type="text" inputmode="numeric" pattern="[0-9 ]*" autocomplete="one-time-code" required>
+        </label>
+        <button type="submit" class="primary">Einrichtung abschließen</button>
+        <p id="setupSecretMsg" class="msg" role="alert"></p>
+      </form>
+    </section>
+
+    <!-- Anmeldung -->
+    <section id="login" class="screen center" hidden>
+      <form id="loginForm" class="card" method="post" action="#" autocomplete="on">
+        <h1>JulOS</h1>
+        <p class="sub">Anmelden</p>
+        <label>Benutzername
+          <input id="loginUser" name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required>
+        </label>
+        <label>Passwort
+          <input id="loginPw" name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <label>Code aus der Authenticator-App (oder Wiederherstellungscode)
+          <input id="loginCode" type="text" autocomplete="one-time-code" autocapitalize="none" autocorrect="off" spellcheck="false" required>
+        </label>
+        <button id="loginBtn" type="submit" class="primary">Anmelden</button>
+        <p id="loginMsg" class="msg" role="alert"></p>
+      </form>
+    </section>
+
+    <!-- Startseite: gespeicherte Verbindungen -->
+    <section id="home" class="screen" hidden>
+      <header class="homebar">
+        <h1>JulOS</h1>
+        <button id="accountBtn" type="button" class="chip" aria-haspopup="menu"><span id="accountName"></span></button>
+        <div id="accountMenu" class="sheet" hidden role="menu">
+          <button type="button" role="menuitem" data-act="devices">Geräte und Sitzungen</button>
+          <button type="button" role="menuitem" data-act="signout">Abmelden</button>
+        </div>
+      </header>
+      <p id="homeMsg" class="msg wide" role="alert"></p>
+      <div id="connList" class="connlist"></div>
+      <p id="connEmpty" class="empty" hidden>Noch keine Verbindung. Lege den Computer an, den du steuern willst.</p>
+      <button id="addConn" type="button" class="fab" aria-label="Verbindung hinzufügen"><span data-ic="add"></span><span class="faclabel">Hinzufügen</span></button>
+    </section>
+
+    <!-- Fernsteuerung -->
+    <section id="remote" hidden>
+      <!-- Programmleiste oben: Modus, offene Fenster, Programm starten -->
+      <header id="topbar" hidden>
+        <div id="rowWin"></div>
+        <div id="winSheet" hidden role="menu"></div>
+      </header>
+      <div id="stage">
+        <div id="display"></div>
+        <div id="touchLayer"></div>
+        <div id="toast" aria-live="polite"></div>
+        <div id="zoomPop" aria-hidden="true"></div>
+        <div id="overlay" hidden>
+          <div class="box">
+            <div id="spinner" class="spinner" hidden aria-hidden="true"></div>
+            <p id="overlayMsg">Verbindung getrennt</p>
+            <button id="reconnectBtn" type="button">Neu verbinden</button>
+            <button id="toLoginBtn" type="button" class="ghost">Zur Startseite</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="menuScrim" hidden></div>
+      <nav id="dock">
+        <!-- Menü: kein Dialog, damit die Tastatur offen bleibt -->
+        <div id="menuSheet" hidden role="menu">
+          <div class="mi" role="menuitem" data-act="reconnect"><span class="mic" data-ic="refresh"></span><span class="mt">Neu verbinden</span></div>
+          <div class="mi" role="menuitem" data-act="kbMode"><span class="mic" data-ic="keyboard"></span><span class="mt">Tastatur</span><span class="mv" id="kbModeLabel"></span></div>
+          <div class="mi" role="menuitem" data-act="autoKb"><span class="mic" data-ic="auto_kb"></span><span class="mt">Auto-Tastatur bei Textfeld</span><span class="mv" id="autoKbLabel"></span></div>
+          <div class="mi" role="menuitem" data-act="touchMode"><span class="mic" data-ic="touch"></span><span class="mt">Finger</span><span class="mv" id="touchModeLabel"></span></div>
+          <div class="mi" role="menuitem" data-act="autoPaste"><span class="mic" data-ic="image"></span><span class="mt">Foto sofort einfügen</span><span class="mv" id="autoPasteLabel"></span></div>
+          <div class="mi" role="menuitem" data-act="password"><span class="mic" data-ic="key"></span><span class="mt">Passwort aus Passwortmanager</span></div>
+          <div class="mi" role="menuitem" data-act="theme"><span class="mic" data-ic="palette"></span><span class="mt">Farben und Design</span></div>
+          <div class="mi" role="menuitem" data-act="editKeys"><span class="mic" data-ic="edit"></span><span class="mt">Sondertasten bearbeiten</span></div>
+          <div class="mi" role="menuitem" data-act="resetKeys"><span class="mic" data-ic="restart"></span><span class="mt">Sondertasten zurücksetzen</span></div>
+          <div class="mi" role="menuitem" data-act="install"><span class="mic" data-ic="download"></span><span class="mt">Als App installieren</span></div>
+          <div class="mi" role="menuitem" data-act="logout"><span class="mic" data-ic="logout"></span><span class="mt">Verbindung beenden</span></div>
+        </div>
+
+        <div id="rowsTop"></div>
+        <div id="rowsBottom"></div>
+      </nav>
+    </section>
+
+    <!-- Verbindung anlegen/aendern -->
+    <dialog id="connDlg">
+      <form id="connForm" method="dialog" autocomplete="off">
+        <h2 id="connDlgTitle">Verbindung</h2>
+        <label>Name <input id="connName" type="text" maxlength="60" autocomplete="off" required></label>
+        <label>Art
+          <select id="connKind"><option value="desktop">Desktop (RDP)</option><option value="terminal">Terminal (SSH)</option></select>
+        </label>
+        <label>Adresse <input id="connHost" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Name oder IP-Adresse" required></label>
+        <label>Port <input id="connPort" type="text" inputmode="numeric" autocomplete="off" placeholder="3389"></label>
+        <label>Benutzername auf dem Ziel <input id="connUser" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
+        <p class="hint">Das Passwort wird nicht gespeichert. Du gibst es bei jeder Verbindung ein, auch ein Passwortmanager kann es einfügen.</p>
+        <p id="connMsg" class="msg" role="alert"></p>
+        <div class="row">
+          <button id="connSave" type="submit" class="primary">Speichern</button>
+          <button id="connDelete" type="button" class="danger" hidden>Löschen</button>
+          <button class="ghost close" data-act="close" type="button">Abbrechen</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Passwort fuer die Verbindung -->
+    <dialog id="startDlg">
+      <form id="startForm" method="dialog" autocomplete="on">
+        <h2 id="startTitle">Verbinden</h2>
+        <label>Benutzername <input id="startUser" name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" readonly></label>
+        <label>Passwort <input id="startPw" name="password" type="password" autocomplete="current-password" required></label>
+        <div class="row">
+          <button id="startGo" type="submit" class="primary">Verbinden</button>
+          <button class="ghost close" data-act="close" type="button">Abbrechen</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Geraete und Sitzungen -->
+    <dialog id="devicesDlg">
+      <h2>Geräte und Sitzungen</h2>
+      <div id="devicesList" class="devlist"></div>
+      <p id="devicesMsg" class="msg" role="alert"></p>
+      <div class="row">
+        <button id="logoutOthers" type="button" class="danger">Alle anderen abmelden</button>
+        <button class="ghost close" data-act="close" type="button">Schließen</button>
+      </div>
+    </dialog>
+
+    <!-- Text senden / Zwischenablage -->
+    <dialog id="clipDlg">
+      <h2>Text senden</h2>
+      <p class="hint">Hier einfügen oder tippen. „Eintippen“ schreibt den Text wie von Hand in die VM.</p>
+      <textarea id="sendText" rows="5" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+      <div class="row">
+        <button id="typeBtn" type="button">Eintippen</button>
+        <button id="pasteBtn" type="button" class="ghost">In Remote-Zwischenablage</button>
+      </div>
+      <h3>Von der VM kopiert</h3>
+      <textarea id="remoteClip" rows="4" readonly></textarea>
+      <div class="row">
+        <button id="copyBtn" type="button" class="ghost">Auf dem Handy kopieren</button>
+        <button class="ghost close" data-act="close" type="button">Schließen</button>
+      </div>
+    </dialog>
+
+    <!-- Taste bearbeiten -->
+    <dialog id="keyDlg">
+      <h2 id="keyDlgTitle">Taste</h2>
+      <label>Beschriftung <input id="keyLabel" type="text" maxlength="12" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+      <label>Art
+        <select id="keyType">
+          <option value="chord">Kombination (z. B. ctrl+shift+t)</option>
+          <option value="mod">Umschalter (hält Strg/Alt/Shift/Win)</option>
+          <option value="text">Text eintippen</option>
+          <option value="action">Aktion (zum Beispiel zoomin, keyboard)</option>
+        </select>
+      </label>
+      <label id="keyValueWrap"><span id="keyValueLabel">Tasten</span>
+        <input id="keyValue" type="text" autocapitalize="off" autocorrect="off" spellcheck="false">
+      </label>
+      <p class="hint" id="keyHint"></p>
+      <div class="row">
+        <button id="keyLeft" type="button" class="ghost">◀ nach links</button>
+        <button id="keyRight" type="button" class="ghost">nach rechts ▶</button>
+      </div>
+      <div class="row">
+        <button id="keySave" type="button">Speichern</button>
+        <button id="keyDelete" type="button" class="danger">Löschen</button>
+        <button class="ghost close" data-act="close" type="button">Abbrechen</button>
+      </div>
+    </dialog>
+
+    <!-- Farben (Material-You-Stil) -->
+    <dialog id="themeDlg">
+      <h2>Farben und Design</h2>
+      <p class="hint">Ein Browser kann die Farben deines Android-Hintergrunds nicht direkt lesen. Material You berechnet sie aus dem Hintergrundbild. Das kannst du hier nachmachen: „Farbe aus Bild“ nimmt dein Hintergrundbild oder einen Screenshot deines Startbildschirms und leitet daraus die Palette ab.</p>
+      <div class="row"><button id="imgSeedBtn" type="button">Farbe aus Bild</button></div>
+      <div id="swatches" class="swatches"></div>
+      <label>Eigene Farbe <input id="seedInput" type="color" value="#4f86f7"></label>
+      <label>Hell / Dunkel
+        <select id="schemeSel"><option value="auto">Automatisch (wie das Handy)</option><option value="dark">Dunkel</option><option value="light">Hell</option></select>
+      </label>
+      <button class="ghost close" data-act="close" type="button">Fertig</button>
+    </dialog>
+
+    <!-- Passwort per Passwortmanager (Bitwarden) holen und in die VM tippen -->
+    <dialog id="pwDlg">
+      <h2>Passwort einfügen</h2>
+      <p class="hint">Tippe ins Feld „Passwort“. Bitwarden schlägt nur Zugänge für <em>diese</em> Seite vor. Für eine andere Seite tippe im Bitwarden-Vorschlag auf „Tresor öffnen“ und wähle den Eintrag, oder füge das kopierte Passwort ein. „Eintippen“ schreibt es dann in das aktive Feld der VM. Nichts wird gespeichert.</p>
+      <form id="pwForm" autocomplete="on">
+        <label>Benutzername <input id="pwUser" name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
+        <label>Passwort <input id="pwPass" name="password" type="password" autocomplete="current-password"></label>
+        <div class="row">
+          <button id="pwTypePass" type="button">Passwort eintippen</button>
+          <button id="pwTypeBoth" type="button" class="ghost">Benutzer ⇥ Passwort ⏎</button>
+        </div>
+      </form>
+      <button class="ghost close" data-act="close" type="button">Schließen</button>
+    </dialog>
+
+    <!-- Bild einfügen: Galerie/Kamera, Zwischenablage (auch Google-Tastatur) -->
+    <dialog id="photoDlg">
+      <h2>Bild einfügen</h2>
+      <div class="row"><button id="photoPick" type="button">Foto wählen (Galerie, Kamera)</button></div>
+      <div class="row"><button id="photoClip" type="button" class="ghost">Aus Zwischenablage einfügen</button></div>
+      <p class="hint">Geht das nicht (zum Beispiel ohne HTTPS): Das Feld unten lange antippen und „Einfügen“ wählen, oder in der Google-Tastatur das Bild aus der Zwischenablage antippen. Das Bild wird sofort gesendet.</p>
+      <div id="pasteBox" contenteditable="true" role="textbox" aria-label="Bild hier einfügen" autocapitalize="none" autocorrect="off" spellcheck="false" data-ph="Hier einfügen"></div>
+      <button class="ghost close" data-act="close" type="button">Schließen</button>
+    </dialog>
+
+    <!-- Programme starten (Fensterleiste) -->
+    <dialog id="appsDlg">
+      <h2>Programm starten</h2>
+      <input id="appsSearch" type="search" placeholder="Suchen …" autocomplete="off" autocapitalize="none" spellcheck="false">
+      <div id="appsList" class="applist"></div>
+      <button class="ghost close" data-act="close" type="button">Schließen</button>
+    </dialog>
+  </main>
+
+  <input id="photoInput" type="file" accept="image/*" hidden>
+  <input id="imgSeedInput" type="file" accept="image/*" hidden>
+
+  <!-- Eingabefeld für die Android-Tastatur (unsichtbar) -->
+  <input id="kb" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"
+         enterkeyhint="enter" aria-label="Tastatureingabe" data-lpignore="true" data-form-type="other">
+
+  <!-- Eingabefeld, das Bilder aus der Tastatur annimmt (Sticker, GIFs, kopierte Bilder) -->
+  <div id="kbRich" contenteditable="true" role="textbox" aria-label="Tastatureingabe mit Bildern" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="enter"></div>
+
+  <script type="module" src="shell.js"></script>
 </body>
 </html>

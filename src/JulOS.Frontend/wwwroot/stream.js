@@ -4,16 +4,23 @@
  * disconnect, getDisplay und die Rueckrufe onstatechange/onerror), damit Touch, Tastatur und Menues in app.js unveraendert bleiben.
  *
  * Nachrichten (alle binaer, Zahlen big endian), siehe ScreenProtocol auf dem Server:
- *   Server -> Browser: 1 Bild (flags, folge u32, H.264), 2 Zeiger, 3 Groesse, 4 Fehler, 5 uebernommen, 6 Zwischenablage (UTF-8-Text)
- *   Browser -> Server: 1 Bestaetigung, 2 Maus bewegt, 3 Maustaste, 4 Mausrad, 5 Taste (Scancode), 6 Zeichen, 7 Fenstergroesse, 8 Schluesselbild,
- *                      9 Zwischenablage (UTF-8-Text, bis 1 MiB; der ferne Rechner holt ihn, wenn er einfuegt), 10 Pause (1 = die Ansicht ist nicht zu sehen: der Server kodiert nicht, 0 = weiter)
+ *   Server -> Browser: 1 Bild (flags, folge u32, H.264), 2 Zeiger, 3 Groesse, 4 Fehler, 5 uebernommen, 6 Zwischenablage (UTF-8-Text),
+ *                      7 Bild aus der VM (format 1 PNG / 2 BMP), 8 Dateiliste der VM, 9 Dateistueck, 10 Ergebnis eines Sendens
+ *   Browser -> Server: 1 Bestaetigung (Folgenummer u32: alle Bilder bis dahin), 2 Maus bewegt, 3 Maustaste, 4 Mausrad, 5 Taste (Scancode), 6 Zeichen, 7 Fenstergroesse, 8 Schluesselbild,
+ *                      9 Zwischenablage (UTF-8-Text, bis 1 MiB; der ferne Rechner holt ihn, wenn er einfuegt),
+ *                      10 Senden Anfang (Bild als BMP oder Datei), 11 Stueck, 12 Ende, 13 Abbruch, 14 Datei der VM holen, 15 Holen Abbruch,
+ *                      16 Pause (1 = die Ansicht ist nicht zu sehen: der Server kodiert nicht, 0 = weiter)
  *
- * Zwischenablage: wie bei Guacamole als Strom (onclipboard(stream, 'text/plain') mit onblob/onend, createClipboardStream() mit sendBlob/sendEnd),
- * damit Guacamole.StringReader und StringWriter in app.js unveraendert funktionieren. Nur Text.
+ * Zwischenablage: Text wie bei Guacamole als Strom (onclipboard(stream, 'text/plain') mit onblob/onend, createClipboardStream() mit sendBlob/sendEnd),
+ * damit Guacamole.StringReader und StringWriter in app.js unveraendert funktionieren. Bilder und Dateien haben eigene Rueckrufe
+ * (onclipimage, onclipfiles) und Methoden (sendTransfer, fetchFile); das Format steht in docs/CLIPBOARD.md und ScreenProtocol.cs.
  * ===================================================================== */
 
-const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6 };
-const OUT = { ack: 1, move: 2, button: 3, wheel: 4, key: 5, unicode: 6, resize: 7, keyframe: 8, clipboard: 9, pause: 10 };
+const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, image: 7, files: 8, fileChunk: 9, result: 10 };
+const OUT = { ack: 1, move: 2, button: 3, wheel: 4, key: 5, unicode: 6, resize: 7, keyframe: 8, clipboard: 9,
+  sendBegin: 10, sendChunk: 11, sendEnd: 12, sendCancel: 13, fileRequest: 14, fileCancel: 15, pause: 16 };
+const CHUNK = 128 * 1024;                 // so gross sind die Stuecke beim Senden (der Server nimmt bis 256 kB)
+const BUFFER_HIGH = 1024 * 1024;          // darueber wartet das Senden, bis der Socket leer laeuft (sonst steht die Maus hinter einer Datei)
 
 /* ---------- Tasten: X11-Keysyms (so arbeitet app.js) -> RDP-Scancodes ---------- */
 // [scancode, erweitert]
@@ -118,14 +125,19 @@ export class StreamClient {
     this.url = url;
     this.display = new StreamDisplay();
     this.onstatechange = null; this.onerror = null; this.onclipboard = null;
+    this.onclipimage = null; this.onclipfiles = null; this.onclipresult = null;   // Bilder, Dateien und Meldungen der VM (siehe docs/CLIPBOARD.md)
+    this.nativeClipboard = true;        // Bilder und Dateien gehen ueber den Stream (app.js fragt danach)
+    this.nextTransfer = 1; this.transfers = new Map(); this.fetches = new Map();
     this.state = 0;
     this.socket = null; this.decoder = null; this.codec = '';
     this.connected = false; this.closing = false;
     this.last = { x: -1, y: -1, left: false, middle: false, right: false, up: false, down: false };
     this.mods = { ctrl: false, alt: false, super: false };
     this.layout = layout;
-    this.stats = { pictures: 0, dropped: 0 };
+    this.stats = { pictures: 0, dropped: 0, bytes: 0 };
     this.failures = 0;
+    this.submitted = 0; this.output = 0; this.activityAt = 0;   // Folgenummern: dem Dekodierer gegeben, von ihm geliefert; Zeit des letzten Wechsels
+    this.received = 0;                  // Folgenummer des zuletzt empfangenen Bildes (der Server zaehlt aufsteigend, ohne Luecken)
     this.paused = false;                // die Ansicht ist im Hintergrund: der Server kodiert dann keine Bilder
     this.drawn = false;                 // ob schon ein Bild gezeichnet wurde (davor darf app.js auf Guacamole ausweichen)
   }
@@ -141,6 +153,12 @@ export class StreamClient {
     if (this.connected) this.send(Uint8Array.of(OUT.pause, on ? 1 : 0));
   }
 
+  // Ein Dekodierer, der Bilder angenommen hat und sie nicht mehr herausgibt (manche halten Bilder zurueck, weil sie auf spaetere warten):
+  // nach einer Sekunde neu oeffnen und ein Schluesselbild holen, statt dass der Server auf die Bestaetigung wartet.
+  watchDecoder() {
+    if (this.decoder && this.submitted > this.output && performance.now() - this.activityAt > 1000) { this.stats.stalls = (this.stats.stalls || 0) + 1; this.decoderFailed(); }
+  }
+
   setState(s) { if (this.state === s) return; this.state = s; if (this.onstatechange) this.onstatechange(s); }
 
   connect(query) {
@@ -148,12 +166,14 @@ export class StreamClient {
     const socket = new WebSocket(this.url + '?' + query);
     socket.binaryType = 'arraybuffer';
     this.socket = socket;
+    this.watch = setInterval(() => this.watchDecoder(), 500);
     socket.onmessage = (e) => { if (this.socket === socket) this.receive(e.data); };
     socket.onclose = () => { if (this.socket === socket) this.finish(); };
     socket.onerror = () => { if (this.socket === socket && !this.connected && this.onerror) this.onerror({ code: 520, message: 'Keine Verbindung zum Server.' }); };
   }
 
   disconnect() {
+    clearInterval(this.watch);
     this.closing = true;
     const s = this.socket; this.socket = null;
     if (s) { try { s.close(); } catch { /* egal */ } }
@@ -162,11 +182,16 @@ export class StreamClient {
   }
 
   finish() {
+    clearInterval(this.watch);
     this.socket = null; this.closeDecoder();
+    for (const t of this.transfers.values()) t.result({ code: 4, text: 'Verbindung beendet.' });
+    for (const f of this.fetches.values()) f.fail('Verbindung beendet.');
+    this.fetches.clear();
     if (!this.closing) this.setState(5);
   }
 
   closeDecoder() {
+    this.submitted = this.output = 0;
     const d = this.decoder; this.decoder = null; this.codec = '';
     if (d && d.state !== 'closed') { try { d.close(); } catch { /* egal */ } }
   }
@@ -202,6 +227,15 @@ export class StreamClient {
         this.setState(5);
         break;
       case IN.clipboard: this.incomingClipboard(new Uint8Array(buffer, 1)); break;
+      case IN.image: if (this.onclipimage && buffer.byteLength > 2) this.onclipimage(v.getUint8(1), new Uint8Array(buffer, 2)); break;
+      case IN.files: this.incomingFiles(v, buffer); break;
+      case IN.fileChunk: this.incomingFileChunk(v, buffer); break;
+      case IN.result: {
+        const id = v.getUint32(1), code = v.getUint8(5), text = new TextDecoder().decode(new Uint8Array(buffer, 6));
+        const t = this.transfers.get(id);
+        if (t) t.result({ code, text }); else if (this.onclipresult) this.onclipresult({ id, code, text });
+        break;
+      }
       default: break;
     }
   }
@@ -216,6 +250,83 @@ export class StreamClient {
     if (stream.onend) stream.onend();
   }
 
+  // Dateien, die der ferne Rechner kopiert hat: nur die Liste, der Inhalt kommt erst mit fetchFile
+  incomingFiles(v, buffer) {
+    const batch = v.getUint32(1), count = v.getUint8(5), files = [];
+    let at = 6;
+    for (let i = 0; i < count && at + 10 <= buffer.byteLength; i++) {
+      const size = Number(v.getBigInt64(at)), n = v.getUint16(at + 8);
+      files.push({ size, name: new TextDecoder().decode(new Uint8Array(buffer, at + 10, n)) });
+      at += 10 + n;
+    }
+    for (const [key, f] of this.fetches) if (f.batch !== batch) { this.fetches.delete(key); f.fail('Die Auswahl in der VM hat sich geändert.'); }
+    if (this.onclipfiles) this.onclipfiles(batch, files);
+  }
+
+  incomingFileChunk(v, buffer) {
+    const batch = v.getUint32(1), index = v.getUint8(5), flags = v.getUint8(6);
+    const f = this.fetches.get(batch);
+    if (!f) return;
+    const bytes = new Uint8Array(buffer, 7);
+    if (flags & 2) { this.fetches.delete(batch); f.fail(new TextDecoder().decode(bytes)); return; }
+    f.parts.push(bytes.slice()); f.received += bytes.length;
+    if (f.progress) f.progress(f.received);
+    if (flags & 1) { this.fetches.delete(batch); f.done(new Blob(f.parts)); }
+  }
+
+  // Eine Datei der VM holen (Nummer in der zuletzt gemeldeten Liste). Antwort: ein Blob, oder eine Ausnahme mit dem Grund (Text fuer die Anzeige).
+  fetchFile(batch, index, progress) {
+    if (this.fetches.has(batch)) return Promise.reject(new Error('Es läuft schon ein Download.'));
+    return new Promise((resolve, reject) => {
+      this.fetches.set(batch, { batch, parts: [], received: 0, progress, done: resolve, fail: (m) => reject(new Error(m)) });
+      const m = new Uint8Array(6); new DataView(m.buffer).setUint32(1, batch); m[0] = OUT.fileRequest; m[5] = index;
+      this.send(m);
+    });
+  }
+
+  cancelFetch(batch) {
+    const f = this.fetches.get(batch);
+    if (!f) return;
+    this.fetches.delete(batch);
+    const m = new Uint8Array(5); m[0] = OUT.fileCancel; new DataView(m.buffer).setUint32(1, batch);
+    this.send(m); f.fail('Abgebrochen.');
+  }
+
+  /* Ein Bild (kind 1, als BMP) oder eine Datei (kind 2, Teil eines Stapels: index von count) an die Zwischenablage der VM senden.
+     data ist ein Blob; signal bricht ab; progress(gesendet, gesamt). Antwort: { code, text } des Servers (code 0 = angenommen). */
+  async sendTransfer(kind, data, name, index, count, progress, signal) {
+    const socket = this.socket;
+    if (!socket || socket.readyState !== 1) return { code: 4, text: 'Keine Verbindung.' };
+    const id = this.nextTransfer++;
+    const nameBytes = new TextEncoder().encode(name || '').slice(0, 255);
+    const begin = new Uint8Array(16 + nameBytes.length), view = new DataView(begin.buffer);
+    begin[0] = OUT.sendBegin; view.setUint32(1, id); begin[5] = kind; begin[6] = index; begin[7] = count; view.setBigUint64(8, BigInt(data.size));
+    begin.set(nameBytes, 16);
+    const answer = new Promise((resolve) => this.transfers.set(id, { result: resolve }));
+    let early = null; answer.then((r) => { early = r; });
+    const control = (type) => { const m = new Uint8Array(5); m[0] = type; new DataView(m.buffer).setUint32(1, id); return m; };
+    try {
+      this.send(begin);
+      for (let at = 0; at < data.size; at += CHUNK) {
+        // ein Fehler gleich nach dem Anfang (zu gross, nicht erlaubt ...) beendet das Senden, ohne die Daten noch zu schicken
+        if ((at / CHUNK) % 4 === 0) await new Promise((r) => setTimeout(r, 0));   // dem Socket Luft lassen: eine Antwort des Servers (Fehler) kommt nur zwischen den Stuecken an
+        if (early) return early;
+        if (signal && signal.aborted) { this.send(control(OUT.sendCancel)); return { code: 4, text: 'Abgebrochen.' }; }
+        while (socket.bufferedAmount > BUFFER_HIGH) {
+          await new Promise((r) => setTimeout(r, 20));
+          if (this.socket !== socket) return { code: 4, text: 'Keine Verbindung.' };
+        }
+        const part = new Uint8Array(await data.slice(at, at + CHUNK).arrayBuffer());
+        const m = new Uint8Array(5 + part.length); m[0] = OUT.sendChunk; new DataView(m.buffer).setUint32(1, id); m.set(part, 5);
+        this.send(m);
+        if (progress) progress(Math.min(at + CHUNK, data.size), data.size);
+      }
+      if (early) return early;
+      this.send(control(OUT.sendEnd));
+      return await Promise.race([answer, new Promise((r) => setTimeout(() => r({ code: 4, text: 'Die VM antwortet nicht.' }), 20000))]);
+    } finally { this.transfers.delete(id); }
+  }
+
   // Codec-Zeichenfolge aus dem SPS des Schluesselbilds (Profil, Einschraenkungen, Stufe)
   codecOf(bytes) {
     for (let i = 0; i + 6 < Math.min(bytes.length, 64); i++) {
@@ -227,19 +338,27 @@ export class StreamClient {
     return 'avc1.42e01f';
   }
 
+  // Jede Bestaetigung gilt fuer das Bild mit dieser Folgenummer und alle davor. So steht jedes Bild, das nie gezeichnet wird (verworfen,
+  // Dekodierer neu geoeffnet oder ausgestiegen), nicht dauerhaft im Fenster des Servers: ein spaeteres Bild oder diese Notbestaetigung
+  // raeumt es auf.
+  ack(sequence) { const b = new DataView(new ArrayBuffer(5)); b.setUint8(0, OUT.ack); b.setInt32(1, sequence); this.send(b.buffer); }
+
   picture(v, buffer) {
     const isKey = (v.getUint8(1) & 1) !== 0;
     const sequence = v.getInt32(2);
+    this.received = sequence;
     const data = new Uint8Array(buffer, 6);
     if (isKey) {
       const codec = this.codecOf(data);
-      if (!this.decoder || this.decoder.state === 'closed' || codec !== this.codec) this.openDecoder(codec);
+      if (!this.decoder || this.decoder.state === 'closed' || codec !== this.codec) this.openDecoder(codec, sequence - 1);
     }
     const d = this.decoder;
-    if (!d || d.state !== 'configured') { this.stats.dropped++; this.send1(OUT.keyframe); return; }   // ohne Schluesselbild nichts zu dekodieren: eins anfordern
+    if (!d || d.state !== 'configured') { this.stats.dropped++; this.ack(sequence); this.send1(OUT.keyframe); return; }   // ohne Schluesselbild nichts zu dekodieren: eins anfordern
     try {
       d.decode(new EncodedVideoChunk({ type: isKey ? 'key' : 'delta', timestamp: sequence, data }));
-      this.stats.pictures++;
+      if (this.submitted <= this.output) this.activityAt = performance.now();
+      this.submitted = sequence;
+      this.stats.pictures++; this.stats.bytes += data.length;
     } catch {
       this.decoderFailed();
     }
@@ -249,6 +368,7 @@ export class StreamClient {
   // hier nicht (Browser ohne passenden H.264-Dekodierer): dann Fehler melden, damit app.js auf Guacamole ausweichen kann.
   decoderFailed() {
     this.stats.dropped++; this.closeDecoder();
+    this.ack(this.received);                       // was im Dekodierer steckte, kommt nie heraus
     if (!this.drawn && ++this.failures >= 3) {
       this.closing = true;
       const s = this.socket; this.socket = null;
@@ -260,16 +380,21 @@ export class StreamClient {
     this.send1(OUT.keyframe);
   }
 
-  openDecoder(codec) {
+  // lostUpTo: die Bilder bis zu dieser Nummer, die im alten Dekodierer steckten (sie werden nie gezeichnet)
+  openDecoder(codec, lostUpTo) {
+    const hadDecoder = !!this.decoder;
     this.closeDecoder();
+    if (hadDecoder && lostUpTo > 0) this.ack(lostUpTo);
     const d = new VideoDecoder({
       output: (frame) => {
         const g = this.display;
+        const sequence = frame.timestamp;
         if (frame.displayWidth !== g.width || frame.displayHeight !== g.height) g.resize(frame.displayWidth, frame.displayHeight);
         g.ctx.drawImage(frame, 0, 0);
         frame.close();
         this.drawn = true;
-        this.send1(OUT.ack);                       // erst nach dem Zeichnen: so laeuft der Server dem Browser nie davon
+        this.output = sequence; this.activityAt = performance.now();
+        this.ack(sequence);                        // erst nach dem Zeichnen: so laeuft der Server dem Browser nie davon
       },
       error: () => { if (this.decoder === d) this.decoderFailed(); },
     });

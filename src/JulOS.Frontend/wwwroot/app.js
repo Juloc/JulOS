@@ -2,6 +2,7 @@ import Guacamole from '/lib/guacamole-common.min.js';
 import { StreamClient } from './stream.js';
 import { SizeGate, LayoutLog } from './layoutlog.js';
 import { Session, Sessions } from './sessions.js';
+import { LIMITS, fmtSize, bmpFromImage, pngFromBytes, filesFromTransfer, xhrUpload, saveBlob } from './clip.js';
 
 /* =====================================================================
  * JulOS – Fernsteuerung
@@ -83,6 +84,11 @@ const S = {
   seed: store.get('seed', '#9a67ea'),         // Grundfarbe fuer das Material-You-Design ('system' oder #rrggbb), Standard Violett wie die Handy-Oberflaeche
   scheme: store.get('scheme', 'auto'),       // 'auto' | 'light' | 'dark'
 };
+// Am PC (grosser Schirm, Maus) steht die VM 1:1 auf dem Schirm: ein Bild, das auf 80 % verkleinert angefordert und dann hochgezogen wird, ist
+// ueberall weich, besonders der Text. Auf dem Handy bleibt es bei 0,8 (Inhalt etwas groesser).
+function pcDefaultK() {
+  try { return matchMedia('(pointer: fine)').matches && matchMedia('(min-width: 1000px)').matches ? 1 : 0.8; } catch { return 0.8; }
+}
 let lastStageSize = { w: window.innerWidth, h: window.innerHeight };   // zuletzt gemessene sichtbare Bildflaeche (fuer Sitzungen im Hintergrund)
 
 /** Alle Fernsteuer-Sitzungen und die aktive (andere Sitzungsarten, etwa das native Terminal, gehoeren nicht hierher). */
@@ -91,9 +97,9 @@ const cur = () => (Sessions.active instanceof RemoteSession ? Sessions.active : 
 
 /* ---------- Toast / kleine Helfer ---------- */
 let gToastEl = null, gToastTimer = 0;
-function toast(msg, ms = 1400) {
+function toast(msg, ms = 1400, onTap = null) {
   const s = cur();
-  if (s) return s.toast(msg, ms);
+  if (s) return s.toast(msg, ms, onTap);
   if (!gToastEl) { gToastEl = document.createElement('div'); gToastEl.className = 'sv-toast'; gToastEl.style.cssText = 'position:fixed;z-index:200;top:calc(12px + env(safe-area-inset-top))'; document.body.appendChild(gToastEl); }
   gToastEl.textContent = msg; gToastEl.classList.add('show');
   clearTimeout(gToastTimer); gToastTimer = setTimeout(() => gToastEl.classList.remove('show'), ms);
@@ -204,7 +210,7 @@ const DEFAULT_ROWS = [
     ITEM('Strg+C', 'chord', 'ctrl+c'), ITEM('Strg+V', 'chord', 'ctrl+v'), ITEM('Strg+X', 'chord', 'ctrl+x'), ITEM('Strg+A', 'chord', 'ctrl+a'),
     ITEM('Strg+Z', 'chord', 'ctrl+z'), ITEM('Strg+F', 'chord', 'ctrl+f'), ITEM('Alt+Tab', 'chord', 'alt+tab'), ITEM('Strg+⇧+T', 'chord', 'ctrl+shift+t') ] },
   { id: 'funcs', title: 'Funktionen', icon: 'apps', items: [
-    ITEM('Bild einfügen', 'action', 'pasteimg'), ITEM('Foto wählen', 'action', 'photo'), ITEM('Text senden', 'action', 'clip'), ITEM('Passwort', 'action', 'password') ] },
+    ITEM('Bild einfügen', 'action', 'pasteimg'), ITEM('Foto wählen', 'action', 'photo'), ITEM('Datei senden', 'action', 'sendfile'), ITEM('Text senden', 'action', 'clip'), ITEM('Passwort', 'action', 'password') ] },
   // die Leiste: immer sichtbar, eine Zeile, ganz unten
   { id: 'bar', title: 'Leiste', fixed: true, items: [
     ITEM('Esc', 'chord', 'esc'), ITEM('Strg', 'mod', 'ctrl'), ITEM('Tab', 'chord', 'tab'),
@@ -319,7 +325,13 @@ function toggleFullscreen() {
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   else document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => toast('Vollbild nicht möglich'));
 }
-function openClipDlg() { el.remoteClip.value = (cur() && cur().clipText) || ''; el.clipDlg.showModal(); }
+function openClipDlg() {
+  const s = cur();
+  el.remoteClip.value = (s && s.clipText) || '';
+  $('#pullImgBtn').hidden = !!(s && s.nativeClip());
+  renderRemoteItem();
+  el.clipDlg.showModal();
+}
 /* Aktionen, die eine Taste in der Leiste ausloesen kann (frei zuordenbar im Tasten-Editor); sie bekommen die Sitzung, in deren Leiste getippt wurde */
 const ACTIONS = {
   keyboard: () => { if (kbOpen) el.kb.blur(); else { el.kb.blur(); el.kb.focus(); } },
@@ -330,6 +342,7 @@ const ACTIONS = {
   expand: toggleExpanded,
   photo: () => openPhotoDlg(),
   pasteimg: () => pasteImageFromClipboard(),
+  sendfile: () => pickFile(),
   clip: () => openClipDlg(),
   password: () => openPwDialog(),
   sessions: () => Sessions.requestSwitcher(),
@@ -411,7 +424,7 @@ export class RemoteSession extends Session {
     this.connected = false; this.everConnected = false; this.intentional = false; this.fatal = false; this.disposed = false;
     this.firstLogin = true; this.forceGuac = false; this.streamWorked = false; this.engine = 'guac';
     this.gen = 0;                                  // zaehlt jeden Verbindungsversuch: spaete Antworten eines alten Versuchs werden verworfen
-    this.k = clamp(store.get('k.' + conn.id, store.get('k', 0.8)), 0.35, 1.8);   // Remote-Pixel pro Handy-Pixel (kleiner = Inhalt groesser), je Verbindung gemerkt
+    this.k = clamp(store.get('k.' + conn.id, store.get('k', pcDefaultK())), 0.35, 1.8);   // Remote-Pixel pro Handy-Pixel (kleiner = Inhalt groesser), je Verbindung gemerkt
     this.lastSent = { w: 0, h: 0 }; this.gate = new SizeGate();
     this.retry = 0; this.retryTimer = null; this.resizeTimer = null; this.connectTimer = null; this.toastTimer = null; this.zoomTimer = null;
     this.connectedAt = 0; this.connectStarted = 0; this.frameSeen = false;
@@ -420,6 +433,7 @@ export class RemoteSession extends Session {
     this.keyChain = Promise.resolve();
     this.actOn = {};
     this.clipText = '';
+    this.xferAbort = null; this.xferCancelExtra = null; this.remoteItem = { image: null, imageUrl: null, files: null };
     this.counts = { instr: 0 };                    // Zaehler fuer Tests (Anweisungen von guacd)
     this.stageW = 0; this.stageH = 0; this.lastStage = null;
     this.W = { available: false, list: [], mode: 'desktop', timer: null, lastCls: null, candCls: null, candN: 0, profileAt: 0, apps: null };
@@ -429,6 +443,7 @@ export class RemoteSession extends Session {
     this.buildDom();
     this.wireTouch();
     this.wireUi();
+    this.wireDrop();
     this.setState('disconnected', 'Noch nicht verbunden');
   }
 
@@ -441,7 +456,7 @@ export class RemoteSession extends Session {
       topbar: q('sv-topbar'), rowWin: q('sv-rowWin'), winSheet: q('sv-winSheet'), stage: q('sv-stage'), display: q('sv-display'), touch: q('sv-touch'),
       toast: q('sv-toast'), zoomPop: q('sv-zoom'), overlay: q('sv-overlay'), overlayMsg: q('sv-overlayMsg'), spinner: q('sv-spinner'),
       reconnectBtn: q('sv-reconnect'), closeBtn: q('sv-close'), scrim: q('sv-scrim'), dock: q('sv-dock'), menu: q('sv-menu'),
-      rowsTop: q('sv-rowsTop'), rowsBottom: q('sv-rowsBottom'),
+      rowsTop: q('sv-rowsTop'), rowsBottom: q('sv-rowsBottom'), xfer: q('sv-xfer'), xferText: q('sv-xferText'), xferCancel: q('sv-xferCancel'),
     };
     renderIcons(root);
     this.lay = new LayoutLog({ emit: (evt, d) => this.dbg(evt, d), parts: { app: $('#app'), stage: this.el.stage, topbar: this.el.topbar, dock: this.el.dock }, state: () => ({ kbOpen }), visible: LAYDEBUG });
@@ -469,8 +484,10 @@ export class RemoteSession extends Session {
 
   dbg(evt, data = {}) { dbg(evt, data); }
   q(sel) { return this.element.querySelector(sel); }
-  toast(msg, ms = 1400) {
-    this.el.toast.textContent = msg; this.el.toast.classList.add('show');
+  toast(msg, ms = 1400, onTap = null) {
+    const t = this.el.toast;
+    t.textContent = msg; t.classList.add('show');
+    t.classList.toggle('tap', !!onTap); t.onclick = onTap ? () => { t.classList.remove('show'); onTap(); } : null;
     clearTimeout(this.toastTimer); this.toastTimer = setTimeout(() => this.el.toast.classList.remove('show'), ms);
   }
   hasCredentials() { return !!(this.password || this.conn.stored); }   // Passwort im Speicher des Browsers oder auf dem Server gespeichert
@@ -683,6 +700,13 @@ export class RemoteSession extends Session {
       };
     };
 
+    // Bilder und Dateien: der eigene Stream meldet sie selbst; bei Guacamole holt der Knopf im Dialog das Bild ueber den Helfer
+    if (client.nativeClipboard) {
+      client.onclipimage = (format, bytes) => this.onRemoteImage(format, bytes);
+      client.onclipfiles = (batch, files) => this.onRemoteFiles(batch, files);
+      client.onclipresult = (r) => { if (r.text) this.toast(r.text, 3600); };
+    }
+
     this.setupMouse(client, display);
     client.connect('ticket=' + encodeURIComponent(ticket));
     // kommt innerhalb von 20 s keine Verbindung zustande: nicht ewig "Verbinde ..." zeigen
@@ -779,7 +803,12 @@ export class RemoteSession extends Session {
     if (!rw) return;
     const r = this.el.stage.getBoundingClientRect();
     if (r.width < 50) return;                       // versteckt: nichts zu skalieren
-    this.display.scale(r.width / rw);
+    // Das Bild der VM hat nach dem Abrunden auf Vielfache von 4 ein paar Pixel weniger als das Fenster; wuerde es darauf gestreckt, laege es um
+    // Bruchteile eines Pixels daneben und waere ueberall weich. Wo es 1:1 auf den Schirm passt (Faktor 1 / devicePixelRatio), bleibt es genau dort.
+    const dpr = window.devicePixelRatio || 1;
+    let scale = r.width / rw;
+    if (Math.abs(scale * dpr - 1) < 0.02) scale = 1 / dpr;
+    this.display.scale(scale);
   }
   // Wann die Groesse wirklich an die VM geht, entscheidet SizeGate (layoutlog.js): nur bei echtem Unterschied (8 x 16 Geraetepixel Toleranz),
   // nicht waehrend die Tastatur faehrt, hoechstens einmal pro Sekunde und mit Notbremse (4 Aenderungen in 20 s, dann 5 s Pause).
@@ -1138,6 +1167,119 @@ export class RemoteSession extends Session {
     return { x: G.px, y: G.py };
   }
 
+
+  /* =====================================================================
+   *  Bilder und Dateien in der Zwischenablage (Entwurf: docs/CLIPBOARD.md), je Sitzung
+   *  Eigener Stream: Bild (BMP) und Dateien gehen ueber den Stream, die VM meldet Bilder und Dateien selbst.
+   *  Guacamole: Bild ueber den Foto-Helfer (uploadPhoto), eine Datei ueber /api/upload-file, ein Bild der VM holt der Knopf im Dialog.
+   * ===================================================================== */
+  nativeClip() { return !!(this.client && this.client.nativeClipboard); }
+  showXfer(text, cancel) {
+    this.el.xferText.textContent = text; this.el.xfer.hidden = false;
+    if (cancel !== undefined) this.xferCancelExtra = cancel;
+  }
+  hideXfer() { this.el.xfer.hidden = true; this.xferAbort = null; this.xferCancelExtra = null; }
+
+  /* Vom Browser an die VM. Ein einzelnes Bild wird wie ein kopiertes Bild behandelt (und mit Strg+V eingefuegt, wenn das eingeschaltet ist), alles
+     andere sind Dateien. Gibt true zurueck, wenn etwas angekommen ist. */
+  async sendToRemote(list) {
+    if (!this.connected || !this.client) { this.toast('Nicht verbunden'); return false; }
+    if (this.xferAbort) { this.toast('Es läuft schon eine Übertragung.', 2400); return false; }
+    const files = list.filter((f) => f && f.size !== undefined);
+    if (!files.length) return false;
+    if (files.length === 1 && /^image\//.test(files[0].type)) return this.sendImage(files[0]);
+    if (files.length > LIMITS.files) { this.toast(`Zu viele Dateien (höchstens ${LIMITS.files}).`, 3600); return false; }
+    if (files.some((f) => f.size === 0)) { this.toast('Die Datei ist leer.', 3000); return false; }
+    const big = files.find((f) => f.size > LIMITS.fileBytes);
+    if (big || files.reduce((n, f) => n + f.size, 0) > LIMITS.fileBytes) { this.toast(`Datei zu groß (höchstens ${LIMITS.fileBytes / 1048576} MB).`, 3600); return false; }
+    if (!this.nativeClip() && files.length > 1) { this.toast('Mit dieser Bildübertragung geht nur eine Datei auf einmal.', 3800); return false; }
+
+    const ctl = this.xferAbort = new AbortController();
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i], label = files.length > 1 ? ` (${i + 1}/${files.length})` : '';
+        const progress = (done, total) => this.showXfer(`Sende ${f.name}${label} … ${Math.round(100 * done / total)} %`, null);
+        this.showXfer(`Sende ${f.name}${label} …`, null);
+        let r;
+        if (this.nativeClip()) r = await this.client.sendTransfer(2, f, f.name, i, files.length, progress, ctl.signal);
+        else {
+          const x = await xhrUpload('/api/upload-file', { 'X-JulOS': '1', 'X-File-Name': encodeURIComponent(f.name), 'Content-Type': 'application/octet-stream' }, f, progress, ctl.signal);
+          r = { code: x.status === 200 ? 0 : 4, text: (x.body && x.body.error) || 'Fehler ' + x.status };
+        }
+        if (ctl.signal.aborted) return false;
+        if (r.code !== 0) { this.toast(r.text || 'Senden fehlgeschlagen', 4200); this.dbg('file-error', { c: r.code }); return false; }
+      }
+    } catch (e) { if (!ctl.signal.aborted) this.toast('Senden: ' + e.message, 4200); return false; }
+    finally { this.hideXfer(); }
+    this.dbg('file-sent', { n: files.length, kb: Math.round(files.reduce((n, f) => n + f.size, 0) / 1024) });
+    this.toast(files.length > 1 ? 'Dateien liegen in der Zwischenablage der VM – dort einfügen (Strg+V)' : 'Datei liegt in der Zwischenablage der VM – dort einfügen (Strg+V)', 4200);
+    return true;
+  }
+
+  async sendImage(file) {
+    if (file.size > LIMITS.imageBytes) { this.toast(`Bild zu groß (höchstens ${LIMITS.imageBytes / 1048576} MB).`, 3600); return false; }
+    if (!this.nativeClip()) { await uploadPhoto(file); return true; }
+    const ctl = this.xferAbort = new AbortController();
+    try {
+      this.showXfer('Bild wird umgewandelt …', null);
+      const { blob } = await bmpFromImage(file);
+      this.showXfer('Bild wird gesendet …', null);
+      const r = await this.client.sendTransfer(1, blob, '', 0, 1, (d, t) => this.showXfer(`Bild wird gesendet … ${Math.round(100 * d / t)} %`, null), ctl.signal);
+      if (ctl.signal.aborted) return false;
+      if (r.code !== 0) { this.toast(r.text || 'Senden fehlgeschlagen', 4200); return false; }
+    } catch (e) { if (!ctl.signal.aborted) this.toast('Bild: ' + e.message, 4200); return false; }
+    finally { this.hideXfer(); }
+    this.dbg('image-sent', { kb: Math.round(file.size / 1024), auto: S.autoPaste });
+    if (S.autoPaste) { await sleep(250); await this.sendChord([KS.ctrl, charKeysym('v')]); this.toast('Bild eingefügt (Strg+V)'); }
+    else this.toast('Bild liegt in der Zwischenablage der VM – dort Strg+V', 3500);
+    return true;
+  }
+
+  /* Von der VM an den Browser: das Neueste dieser Sitzung steht im Dialog "Text senden" (renderRemoteItem) */
+  async showRemoteImage(png, how) {
+    this.remoteItem.image = png; this.remoteItem.files = null; if (cur() === this) renderRemoteItem();
+    // Ohne Fokus oder ohne frische Eingabe verweigert der Browser das Schreiben: dann wartet das Bild im Dialog
+    if (cur() === this && document.hasFocus()) {
+      try { await copyImageToLocal(png); this.toast('Bild aus der VM kopiert', 2200); this.dbg('remote-image', { kb: Math.round(png.size / 1024), how, copied: true }); return; } catch { /* Dialog */ }
+    }
+    this.dbg('remote-image', { kb: Math.round(png.size / 1024), how, copied: false });
+    this.toast('Bild aus der VM – tippen zum Kopieren', 6000, () => { Sessions.activate(this.id); openClipDlg(); });
+  }
+  async onRemoteImage(format, bytes) {
+    try { await this.showRemoteImage(await pngFromBytes(bytes, format), 'push'); } catch (e) { this.toast('Bild aus der VM nicht lesbar: ' + e.message, 3600); }
+  }
+  onRemoteFiles(batch, list) {
+    if (!list.length) { this.remoteItem.files = null; if (cur() === this) renderRemoteItem(); return; }
+    this.remoteItem.files = { batch, list }; this.remoteItem.image = null; if (cur() === this) renderRemoteItem();
+    this.toast((list.length === 1 ? 'Datei aus der VM: ' + list[0].name : list.length + ' Dateien aus der VM') + ' – tippen zum Laden', 6000, () => { Sessions.activate(this.id); openClipDlg(); });
+  }
+  async downloadRemoteFile(batch, index, name) {
+    if (!this.client || !this.client.fetchFile) return;
+    this.showXfer(`Lade ${name} …`, () => this.client.cancelFetch && this.client.cancelFetch(batch));
+    this.xferAbort = new AbortController();
+    try {
+      const blob = await this.client.fetchFile(batch, index, (n) => this.showXfer(`Lade ${name} … ${fmtSize(n)}`));
+      saveBlob(blob, name); this.toast('Gespeichert: ' + name, 3000);
+    } catch (e) { this.toast(e.message || 'Download fehlgeschlagen', 4200); }
+    finally { this.hideXfer(); }
+  }
+  /* Ablegen von Dateien auf das Bild dieser Sitzung */
+  wireDrop() {
+    const st = this.el.stage; let depth = 0;
+    const hasFiles = (e) => e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
+    st.addEventListener('dragenter', (e) => { if (!hasFiles(e)) return; e.preventDefault(); depth++; st.classList.add('dropping'); });
+    st.addEventListener('dragover', (e) => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+    st.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; st.classList.remove('dropping'); } });
+    st.addEventListener('drop', async (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault(); depth = 0; st.classList.remove('dropping');
+      const { files, skipped } = filesFromTransfer(e.dataTransfer);
+      if (skipped.length) this.toast('Ordner werden nicht übertragen: ' + skipped.slice(0, 2).join(', '), 3200);
+      if (files.length) { try { await this.sendToRemote(files); } catch (err) { this.toast('Senden: ' + err.message, 4200); } }
+    });
+    this.el.xferCancel.addEventListener('click', () => { if (this.xferAbort) this.xferAbort.abort(); if (this.xferCancelExtra) this.xferCancelExtra(); this.hideXfer(); this.toast('Abgebrochen'); });
+  }
+
   /* ---------- Touch-Gesten (je Sitzung, auf deren Touch-Ebene) ---------- */
   wireTouch() {
     const G = this.G, touch = this.el.touch;
@@ -1286,12 +1428,12 @@ const NAMED = { Enter: KS.enter, Backspace: KS.backspace, Tab: KS.tab, Escape: K
   ArrowUp: KS.up, ArrowDown: KS.down, Delete: KS.delete, Home: KS.home, End: KS.end, PageUp: KS.pageup, PageDown: KS.pagedown, Insert: KS.insert };
 for (let i = 1; i <= 12; i++) NAMED['F' + i] = KS['f' + i];   // F-Tasten gehen an die VM (F5/F11/F12 wirken dann nicht im Browser)
 
-// Bilder aus der Tastatur (Sticker, GIFs, kopierte Bilder): hochladen und mit Strg+V einfuegen
+// Bilder und Dateien aus der Tastatur (Sticker, GIFs), per Einfuegen oder Ablegen: an die Zwischenablage der VM senden (sendToRemote)
 async function handleKbFiles(files) {
-  const img = [...files].find((f) => /^image\//.test(f.type));
-  if (!img) return false;
-  dbg('kbimage', { t: img.type, kb: Math.round(img.size / 1024) });
-  try { await uploadPhoto(img); } catch (e) { toast('Bild: ' + e.message, 4200); }
+  const list = [...files];
+  if (!list.length) return false;
+  dbg('kbfiles', { n: list.length, t: String(list[0].type).slice(0, 20), kb: Math.round(list[0].size / 1024) });
+  try { await sendToRemote(list); } catch (e) { toast('Senden: ' + e.message, 4200); }
   return true;
 }
 function onKbPaste(e) {
@@ -1312,6 +1454,7 @@ function onKbBeforeInput(e) {
 function syncDiff() {
   const s = cur();
   if (!s || !s.connected) return;
+  if (!keyOwner()) { setKbVal(''); prevValue = ''; return; }   // Desktop-Layout: ein anderes Fenster hat die Tasten, nichts an die VM senden
   const v = kbVal();
   const a = [...prevValue], b = [...v];
   let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
@@ -1331,41 +1474,42 @@ function heldModifiers(e, mods) {
   return m;
 }
 let pasteKeyAt = 0, pasteKeys = [];   // Einfuegen per Tastatur: Zeitpunkt und die danach an die VM zu sendende Kombination
+function onKbKeydown(e) {
+  if (kbEvCount++ < 60) dbg('keydown', { key: e.key.length === 1 ? 'char' : e.key, code: e.keyCode, comp: e.isComposing });
+  const s = cur();
+  if (!s || !s.connected || !keyOwner()) return;
+  // AltGr (auf Windows als Strg+Alt gemeldet) erzeugt Zeichen wie @ und {: die kommen ueber das Eingabefeld, nicht als Kombination
+  const altGr = e.getModifierState && e.getModifierState('AltGraph');
+  const held = altGr ? [] : heldModifiers(e, s.mods);
+  // Einfuegen (Strg+V, Strg+Umschalt+V, Umschalt+Einfg): die Tastenkombination nicht abfangen, der Browser meldet dann das paste-Ereignis
+  // mit dem Text der lokalen Zwischenablage; onKbPaste legt ihn in die Zwischenablage der VM und sendet danach die Kombination
+  if (!altGr && ((e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'v') || (e.shiftKey && !e.ctrlKey && !e.altKey && e.key === 'Insert'))) {
+    pasteKeyAt = Date.now(); pasteKeys = [...held, e.key === 'Insert' ? KS.insert : charKeysym('v')]; return;
+  }
+  if (e.key in NAMED) {
+    // Backspace mit Text im Feld kommt ueber das input-Ereignis (Abgleich), nur bei leerem Feld oder mit Umschaltern direkt senden
+    if (e.key === 'Backspace' && kbVal().length > 0 && !held.length) return;
+    e.preventDefault(); lastNamedAt = Date.now();
+    if (e.key === 'Enter' || e.key === 'Tab' || (e.key === 'Backspace' && held.length)) { setKbVal(''); prevValue = ''; }
+    // mit gehaltenem Shift/Strg/Alt als Kombination, sonst geht Umschalt+Pfeil (Markieren), Strg+Pfeil (Wortsprung) usw. verloren
+    if (held.length) s.sendChord([...held, NAMED[e.key]], 3); else s.tapKey(NAMED[e.key]);
+    return;
+  }
+  // Hardware-Tastatur mit Strg/Alt: als Kombination weitergeben (Umschalt bleibt erhalten, Strg+Umschalt+C)
+  if ((e.ctrlKey || e.altKey || e.metaKey) && !altGr && e.key.length === 1) {
+    e.preventDefault();
+    s.sendChord([...held, charKeysym(e.key.toLowerCase())], 3);
+  }
+}
 function wireKb(node) {
-  node.addEventListener('keydown', (e) => {
-    if (kbEvCount++ < 60) dbg('keydown', { key: e.key.length === 1 ? 'char' : e.key, code: e.keyCode, comp: e.isComposing });
-    const s = cur();
-    if (!s || !s.connected) return;
-    // AltGr (auf Windows als Strg+Alt gemeldet) erzeugt Zeichen wie @ und {: die kommen ueber das Eingabefeld, nicht als Kombination
-    const altGr = e.getModifierState && e.getModifierState('AltGraph');
-    const held = altGr ? [] : heldModifiers(e, s.mods);
-    // Einfuegen (Strg+V, Strg+Umschalt+V, Umschalt+Einfg): die Tastenkombination nicht abfangen, der Browser meldet dann das paste-Ereignis
-    // mit dem Text der lokalen Zwischenablage; onKbPaste legt ihn in die Zwischenablage der VM und sendet danach die Kombination
-    if (!altGr && ((e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'v') || (e.shiftKey && !e.ctrlKey && !e.altKey && e.key === 'Insert'))) {
-      pasteKeyAt = Date.now(); pasteKeys = [...held, e.key === 'Insert' ? KS.insert : charKeysym('v')]; return;
-    }
-    if (e.key in NAMED) {
-      // Backspace mit Text im Feld kommt ueber das input-Ereignis (Abgleich), nur bei leerem Feld oder mit Umschaltern direkt senden
-      if (e.key === 'Backspace' && kbVal().length > 0 && !held.length) return;
-      e.preventDefault(); lastNamedAt = Date.now();
-      if (e.key === 'Enter' || e.key === 'Tab' || (e.key === 'Backspace' && held.length)) { setKbVal(''); prevValue = ''; }
-      // mit gehaltenem Shift/Strg/Alt als Kombination, sonst geht Umschalt+Pfeil (Markieren), Strg+Pfeil (Wortsprung) usw. verloren
-      if (held.length) s.sendChord([...held, NAMED[e.key]], 3); else s.tapKey(NAMED[e.key]);
-      return;
-    }
-    // Hardware-Tastatur mit Strg/Alt: als Kombination weitergeben (Umschalt bleibt erhalten, Strg+Umschalt+C)
-    if ((e.ctrlKey || e.altKey || e.metaKey) && !altGr && e.key.length === 1) {
-      e.preventDefault();
-      s.sendChord([...held, charKeysym(e.key.toLowerCase())], 3);
-    }
-  });
+  node.addEventListener('keydown', onKbKeydown);
   node.addEventListener('beforeinput', onKbBeforeInput);
   node.addEventListener('paste', onKbPaste);
   node.addEventListener('drop', (e) => { if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) { e.preventDefault(); handleKbFiles(e.dataTransfer.files); } });
   node.addEventListener('compositionend', () => syncDiff());
   node.addEventListener('input', () => syncDiff());
-  node.addEventListener('blur', () => { holdSize(); setActOnAll('keyboard', kbOpen); if (node === el.kb) { setKbVal(''); prevValue = ''; } dbg('kbblur', {}); });
-  node.addEventListener('focus', () => { holdSize(); setActOnAll('keyboard', true); dbg('kbfocus', { mode: S.kbMode }); });
+  node.addEventListener('blur', () => { if (!HW_KB) holdSize(); setActOnAll('keyboard', kbOpen); if (node === el.kb) { setKbVal(''); prevValue = ''; } dbg('kbblur', {}); keyFocusHook(); });
+  node.addEventListener('focus', () => { if (!HW_KB) holdSize(); setActOnAll('keyboard', true); dbg('kbfocus', { mode: S.kbMode }); keyFocusHook(); });
 }
 wireKb(el.kbInput); wireKb(el.kbRich);
 
@@ -1373,18 +1517,36 @@ wireKb(el.kbInput); wireKb(el.kbRich);
 // Das versteckte Eingabefeld bekommt den Fokus beim Verbinden, bei jedem Klick ins Bild und bei der ersten Taste, die sonst ins Leere ginge.
 // Es gehoert immer der aktiven Sitzung: am Desktop ist das das Fenster, das den Fokus hat.
 const HW_KB = matchMedia('(pointer: fine) and (hover: hover)').matches || location.search.includes('hwkb');   // ?hwkb: nur zum Testen
+// Wer bekommt die Tasten? Auf dem Handy immer die Fernsteuerung. Im Desktop-Layout nur, solange ein Fernfenster das aktive Fenster ist:
+// desktop.js meldet das ueber remoteApi.setKeyOwner (Menue oder Launcher offen, anderes Fenster vorn: nein).
+let keyOwner = () => true, keyFocusHook = () => {};
 function focusKbForHardware() {
   const s = cur();
-  if (!HW_KB || !s || !s.connected || !s.visible || kbFocused()) return;
+  if (!HW_KB || !s || !s.connected || !s.visible || !keyOwner() || kbFocused()) return;
   if (document.querySelector('dialog[open]') || !s.el.menu.hidden) return;
   try { el.kb.focus({ preventScroll: true }); } catch { el.kb.focus(); }
 }
+/** Ein echtes Texteingabefeld (Eingabe, Auswahl, Textbereich, bearbeitbarer Inhalt)? Knoepfe und Haken zaehlen nicht. */
+function isTextField(a) {
+  if (!a || a === document.body || a === document.documentElement) return false;
+  if (a.isContentEditable) return true;
+  if (a.tagName === 'TEXTAREA' || a.tagName === 'SELECT') return true;
+  if (a.tagName === 'INPUT') return !['button', 'checkbox', 'radio', 'range', 'color', 'file', 'submit', 'reset', 'image'].includes((a.type || '').toLowerCase());
+  return false;
+}
 if (HW_KB) {
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') return;
+    const s = cur();
+    if (!s || !s.connected || !keyOwner()) return;
+    if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta' || e.key === 'AltGraph') return;
+    if (document.querySelector('dialog[open]')) return;
     const a = document.activeElement;
-    if (a && a !== document.body && a !== document.documentElement) return;      // ein anderes Feld hat den Fokus: in Ruhe lassen
+    if (a === el.kbInput || a === el.kbRich) return;       // das Tastaturfeld verarbeitet die Taste selbst
+    if (isTextField(a)) return;                            // ein anderes Feld hat den Fokus: in Ruhe lassen
+    // Fokus steht auf einem Knopf oder auf nichts: das Tastaturfeld nehmen und diese Taste gleich selbst verarbeiten (sonst ginge sie verloren).
+    // Zeichen kommen danach als input-Ereignis im Tastaturfeld an, benannte Tasten und Kombinationen laufen ueber onKbKeydown.
     focusKbForHardware();
+    if (kbFocused()) onKbKeydown(e);
   }, true);
 }
 // Falls die Tastatur ein Bild als <img> in das Feld legt: Bild holen, hochladen, Element entfernen
@@ -1416,6 +1578,55 @@ el.copyBtn.addEventListener('click', async () => {
   const t = el.remoteClip.value;
   try { await navigator.clipboard.writeText(t); toast('Kopiert'); }
   catch { el.remoteClip.focus(); el.remoteClip.select(); try { document.execCommand('copy'); toast('Kopiert'); } catch { toast('Bitte Text markieren und kopieren'); } }
+});
+
+/* ----- Datei senden und Bilder/Dateien aus der VM: der Dialog gehoert der aktiven Sitzung ----- */
+const fileInput = $('#fileInput');
+const sendToRemote = (list) => { const s = cur(); if (!s) { toast('Nicht verbunden'); return Promise.resolve(false); } return s.sendToRemote(list); };
+function pickFile() { fileInput.value = ''; fileInput.click(); }
+fileInput.addEventListener('change', async () => {
+  const files = [...(fileInput.files || [])];
+  if (files.length) try { await sendToRemote(files); } catch (e) { toast('Senden: ' + e.message, 4200); }
+});
+$('#sendFileBtn').addEventListener('click', () => { el.clipDlg.close(); pickFile(); });
+
+const itemBox = $('#remoteItem'), itemImg = $('#remoteImg'), itemFiles = $('#remoteFiles'), itemImgRow = $('#remoteImgRow');
+function renderRemoteItem() {
+  const s = cur(), item = s ? s.remoteItem : { image: null, files: null };
+  itemBox.hidden = !(item.image || item.files);
+  itemImg.hidden = itemImgRow.hidden = !item.image;
+  if (item.image) { if (item.imageUrl) URL.revokeObjectURL(item.imageUrl); item.imageUrl = URL.createObjectURL(item.image); itemImg.src = item.imageUrl; }
+  itemFiles.hidden = !item.files; itemFiles.textContent = '';
+  if (item.files) {
+    for (const [i, f] of item.files.list.entries()) {
+      const li = document.createElement('li'), nm = document.createElement('span'), sz = document.createElement('span'), b = document.createElement('button');
+      nm.className = 'nm'; nm.textContent = f.name; sz.className = 'sz'; sz.textContent = fmtSize(f.size);
+      b.type = 'button'; b.textContent = 'Laden'; b.className = 'ghost';
+      b.addEventListener('click', () => s.downloadRemoteFile(item.files.batch, i, f.name));
+      li.append(nm, sz, b); itemFiles.append(li);
+    }
+  }
+}
+async function copyImageToLocal(blob) {
+  if (!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem)) throw new Error('Kopieren ist hier nicht möglich (HTTPS nötig)');
+  await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+}
+$('#imgCopyBtn').addEventListener('click', async () => {
+  const s = cur(); if (!s || !s.remoteItem.image) return;
+  try { await copyImageToLocal(s.remoteItem.image); toast('Bild kopiert'); } catch (e) { toast(e.message || 'Kopieren nicht erlaubt, bitte Speichern', 3600); }
+});
+$('#imgSaveBtn').addEventListener('click', () => { const s = cur(); if (s && s.remoteItem.image) saveBlob(s.remoteItem.image, 'bild-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '') + '.png'); });
+// Guacamole meldet Bilder nicht von selbst: der Helfer in der VM-Sitzung liest sie auf Wunsch aus der Zwischenablage
+$('#pullImgBtn').addEventListener('click', async () => {
+  const s = cur(); if (!s) return;
+  s.showXfer('Hole das Bild aus der VM …', null);
+  try {
+    const r = await fetch('/api/clipboard/pull', { method: 'POST', headers: { 'X-JulOS': '1' } });
+    if (r.status === 204) { toast('In der Zwischenablage der VM liegt kein Bild', 3200); return; }
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'Fehler ' + r.status); }
+    await s.showRemoteImage(await r.blob(), 'pull');
+  } catch (e) { toast('Bild holen: ' + e.message, 4200); }
+  finally { s.hideXfer(); }
 });
 
 /* =====================================================================
@@ -1650,7 +1861,7 @@ document.addEventListener('pointerdown', (e) => {
 }, { passive: true });
 
 // nur mit ?debug in der Adresse: Zugriff fuer Tests
-if (location.search.includes('debug')) window.__pd = { Sessions, S, rows: () => rows, remotes, cur, cursorInfo, openPhotoDlg, ico };
+if (location.search.includes('debug')) window.__pd = { Sessions, S, rows: () => rows, remotes, cur, cursorInfo, openPhotoDlg, ico, sendToRemote, handleKbFiles };
 
 /* ---------- PWA: Service Worker und Installation ---------- */
 let installEvent = null;
@@ -1663,3 +1874,40 @@ async function installApp() {
   else toast('Im Browser-Menü „App installieren“ oder „Zum Startbildschirm“ wählen.', 4200);
 }
 if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('/sw.js').catch(() => {});
+
+/* =====================================================================
+ *  Haken fuer die Desktop-Oberflaeche (desktop.js): dieselben Aktionen wie die Tastenleiste, nur ohne die Leiste.
+ *  Auf dem PC steht die Leiste nicht unten; ihre Funktionen kommen als Menues in die obere Leiste. Alles wirkt auf die aktive Sitzung.
+ * ===================================================================== */
+const none = { off: 'off' };
+export const remoteApi = {
+  /** Tasten senden, zum Beispiel 'esc', 'ctrl+alt+delete', 'f5' (die Schreibweise der Tasten-Editoren) */
+  keys: (chord) => cur() && cur().activateKey({ type: 'chord', value: chord }),
+  /** Umschalter Strg/Alt/Shift/Super: Zustand 'off' | 'once' | 'lock' und Weiterschalten wie die Taste in der Leiste */
+  mod: (name) => (cur() ? cur().mods[name] : none.off),
+  cycleMod: (name) => cur() && cur().cycleMod(name),
+  /** Eine der frei belegbaren Gruppen ('keys', 'combos', 'funcs') samt Index fuer den Editor */
+  group: (id) => { const r = rows.findIndex((x) => x.id === id); return r < 0 ? null : { index: r, title: rows[r].title, items: rows[r].items }; },
+  press: (def) => cur() && cur().activateKey(def),
+  editKey: (r, i) => openKeyEditor(r, i),
+  resetKeys: () => { if (confirm('Sondertasten auf Standard zurücksetzen?')) { rows = clone(DEFAULT_ROWS); saveRows(); renderAllRows(); } },
+  /** Ansicht */
+  zoomPercent: () => (cur() ? cur().zoomPercent() : 100),
+  setZoomPercent: (p) => { const s = cur(); if (s) { s.setK(100 / p); s.rememberProfile(); } },
+  zoomIn: () => ACTIONS.zoomin(cur()), zoomOut: () => ACTIONS.zoomout(cur()),
+  fit: () => { const s = cur(); if (s) { s.pushSize(true); s.fitDisplay(); } },
+  /** Fenster der VM (Agent): Zustand, aktualisieren, Fenster nach vorn, Modus wechseln, Programm starten */
+  windows: () => { const s = cur(); return s ? { available: s.W.available, mode: s.W.mode, list: s.W.list } : { available: false, mode: 'desktop', list: [] }; },
+  refreshWindows: () => cur() && cur().pollWindows(),
+  activateWindow: (id) => { const s = cur(); return s && s.activateWindow(id, s.W.mode === 'apps'); },
+  toggleMode: () => cur() && cur().toggleMode(),
+  openApps: () => cur() && openApps(cur()),
+  /** Sonstiges */
+  reconnect: () => { const s = cur(); if (s) { s.retry = 0; if (s.hasCredentials()) s.start(); } },
+  action: (name) => ACTIONS[name] && ACTIONS[name](cur()),
+  focus: () => focusKbForHardware(),
+  /** Desktop-Layout: wer die Tasten bekommt (Funktion liefert true/false), den Fokus vom Tastaturfeld nehmen, hat das Tastaturfeld den Fokus */
+  setKeyOwner: (fn, onFocusChange) => { keyOwner = fn; if (onFocusChange) keyFocusHook = onFocusChange; },
+  blurKeys: () => { if (kbFocused()) el.kb.blur(); },
+  hasKeys: () => kbFocused(),
+};

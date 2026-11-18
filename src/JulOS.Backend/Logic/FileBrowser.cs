@@ -187,6 +187,7 @@ public sealed class FileBrowser
                 if (entry is DirectoryInfo && depth < MaxDepth) queue.Enqueue((entry.FullName, relPath, depth + 1));
             }
         }
+        results.Sort((a, b) => string.Compare(a.Path, b.Path, CultureInfo.InvariantCulture, CompareOptions.IgnoreCase | CompareOptions.NumericOrdering));
         return new FileSearchResult([.. results], truncated);
     }
 

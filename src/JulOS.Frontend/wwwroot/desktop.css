@@ -62,7 +62,7 @@ html.desktop body { background: #d9d4f2; }
 .dk-win.active { box-shadow: var(--dk-shadow); }
 @keyframes dkwin { from { opacity: 0; transform: scale(.965) translateY(8px); } to { opacity: 1; transform: none; } }
 .dk-win.min { opacity: 0; transform: translateY(60px); pointer-events: none; visibility: hidden; transition: opacity .18s, transform .18s, visibility 0s .18s; }   /* ohne scale: die Groesse der Anzeige darf sich beim Minimieren nicht aendern */
-.dk-win.max { left: 0 !important; top: 34px !important; width: 100% !important; height: calc(100% - 34px - 96px) !important; border-radius: 0; }
+.dk-win.max { left: 0 !important; top: 34px !important; width: 100% !important; height: calc(100% - 34px - var(--dk-reserve, 96px)) !important; border-radius: 0; }
 .dk-win.dragging, .dk-win.resizing { transition: none; }
 .dk-wh { flex: 0 0 auto; height: 42px; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 14px; cursor: default; border-radius: 16px 16px 0 0; }
 .dk-win.max .dk-wh { border-radius: 0; }
@@ -90,10 +90,8 @@ html.desktop body { background: #d9d4f2; }
 .dk-win.dk-session .dk-wb { background: #000; }
 html.desktop .sv { flex: 1; min-height: 0; }
 html.desktop .sv .sv-rowsTop { display: none; }
-html.desktop .sv .sv-dock { border-radius: 0; background: rgba(255, 255, 255, .86); box-shadow: 0 -1px 0 rgba(90, 80, 150, .14); }
-html.desktop .sv .sv-dock .row.bar { padding-top: 4px; padding-bottom: 4px; }
-html.desktop .sv .sv-dock .sv-menu { left: 12px; right: auto; width: 360px; }
-html.desktop .sv .sv-topbar { border-radius: 0; background: rgba(255, 255, 255, .86); box-shadow: 0 1px 0 rgba(90, 80, 150, .14); }
+/* Die Tastenleiste und die Fensterleiste der VM stehen nicht mehr im Fenster: ihre Funktionen sind Menues in der oberen Leiste (desktop-remote.js) */
+html.desktop .sv .sv-dock, html.desktop .sv .sv-topbar { display: none !important; }
 html.desktop .sv .sv-overlay .box { border-radius: 20px; background: rgba(255, 255, 255, .94); }
 
 /* ---------- Home-Fenster ---------- */
@@ -207,12 +205,79 @@ html.desktop .sv .sv-overlay .box { border-radius: 20px; background: rgba(255, 2
 .dk-launch .dk-foot button { width: 32px; height: 32px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; color: #4a4d70; }
 #desktop .dk-launch .dk-foot button:hover { background: rgba(90, 80, 150, .14); }
 
+
+/* ---------- Dateien (nur lesen) ---------- */
+.dk-fs { flex: 1; min-height: 0; display: grid; grid-template-columns: 190px 1fr; }
+.dk-fside { padding: 8px 10px 14px; display: flex; flex-direction: column; gap: 2px; border-right: 1px solid rgba(90, 80, 150, .1); }
+.dk-fside .dk-nav { height: 40px; display: flex; align-items: center; gap: 12px; padding: 0 12px; border-radius: 11px; color: #3a3d63; font-weight: 500; width: 100%; }
+#desktop .dk-fside button.dk-nav.sel { background: rgba(106, 88, 230, .17); color: #3a29b8; }
+.dk-fnote { margin: 12px 8px 0; font-size: 12px; line-height: 1.45; color: #7a7ea0; }
+.dk-fmain { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.dk-ftool { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; padding: 8px 14px 8px 12px; }
+.dk-crumbs { flex: 1; min-width: 0; height: 32px; display: flex; align-items: center; overflow-x: auto; scrollbar-width: none; white-space: nowrap; margin: 0 6px 0 4px; padding: 0 6px; border-radius: 10px; background: rgba(255, 255, 255, .72); border: 1px solid rgba(90, 80, 150, .14); }
+.dk-crumbs::-webkit-scrollbar { display: none; }
+.dk-crumb { height: 24px; padding: 0 7px; border-radius: 7px; color: #3a3d63; font-size: 13px; flex: 0 0 auto; }
+#desktop .dk-crumbs button.dk-crumb:hover { background: rgba(106, 88, 230, .12); }
+.dk-crumb.cur { font-weight: 650; color: #25284a; }
+.dk-csep { display: inline-flex; color: #9a9dbb; } .dk-csep svg { width: 13px; height: 13px; }
+.dk-fsearch { flex: 0 0 210px; height: 32px; margin: 0; display: flex; flex-direction: row; align-items: center; gap: 8px; padding: 0 11px; border-radius: 10px; background: rgba(255, 255, 255, .8); border: 1px solid rgba(90, 80, 150, .14); color: #7a7ea0; }
+.dk-fsearch input { all: unset; flex: 1; min-width: 0; color: #25284a; font-size: 13px; user-select: text; -webkit-user-select: text; }
+.dk-fsearch input::placeholder { color: #8a8eae; }
+.dk-fsearch:focus-within { border-color: var(--dk-accent); box-shadow: 0 0 0 3px rgba(106, 88, 230, .15); }
+.dk-fview { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 14px 10px; transition: opacity .12s; }
+.dk-fview.busy { opacity: .55; }
+.dk-fview::-webkit-scrollbar { width: 8px; } .dk-fview::-webkit-scrollbar-thumb { background: rgba(90, 80, 150, .22); border-radius: 8px; }
+.dk-fgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 6px; }
+.dk-fi { display: flex !important; flex-direction: column; align-items: center; gap: 3px; padding: 10px 6px 8px !important; border-radius: 12px !important; text-align: center !important; min-width: 0; color: #25284a; }
+#desktop button.dk-fi:hover { background: rgba(255, 255, 255, .7) !important; }
+#desktop button.dk-fi.sel { background: rgba(106, 88, 230, .16) !important; box-shadow: inset 0 0 0 1.5px rgba(106, 88, 230, .5); }
+.dk-fic { display: inline-flex; align-items: center; justify-content: center; color: #6a6f95; }
+.dk-fic.dir { color: #ee9b3a; }
+.dk-fic.dir svg { fill: rgba(247, 199, 106, .55); }
+#desktop .dk-fic.big svg.dk-i { width: 54px; height: 54px; stroke-width: 1.4; }
+.dk-fn { max-width: 100%; font-size: 13px; font-weight: 500; line-height: 1.25; word-break: break-word; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.dk-fm { font-size: 11.5px; color: #7a7ea0; }
+.dk-flist { display: flex; flex-direction: column; gap: 2px; }
+.dk-flist .dk-fi { flex-direction: row; text-align: left !important; gap: 11px; padding: 7px 10px !important; }
+.dk-flist .dk-fn { flex: 1; -webkit-line-clamp: 1; text-align: left; }
+.dk-flist .dk-fp { flex: 0 1 38%; font-size: 12px; color: #7a7ea0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-flist .dk-fm { flex: 0 0 76px; text-align: right; }
+.dk-fempty { padding: 60px 20px; text-align: center; color: #7a7ea0; }
+.dk-fstat { flex: 0 0 auto; min-height: 40px; display: flex; align-items: center; gap: 12px; padding: 4px 14px; border-top: 1px solid rgba(90, 80, 150, .1); color: #5c607f; font-size: 12.5px; }
+.dk-fstat > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-fstat .dk-btn { height: 30px; }
+
 /* ---------- Hinweis ---------- */
 .dk-toast { position: absolute; left: 50%; bottom: 100px; transform: translateX(-50%); z-index: 7000; max-width: min(560px, 80vw); padding: 10px 18px; border-radius: 14px; background: rgba(36, 38, 70, .9); color: #fff;
   box-shadow: 0 10px 30px rgba(36, 38, 70, .35); animation: dkpop .18s ease-out; }
 
 @media (max-width: 1180px) { .dk-sys { grid-template-columns: repeat(2, 1fr); } }
 @media (prefers-reduced-motion: reduce) { .dk-win, .dk-menu, .dk-launch, .dk-toast { animation: none; } }
+
+/* ---------- Menues der oberen Leiste fuer das Fernfenster, Untermenues, Dock-Modi ---------- */
+.dk-menus { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.dk-bar .dk-mi.dk-appname { font-weight: 700; }
+.dk-menu.sub { z-index: 6100; min-width: 150px; }
+.dk-menu .dk-it .dk-hint svg { width: 14px; height: 14px; }
+.dk-dock { transition: transform .22s cubic-bezier(.2, .8, .3, 1), opacity .18s, visibility 0s; }
+.dk-dock.away { transform: translate(-50%, calc(100% + 40px)); opacity: 0; visibility: hidden; pointer-events: none; transition: transform .22s ease-in, opacity .18s, visibility 0s .22s; }
+.dk-knob { position: absolute; left: 50%; bottom: 86px; transform: translateX(-50%); z-index: 4400; width: 46px; height: 18px; border-radius: 99px; display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, .6); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, .8); color: #4a4d70; box-shadow: 0 2px 8px rgba(78, 62, 140, .18); transition: bottom .22s cubic-bezier(.2, .8, .3, 1), background .12s; }
+.dk-knob[hidden] { display: none; }
+.dk-knob svg { width: 14px; height: 14px; transition: transform .2s; }
+.dk-knob.closed { bottom: 4px; } .dk-knob.closed svg { transform: rotate(180deg); }
+#desktop button.dk-knob:hover { background: rgba(255, 255, 255, .9); }
+.dk-win:fullscreen { border-radius: 0; }
+.dk-win:fullscreen .dk-wh, .dk-win:fullscreen .dk-rz { display: none; }
+@media (prefers-reduced-motion: reduce) { .dk-dock, .dk-knob { transition: none; } }
+
+/* ---------- Tastatur: wohin wird getippt ---------- */
+.dk-keys { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; margin-right: 4px; border-radius: 99px; font-size: 12px; color: #7a7ea0; background: rgba(90, 80, 150, .08); white-space: nowrap; }
+.dk-keys[hidden] { display: none; }
+.dk-keys svg.dk-i { width: 14px; height: 14px; }
+.dk-keys.on { color: #3a29b8; background: rgba(106, 88, 230, .16); font-weight: 600; }
+.dk-win.keys { box-shadow: 0 0 0 2px rgba(106, 88, 230, .6), var(--dk-shadow); }
+.dk-win.keys .dk-wh .dk-wt span:last-child::after { content: "Tastatur"; margin-left: 9px; padding: 2px 7px; border-radius: 99px; font-size: 10.5px; font-weight: 600; background: rgba(106, 88, 230, .16); color: #3a29b8; vertical-align: 1px; }
 
 /* ---------- Mehrere Sitzungen: Zustandspunkt in der Titelleiste, Menueintraege nur fuers Handy ausblenden ---------- */
 .dk-sdot { width: 9px; height: 9px; flex: 0 0 9px; border-radius: 50%; background: #9aa0b8; }

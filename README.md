@@ -32,6 +32,7 @@ Status: Linux (X11, XFCE tested) first. Windows is planned and the agent API is 
   chips (with icons) in the app, a "+" starts any installed program. Windows are maximised. Per-application zoom profiles
   (for example a narrow width for apps with a responsive layout).
 - **Photo paste**: pick a photo, it is downscaled, uploaded, put on the remote clipboard and pasted with Ctrl+V.
+- **Images and files in the clipboard**: paste an image (Ctrl+V), drop files on the picture or use "Datei senden"; they arrive on the remote clipboard (paste there with Ctrl+V). With the own stream engine an image or file that the remote copies shows up in the clipboard dialog (copy or save it). Limits and per-engine details: [docs/CLIPBOARD.md](docs/CLIPBOARD.md).
 - **Password managers**: the login form and a dedicated password dialog are autofill friendly (Bitwarden etc.).
 - **Touch**: tap = click, long press = right click, drag, two-finger scroll, pinch zoom (resolution adapts), touchpad mode.
 - **PWA**: installable (needs HTTPS), standalone/fullscreen, offline shell. Material You palette from a seed colour or from an image.
@@ -84,11 +85,12 @@ Roll-out order: proxy config, port forward 443 to the proxy, DNS; optionally a c
 
 `POST /api/upload` saves the image in `~/julos-uploads`; `tools/julos-clip.py` (autostarted in the session) puts it on the GTK
 clipboard and acknowledges it, then the page sends Ctrl+V. Files are deleted after 30 minutes.
-Guacamole cannot transfer image clipboards over RDP, hence this path.
+Guacamole cannot transfer image clipboards over RDP, hence this path. The same helper also takes files (`files/<id>/`) and answers
+the "fetch the image from the remote clipboard" button (`pull/`); the own stream engine needs none of this, see [docs/CLIPBOARD.md](docs/CLIPBOARD.md).
 
 ## Layout
 
-- `src/JulOS.Frontend` host: web client (`wwwroot`: PWA for the phone, desktop interface with windows for wide screens with a mouse), HTTP API, WebSocket; `src/JulOS.Backend` accounts, sessions, connections (PostgreSQL); `src/JulOS.Integrations` guacd relay and agent client; `src/JulOS.Workers` background jobs
+- `src/JulOS.Frontend` host: web client (`wwwroot`: PWA for the phone in Material 3 style, desktop interface with windows for wide screens with a mouse), HTTP API, WebSocket; `src/JulOS.Backend` accounts, sessions, connections (PostgreSQL); `src/JulOS.Integrations` guacd relay and agent client; `src/JulOS.Workers` background jobs
 - `tests/` (`frontend/` runs with node), `database/` (SQL migrations), `deploy/dev/` the test instance with throwaway SSH and RDP targets (see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md); testing on a real phone: [docs/PHONE-TEST.md](docs/PHONE-TEST.md))
 - `tools/julos-agent.py` Linux agent (windows, apps, app mode), `tools/julos-clip.py` photo clipboard helper
 - `tools/install-linux-agent.sh`, `tools/julos-user.sh`, `tools/make-client-cert.sh`

@@ -38,11 +38,11 @@ public sealed class ClipboardBridgeTests
     }
 
     [Fact]
-    public void A_copy_without_text_and_a_refused_or_empty_answer_tell_the_browser_nothing()
+    public void A_copy_without_anything_usable_and_a_refused_or_empty_answer_tell_the_browser_nothing()
     {
         var (channel, wire, _, remote) = Started();
 
-        channel.Receive(ClipServer.LongFormatList((8, null), (2, null)));      // nur ein Bild
+        channel.Receive(ClipServer.LongFormatList((3, null), (16, null)));     // nichts, was wir weitergeben
         Assert.Single(wire.Take());                                            // nur die Bestaetigung, keine Anfrage
         channel.Receive(ClipServer.LongFormatList((Text, null)));
         wire.Take();

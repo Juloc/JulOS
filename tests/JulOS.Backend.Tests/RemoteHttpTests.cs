@@ -313,6 +313,71 @@ public sealed class RemoteHttpTests
             Assert.Equal(HttpStatusCode.Unauthorized, (await c.SendAsync(Post(path, new { }))).StatusCode);  // ohne Sitzung
         }
         Assert.Equal(HttpStatusCode.Unauthorized, (await c.SendAsync(PostRaw("/api/upload", Png, "image/png", "julos_sid=falsch"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await c.SendAsync(PostRaw("/api/upload-file", Png, "application/octet-stream", "julos_sid=falsch"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await c.SendAsync(PostRaw("/api/clipboard/pull", [], "application/octet-stream", "julos_sid=falsch"))).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_file_goes_to_the_helper_and_the_clipboard_pull_returns_the_image()
+    {
+        var dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "julos-upf-" + Guid.NewGuid().ToString("N"))).FullName;
+        try
+        {
+            await using var db = await TestDb.CreateAsync();
+            await using var app = new Server(db, "127.0.0.1:1", configure: s => s.AddSingleton(new UploadOptions(dir, TimeSpan.FromMilliseconds(500))));
+            var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+            var (cookie, _) = await SignedInAsync(app, c, db);
+
+            var helper = Task.Run(async () =>
+            {
+                for (var i = 0; i < 200; i++)
+                {
+                    var d = Directory.Exists(Path.Combine(dir, "files")) ? Directory.GetDirectories(Path.Combine(dir, "files")).FirstOrDefault(x => !x.EndsWith(".tmp")) : null;
+                    if (d is not null) { await File.WriteAllTextAsync(Path.Combine(d, ".ok"), ""); return d; }
+                    await Task.Delay(10);
+                }
+                return null;
+            });
+            HttpRequestMessage FileReq(string name, byte[] body)
+            {
+                var req = PostRaw("/api/upload-file", body, "application/octet-stream", cookie);
+                req.Headers.Add("X-File-Name", Uri.EscapeDataString(name));
+                return req;
+            }
+
+            var ok = await c.SendAsync(FileReq("Übersicht Q3.txt", "abc"u8.ToArray()));
+            Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+            var saved = await helper;
+            Assert.Equal("abc", await System.IO.File.ReadAllTextAsync(Path.Combine(saved!, "Übersicht Q3.txt")));
+
+            var blocked = await c.SendAsync(FileReq("setup.exe", [1]));
+            Assert.Equal(HttpStatusCode.BadRequest, blocked.StatusCode);
+            Assert.Contains(".exe", (await Json(blocked)).GetProperty("error").GetString());
+            Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(FileReq("..", [1]))).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(FileReq("leer.txt", []))).StatusCode);
+            Assert.Equal(HttpStatusCode.GatewayTimeout, (await c.SendAsync(FileReq("a.txt", [1]))).StatusCode);   // kein Helfer
+            var noHeader = PostRaw("/api/upload-file", [1], "application/octet-stream", cookie);
+            Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(noHeader)).StatusCode);                // kein Name
+
+            // Bild aus der Zwischenablage der VM: Helfer antwortet mit einem PNG, danach mit "nichts"
+            var png = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 9, 9 };
+            var pull = Task.Run(async () =>
+            {
+                for (var i = 0; i < 200; i++)
+                {
+                    var req = Directory.Exists(Path.Combine(dir, "pull")) ? Directory.GetFiles(Path.Combine(dir, "pull"), "*.req").FirstOrDefault() : null;
+                    if (req is not null) { await System.IO.File.WriteAllBytesAsync(req[..^4] + ".png", png); return; }
+                    await Task.Delay(10);
+                }
+            });
+            var got = await c.SendAsync(PostRaw("/api/clipboard/pull", [], "application/octet-stream", cookie));
+            await pull;
+            Assert.Equal(HttpStatusCode.OK, got.StatusCode);
+            Assert.Equal("image/png", got.Content.Headers.ContentType?.MediaType);
+            Assert.Equal(png, await got.Content.ReadAsByteArrayAsync());
+            Assert.Equal(HttpStatusCode.GatewayTimeout, (await c.SendAsync(PostRaw("/api/clipboard/pull", [], "application/octet-stream", cookie))).StatusCode);
+        }
+        finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
     }
 
     [Fact]

@@ -48,10 +48,10 @@ const kindIcon = (k) => icon(k === 'terminal' ? 'terminal' : 'desktop');
 const LOGO = `<svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="mlg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--m3-primary)"/><stop offset="1" stop-color="var(--m3-tertiary)"/></linearGradient></defs><rect width="32" height="32" rx="10" fill="url(#mlg)"/><path d="M12 9.5v13l11-6.5z" fill="var(--m3-on-primary)"/></svg>`;
 // Zierbild im Kopf der Startseite: Berg und See in den Toenen des Themas (keine Bilddatei)
 const ART = `<svg class="art" viewBox="0 0 400 96" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
-  <path d="M0 96V70l60-18 50 14 70-40 36-12 50 34 40-10 94 40v18z" fill="var(--m3-secondary-container)" opacity=".75"/>
-  <path d="M150 38l30-12 22 14-14-3-10 7-8-6-12 6z" fill="var(--m3-surface-lowest)" opacity=".85"/>
-  <path d="M0 96V80l70-14 64 12 90-18 70 14 106-6v28z" fill="var(--m3-primary-container)" opacity=".9"/>
-  <path d="M0 96V88c60-8 120-6 200-2s140 0 200-6v16z" fill="var(--m3-tertiary-container)" opacity=".9"/></svg>`;
+  <path d="M0 96V70l60-18 50 14 70-40 36-12 50 34 40-10 94 40v18z" fill="var(--m3-primary-container)" opacity=".95"/>
+  <path d="M150 38l30-12 22 14-14-3-10 7-8-6-12 6z" fill="var(--m3-surface-lowest)" opacity=".9"/>
+  <path d="M0 96V80l70-14 64 12 90-18 70 14 106-6v28z" fill="var(--m3-secondary-container)" opacity=".95"/>
+  <path d="M0 96V88c60-8 120-6 200-2s140 0 200-6v16z" fill="var(--m3-tertiary-container)" opacity=".8"/></svg>`;
 
 const DEST = [
   { id: 'home', label: 'Home', ic: 'home' },
@@ -381,7 +381,7 @@ function lastConnection() {
  * ===================================================================== */
 function soonHtml(ic, title, text) {
   return `<div class="m3-h" data-head><h1>${title}</h1></div>
-    <div class="m3-card soon"><span class="big">${icon(ic)}</span><h2>${title}</h2><span class="m3-chip status"><span class="m3-dot"></span>bald verfügbar</span><p>${text}</p></div>`;
+    <div class="m3-card soon"><span class="big">${icon(ic)}</span><span class="m3-chip status"><span class="m3-dot"></span>bald verfügbar</span><p>${text}</p></div>`;
 }
 function renderServer() {
   const pg = $('#pg-server');
@@ -412,7 +412,7 @@ function renderProfile() {
   const planned = showPlaceholders();
   pg.innerHTML = `
     <div class="m3-h" data-head><h1>Profil</h1><p>Konto, Darstellung und Sicherheit</p></div>
-    <div class="m3-card me"><span class="avatar">${esc((user || '?').trim().slice(0, 1))}</span><span class="t">${esc(user)}<small>Angemeldet mit Passwort und Authenticator-Code</small></span></div>
+    <div class="m3-card me"><span class="avatar">${esc((user || '?').trim().slice(0, 1))}</span><span class="t">${esc(user)}<small>Passwort und Authenticator</small></span></div>
 
     <div class="grp-t">Darstellung</div>
     <div class="m3-card grp">

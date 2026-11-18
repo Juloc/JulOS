@@ -148,6 +148,18 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                         buffer = pool.Rent(5);
                         length = ScreenProtocol.WriteSize(buffer, size.Width, size.Height);
                         break;
+                    case ScreenClipboardImage image:
+                        await SendOnceAsync(ws, ScreenProtocol.Image(image.Format, image.Data), ct).ConfigureAwait(false);
+                        continue;
+                    case ScreenClipboardFiles files:
+                        await SendOnceAsync(ws, ScreenProtocol.Files(files.Batch, files.Files), ct).ConfigureAwait(false);
+                        continue;
+                    case ScreenFileChunk chunk:
+                        await SendOnceAsync(ws, ScreenProtocol.FileChunk(chunk.Batch, chunk.Index, chunk.Flags, chunk.Data), ct).ConfigureAwait(false);
+                        continue;
+                    case ScreenTransferResult result:
+                        await SendOnceAsync(ws, ScreenProtocol.Result(result.Id, result.Code, result.Message), ct).ConfigureAwait(false);
+                        continue;
                     default:
                         continue;
                 }
@@ -163,6 +175,9 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             }
         }
     }
+
+    private static Task SendOnceAsync(WebSocket ws, byte[] message, CancellationToken ct) =>
+        ws.SendAsync(message, WebSocketMessageType.Binary, true, ct);
 
     /// <summary>Browser -> Stream: kleine binaere Nachrichten (siehe ScreenProtocol); nur die Zwischenablage darf laenger sein und kommt dann in Teilen.</summary>
     private static async Task ReceiveFromBrowserAsync(WebSocket ws, ScreenStream stream, CancellationToken ct)
@@ -203,7 +218,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             }
 
             // Zu lange Nachrichten, die nicht zur Zwischenablage gehoeren, sind nicht von uns
-            if (used > ReceiveBuffer && buffer[0] != ScreenProtocol.FromBrowserClipboard)
+            if (used > ReceiveBuffer && !ScreenProtocol.MayBeLong(buffer[0]))
             {
                 await ws.CloseOutputAsync(WebSocketCloseStatus.PolicyViolation, "ungültig", CancellationToken.None).ConfigureAwait(false);
                 return;
@@ -222,7 +237,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         switch (m[0])
         {
             case ScreenProtocol.FromBrowserAck:
-                stream.Acknowledge();
+                stream.Acknowledge(m.Length >= 5 ? BinaryPrimitives.ReadInt32BigEndian(m[1..]) : null);
                 break;
             case ScreenProtocol.FromBrowserMove when m.Length >= 5:
                 stream.MouseMove(BinaryPrimitives.ReadUInt16BigEndian(m[1..]), BinaryPrimitives.ReadUInt16BigEndian(m[3..]));
@@ -245,6 +260,28 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             case ScreenProtocol.FromBrowserClipboard when m.Length >= 2:
                 // Ungueltiges UTF-8 wird zu U+FFFD, nie zu einer Ausnahme
                 stream.SetClipboard(System.Text.Encoding.UTF8.GetString(m[1..]));
+                break;
+            case ScreenProtocol.FromBrowserSendBegin when m.Length >= 16:
+            {
+                var size = BinaryPrimitives.ReadUInt64BigEndian(m[8..]);
+                var name = m.Length > 16 ? System.Text.Encoding.UTF8.GetString(m[16..Math.Min(m.Length, 16 + 255)]) : "";
+                stream.BeginTransfer(BinaryPrimitives.ReadUInt32BigEndian(m[1..]), m[5], m[6], m[7], size > long.MaxValue ? long.MaxValue : (long)size, name);
+                break;
+            }
+            case ScreenProtocol.FromBrowserSendChunk when m.Length >= 5:
+                stream.TransferChunk(BinaryPrimitives.ReadUInt32BigEndian(m[1..]), m[5..]);
+                break;
+            case ScreenProtocol.FromBrowserSendEnd when m.Length >= 5:
+                stream.EndTransfer(BinaryPrimitives.ReadUInt32BigEndian(m[1..]));
+                break;
+            case ScreenProtocol.FromBrowserSendCancel when m.Length >= 5:
+                stream.CancelTransfer(BinaryPrimitives.ReadUInt32BigEndian(m[1..]));
+                break;
+            case ScreenProtocol.FromBrowserFileRequest when m.Length >= 6:
+                stream.RequestFile(BinaryPrimitives.ReadUInt32BigEndian(m[1..]), m[5]);
+                break;
+            case ScreenProtocol.FromBrowserFileCancel when m.Length >= 5:
+                stream.CancelFile(BinaryPrimitives.ReadUInt32BigEndian(m[1..]));
                 break;
             case ScreenProtocol.FromBrowserKeyFrame:
                 stream.RequestKeyFrame();

@@ -60,4 +60,41 @@ public sealed class ScreenProtocolTests
         Assert.Equal(6, ScreenProtocol.ToBrowserClipboard);
         Assert.Equal(9, ScreenProtocol.FromBrowserClipboard);
     }
+
+    [Fact]
+    public void Image_file_list_file_chunk_and_result_messages_have_the_documented_layout()
+    {
+        Assert.Equal([7, 2, 9, 8], ScreenProtocol.Image(2, [9, 8]));
+
+        var files = ScreenProtocol.Files(0x01020304, [new RemoteFile("a.txt", 5), new RemoteFile("Größe.pdf", -1)]);
+        Assert.Equal([8, 1, 2, 3, 4, 2], files[..6]);
+        Assert.Equal(5, BinaryPrimitives.ReadInt64BigEndian(files.AsSpan(6)));
+        Assert.Equal(5, BinaryPrimitives.ReadUInt16BigEndian(files.AsSpan(14)));
+        Assert.Equal("a.txt", System.Text.Encoding.UTF8.GetString(files, 16, 5));
+        Assert.Equal(-1, BinaryPrimitives.ReadInt64BigEndian(files.AsSpan(21)));
+        var second = BinaryPrimitives.ReadUInt16BigEndian(files.AsSpan(29));
+        Assert.Equal("Größe.pdf", System.Text.Encoding.UTF8.GetString(files, 31, second));
+        Assert.Equal(31 + second, files.Length);
+        Assert.Equal([8, 0, 0, 0, 7, 0], ScreenProtocol.Files(7, []));
+
+        Assert.Equal([9, 0, 0, 0, 7, 3, 1, 5, 6], ScreenProtocol.FileChunk(7, 3, ClipboardBridge.ChunkLast, [5, 6]));
+
+        var result = ScreenProtocol.Result(300, ClipboardBridge.ResultTooBig, "zu groß");
+        Assert.Equal([10, 0, 0, 1, 44, 1], result[..6]);
+        Assert.Equal("zu groß", System.Text.Encoding.UTF8.GetString(result, 6, result.Length - 6));
+    }
+
+    [Fact]
+    public void Only_the_text_the_file_name_and_the_file_pieces_may_be_longer_than_an_input()
+    {
+        foreach (var type in new[] { ScreenProtocol.FromBrowserClipboard, ScreenProtocol.FromBrowserSendBegin, ScreenProtocol.FromBrowserSendChunk })
+        {
+            Assert.True(ScreenProtocol.MayBeLong(type));
+        }
+
+        foreach (var type in new[] { ScreenProtocol.FromBrowserAck, ScreenProtocol.FromBrowserMove, ScreenProtocol.FromBrowserKey, ScreenProtocol.FromBrowserSendEnd, ScreenProtocol.FromBrowserFileRequest })
+        {
+            Assert.False(ScreenProtocol.MayBeLong(type));
+        }
+    }
 }

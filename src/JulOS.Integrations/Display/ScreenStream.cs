@@ -18,6 +18,18 @@ public sealed record ScreenPicture(int Sequence, bool IsKey, byte[] Data) : Scre
 /// <summary>Der ferne Rechner hat Text kopiert.</summary>
 public sealed record ScreenClipboardText(string Text) : ScreenEvent;
 
+/// <summary>Der ferne Rechner hat ein Bild kopiert (Format 1 PNG, 2 BMP).</summary>
+public sealed record ScreenClipboardImage(byte Format, byte[] Data) : ScreenEvent;
+
+/// <summary>Der ferne Rechner hat Dateien kopiert (leere Liste: die Auswahl ist weg).</summary>
+public sealed record ScreenClipboardFiles(uint Batch, IReadOnlyList<RemoteFile> Files) : ScreenEvent;
+
+/// <summary>Ein Stueck einer Datei, die der Browser angefordert hat (Flags siehe <see cref="ClipboardBridge.ChunkLast"/>).</summary>
+public sealed record ScreenFileChunk(uint Batch, int Index, byte Flags, byte[] Data) : ScreenEvent;
+
+/// <summary>Wie ein Senden vom Browser ausgegangen ist.</summary>
+public sealed record ScreenTransferResult(uint Id, byte Code, string Message) : ScreenEvent;
+
 public enum CursorKind { Shape, Hidden, Default }
 
 /// <summary>Die Form des Mauszeigers des fernen Rechners (RGBA, R zuerst, gerade Alpha, von oben nach unten).</summary>
@@ -63,7 +75,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     private long _dirtyPixels;
     private (int Width, int Height)? _pendingSize;
 
-    private int _inFlight;
+    private readonly PictureWindow _window = new(MaxPicturesInFlight);
     private long _lastAckAt, _lastSentAt, _lastUpdateAt;
     private int _sequence;
     private int _disposed;
@@ -78,7 +90,14 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         _options = options;
         _maxKilobitsPerSecond = maxKilobitsPerSecond;
         _log = log;
-        _clipboard = new ClipboardBridge(_clipboardChannel, text => _events.Writer.TryWrite(new ScreenClipboardText(text)));
+        _clipboard = new ClipboardBridge(_clipboardChannel, new ClipboardSink
+        {
+            Text = text => _events.Writer.TryWrite(new ScreenClipboardText(text)),
+            Image = (format, data) => _events.Writer.TryWrite(new ScreenClipboardImage(format, data)),
+            Files = (batch, files) => _events.Writer.TryWrite(new ScreenClipboardFiles(batch, files)),
+            FileChunk = (batch, index, flags, data) => _events.Writer.TryWrite(new ScreenFileChunk(batch, index, flags, data)),
+            Result = (id, code, message) => _events.Writer.TryWrite(new ScreenTransferResult(id, code, message)),
+        });
     }
 
     /// <summary>Ob H.264 auf dieser Maschine kodiert werden kann (libopenh264 vorhanden).</summary>
@@ -143,17 +162,32 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     /// <summary>Der Browser hat Text abgelegt; der ferne Rechner holt ihn, wenn dort eingefuegt wird.</summary>
     public void SetClipboard(string text) => _clipboard.SetLocalText(text);
 
-    /// <summary>Der Browser hat ein Bild dekodiert.</summary>
-    public void Acknowledge()
+    /// <summary>Der Browser sendet ein Bild (als BMP) oder eine Datei an die Zwischenablage des fernen Rechners; siehe <see cref="ClipboardBridge"/>.</summary>
+    public void BeginTransfer(uint id, byte kind, int index, int count, long size, string name) => _clipboard.BeginTransfer(id, kind, index, count, size, name);
+
+    public void TransferChunk(uint id, ReadOnlySpan<byte> data) => _clipboard.TransferChunk(id, data);
+
+    public void EndTransfer(uint id) => _clipboard.EndTransfer(id);
+
+    public void CancelTransfer(uint id) => _clipboard.CancelTransfer(id);
+
+    /// <summary>Der Browser holt eine Datei, die der ferne Rechner kopiert hat.</summary>
+    public void RequestFile(uint batch, int index) => _clipboard.RequestFile(batch, index);
+
+    public void CancelFile(uint batch) => _clipboard.CancelFile(batch);
+
+
+    /// <summary>Der Browser hat die Bilder bis zu dieser Folgenummer dekodiert (oder verworfen); ohne Nummer: ein Bild mehr.</summary>
+    public void Acknowledge(int? sequence = null)
     {
         Volatile.Write(ref _lastAckAt, Environment.TickCount64);
-        while (true)
+        if (sequence is { } value)
         {
-            var current = Volatile.Read(ref _inFlight);
-            if (current <= 0 || Interlocked.CompareExchange(ref _inFlight, current - 1, current) == current)
-            {
-                break;
-            }
+            _window.Acknowledge(value);
+        }
+        else
+        {
+            _window.AcknowledgeOne();
         }
 
         Wake();
@@ -276,8 +310,8 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
             var encoder = _encoder;
             var frame = _frame;
 
-            var inFlight = Volatile.Read(ref _inFlight);
-            if (inFlight >= MaxPicturesInFlight)
+            var inFlight = _window.InFlight;
+            if (_window.Full)
             {
                 var tick = Environment.TickCount64;
                 var quietFor = tick - Math.Max(Volatile.Read(ref _lastAckAt), Volatile.Read(ref _lastSentAt));
@@ -285,11 +319,11 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
                 {
                     _log?.LogWarning("Keine Bestaetigung seit {Quiet} ms bei {InFlight} offenen Bildern (letztes Bild vor {Sent} ms, letzte Aenderung vor {Update} ms): Fenster zurueckgesetzt, Schluesselbild folgt",
                         quietFor, inFlight, tick - Volatile.Read(ref _lastSentAt), tick - Volatile.Read(ref _lastUpdateAt));
-                    Volatile.Write(ref _inFlight, 0);
+                    _window.Reset();
                     needKey = true;
                 }
             }
-            if (encoder is not null && frame is not null && !Volatile.Read(ref _paused) && Volatile.Read(ref _inFlight) < MaxPicturesInFlight)
+            if (encoder is not null && frame is not null && !Volatile.Read(ref _paused) && !_window.Full)
             {
                 var now = Environment.TickCount64;
                 var hasChange = PeekDirty(out var left, out var top, out var width, out var height, out var pixels);
@@ -318,9 +352,11 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
                         wait = (int)Math.Max(1, due - now);
                     }
                 }
-                else if (needKey && !encodedAny)
+                else if (needKey)
                 {
-                    // Kein neuer Inhalt, aber noch nie etwas gesendet: der ganze Bildschirm ist das erste Bild
+                    // Kein neuer Inhalt, aber ein Schluesselbild ist verlangt (erstes Bild, Groessenwechsel, der Browser hat den Faden verloren,
+                    // Fenster zurueckgesetzt): der ganze Bildschirm. Auch ein scharfer, ruhender Bildschirm wird so neu gesendet; sonst bliebe
+                    // die Anfrage des Browsers unbeantwortet und sein Bild leer.
                     frame.MarkChanged();
                     encodedAny |= Send(encoder, frame, true);
                     needKey = false;
@@ -384,7 +420,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         }
 
         var sequence = Interlocked.Increment(ref _sequence);
-        Interlocked.Increment(ref _inFlight);
+        _window.Sent(sequence);
         Volatile.Write(ref _lastSentAt, Environment.TickCount64);
         _events.Writer.TryWrite(new ScreenPicture(sequence, isKey, data.ToArray()));
         return true;
@@ -396,7 +432,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         _frame?.Dispose();
         _encoder = null;
         _frame = null;
-        Volatile.Write(ref _inFlight, 0);
+        _window.Reset();
 
         var evenWidth = width & ~1;
         var evenHeight = height & ~1;
@@ -552,6 +588,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
             await _rdp.DisposeAsync().ConfigureAwait(false);
         }
 
+        _clipboard.Dispose();
         _encoder?.Dispose();
         _frame?.Dispose();
         _events.Writer.TryComplete();

@@ -158,6 +158,27 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16)
                         buffer[0] = ScreenProtocol.ToBrowserClipboard;
                         length = 1 + System.Text.Encoding.UTF8.GetBytes(clip.Text, buffer.AsSpan(1));
                         break;
+                    case ScreenAudioStatus audio:
+                        buffer = pool.Rent(ScreenProtocol.AudioStatusLength);
+                        length = ScreenProtocol.WriteAudioStatus(buffer, audio.Status);
+                        break;
+                    case ScreenAudioReady:
+                        // Der Ton liegt in der begrenzten Warteschlange der Bruecke; hier wird sie ausgesendet
+                        while (stream.Audio.TryTake(out var block))
+                        {
+                            var sound = pool.Rent(ScreenProtocol.AudioHeader + block.Pcm.Length);
+                            try
+                            {
+                                var size = ScreenProtocol.WriteAudio(sound, block);
+                                await ws.SendAsync(sound.AsMemory(0, size), WebSocketMessageType.Binary, true, ct).ConfigureAwait(false);
+                            }
+                            finally
+                            {
+                                pool.Return(sound);
+                            }
+                        }
+
+                        continue;
                     case ScreenSize size:
                         buffer = pool.Rent(5);
                         length = ScreenProtocol.WriteSize(buffer, size.Width, size.Height);
@@ -217,7 +238,8 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16)
             }
 
             // Zu lange Nachrichten, die nicht zur Zwischenablage gehoeren, sind nicht von uns
-            if (used > ReceiveBuffer && buffer[0] != ScreenProtocol.FromBrowserClipboard)
+            if (used > ReceiveBuffer && buffer[0] != ScreenProtocol.FromBrowserClipboard
+                && !(buffer[0] == ScreenProtocol.FromBrowserMicrophone && used <= ScreenProtocol.MaxMicrophoneMessage))
             {
                 await ws.CloseOutputAsync(WebSocketCloseStatus.PolicyViolation, "ungültig", CancellationToken.None).ConfigureAwait(false);
                 return;
@@ -262,6 +284,12 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16)
                 break;
             case ScreenProtocol.FromBrowserKeyFrame:
                 stream.RequestKeyFrame();
+                break;
+            case ScreenProtocol.FromBrowserAudio when m.Length >= 2:
+                stream.Audio.OutputOn = m[1] != 0;
+                break;
+            case ScreenProtocol.FromBrowserMicrophone when m.Length >= 7:
+                stream.Audio.Microphone(m[5..], (int)Math.Clamp(BinaryPrimitives.ReadUInt32BigEndian(m[1..]), 8000u, 96000u));
                 break;
         }
     }

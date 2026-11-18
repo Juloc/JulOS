@@ -312,7 +312,7 @@ public sealed class RelayTests
         var relay = new GuacRelay(new GuacdOptions("127.0.0.1", guacd.Port), NullLogger<GuacRelay>.Instance, registry);
         var me = Guid.NewGuid();
         var conn = Guid.NewGuid();
-        GuacSpec Spec(string sid) => GuacSpec.Terminal("h", 22, "u", "p", 800, 600, 96) with { Slot = SessionRegistry.SlotOf(me, conn, sid) };
+        GuacSpec Spec(string sid) => TestSpec.Ssh("h", 22, "u", "p", 800, 600, 96) with { Slot = SessionRegistry.SlotOf(me, conn, sid) };
 
         var (b1, s1) = await SocketPairAsync();
         var first = relay.RunAsync(s1, Spec("sitzung-eins"), Alive, CancellationToken.None, owner: me);

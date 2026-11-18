@@ -51,7 +51,7 @@ internal static class RemoteEndpoints
                     SshProtocol.Clamp(body.Cols ?? 80, SshProtocol.MinCols, SshProtocol.MaxCols), SshProtocol.Clamp(body.Rows ?? 24, SshProtocol.MinRows, SshProtocol.MaxRows));
                 var (owner, connection) = (id.UserId, c.Id);
                 var sshTicket = sshTickets.Create(id.UserId, new SshTarget(owner, options, c.HostKey, body.AcceptHostKey,
-                    (key, ct) => connections.SetHostKeyAsync(owner, connection, key, ct)));
+                    (key, ct) => connections.SetHostKeyAsync(owner, connection, key, ct), SessionRegistry.SlotOf(owner, connection, body.Sid)));
                 return sshTicket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(sshTicket, c.Kind, options.Cols, options.Rows, "ssh"), AppJson.Default.TicketResponse);
             }
 

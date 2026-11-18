@@ -4,6 +4,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
+using JulOS.Integrations;
 using JulOS.Integrations.Ssh;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -119,10 +120,10 @@ public sealed class SshRelayTests
                 WebSocket.CreateFromStream(server.GetStream(), new WebSocketCreationOptions { IsServer = true }));
     }
 
-    private static SshTarget Target(string? stored = null, string? accepted = null, Func<string, CancellationToken, Task>? save = null, Guid? owner = null)
-        => new(owner ?? Guid.NewGuid(), new SshConnectOptions("ziel", 22, "tester", "geheim", 100, 30), stored, accepted, save ?? ((_, _) => Task.CompletedTask));
+    private static SshTarget Target(string? stored = null, string? accepted = null, Func<string, CancellationToken, Task>? save = null, Guid? owner = null, string? slot = null)
+        => new(owner ?? Guid.NewGuid(), new SshConnectOptions("ziel", 22, "tester", "geheim", 100, 30), stored, accepted, save ?? ((_, _) => Task.CompletedTask), slot);
 
-    private static SshRelay Relay(FakeSshSession session, int max = 32, int perUser = 8) => new(NullLogger<SshRelay>.Instance, () => session, max, perUser);
+    private static SshRelay Relay(FakeSshSession session, int max = 32) => new(NullLogger<SshRelay>.Instance, () => session, max);
 
     private static async Task<byte[]> ReceiveAsync(WebSocket ws)
     {
@@ -298,19 +299,24 @@ public sealed class SshRelayTests
     public async Task Limits_apply_per_user_and_in_total_and_slots_are_released()
     {
         var owner = Guid.NewGuid();
-        var relay = new SshRelay(NullLogger<SshRelay>.Instance, () => new FakeSshSession(), maxSessions: 3, maxPerUser: 2);
+        var registry = new SessionRegistry(2);
+        var relay = new SshRelay(NullLogger<SshRelay>.Instance, () => new FakeSshSession(), maxSessions: 3, registry);
+        var conn = Guid.NewGuid();
+        string Slot(string sid) => SessionRegistry.SlotOf(owner, conn, sid);
         var open = new List<(WebSocket B, Task Run)>();
-        for (var i = 0; i < 2; i++)
+        foreach (var sid in new[] { "sitzung-eins", "sitzung-zwei" })        // zwei Sitzungen zum selben Ziel laufen nebeneinander
         {
             var (b, s) = await SocketPairAsync();
-            open.Add((b, relay.RunAsync(s, Target(owner: owner), Alive, CancellationToken.None)));
-            await ReceiveAsync(b);
+            open.Add((b, relay.RunAsync(s, Target(owner: owner, slot: Slot(sid)), Alive, CancellationToken.None)));
+            Assert.Equal(SshProtocol.FromReady, (await ReceiveAsync(b))[0]);
         }
 
-        // dritte Verbindung desselben Benutzers: abgelehnt, ein anderer Benutzer darf noch
+        // dritte Sitzung desselben Benutzers: abgelehnt mit freundlichem Text, ein anderer Benutzer darf noch
         var (b3, s3) = await SocketPairAsync();
-        var run3 = relay.RunAsync(s3, Target(owner: owner), Alive, CancellationToken.None);
-        Assert.Equal(SshProtocol.ErrorBusy, Body(await ReceiveAsync(b3)).GetProperty("code").GetInt32());
+        var run3 = relay.RunAsync(s3, Target(owner: owner, slot: Slot("sitzung-drei")), Alive, CancellationToken.None);
+        var refused = Body(await ReceiveAsync(b3));
+        Assert.Equal(SessionRegistry.TooManyStatus, refused.GetProperty("code").GetInt32());
+        Assert.Contains("2 Sitzungen", refused.GetProperty("message").GetString());
         await run3.WaitAsync(Wait);
 
         var (b4, s4) = await SocketPairAsync();
@@ -325,10 +331,36 @@ public sealed class SshRelayTests
         await open[0].B.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
         await open[0].Run.WaitAsync(Wait);
         var (b6, s6) = await SocketPairAsync();
-        open.Add((b6, relay.RunAsync(s6, Target(owner: owner), Alive, CancellationToken.None)));
+        open.Add((b6, relay.RunAsync(s6, Target(owner: owner, slot: Slot("sitzung-drei")), Alive, CancellationToken.None)));
         Assert.Equal(SshProtocol.FromReady, (await ReceiveAsync(b6))[0]);
 
         foreach (var (b, run) in open.Skip(1)) { await b.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None); await run.WaitAsync(Wait); }
+    }
+
+    [Fact]
+    public async Task A_new_connection_in_the_same_slot_replaces_the_old_one_which_is_told_why()
+    {
+        var owner = Guid.NewGuid();
+        var slot = SessionRegistry.SlotOf(owner, Guid.NewGuid(), "meine-sitzung");
+        var first = new FakeSshSession();
+        var (b1, s1) = await SocketPairAsync();
+        var registry = new SessionRegistry(2);                                  // beide Relays teilen eine Registry, wie im Server
+        var relayA = new SshRelay(NullLogger<SshRelay>.Instance, () => first, 32, registry);
+        var runA = relayA.RunAsync(s1, Target(owner: owner, slot: slot), Alive, CancellationToken.None);
+        await ReceiveAsync(b1);
+
+        var second = new FakeSshSession();
+        var (b2, s2) = await SocketPairAsync();
+        var runB = new SshRelay(NullLogger<SshRelay>.Instance, () => second, 32, registry).RunAsync(s2, Target(owner: owner, slot: slot), Alive, CancellationToken.None);
+        Assert.Equal(SshProtocol.FromReady, (await ReceiveAsync(b2))[0]);
+
+        Assert.Equal(SshProtocol.EndTaken, Body(await ReceiveAsync(b1)).GetProperty("code").GetInt32());   // der alte Browser erfaehrt es
+        await runA.WaitAsync(Wait);
+        Assert.True(first.Disposed);                                                                          // und seine Shell auf dem Ziel endet
+        Assert.False(second.Disposed);                                                                        // die neue laeuft weiter
+
+        await b2.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+        await runB.WaitAsync(Wait);
     }
 }
 

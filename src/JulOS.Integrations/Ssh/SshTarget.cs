@@ -4,8 +4,9 @@ namespace JulOS.Integrations.Ssh;
 /// Was ein Terminal-Ticket enthaelt. StoredHostKey ist der bekannte Schluessel der Verbindung (null = noch keiner, erste Verbindung);
 /// AcceptHostKey ist der Schluessel, den der Benutzer nach einer Warnung ausdruecklich bestaetigt hat (nur genau dieser gilt).
 /// SaveHostKey schreibt einen neuen oder bestaetigten Schluessel (die Bibliothek kennt die Datenbank nicht).
+/// Slot: Benutzer + Verbindung + Sitzungskennung des Browsers (siehe <see cref="SessionRegistry"/>); ein neuer WebSocket im selben Slot loest den alten ab.
 /// </summary>
-public sealed record SshTarget(Guid Owner, SshConnectOptions Options, string? StoredHostKey, string? AcceptHostKey, Func<string, CancellationToken, Task> SaveHostKey);
+public sealed record SshTarget(Guid Owner, SshConnectOptions Options, string? StoredHostKey, string? AcceptHostKey, Func<string, CancellationToken, Task> SaveHostKey, string? Slot = null);
 
 /// <summary>Einmal-Tickets fuer den Terminal-WebSocket (siehe <see cref="Tickets{T}"/>).</summary>
 public sealed class SshTickets(TimeProvider time) : Tickets<SshTarget>(time);

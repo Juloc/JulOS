@@ -1,40 +1,39 @@
-using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using Microsoft.Extensions.Logging;
 
 namespace JulOS.Integrations.Ssh;
 
 /// <summary>
-/// Verbindet einen Browser-WebSocket mit einer <see cref="ISshSession"/> (Protokoll: <see cref="SshProtocol"/>). Pro Verbindung eigene Shell,
-/// mehrere gleichzeitig sind erlaubt (anders als beim Desktop gibt es keine Sitzung, die ein neuer Browser uebernehmen muesste).
-/// Grenzen: insgesamt und pro Benutzer. Wie bei den anderen Verbindungen endet die Sitzung mit der Anmeldung der App (Pruefung alle 60 s).
+/// Verbindet einen Browser-WebSocket mit einer <see cref="ISshSession"/> (Protokoll: <see cref="SshProtocol"/>). Pro Slot (Benutzer, Verbindung,
+/// Sitzung des Browsers) ist nur ein WebSocket offen: ein neuer loest den alten ab (zum Beispiel nach einem Verbindungsabbruch auf dem Handy,
+/// dann endet die alte Shell auf dem Ziel gleich mit). Mehrere Sitzungen zum selben Ziel haben verschiedene Slots. Die Obergrenze pro Benutzer
+/// steckt in der <see cref="SessionRegistry"/>, dazu eine globale. Wie bei den anderen Verbindungen endet die Sitzung mit der Anmeldung der App
+/// (Pruefung alle 60 s).
 /// </summary>
-public sealed class SshRelay(ILogger<SshRelay> log, Func<ISshSession>? factory = null, int maxSessions = 32, int maxPerUser = 8)
+public sealed class SshRelay(ILogger<SshRelay> log, Func<ISshSession>? factory = null, int maxSessions = 32, SessionRegistry? registry = null)
 {
     public static readonly TimeSpan SessionCheck = TimeSpan.FromSeconds(60);
 
     private readonly Func<ISshSession> _factory = factory ?? (() => new SshNetSession());
     private readonly SemaphoreSlim _slots = new(maxSessions);
-    private readonly ConcurrentDictionary<Guid, int> _perUser = new();
+    private readonly SessionRegistry _sessions = registry ?? new SessionRegistry();
 
     public async Task RunAsync(WebSocket ws, SshTarget target, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan? sessionCheck = null)
     {
-        var mine = _perUser.AddOrUpdate(target.Owner, 1, (_, n) => n + 1);
-        var gotSlot = false;
+        if (!await _slots.WaitAsync(0, ct).ConfigureAwait(false))
+        {
+            await FinishAsync(ws, SshProtocol.End(SshProtocol.ErrorBusy, "Der Server ist gerade ausgelastet."), ct).ConfigureAwait(false);
+            await CloseAsync(ws).ConfigureAwait(false);
+            return;
+        }
+
         try
         {
-            if (mine > maxPerUser || !(gotSlot = await _slots.WaitAsync(0, ct).ConfigureAwait(false)))
-            {
-                await FinishAsync(ws, SshProtocol.End(SshProtocol.ErrorBusy, "Zu viele gleichzeitige Verbindungen."), ct).ConfigureAwait(false);
-                return;
-            }
-
             await RunCoreAsync(ws, target, sessionAlive, ct, sessionCheck ?? SessionCheck).ConfigureAwait(false);
         }
         finally
         {
-            if (gotSlot) _slots.Release();
-            _perUser.AddOrUpdate(target.Owner, 0, (_, n) => Math.Max(0, n - 1));
+            _slots.Release();
             await CloseAsync(ws).ConfigureAwait(false);
         }
     }
@@ -42,6 +41,14 @@ public sealed class SshRelay(ILogger<SshRelay> log, Func<ISshSession>? factory =
     private async Task RunCoreAsync(WebSocket ws, SshTarget target, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan sessionCheck)
     {
         var started = Environment.TickCount64;
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var lease = _sessions.TryOpen(target.Owner, target.Slot, () => stop.Cancel());
+        if (lease is null)
+        {
+            await FinishAsync(ws, SshProtocol.End(SessionRegistry.TooManyStatus, _sessions.LimitMessage), ct).ConfigureAwait(false);
+            return;
+        }
+
         await using var session = _factory();
         var decision = HostKeyDecision.Known;
         try
@@ -50,7 +57,7 @@ public sealed class SshRelay(ILogger<SshRelay> log, Func<ISshSession>? factory =
             {
                 decision = HostKeyPolicy.Decide(target.StoredHostKey, target.AcceptHostKey, key);
                 return decision != HostKeyDecision.Changed;
-            }, ct).ConfigureAwait(false);
+            }, stop.Token).ConfigureAwait(false);
         }
         catch (SshException e)
         {
@@ -60,7 +67,8 @@ public sealed class SshRelay(ILogger<SshRelay> log, Func<ISshSession>? factory =
         }
         catch (OperationCanceledException)
         {
-            return;                                                  // Browser weg, bevor die Verbindung stand
+            if (lease.Replaced) await FinishAsync(ws, SshProtocol.End(SshProtocol.EndTaken, "Die Sitzung wurde in einem anderen Fenster oder auf einem anderen Gerät übernommen."), ct).ConfigureAwait(false);
+            return;                                                  // sonst: Browser weg, bevor die Verbindung stand
         }
 
         var key = session.PresentedHostKey!;
@@ -72,7 +80,6 @@ public sealed class SshRelay(ILogger<SshRelay> log, Func<ISshSession>? factory =
             log.LogInformation("SSH-Host-Schlüssel {Decision} ({Algorithm})", decision == HostKeyDecision.FirstUse ? "gemerkt" : "ersetzt (vom Benutzer bestätigt)", key.Algorithm);
         }
 
-        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
         byte[]? last = null;
         try
         {
@@ -84,7 +91,8 @@ public sealed class SshRelay(ILogger<SshRelay> log, Func<ISshSession>? factory =
             var receive = ReceiveFromBrowserAsync(ws, session, flow, stop.Token);
             var watch = WatchAsync(sessionAlive, sessionCheck, stop.Token);
             var first = await Task.WhenAny(send, receive, watch).ConfigureAwait(false);
-            if (first == send && !ct.IsCancellationRequested) last = SshProtocol.End(SshProtocol.EndShellClosed, "Die Sitzung wurde beendet.");
+            if (lease.Replaced) last = SshProtocol.End(SshProtocol.EndTaken, "Die Sitzung wurde in einem anderen Fenster oder auf einem anderen Gerät übernommen.");
+            else if (first == send && !ct.IsCancellationRequested) last = SshProtocol.End(SshProtocol.EndShellClosed, "Die Sitzung wurde beendet.");
             else if (first == watch) last = SshProtocol.End(SshProtocol.EndSessionExpired, "Die Sitzung der App ist abgelaufen.");
 
             // Zuerst sagen, warum es endet (ein abgebrochenes Senden reisst den WebSocket ein), dann die Schleifen beenden
@@ -105,7 +113,7 @@ public sealed class SshRelay(ILogger<SshRelay> log, Func<ISshSession>? factory =
         }
         finally
         {
-            log.LogInformation("SSH-Verbindung beendet nach {Seconds} s", (Environment.TickCount64 - started) / 1000);
+            log.LogInformation("SSH-Verbindung beendet nach {Seconds} s{Replaced}", (Environment.TickCount64 - started) / 1000, lease.Replaced ? " (von einer neuen Verbindung abgelöst)" : "");
         }
     }
 

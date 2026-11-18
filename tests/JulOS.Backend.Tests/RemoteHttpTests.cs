@@ -177,7 +177,7 @@ public sealed class RemoteHttpTests
         await Assert.ThrowsAnyAsync<Exception>(() => OpenAsync(app, "egal", null));
 
         var (cookie, userId) = await SignedInAsync(app, c, db);
-        var connection = await new ConnectionStore(db.Data).CreateAsync(userId, "Test", "terminal", "ziel", 22, "tester");
+        var connection = await new ConnectionStore(db.Data).CreateAsync(userId, "Test", "desktop", "ziel", 3389, "tester");
 
         // fehlende Angaben, fremde Verbindung
         Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Post("/api/remote/ticket", new { connection = connection.Id }, cookie))).StatusCode);
@@ -231,7 +231,7 @@ public sealed class RemoteHttpTests
         await using var app = new Server(db, $"127.0.0.1:{guacd.Port}");
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (cookie, userId) = await SignedInAsync(app, c, db);
-        var connection = await new ConnectionStore(db.Data).CreateAsync(userId, "Test", "terminal", "ziel", 22, "u");
+        var connection = await new ConnectionStore(db.Data).CreateAsync(userId, "Test", "desktop", "ziel", 3389, "u");
         using var ws = await OpenAsync(app, await TicketAsync(c, cookie, connection.Id), cookie);
         await ReadAsync(ws);
 

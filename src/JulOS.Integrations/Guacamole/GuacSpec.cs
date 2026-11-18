@@ -12,7 +12,7 @@ public sealed record GuacSpec(string Protocol, IReadOnlyDictionary<string, strin
             ["color-depth"] = "24", ["server-layout"] = "de-de-qwertz", ["timezone"] = "Europe/Berlin",
             ["enable-font-smoothing"] = "true", ["enable-wallpaper"] = "false", ["enable-theming"] = "true",
             ["enable-full-window-drag"] = "false", ["enable-desktop-composition"] = "false", ["enable-menu-animations"] = "false",
-            ["disable-audio"] = "true", ["clipboard-encoding"] = "UTF-8", ["client-name"] = "julos",
+            ["disable-audio"] = "true", ["clipboard-encoding"] = "UTF-8", ["client-name"] = "julos", ["disable-gfx"] = "true",   // xrdp 0.10 zeigt mit der Grafik-Pipeline (GFX) lange nur Schwarz; ohne sofort Bild
         }, width, height, dpi);
 
     /// <summary>Terminal ueber SSH (guacd zeichnet das Terminal selbst).</summary>

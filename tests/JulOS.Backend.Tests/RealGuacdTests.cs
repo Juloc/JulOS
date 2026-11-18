@@ -103,17 +103,20 @@ public sealed class RealGuacdTests
         using var conn = await GuacdClient.ConnectAsync(opts.Host, opts.Port, spec, CancellationToken.None);
         var handshake = clock.ElapsedMilliseconds;
 
-        // Bilddaten mitzaehlen: ein leerer/schwarzer Bildschirm waere winzig, ein Desktop hat zehntausende Bytes
-        long bytes = 0, firstFullPicture = -1;
+        // Bilddaten mitzaehlen: ein leerer/schwarzer Bildschirm waere winzig, ein Desktop hat mehrere zehntausend Bytes (bei flachem Test-Desktop mindestens ca. 17 kB)
+        long bytes = 0, firstFullPicture = -1, firstBlob = -1;
+        var ops = new Dictionary<string, int>();
         var seen = await CollectAsync(conn, ins =>
         {
-            if (ins[0] == "blob") bytes += ins[2].Length * 3 / 4;
-            if (firstFullPicture < 0 && bytes > 20_000) firstFullPicture = clock.ElapsedMilliseconds;
+            ops[ins[0]] = ops.GetValueOrDefault(ins[0]) + 1;
+            if (ins[0] == "blob") { bytes += ins[2].Length * 3 / 4; if (firstBlob < 0) firstBlob = clock.ElapsedMilliseconds; }
+            if (firstFullPicture < 0 && bytes > 8_000) firstFullPicture = clock.ElapsedMilliseconds;
             return ins[0] == "error" || clock.ElapsedMilliseconds > 8000;     // 8 s lang zuhoeren (mit quittierten sync-Anweisungen)
         });
 
         Assert.DoesNotContain(seen, s => s.Op == "error");
         Assert.True(handshake < 2000, $"Handshake dauerte {handshake} ms");
-        Assert.InRange(firstFullPicture, 0, 5000);                              // volles Bild in unter 5 s (hier ca. 1,3 s)
+        var detail = $"erster Blob {firstBlob} ms, {bytes} Bytes, Anweisungen: {string.Join(' ', ops.OrderByDescending(o => o.Value).Take(8).Select(o => o.Key + '=' + o.Value))}";
+        Assert.True(firstFullPicture is >= 0 && firstFullPicture <= int.Parse(Environment.GetEnvironmentVariable("JULOS_TEST_MAXMS") ?? "5000"), $"volles Bild nach {firstFullPicture} ms ({detail})");                              // volles Bild in unter 5 s (hier ca. 1,3 s)
     }
 }

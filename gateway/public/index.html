@@ -33,10 +33,16 @@
 
     <!-- Fernsteuerung -->
     <section id="remote" hidden>
+      <!-- Programmleiste oben: Modus, offene Fenster, Programm starten -->
+      <header id="topbar" hidden>
+        <div id="rowWin"></div>
+        <div id="winSheet" hidden role="menu"></div>
+      </header>
       <div id="stage">
         <div id="display"></div>
         <div id="touchLayer"></div>
         <div id="toast" aria-live="polite"></div>
+        <div id="zoomPop" aria-hidden="true"></div>
         <div id="overlay" hidden>
           <div class="box">
             <div id="spinner" class="spinner" hidden aria-hidden="true"></div>
@@ -64,20 +70,7 @@
           <div class="mi" role="menuitem" data-act="logout"><span class="mic" data-ic="logout"></span><span class="mt">Abmelden</span></div>
         </div>
 
-        <div id="winSheet" hidden role="menu"></div>
-        <div id="rowWin" hidden></div>
         <div id="rowsTop"></div>
-        <div id="handle">
-          <div id="kbBtn" class="hb" role="button" aria-label="Tastatur" data-ic="keyboard"></div>
-          <div id="zoomOutBtn" class="hb" role="button" aria-label="Kleiner" data-ic="zoom_out"></div>
-          <div id="zoomInBtn" class="hb" role="button" aria-label="Größer" data-ic="zoom_in"></div>
-          <span id="zoomInfo">80 %</span>
-          <div id="fsBtn" class="hb" role="button" aria-label="Vollbild" data-ic="fullscreen"></div>
-          <div id="photoBtn" class="hb" role="button" aria-label="Foto einfügen" data-ic="image"></div>
-          <div id="clipBtn" class="hb" role="button" aria-label="Text senden und Zwischenablage" data-ic="paste"></div>
-          <div id="menuBtn" class="hb" role="button" aria-label="Menü" data-ic="more"></div>
-          <div id="keysToggle" class="hb wide" role="button" aria-label="Sondertasten ein- und ausklappen" data-ic="expand_more"></div>
-        </div>
         <div id="rowsBottom"></div>
       </nav>
     </section>
@@ -108,7 +101,7 @@
           <option value="chord">Kombination (z. B. ctrl+shift+t)</option>
           <option value="mod">Umschalter (hält Strg/Alt/Shift/Win)</option>
           <option value="text">Text eintippen</option>
-          <option value="action">Aktion (password oder photo)</option>
+          <option value="action">Aktion (zum Beispiel zoomin, keyboard)</option>
         </select>
       </label>
       <label id="keyValueWrap"><span id="keyValueLabel">Tasten</span>

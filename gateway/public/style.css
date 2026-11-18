@@ -176,3 +176,22 @@ dialog[open]::backdrop { animation: fade .22s ease-out; }
 .appitem img { width: 32px; height: 32px; }
 .appitem:active { background: color-mix(in srgb, var(--md-primary) 14%, transparent); }
 input[type=search] { background: var(--md-surface-high); color: var(--text); border: 1px solid transparent; border-bottom: 2px solid var(--md-outline); border-radius: 12px 12px 4px 4px; padding: 12px; font: inherit; width: 100%; }
+
+
+/* ===== Programmleiste oben, Leiste unten als eine Zeile, Zoom-Anzeige ===== */
+#topbar { position: relative; z-index: 11; background: var(--panel); border-radius: 0 0 22px 22px; box-shadow: 0 2px 10px rgba(0,0,0,.35); }
+#topbar #rowWin { padding: 6px 8px; }
+#topbar #winSheet { bottom: auto; top: calc(100% + 6px); z-index: 40; }
+#zoomPop { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(.9); z-index: 21; pointer-events: none; opacity: 0; transition: opacity .18s, transform .18s;
+  background: color-mix(in srgb, var(--md-surface) 82%, transparent); color: var(--md-on-surface); padding: 12px 22px; border-radius: 999px; font-size: 1.4rem; font-weight: 500; box-shadow: 0 2px 12px rgba(0,0,0,.4); }
+#zoomPop.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+.row.bar { padding-top: 6px; padding-bottom: 6px; }
+.row.bar .rk { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; align-items: center; }
+.row.bar .rk::-webkit-scrollbar { display: none; }
+.row.bar.editing .rk { flex-wrap: wrap; }
+.row .k.ic { min-width: var(--kh); padding: 0 9px; }
+.row .k.on { background: var(--md-primary-container); color: var(--md-on-primary-container); }
+.row.bar .rk { gap: 5px; }
+.row.bar:not(.editing) .k { flex: 1 0 auto; min-width: 34px; padding: 0 6px; }
+.row.bar .k.ic { min-width: 34px; padding: 0 6px; }
+#rowsTop { padding-top: 6px; }

@@ -89,7 +89,7 @@ Guacamole cannot transfer image clipboards over RDP, hence this path.
 
 ## Roadmap
 
-Windows agent, drag and drop of files into a desktop web version, per-window profiles, multi-host.
+Now: the Remote module (see [docs/SCOPE.md](docs/SCOPE.md)). Next: a module core, then Docker, Caddy and DDNS modules, files, Windows agent, multi-host. The goal is one interface for everything you run.
 
 ## License
 

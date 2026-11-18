@@ -1,9 +1,11 @@
 # JulOS vision
 
-JulOS is not a remote desktop client. It is a **personal, self-hosted workspace layer**: one place, in your pocket or in any
-browser, where all your computers, programs and files feel like a single device that you own.
+JulOS is not a remote desktop client. It is the **one interface where everything of mine comes together**: my computers,
+programs and files, and the services I run at home: Docker, the reverse proxy (Caddy), dynamic DNS, and more. One place, in
+your pocket or in any browser, that feels like a single device that you own.
 
-The first release is the smallest useful piece: your own Linux desktop on your phone, with the keyboard you already use.
+Remote access is the first module, because it is the one that makes everything else reachable from a phone. Docker, Caddy,
+DDNS and the rest follow as further modules on the same core.
 Everything below is the direction, not a promise of dates. What is actually being built now is defined in [SCOPE.md](SCOPE.md),
 which wins whenever the two disagree.
 
@@ -33,10 +35,11 @@ a file browser for the host, a clipboard that carries images and file lists in b
 The Android keyboard as it is (suggestions, autocorrect, images), extra keys you define yourself, gestures, touchpad mode,
 and later hardware keyboards and mice, stylus, and a clean fullscreen mode.
 
-### 5. Your workspace, not just your screen
-Things you do all day, close at hand: notifications from the host, quick actions (run a script, open a project),
-status tiles, and links to the tools you already run (for example coding agents, home automation, dashboards) as adapters,
-not as hard dependencies.
+### 5. The hub for everything I run
+The same app shows and controls the rest of my setup as modules: Docker (containers, stacks, logs), Caddy (sites, certificates),
+DDNS (current address, updates), plus things like Proxmox, files and monitoring. Each module talks to the existing tool through
+its API and leaves that tool in charge of its domain. Notifications from hosts and quick actions (run a script, restart a
+container, open a project) live here too. Modules are adapters, not hard dependencies of the core.
 
 ### 6. One look
 Material You colours from your phone, installable PWA, fast reconnect, works offline as a shell.
@@ -45,12 +48,12 @@ Material You colours from your phone, installable PWA, fast reconnect, works off
 
 | Step | Content |
 | --- | --- |
-| 0.x (now) | Linux desktop on the phone: keyboard, extra keys, window bar, photo paste, PWA, mTLS/proxy mode, Docker image |
-| 1 | Reliable daily use: HTTPS rollout, polish from real phone testing, per-program profiles, settings sync |
-| 2 | Files: upload/download, drag and drop in a desktop web app, clipboard with files, Android share target |
-| 3 | Windows agent (outbound connection, one-click install), host picker, multi-host |
-| 4 | Adapters and quick actions, notifications from hosts, pinned apps as home screen icons |
-| 5 | Optional extras: macOS agent, audio, multi-user for a household |
+| 1 (now) | Remote module: Linux desktop on the phone, keyboard, extra keys, program bar, photo paste, PWA, mTLS/proxy mode, Docker image |
+| 2 | Core for modules: one shell with module list, login and settings, hosts and modules registered in one place |
+| 3 | Docker and Caddy modules (read first, then act), DDNS status |
+| 4 | Files: upload/download, drag and drop in a desktop web app, clipboard with files, Android share target |
+| 5 | Windows agent (outbound connection), multi-host, notifications, quick actions |
+| 6 | Optional extras: Proxmox, monitoring, macOS agent, audio, multi-user for a household |
 
 ## Non-goals
 

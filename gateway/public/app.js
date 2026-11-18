@@ -55,15 +55,14 @@ const el = {
   login: $('#login'), loginForm: $('#loginForm'), user: $('#user'), pw: $('#pw'), loginMsg: $('#loginMsg'), connectBtn: $('#connectBtn'),
   remote: $('#remote'), stage: $('#stage'), display: $('#display'), touch: $('#touchLayer'), toast: $('#toast'),
   overlay: $('#overlay'), overlayMsg: $('#overlayMsg'), reconnectBtn: $('#reconnectBtn'), toLoginBtn: $('#toLoginBtn'),
-  dock: $('#dock'), kbBtn: $('#kbBtn'), zoomIn: $('#zoomInBtn'), zoomOut: $('#zoomOutBtn'), zoomInfo: $('#zoomInfo'),
-  fsBtn: $('#fsBtn'), clipBtn: $('#clipBtn'), menuBtn: $('#menuBtn'), keysToggle: $('#keysToggle'), keys: $('#keys'),
+  dock: $('#dock'), topbar: $('#topbar'), zoomPop: $('#zoomPop'),
   kb: $('#kb'), kbInput: $('#kb'), kbRich: $('#kbRich'),
   menuSheet: $('#menuSheet'), menuScrim: $('#menuScrim'), spinner: $('#spinner'), imgSeedBtn: $('#imgSeedBtn'), imgSeedInput: $('#imgSeedInput'), kbModeLabel: $('#kbModeLabel'), touchModeLabel: $('#touchModeLabel'), autoKbLabel: $('#autoKbLabel'),
   clipDlg: $('#clipDlg'), sendText: $('#sendText'), remoteClip: $('#remoteClip'), typeBtn: $('#typeBtn'), pasteBtn: $('#pasteBtn'), copyBtn: $('#copyBtn'),
   keyDlg: $('#keyDlg'), keyDlgTitle: $('#keyDlgTitle'), keyLabel: $('#keyLabel'), keyType: $('#keyType'), keyValue: $('#keyValue'),
   keyValueLabel: $('#keyValueLabel'), keyHint: $('#keyHint'), keyLeft: $('#keyLeft'), keyRight: $('#keyRight'),
   keySave: $('#keySave'), keyDelete: $('#keyDelete'),
-  photoBtn: $('#photoBtn'), photoInput: $('#photoInput'), autoPasteLabel: $('#autoPasteLabel'),
+  photoInput: $('#photoInput'), autoPasteLabel: $('#autoPasteLabel'),
   themeDlg: $('#themeDlg'), swatches: $('#swatches'), seedInput: $('#seedInput'), schemeSel: $('#schemeSel'),
   pwDlg: $('#pwDlg'), pwUser: $('#pwUser'), pwPass: $('#pwPass'), pwTypePass: $('#pwTypePass'), pwTypeBoth: $('#pwTypeBoth'),
 };
@@ -78,7 +77,7 @@ const S = {
   touchMode: store.get('touchMode', 'direct'),// 'direct' (Tippen = Klick an der Stelle) | 'pad' (Touchpad)
   lastSent: { w: 0, h: 0 },
   retry: 0, retryTimer: null, resizeTimer: null, toastTimer: null,
-  keysOpen: store.get('keysOpen', true), editing: false,
+  expanded: store.get('expanded', false), actOn: {}, zoomTimer: null, editing: false,
   autoKb: store.get('autoKb', true),   // Tastatur oeffnet sich beim Tippen auf ein Textfeld (Erkennung am Mauszeiger)
   debug: store.get('debug', true),     // sendet nur Messwerte (Groessen, Ereignisarten), nie getippten Text
   cursor: { ibeam: false },
@@ -126,7 +125,7 @@ function layoutViewport() {
     kbOpen = open; root.classList.toggle('kb-open', open);
     // Tastatur per Zurueck-Geste geschlossen, Feld hat aber noch den Fokus: Fokus loesen, damit der Zustand stimmt
     if (!open && kbFocused()) el.kb.blur();
-    el.kbBtn.classList.toggle('on', open);
+    setActOn('keyboard', open);
     dbg('kbvisible', { open, vvh: Math.round(h), base: Math.round(baseH), inner: window.innerHeight });
   }
 }
@@ -206,31 +205,34 @@ const typeText = (str) => enqueue(async () => {
  *  Leisten-Zeilen: Tasten (Schnell, Mehr), je einklappbar und bearbeitbar; dazu die Fensterleiste
  * ===================================================================== */
 const ITEM = (label, type, value) => ({ label, type, value });
+const ACT = (icon, action) => ITEM(':' + icon, 'action', action);
 const DEFAULT_ROWS = [
   { id: 'more', title: 'Mehr', open: false, items: [
     ITEM('⇧Tab', 'chord', 'shift+tab'), ITEM('Bild↑', 'chord', 'pageup'), ITEM('Bild↓', 'chord', 'pagedown'), ITEM('Pos1', 'chord', 'home'),
     ITEM('Ende', 'chord', 'end'), ITEM('Entf', 'chord', 'delete'), ITEM('Strg+C', 'chord', 'ctrl+c'), ITEM('Strg+V', 'chord', 'ctrl+v'),
     ITEM('Strg+X', 'chord', 'ctrl+x'), ITEM('Strg+A', 'chord', 'ctrl+a'), ITEM('Strg+Z', 'chord', 'ctrl+z'), ITEM('Strg+F', 'chord', 'ctrl+f'),
-    ITEM('Alt+Tab', 'chord', 'alt+tab'), ITEM('Strg+⇧+T', 'chord', 'ctrl+shift+t'), ITEM(':key', 'action', 'password') ] },
+    ITEM('Alt+Tab', 'chord', 'alt+tab'), ITEM('Strg+⇧+T', 'chord', 'ctrl+shift+t'),
+    ACT('image', 'photo'), ACT('paste', 'clip'), ACT('key', 'password') ] },
   { id: 'quick', title: 'Tasten', open: true, items: [
-    ITEM('Esc', 'chord', 'esc'), ITEM('Tab', 'chord', 'tab'), ITEM('Strg', 'mod', 'ctrl'), ITEM('Alt', 'mod', 'alt'), ITEM('Shift', 'mod', 'shift'),
+    ITEM('Alt', 'mod', 'alt'), ITEM('Shift', 'mod', 'shift'),
     ITEM('←', 'chord', 'left'), ITEM('↑', 'chord', 'up'), ITEM('↓', 'chord', 'down'), ITEM('→', 'chord', 'right'),
     ITEM(':ret', 'chord', 'enter'), ITEM(':backspace', 'chord', 'backspace') ] },
+  // die Leiste: immer sichtbar, eine Zeile, ganz unten
+  { id: 'bar', title: 'Leiste', fixed: true, items: [
+    ITEM('Esc', 'chord', 'esc'), ITEM('Strg', 'mod', 'ctrl'), ITEM('Tab', 'chord', 'tab'),
+    ACT('zoom_out', 'zoomout'), ACT('zoom_in', 'zoomin'), ACT('fullscreen', 'fullscreen'), ACT('more', 'menu'),
+    ACT('expand_less', 'expand'), ACT('keyboard', 'keyboard') ] },
 ];
 const clone = (o) => JSON.parse(JSON.stringify(o));
 function loadRows() {
-  const saved = store.get('rows2', null);
-  if (Array.isArray(saved) && saved.length) return saved;
-  const rows = clone(DEFAULT_ROWS);
-  const old = store.get('keys', null);                       // alte, flache Liste in die Zeile "Mehr" uebernehmen
-  if (Array.isArray(old) && old.length) rows.find((r) => r.id === 'more').items = old;
-  return rows;
+  const saved = store.get('rows3', null);
+  if (Array.isArray(saved) && saved.some((r) => r.fixed)) return saved;
+  return clone(DEFAULT_ROWS);
 }
 let rows = loadRows();
 let suppressClick = false;
 let editRow = 0, editIndex = -1;      // editIndex -1 = neue Taste
-const saveRows = () => store.set('rows2', rows);
-const anyRowOpen = () => rows.some((r) => r.open);
+const saveRows = () => store.set('rows3', rows);
 
 function refreshModButtons() {
   document.querySelectorAll('#rowsTop .k[data-mod], #rowsBottom .k[data-mod]').forEach((b) => {
@@ -250,7 +252,9 @@ async function activateKey(def) {
       await typeText(def.value || '');
     } else if (def.type === 'action') {
       const v = String(def.value).toLowerCase();
-      if (v === 'password') openPwDialog(); else if (v === 'photo') pickPhoto(); else throw new Error('Unbekannte Aktion');
+      const f = ACTIONS[v];
+      if (!f) throw new Error('Unbekannte Aktion');
+      f();
     } else {
       await sendChord(parseChord(def.value));
     }
@@ -260,7 +264,15 @@ async function activateKey(def) {
 function keyEl(def, r, i) {
   const b = document.createElement('div');
   b.setAttribute('role', 'button'); b.className = 'k' + (S.editing ? ' edit' : '');
-  if (String(def.label).startsWith(':') && ICONS[def.label.slice(1)]) b.innerHTML = ico(def.label.slice(1)); else b.textContent = def.label;
+  const isIcon = String(def.label).startsWith(':');
+  let icon = isIcon ? def.label.slice(1) : '';
+  if (def.type === 'action') {
+    const act = String(def.value).toLowerCase();
+    b.dataset.act = act;
+    if (act === 'expand') icon = S.expanded ? 'expand_more' : 'expand_less';   // Pfeil zeigt, was der naechste Tipp tut
+    if (S.actOn[act]) b.classList.add('on');
+  }
+  if (isIcon && ICONS[icon]) { b.innerHTML = ico(icon); b.classList.add('ic'); } else b.textContent = def.label;
   b.dataset.r = String(r); b.dataset.i = String(i);
   if (def.type === 'mod') b.dataset.mod = MODNAME[String(def.value).toLowerCase()] || '';
   b.addEventListener('click', () => {
@@ -275,11 +287,10 @@ function renderRows() {
   const top = $('#rowsTop'), bottom = $('#rowsBottom');
   top.replaceChildren(); bottom.replaceChildren();
   rows.forEach((row, r) => {
-    const open = S.editing ? true : row.open;
-    const wrap = document.createElement('div'); wrap.className = 'row' + (open ? '' : ' collapsed') + (S.editing ? ' editing' : '');
-    const rh = document.createElement('div'); rh.className = 'rh'; rh.setAttribute('role', 'button');
-    rh.innerHTML = ico(open ? 'expand_more' : 'chevron_right') + `<span>${row.title}</span>`;
-    rh.addEventListener('click', () => { if (S.editing) return; row.open = !row.open; saveRows(); renderRows(); applyKeysOpen(); });
+    const fixed = !!row.fixed;
+    const open = S.editing || fixed ? true : row.open;
+    const wrap = document.createElement('div');
+    wrap.className = 'row' + (open ? '' : ' collapsed') + (fixed ? ' bar' : '') + (S.editing ? ' editing' : '');
     const rk = document.createElement('div'); rk.className = 'rk'; rk.dataset.r = String(r);
     row.items.forEach((def, i) => rk.appendChild(keyEl(def, r, i)));
     if (S.editing) {
@@ -287,13 +298,19 @@ function renderRows() {
       add.addEventListener('click', () => openKeyEditor(r, -1)); rk.appendChild(add);
       if (r === rows.length - 1) {
         const done = document.createElement('div'); done.setAttribute('role', 'button'); done.className = 'k'; done.textContent = '✓ Fertig';
-        done.addEventListener('click', () => { S.editing = false; renderRows(); applyKeysOpen(); toast('Tasten gespeichert'); }); rk.appendChild(done);
+        done.addEventListener('click', () => { S.editing = false; renderRows(); toast('Tasten gespeichert'); }); rk.appendChild(done);
       }
     }
-    wrap.append(rh, rk);
-    (row.id === 'quick' ? bottom : top).appendChild(wrap);
+    if (fixed) wrap.append(rk);
+    else {
+      const rh = document.createElement('div'); rh.className = 'rh'; rh.setAttribute('role', 'button');
+      rh.innerHTML = ico(open ? 'expand_more' : 'chevron_right') + `<span>${row.title}</span>`;
+      rh.addEventListener('click', () => { if (S.editing) return; row.open = !row.open; saveRows(); renderRows(); });
+      wrap.append(rh, rk);
+    }
+    (fixed ? bottom : top).appendChild(wrap);
   });
-  refreshModButtons();
+  applyKeysOpen(); refreshModButtons();
 }
 const renderKeys = renderRows;
 
@@ -342,7 +359,7 @@ function updateKeyEditorHints() {
   const t = el.keyType.value;
   if (t === 'chord') { el.keyValueLabel.textContent = 'Tasten'; el.keyHint.textContent = 'Mit + verbinden, z. B. ctrl+shift+t, alt+f4, win+d, f5, pageup. Namen: ctrl/strg, alt, shift, win, esc, tab, enter, backspace, delete, home, end, pageup, pagedown, left/up/right/down, space, f1–f12 oder ein Zeichen.'; }
   else if (t === 'mod') { el.keyValueLabel.textContent = 'Umschalter'; el.keyHint.textContent = 'ctrl, alt, shift oder win. Erster Tipp: gilt für die nächste Taste (Rahmen). Zweiter Tipp: bleibt gedrückt (gefüllt). Dritter Tipp: aus.'; }
-  else if (t === 'action') { el.keyValueLabel.textContent = 'Aktion'; el.keyHint.textContent = 'password öffnet das Passwortfeld für deinen Passwortmanager, photo öffnet die Fotoauswahl.'; }
+  else if (t === 'action') { el.keyValueLabel.textContent = 'Aktion'; el.keyHint.textContent = 'Mögliche Aktionen: ' + Object.keys(ACTIONS).join(', ') + '. Ein Symbol als Beschriftung geht mit Doppelpunkt, zum Beispiel :image, :keyboard, :zoom_in.'; }
   else { el.keyValueLabel.textContent = 'Text'; el.keyHint.textContent = 'Dieser Text wird bei Tipp wie von Hand eingetippt (zum Beispiel ein Befehl oder /clear).'; }
 }
 function openKeyEditor(r, i) {
@@ -361,7 +378,7 @@ el.keySave.addEventListener('click', () => {
   try {
     if (def.type === 'chord') parseChord(def.value);
     if (def.type === 'mod' && !MODNAME[def.value.toLowerCase()]) throw new Error('Umschalter: ctrl, alt, shift oder win');
-    if (def.type === 'action' && !['password', 'photo'].includes(def.value.toLowerCase())) throw new Error('Aktion: password oder photo');
+    if (def.type === 'action' && !ACTIONS[def.value.toLowerCase()]) throw new Error('Aktion: ' + Object.keys(ACTIONS).join(', '));
   } catch (e) { toast(e.message, 2600); return; }
   if (editIndex >= 0) rows[editRow].items[editIndex] = def; else rows[editRow].items.push(def);
   saveRows(); el.keyDlg.close(); renderRows();
@@ -375,14 +392,32 @@ const moveKey = (d) => {
 el.keyLeft.addEventListener('click', () => moveKey(-1));
 el.keyRight.addEventListener('click', () => moveKey(1));
 
-/* ----- alle Zeilen ein-/ausklappen (Pfeil in der Werkzeugzeile) ----- */
-function applyKeysOpen() { el.keysToggle.innerHTML = ico(anyRowOpen() ? 'expand_more' : 'expand_less'); }
-el.keysToggle.addEventListener('click', () => {
+/* ----- Aufklappen: die Leiste bleibt, darueber erscheinen die weiteren Zeilen ----- */
+function applyKeysOpen() { $('#rowsTop').hidden = !(S.expanded || S.editing); }
+function toggleExpanded() {
   if (S.editing) return;
-  if (anyRowOpen()) rows.forEach((r) => { r.open = false; });
-  else rows.forEach((r) => { r.open = DEFAULT_ROWS.find((d) => d.id === r.id)?.open ?? true; });
-  saveRows(); renderRows(); applyKeysOpen();
-});
+  S.expanded = !S.expanded; store.set('expanded', S.expanded); renderRows();
+}
+function setActOn(name, on) {
+  S.actOn[name] = on;
+  document.querySelectorAll(`.k[data-act="${name}"]`).forEach((b) => b.classList.toggle('on', on));
+}
+function toggleFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  else document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => toast('Vollbild nicht möglich'));
+}
+/* Aktionen, die eine Taste in der Leiste ausloesen kann (frei zuordenbar im Tasten-Editor) */
+const ACTIONS = {
+  keyboard: () => { if (kbOpen) el.kb.blur(); else { el.kb.blur(); el.kb.focus(); } },
+  zoomin: () => { setK(S.k / 1.12); rememberProfile(); },
+  zoomout: () => { setK(S.k * 1.12); rememberProfile(); },
+  fullscreen: toggleFullscreen,
+  menu: () => (el.menuSheet.hidden ? openMenu() : closeMenu()),
+  expand: toggleExpanded,
+  photo: () => pickPhoto(),
+  clip: () => el.clipDlg.showModal(),
+  password: () => openPwDialog(),
+};
 
 /* Tippen auf Dock-Knoepfe darf den Fokus (und damit die Tastatur) nicht wegnehmen */
 el.dock.addEventListener('mousedown', (e) => { if (e.target.closest('.hb, .k, .chip, .rh, button')) e.preventDefault(); });
@@ -431,8 +466,8 @@ function rememberProfile() {                               // Zoom von Hand: fue
 }
 function renderWindows() {
   const row = $('#rowWin');
-  if (!W.available) { row.hidden = true; return; }
-  row.hidden = false; row.replaceChildren();
+  if (!W.available) { el.topbar.hidden = true; return; }
+  el.topbar.hidden = false; row.replaceChildren();
   const mode = document.createElement('div'); mode.className = 'chip mode'; mode.setAttribute('role', 'button');
   mode.innerHTML = ico(W.mode === 'apps' ? 'apps' : 'desktop') + `<span>${W.mode === 'apps' ? 'Apps' : 'Desktop'}</span>`;
   mode.addEventListener('click', toggleMode); row.appendChild(mode);
@@ -521,21 +556,21 @@ function scheduleSize() { clearTimeout(S.resizeTimer); S.resizeTimer = setTimeou
 new ResizeObserver(() => { fitDisplay(); scheduleSize(); }).observe(el.stage);
 
 const zoomPercent = () => Math.round(100 / S.k);
+function showZoomPop() {                                   // Zoomstufe nur kurz einblenden
+  el.zoomPop.textContent = zoomPercent() + ' %'; el.zoomPop.classList.add('show');
+  clearTimeout(S.zoomTimer); S.zoomTimer = setTimeout(() => el.zoomPop.classList.remove('show'), 900);
+}
 function setK(k, announce = true) {
   S.k = clamp(k, 0.35, 1.8); store.set('k', S.k);
-  el.zoomInfo.textContent = zoomPercent() + ' %';
-  if (announce) toast('Anzeige ' + zoomPercent() + ' %');
+  if (announce) showZoomPop();
   scheduleSize();
 }
-el.zoomIn.addEventListener('click', () => { setK(S.k / 1.12); rememberProfile(); });
-el.zoomOut.addEventListener('click', () => { setK(S.k * 1.12); rememberProfile(); });
-el.zoomInfo.textContent = zoomPercent() + ' %';
 
 /* =====================================================================
  *  Verbindung
  * ===================================================================== */
 function teardown() {
-  clearTimeout(S.retryTimer); stopWindowBar(); $('#rowWin').hidden = true;
+  clearTimeout(S.retryTimer); stopWindowBar(); el.topbar.hidden = true;
   try { S.client && S.client.disconnect(); } catch { /* egal */ }
   S.client = null; S.tunnel = null; S.display = null; S.mouse = null; S.connected = false;
   el.display.replaceChildren();
@@ -591,7 +626,7 @@ async function connect() {
   client.onstatechange = (st) => {
     if (S.client !== client) return;
     if (st === 3) { // verbunden
-      S.connected = true; S.everConnected = true; S.retry = 0; S.connectedAt = Date.now(); startWindowBar(); el.overlay.hidden = true; el.spinner.hidden = true; el.connectBtn.classList.remove('busy'); fitDisplay(); pushSize(true);
+      S.connected = true; S.everConnected = true; S.retry = 0; S.connectedAt = Date.now(); startWindowBar(); el.connectBtn.classList.remove('busy'); fitDisplay(); pushSize(true); waitForFrame(client);
       setTimeout(() => { if (S.client === client) S.firstLogin = false; }, 12000);
     } else if (st === 5) { // getrennt
       S.connected = false;
@@ -621,6 +656,40 @@ async function connect() {
 
   setupMouse(client, display);
   client.connect('token=' + encodeURIComponent(token));
+}
+
+/* Nach dem Verbinden bleibt die Ladeanzeige stehen, bis wirklich ein Bild da ist (sonst ist alles schwarz).
+   Kommt keins, fordert eine kleine Groessenaenderung vom Server ein neues Vollbild an. */
+function nudgeSize() {
+  if (!S.client || !S.connected) return;
+  const { w, h } = computeRemote();
+  S.lastSent = { w, h: h - 2 }; S.client.sendSize(w, h - 2);
+  setTimeout(() => { if (S.client && S.connected) { S.lastSent = { w, h }; S.client.sendSize(w, h); } }, 350);
+}
+function waitForFrame(client) {
+  const started = Date.now();
+  let nudged = false;
+  showBusy('Bild wird geladen …');
+  const probe = document.createElement('canvas'); probe.width = probe.height = 8;
+  const pc = probe.getContext('2d', { willReadFrequently: true });
+  const hasContent = () => {
+    try {
+      const cv = S.display.getDefaultLayer().getCanvas();
+      if (!cv.width || !cv.height) return false;
+      pc.drawImage(cv, 0, 0, 8, 8);
+      const d = pc.getImageData(0, 0, 8, 8).data;
+      for (let i = 0; i < d.length; i += 4) if (d[i] > 10 || d[i + 1] > 10 || d[i + 2] > 10) return true;
+      return false;
+    } catch { return true; }                                // Pruefung nicht moeglich: nicht blockieren
+  };
+  const tick = () => {
+    if (S.client !== client || !S.connected) return;
+    const age = Date.now() - started;
+    if (hasContent() || age > 5000) { dbg('firstframe', { ms: age, nudged }); el.overlay.hidden = true; el.spinner.hidden = true; return; }
+    if (!nudged && age > 1200) { nudged = true; nudgeSize(); }
+    setTimeout(tick, 250);
+  };
+  tick();
 }
 
 function scheduleReconnect() {
@@ -784,7 +853,7 @@ async function endTouch(e) {
     if (!G.decided && !G.moved && dur < 350) { // Zwei-Finger-Tipp = Rechtsklick
       const q = S.touchMode === 'pad' ? padPoint() : remoteXY(G.midLast.x, G.midLast.y); await clickAt(q.x, q.y, 'right');
     } else if (G.decided === 'pinch' && Math.abs(G.newK - G.k0) > 0.01) {
-      setK(G.newK, false); rememberProfile();
+      setK(G.newK, false); showZoomPop(); rememberProfile();
     }
     G.mode = 'idle';
   } else if (G.pts.size === 0) { G.mode = 'idle'; }
@@ -875,8 +944,8 @@ function wireKb(node) {
   node.addEventListener('drop', (e) => { if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) { e.preventDefault(); handleKbFiles(e.dataTransfer.files); } });
   node.addEventListener('compositionend', () => syncDiff());
   node.addEventListener('input', () => syncDiff());
-  node.addEventListener('blur', () => { el.kbBtn.classList.toggle('on', kbOpen); if (node === el.kb) { setKbVal(''); prevValue = ''; } dbg('kbblur', {}); });
-  node.addEventListener('focus', () => { el.kbBtn.classList.add('on'); dbg('kbfocus', { mode: S.kbMode }); });
+  node.addEventListener('blur', () => { setActOn('keyboard', kbOpen); if (node === el.kb) { setKbVal(''); prevValue = ''; } dbg('kbblur', {}); });
+  node.addEventListener('focus', () => { setActOn('keyboard', true); dbg('kbfocus', { mode: S.kbMode }); });
 }
 wireKb(el.kbInput); wireKb(el.kbRich);
 // Falls die Tastatur ein Bild als <img> in das Feld legt: Bild holen, hochladen, Element entfernen
@@ -890,14 +959,12 @@ new MutationObserver((list) => {
     if (n.nodeType === 1 && el.kbRich.children.length) el.kbRich.textContent = prevValue;
   }
 }).observe(el.kbRich, { childList: true, subtree: true });
-el.kbBtn.addEventListener('click', () => { if (kbOpen) el.kb.blur(); else { el.kb.blur(); el.kb.focus(); } });
 
 /* =====================================================================
  *  Menue, Vollbild, Text senden / Zwischenablage
  * ===================================================================== */
-function openMenu() { applyKbMode(); el.menuSheet.hidden = false; el.menuScrim.hidden = false; el.menuBtn.classList.add('on'); }
-function closeMenu() { el.menuSheet.hidden = true; el.menuScrim.hidden = true; el.menuBtn.classList.toggle('on', false); }
-el.menuBtn.addEventListener('click', () => (el.menuSheet.hidden ? openMenu() : closeMenu()));
+function openMenu() { applyKbMode(); el.menuSheet.hidden = false; el.menuScrim.hidden = false; setActOn('menu', true); }
+function closeMenu() { el.menuSheet.hidden = true; el.menuScrim.hidden = true; setActOn('menu', false); }
 el.menuScrim.addEventListener('click', closeMenu);
 // weder Fenster noch Hintergrund duerfen den Fokus nehmen: die Tastatur bleibt offen
 el.menuSheet.addEventListener('mousedown', (e) => e.preventDefault());
@@ -923,12 +990,6 @@ el.menuSheet.addEventListener('click', (e) => {
 });
 document.querySelectorAll('dialog [data-act="close"]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
 
-el.fsBtn.addEventListener('click', () => {
-  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-  else document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => toast('Vollbild nicht möglich'));
-});
-
-el.clipBtn.addEventListener('click', () => el.clipDlg.showModal());
 el.typeBtn.addEventListener('click', async () => { const t = el.sendText.value; el.clipDlg.close(); if (t) { await sleep(150); await typeText(t); toast('Eingetippt'); } });
 el.pasteBtn.addEventListener('click', () => {
   if (!S.client || !el.sendText.value) return;
@@ -1038,7 +1099,6 @@ el.schemeSel.addEventListener('change', () => { S.scheme = el.schemeSel.value; s
  *  Foto einfuegen: hochladen, Helfer legt es in die Zwischenablage der VM-Sitzung, dann Strg+V
  * ===================================================================== */
 function pickPhoto() { el.photoInput.value = ''; el.photoInput.click(); }
-el.photoBtn.addEventListener('click', pickPhoto);
 el.photoInput.addEventListener('change', async () => {
   const f = el.photoInput.files && el.photoInput.files[0];
   if (!f) return;

@@ -89,7 +89,7 @@ Guacamole kann Bild-Zwischenablagen nicht ueber RDP senden, deshalb dieser Weg.
 
 ## Ausblick
 
-Windows-Agent, Dateien per Drag and Drop in eine Desktop-Web-Version, Profile je Fenster, mehrere Hosts.
+Jetzt: das Remote-Modul (siehe [docs/SCOPE.md](docs/SCOPE.md)). Danach: ein Modul-Kern, dann Docker-, Caddy- und DDNS-Module, Dateien, Windows-Agent, mehrere Hosts. Ziel ist eine Oberflaeche fuer alles, was du betreibst.
 
 ## Lizenz
 

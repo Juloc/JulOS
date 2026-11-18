@@ -1,0 +1,15 @@
+using JulOS.Integrations.Guacamole;
+using Microsoft.Extensions.Hosting;
+
+namespace JulOS.Workers;
+
+/// <summary>Vergisst abgelaufene Verbindungs-Tickets (sie enthalten das getippte Passwort und sollen nicht laenger als 30 Sekunden im Speicher liegen).</summary>
+public sealed class TicketSweepWorker(GuacTickets tickets) : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+        try { while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false)) tickets.Sweep(); }
+        catch (OperationCanceledException) { /* Ende */ }
+    }
+}

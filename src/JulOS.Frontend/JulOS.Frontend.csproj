@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\JulOS.Backend\JulOS.Backend.csproj" />
+    <ProjectReference Include="..\JulOS.Integrations\JulOS.Integrations.csproj" />
     <ProjectReference Include="..\JulOS.Workers\JulOS.Workers.csproj" />
   </ItemGroup>
 </Project>

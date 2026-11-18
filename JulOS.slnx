@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/JulOS.Backend/JulOS.Backend.csproj" />
     <Project Path="src/JulOS.Frontend/JulOS.Frontend.csproj" />
+    <Project Path="src/JulOS.Integrations/JulOS.Integrations.csproj" />
     <Project Path="src/JulOS.Workers/JulOS.Workers.csproj" />
   </Folder>
   <Folder Name="/tests/">

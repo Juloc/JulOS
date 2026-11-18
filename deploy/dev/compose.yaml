@@ -21,6 +21,9 @@ services:
 
   guacd:
     image: guacamole/guacd:1.6.0
+    # nur lokal, damit die Tests (deploy/dev/test.sh) den Relay gegen ein echtes guacd pruefen koennen
+    ports:
+      - "127.0.0.1:44822:4822"
 
   julos:
     build:
@@ -44,6 +47,13 @@ services:
       USER_NAME: tester
       USER_PASSWORD: ${DEV_TARGET_PASSWORD}
       PASSWORD_ACCESS: "true"
+
+  # Wegwerf-Ziel fuer den Desktop (RDP mit xrdp und XFCE, wie die Linux-VM). Fester Test-Zugang "ubuntu" / "ubuntu";
+  # es gibt keinen veroeffentlichten Port, nur guacd im selben Netz erreicht es (Host "rdp-target", Port 3389).
+  rdp-target:
+    image: scottyhardy/docker-remote-desktop:latest
+    hostname: rdp-target
+    shm_size: 1g
 
 volumes:
   julos-dev-postgres:

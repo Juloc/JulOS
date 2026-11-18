@@ -27,8 +27,8 @@ host, backend library, integrations, workers and tests, the folders around them)
 JulOS.slnx  global.json  Directory.Build.props  Directory.Packages.props  .editorconfig
 src/
   JulOS.Frontend/       ASP.NET host: static client (PWA), HTTP API, WebSocket endpoint, security headers
-  JulOS.Backend/        class library: Services, Logic, Data (PostgreSQL access), accounts, sessions, tickets
-  JulOS.Integrations/   outside communication: the guacd relay, the agent client (Unix socket)
+  JulOS.Backend/        class library: Services, Logic, Data (PostgreSQL access), accounts, sessions, connections
+  JulOS.Integrations/   outside communication: the guacd relay with its one-time tickets, the agent client (Unix socket)
   JulOS.Workers/        background jobs: purge expired sessions and tickets, upload clean-up
 tests/
   JulOS.Backend.Tests/  unit and integration tests (including a real guacd and PostgreSQL in containers)
@@ -64,7 +64,8 @@ Target for runtime NuGet packages: **two** (Npgsql and the Argon2 library). Test
 - **Session:** 256-bit random value in a cookie (`__Host-` prefix, `Secure`, `HttpOnly`, `SameSite=Strict`), stored only as SHA-256 in PostgreSQL. Idle timeout 30 days, absolute 180 days, rotated every 12 hours with a short grace for parallel requests. Survives server and browser restarts.
 - **Lockout:** per address and per account with growing delay.
 - **Every API and the WebSocket need a session.** State-changing requests also need a custom header and a matching `Origin`. Static files and the manifest are public so the app can be installed.
-- **Connection ticket instead of an encrypted token:** the browser asks for a one-time ticket (random 128 bit, 30 s, kept in memory with the connection settings) and opens the WebSocket with it. The desktop password is typed per connection, held in memory for at most 30 s, never logged or stored.
+- **Connection ticket instead of an encrypted token:** the browser asks for a one-time ticket (random 128 bit, 30 s, kept in memory with the connection settings) and opens the WebSocket with it. The desktop password is typed per connection, held in memory for at most 30 s, never logged or stored. The ticket only works for the user who asked for it, and the WebSocket also checks the `Origin`.
+- **Open connections follow the session:** every minute the relay checks that the session (by its stable id, which survives cookie rotation) is still valid, so signing out or ending a session closes its desktop and terminals.
 - **Headers:** strict CSP, `nosniff`, `frame-ancestors 'none'`, HSTS over HTTPS, no referrer.
 - **The first account is created on the setup screen**, guarded by the one-time setup code from the server log, so only whoever can read the log can claim the instance. Setup closes after the first account. The console tool (`tools/julos-user.sh`) is the recovery path; passwords are typed in the terminal, never passed as an argument.
 
@@ -89,8 +90,8 @@ Production and the test instance differ only in ports, volumes and secrets.
 
 0. Test instance (`deploy/dev`) with throwaway SSH and RDP targets.
 1. Solution skeleton in the layout above: host, static files, headers, health, migration runner, PostgreSQL in compose.
-2. Accounts: setup screen with setup code, Argon2id, TOTP, sessions, lockout, console tool, tests (the Node version on branch `wip/node-auth` is the executable specification).
-3. Relay: ticket endpoint and WebSocket to `guacd`, tested against a real `guacd`.
+2. ~~Accounts: setup screen with setup code, Argon2id, TOTP, sessions, lockout, console tool, tests.~~ Done.
+3. ~~Relay: ticket endpoint and WebSocket to `guacd`, tested against a real `guacd`.~~ Done (`POST /api/remote/ticket`, `GET /api/remote/ws`).
 4. Agent client, upload and log endpoints.
 5. Client: setup and login screens, home with connections (Desktop and Terminal), sign out, device list.
 6. Switch the compose file over, remove the Node gateway.

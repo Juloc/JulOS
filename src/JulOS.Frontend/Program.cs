@@ -6,6 +6,8 @@ using JulOS.Backend.Services;
 using JulOS.Frontend;
 using JulOS.Frontend.Auth;
 using JulOS.Frontend.Cli;
+using JulOS.Frontend.Remote;
+using JulOS.Integrations.Guacamole;
 using JulOS.Workers;
 using Microsoft.AspNetCore.HttpOverrides;
 using Npgsql;
@@ -26,6 +28,8 @@ dataSourceBuilder.ConnectionStringBuilder.GssEncryptionMode = GssEncryptionMode.
 builder.Services.AddSingleton(dataSourceBuilder.Build());
 builder.Services.AddSingleton<Migrator>();
 builder.Services.AddSingleton<UserStore>();
+builder.Services.AddSingleton<ConnectionStore>();
+builder.Services.AddSingleton(new HostPolicy(builder.Configuration["JULOS_ALLOWED_HOSTS"]));
 builder.Services.AddSingleton<SessionStore>();
 builder.Services.AddSingleton<PasswordHasher>();
 builder.Services.AddSingleton<LoginLimiter>();
@@ -33,6 +37,12 @@ builder.Services.AddSingleton(new SetupCode(builder.Configuration["JULOS_SETUP_C
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<AuthService>();
 builder.Services.AddHostedService<SessionPurgeWorker>();
+builder.Services.AddSingleton<GuacTickets>();
+builder.Services.AddHostedService<TicketSweepWorker>();
+// guacd (Container im selben Netz), erreichbar nur fuer den Server
+var guacd = (builder.Configuration["JULOS_GUACD"] ?? "guacd:4822").Split(':');
+builder.Services.AddSingleton(new GuacdOptions(guacd[0], guacd.Length > 1 ? int.Parse(guacd[1]) : 4822));
+builder.Services.AddSingleton<GuacRelay>();
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJson.Default));
 
 // Hinter einem Proxy im eigenen Netz (zum Beispiel Caddy) kommen Client-Adresse, Protokoll und Host aus den X-Forwarded-Kopfzeilen
@@ -73,6 +83,7 @@ app.Use(async (ctx, next) =>
     await next();
 });
 
+app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.UseMiddleware<ApiGuard>();
@@ -92,6 +103,7 @@ app.MapGet("/api/health", async (NpgsqlDataSource data, CancellationToken ct) =>
     return new Health(dbOk, dbOk, version);
 });
 app.MapAuth();
+app.MapRemote();
 
 app.Run();
 return 0;

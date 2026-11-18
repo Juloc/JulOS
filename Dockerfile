@@ -4,6 +4,7 @@ WORKDIR /src
 COPY global.json Directory.Build.props Directory.Packages.props JulOS.slnx ./
 COPY src/JulOS.Backend/JulOS.Backend.csproj src/JulOS.Backend/
 COPY src/JulOS.Workers/JulOS.Workers.csproj src/JulOS.Workers/
+COPY src/JulOS.Integrations/JulOS.Integrations.csproj src/JulOS.Integrations/
 COPY src/JulOS.Frontend/JulOS.Frontend.csproj src/JulOS.Frontend/
 RUN dotnet restore src/JulOS.Frontend/JulOS.Frontend.csproj
 COPY src src

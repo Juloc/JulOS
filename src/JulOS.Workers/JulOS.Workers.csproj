@@ -2,5 +2,6 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="..\JulOS.Backend\JulOS.Backend.csproj" />
+    <ProjectReference Include="..\JulOS.Integrations\JulOS.Integrations.csproj" />
   </ItemGroup>
 </Project>

@@ -10,7 +10,7 @@ public static class SessionTokens
     public static string Hash(string token) => Convert.ToHexStringLower(SHA256.HashData(Encoding.ASCII.GetBytes(token)));
 }
 
-public sealed record SessionIdentity(Guid UserId, string UserName, string Hash, string? NewToken);
+public sealed record SessionIdentity(Guid UserId, string UserName, string Hash, string? NewToken, Guid Id);
 
 public sealed record SessionListItem(bool Current, DateTimeOffset CreatedAt, DateTimeOffset LastSeen, string? UserAgent, string? Ip);
 
@@ -44,12 +44,12 @@ public sealed class SessionStore(NpgsqlDataSource db)
         if (string.IsNullOrEmpty(token) || token.Length > 100) return null;
         var hash = SessionTokens.Hash(token);
 
-        Guid userId; string userName; bool due;
-        await using (var cmd = db.Cmd($"select s.user_id, u.name, s.rotated_at < now() - interval '{RotateHours} hours' from sessions s join users u on u.id = s.user_id where s.hash = $1 and {Valid}", hash))
+        Guid userId, id; string userName; bool due;
+        await using (var cmd = db.Cmd($"select s.user_id, u.name, s.rotated_at < now() - interval '{RotateHours} hours', s.id from sessions s join users u on u.id = s.user_id where s.hash = $1 and {Valid}", hash))
         await using (var r = await cmd.ExecuteReaderAsync(ct))
         {
             if (!await r.ReadAsync(ct)) return await ResolveByPreviousAsync(hash, ct);
-            userId = r.GetGuid(0); userName = r.GetString(1); due = r.GetBoolean(2);
+            userId = r.GetGuid(0); userName = r.GetString(1); due = r.GetBoolean(2); id = r.GetGuid(3);
         }
 
         if (rotate && due)
@@ -58,21 +58,28 @@ public sealed class SessionStore(NpgsqlDataSource db)
             await using var up = db.Cmd(
                 $"update sessions set hash = $2, prev_hash = $1, prev_until = now() + interval '{GraceMinutes} minutes', rotated_at = now(), last_seen = now() where hash = $1 and rotated_at < now() - interval '{RotateHours} hours'",
                 hash, SessionTokens.Hash(newToken));
-            if (await up.ExecuteNonQueryAsync(ct) == 1) return new SessionIdentity(userId, userName, SessionTokens.Hash(newToken), newToken);
+            if (await up.ExecuteNonQueryAsync(ct) == 1) return new SessionIdentity(userId, userName, SessionTokens.Hash(newToken), newToken, id);
             // eine gleichzeitige Anfrage war schneller: das alte Cookie gilt noch (Schonfrist), wir melden nur die Identitaet
             return await ResolveByPreviousAsync(hash, ct);
         }
 
         await using var touch = db.Cmd("update sessions set last_seen = now() where hash = $1 and last_seen < now() - interval '10 minutes'", hash);
         await touch.ExecuteNonQueryAsync(ct);
-        return new SessionIdentity(userId, userName, hash, null);
+        return new SessionIdentity(userId, userName, hash, null, id);
     }
 
     private async Task<SessionIdentity?> ResolveByPreviousAsync(string previousHash, CancellationToken ct)
     {
-        await using var cmd = db.Cmd($"select s.hash, s.user_id, u.name from sessions s join users u on u.id = s.user_id where s.prev_hash = $1 and s.prev_until > now() and {Valid}", previousHash);
+        await using var cmd = db.Cmd($"select s.hash, s.user_id, u.name, s.id from sessions s join users u on u.id = s.user_id where s.prev_hash = $1 and s.prev_until > now() and {Valid}", previousHash);
         await using var r = await cmd.ExecuteReaderAsync(ct);
-        return await r.ReadAsync(ct) ? new SessionIdentity(r.GetGuid(1), r.GetString(2), r.GetString(0), null) : null;
+        return await r.ReadAsync(ct) ? new SessionIdentity(r.GetGuid(1), r.GetString(2), r.GetString(0), null, r.GetGuid(3)) : null;
+    }
+
+    /// <summary>Ob die Sitzung (nach ihrer stabilen Kennung) noch gilt: nicht abgemeldet, nicht abgelaufen.</summary>
+    public async Task<bool> IsAliveAsync(Guid sessionId, CancellationToken ct = default)
+    {
+        await using var cmd = db.Cmd($"select 1 from sessions s join users u on u.id = s.user_id where s.id = $1 and {Valid}", sessionId);
+        return await cmd.ExecuteScalarAsync(ct) is not null;
     }
 
     public async Task DeleteAsync(string hash, CancellationToken ct = default)

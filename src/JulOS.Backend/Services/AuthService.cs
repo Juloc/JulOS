@@ -101,6 +101,8 @@ public sealed class AuthService(UserStore users, SessionStore sessions, Password
         return new(true, 200, User: user.Name, Token: token, RecoveryLeft: await users.RecoveryLeftAsync(user.Id, ct));
     }
 
+    public Task<bool> IsSessionAliveAsync(Guid sessionId, CancellationToken ct = default) => sessions.IsAliveAsync(sessionId, ct);
+
     public Task<SessionIdentity?> ResolveSessionAsync(string token, bool rotate, CancellationToken ct = default) => sessions.ResolveAsync(token, rotate, ct);
 
     public Task LogoutAsync(string hash, CancellationToken ct = default) => sessions.DeleteAsync(hash, ct);

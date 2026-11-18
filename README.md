@@ -35,6 +35,7 @@ Status: Linux (X11, XFCE tested) first. Windows is planned and the agent API is 
 - **Password managers**: the login form and a dedicated password dialog are autofill friendly (Bitwarden etc.).
 - **Touch**: tap = click, long press = right click, drag, two-finger scroll, pinch zoom (resolution adapts), touchpad mode.
 - **PWA**: installable (needs HTTPS), standalone/fullscreen, offline shell. Material You palette from a seed colour or from an image.
+- **Several sessions at once** (up to 8 per user, RDP and SSH, also two to the same target): on the phone a strip with one chip per session (state dot) and a sheet with cards to switch or close; on a wide screen each session is its own window and the keyboard goes only to the focused one. Sessions in the background keep running but pause the expensive work. See [docs/SESSIONS.md](docs/SESSIONS.md).
 - **Reconnect** with animation, keyboard auto-open on text fields, visual viewport aware layout.
 
 ## Quick start

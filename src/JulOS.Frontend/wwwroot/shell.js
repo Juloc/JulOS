@@ -252,7 +252,7 @@ $('#connDelete').addEventListener('click', async (e) => {
 });
 
 /* ---------- Verbinden ---------- */
-const asConn = (c) => ({ id: c.id, name: c.name, kind: c.kind, engine: c.engine, stored: c.hasPassword ? true : undefined });
+const asConn = (c) => ({ id: c.id, name: c.name, kind: c.kind, engine: c.engine, stored: c.hasPassword ? true : undefined, target: `${c.host}:${c.port}/${c.username}` });
 
 /** opts.extra: bewusst eine weitere Sitzung zum selben Ziel; sonst wird eine schon offene Sitzung nur nach vorn geholt. */
 function startDialog(c, opts = {}) {

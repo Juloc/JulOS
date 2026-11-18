@@ -474,6 +474,14 @@ export class RemoteSession extends Session {
     clearTimeout(this.toastTimer); this.toastTimer = setTimeout(() => this.el.toast.classList.remove('show'), ms);
   }
   hasCredentials() { return !!(this.password || this.conn.stored); }   // Passwort im Speicher des Browsers oder auf dem Server gespeichert
+  /** Gibt es eine andere offene Sitzung zum selben Desktop-Ziel (Adresse, Port, Benutzer)? Ein RDP-Ziel gibt je Benutzer nur einen Desktop her:
+      die zweite Verbindung uebernimmt ihn, die erste reisst ab. Ein Abriss mit so einer Schwestersitzung ist daher meist eine Uebernahme, kein Fehler. */
+  hasSibling() { return this.kind === 'desktop' && !!this.conn.target && Sessions.list().some((s) => s !== this && s.kind === 'desktop' && s.conn.target === this.conn.target); }
+  takenBySibling() {
+    this.fatal = true; this.connected = false; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer);
+    this.setState('taken', 'Übernommen');
+    this.showOverlay('Eine andere Sitzung zu diesem Ziel hat den Desktop übernommen: ein RDP-Ziel gibt je Benutzer nur einen Desktop her. „Neu verbinden“ holt ihn hierher zurück (dann reißt die andere ab).');
+  }
 
   /* ---------- Vertrag: einhaengen, sichtbar, Fokus, aufraeumen ---------- */
   mount(container) { container.appendChild(this.element); }
@@ -618,6 +626,7 @@ export class RemoteSession extends Session {
         clearTimeout(this.connectTimer);
         this.connected = true; this.everConnected = true; this.connectedAt = Date.now(); this.frameSeen = false;
         this.setState('connected', 'Verbunden');
+        if (this.hasSibling()) this.toast('Hinweis: Eine andere Sitzung läuft zum selben Ziel und Benutzer. Ein RDP-Ziel gibt je Benutzer nur einen Desktop her, die Sitzungen übernehmen ihn gegenseitig.', 6000);
         this.startWindowBar(); this.fitDisplay(); this.pushSize(); this.waitForFrame(client); this.applyPause();
         if (cur() === this) focusKbForHardware();
         if (isStream) setTimeout(() => { if (this.client === client && !client.drawn) this.fallBackFromStream(client); }, 10000);   // Groesse gemeldet, aber nie ein Bild: der Dekodierer geht nicht
@@ -628,6 +637,7 @@ export class RemoteSession extends Session {
         if (!client.closing && this.fallBackFromStream(client)) return;   // ohne Fehlermeldung getrennt, bevor ein Bild kam
         if (this.intentional || this.fatal) return;
         if (!this.everConnected) return; // Fehler wird von onerror gemeldet
+        if (this.hasSibling()) return this.takenBySibling();
         // sofort nach dem Anmelden getrennt = xrdp hat das Passwort abgelehnt: nicht wiederholen
         if (this.firstLogin && Date.now() - this.connectedAt < 12000) return this.requestClose('Anmeldung fehlgeschlagen. Bitte Passwort prüfen.');
         this.scheduleReconnect();
@@ -644,6 +654,7 @@ export class RemoteSession extends Session {
       if (code === 777) { this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); this.setState('taken', 'Übernommen'); return this.showOverlay(msg); }   // anderswo uebernommen: nicht zurueckholen, sonst streiten sich zwei Fenster
       if (code === 797) { this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); return this.requestClose(msg); }   // Obergrenze der Sitzungen: Meldung des Servers, Sitzung zu
       if (!this.everConnected) this.requestClose(known || 'Verbindung nicht möglich: ' + msg);
+      else if (this.hasSibling()) this.takenBySibling();
       else if (this.firstLogin && Date.now() - this.connectedAt < 12000) this.requestClose('Anmeldung fehlgeschlagen. Bitte Passwort prüfen.');
       else { this.setState('error', 'Fehler'); this.showOverlay(msg); }
     };

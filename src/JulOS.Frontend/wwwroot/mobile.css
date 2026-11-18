@@ -103,6 +103,7 @@ html.m3, html.m3 body { background: var(--m3-surface); }
 .soon .big { width: 72px; height: 72px; border-radius: 28px; background: var(--m3-primary-container); color: var(--m3-on-primary-container); display: flex; align-items: center; justify-content: center; }
 .soon .big svg { width: 36px; height: 36px; fill: currentColor; }
 .soon h2 { margin: 6px 0 0; font: var(--m3-title-l); }
+.soon .m3-chip.status { margin-top: 4px; }
 .soon p { margin: 0; color: var(--m3-on-surface-variant); max-width: 28em; }
 
 /* ---------- Profil ---------- */

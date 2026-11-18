@@ -368,7 +368,7 @@ function lastConnection() {
  * ===================================================================== */
 function soonHtml(ic, title, text) {
   return `<div class="m3-h" data-head><h1>${title}</h1></div>
-    <div class="m3-card soon"><span class="big">${icon(ic)}</span><h2>${title}</h2><span class="m3-chip status"><span class="m3-dot"></span>bald verfügbar</span><p>${text}</p></div>`;
+    <div class="m3-card soon"><span class="big">${icon(ic)}</span><span class="m3-chip status"><span class="m3-dot"></span>bald verfügbar</span><p>${text}</p></div>`;
 }
 function renderServer() {
   const pg = $('#pg-server');

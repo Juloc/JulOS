@@ -25,6 +25,9 @@ Status: Linux (X11, XFCE tested) first. Windows is planned and the agent API is 
 - **Extra keys**: two collapsible rows (quick: Esc, Tab, Ctrl, Alt, Shift, arrows, Enter, Backspace; more: Ctrl+C/V/X/A/Z/F,
   Alt+Tab, Home, End, Page up/down, ...). Ctrl/Alt/Shift are sticky toggles. Edit mode: add, remove, move keys between rows,
   own combos (`ctrl+shift+t`), text snippets.
+- **Desktop browser, real keyboard**: keys go straight to the remote machine. Shift/Ctrl/Alt are sent together with arrows, Home, End etc.
+  (Shift+arrows select, Ctrl+arrows jump by word); Ctrl+V first puts your local clipboard on the remote clipboard, Ctrl+C / Ctrl+X in
+  the remote copy its text to your local clipboard (needs HTTPS or localhost).
 - **Window bar and app mode**: switch between *Desktop* and *Apps*. In Apps mode the session's panel is hidden, windows appear as
   chips (with icons) in the app, a "+" starts any installed program. Windows are maximised. Per-application zoom profiles
   (for example a narrow width for apps with a responsive layout).

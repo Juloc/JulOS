@@ -189,9 +189,9 @@ function resetMods() { for (const n of Object.keys(mods)) mods[n] = 'off'; refre
 // zum Beispiel bei "Backspace x3, dann neues Wort" nach einer Autokorrektur).
 let keyChain = Promise.resolve();
 const enqueue = (fn) => { keyChain = keyChain.then(fn).catch(() => {}); return keyChain; };
-const sendChord = (syms) => enqueue(async () => {
-  for (const s of syms) { kdown(s); await sleep(12); }
-  for (const s of [...syms].reverse()) { kup(s); await sleep(12); }
+const sendChord = (syms, gap = 12) => enqueue(async () => {
+  for (const s of syms) { kdown(s); await sleep(gap); }
+  for (const s of [...syms].reverse()) { kup(s); await sleep(gap); }
   consumeOnce();
 });
 const tapKey = (sym) => enqueue(async () => { kdown(sym); await sleep(8); kup(sym); consumeOnce(); });
@@ -730,7 +730,12 @@ async function connect() {
     const reader = new Guacamole.StringReader(stream);
     let data = '';
     reader.ontext = (t) => { data += t; };
-    reader.onend = () => { el.remoteClip.value = data; toast('Text aus der VM kopiert (Symbol Zwischenablage)', 2200); };
+    reader.onend = () => {
+      el.remoteClip.value = data;
+      // Strg+C / Strg+X in der VM: Text gleich in die Zwischenablage dieses Browsers legen (braucht HTTPS oder localhost und eine eben erfolgte Eingabe)
+      if (navigator.clipboard && navigator.clipboard.writeText && document.hasFocus()) navigator.clipboard.writeText(data).then(() => toast('Kopiert', 1200), () => toast('Text aus der VM kopiert (Symbol Zwischenablage)', 2200));
+      else toast('Text aus der VM kopiert (Symbol Zwischenablage)', 2200);
+    };
   };
 
   setupMouse(client, display);
@@ -1006,7 +1011,17 @@ function onKbPaste(e) {
   const dt = e.clipboardData;
   if (dt && dt.files && dt.files.length) { e.preventDefault(); handleKbFiles(dt.files); return; }
   const txt = dt && dt.getData('text/plain');
-  if (txt) { e.preventDefault(); typeText(txt); }          // eingefuegten Text direkt eintippen
+  if (!txt) return;
+  e.preventDefault();
+  if (Date.now() - pasteKeyAt < 800 && S.client) { pasteToRemote(txt, pasteKeys); return; }   // Strg+V: wie am echten Rechner einfuegen
+  typeText(txt);                                           // Einfuegen ueber das Menue der Bildschirmtastatur: Text direkt eintippen
+}
+// Text in die Zwischenablage der VM legen und danach die Einfuege-Taste druecken (die Pause laesst die Zwischenablage-Meldung ankommen)
+function pasteToRemote(txt, keys) {
+  const stream = S.client.createClipboardStream('text/plain');
+  const w = new Guacamole.StringWriter(stream); w.sendText(txt); w.sendEnd();
+  enqueue(async () => { await sleep(180); });
+  sendChord(keys, 8);
 }
 function onKbBeforeInput(e) {
   if (kbEvCount++ < 60) dbg('beforeinput', { it: e.inputType, comp: e.isComposing, len: (e.data || '').length, files: (e.dataTransfer && e.dataTransfer.files ? e.dataTransfer.files.length : 0), mode: S.kbMode });
@@ -1024,25 +1039,41 @@ function syncDiff() {
   if (b.length > 300) { setKbVal(''); prevValue = ''; }
 }
 let kbEvCount = 0;
+// Umschalter, die an der echten Tastatur gerade gehalten werden (ohne die, die schon ueber die Leiste gedrueckt sind)
+function heldModifiers(e) {
+  const m = [];
+  if (e.ctrlKey && mods.ctrl === 'off') m.push(KS.ctrl);
+  if (e.altKey && mods.alt === 'off') m.push(KS.alt);
+  if (e.shiftKey && mods.shift === 'off') m.push(KS.shift);
+  if (e.metaKey && mods.super === 'off') m.push(KS.win);
+  return m;
+}
+let pasteKeyAt = 0, pasteKeys = [];   // Einfuegen per Tastatur: Zeitpunkt und die danach an die VM zu sendende Kombination
 function wireKb(node) {
   node.addEventListener('keydown', (e) => {
     if (kbEvCount++ < 60) dbg('keydown', { key: e.key.length === 1 ? 'char' : e.key, code: e.keyCode, comp: e.isComposing });
     if (!S.connected) return;
-    if (e.key in NAMED) {
-      // Backspace mit Text im Feld kommt ueber das input-Ereignis (Abgleich), nur bei leerem Feld direkt senden
-      if (e.key === 'Backspace' && kbVal().length > 0) return;
-      e.preventDefault(); lastNamedAt = Date.now();
-      if (e.key === 'Enter' || e.key === 'Tab') { setKbVal(''); prevValue = ''; }
-      tapKey(NAMED[e.key]); return;
+    // AltGr (auf Windows als Strg+Alt gemeldet) erzeugt Zeichen wie @ und {: die kommen ueber das Eingabefeld, nicht als Kombination
+    const altGr = e.getModifierState && e.getModifierState('AltGraph');
+    const held = altGr ? [] : heldModifiers(e);
+    // Einfuegen (Strg+V, Strg+Umschalt+V, Umschalt+Einfg): die Tastenkombination nicht abfangen, der Browser meldet dann das paste-Ereignis
+    // mit dem Text der lokalen Zwischenablage; onKbPaste legt ihn in die Zwischenablage der VM und sendet danach die Kombination
+    if (!altGr && ((e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'v') || (e.shiftKey && !e.ctrlKey && !e.altKey && e.key === 'Insert'))) {
+      pasteKeyAt = Date.now(); pasteKeys = [...held, e.key === 'Insert' ? KS.insert : charKeysym('v')]; return;
     }
-    // Hardware-Tastatur mit Strg/Alt: als Kombination weitergeben
-    if ((e.ctrlKey || e.altKey || e.metaKey) && e.key.length === 1) {
+    if (e.key in NAMED) {
+      // Backspace mit Text im Feld kommt ueber das input-Ereignis (Abgleich), nur bei leerem Feld oder mit Umschaltern direkt senden
+      if (e.key === 'Backspace' && kbVal().length > 0 && !held.length) return;
+      e.preventDefault(); lastNamedAt = Date.now();
+      if (e.key === 'Enter' || e.key === 'Tab' || (e.key === 'Backspace' && held.length)) { setKbVal(''); prevValue = ''; }
+      // mit gehaltenem Shift/Strg/Alt als Kombination, sonst geht Umschalt+Pfeil (Markieren), Strg+Pfeil (Wortsprung) usw. verloren
+      if (held.length) sendChord([...held, NAMED[e.key]], 3); else tapKey(NAMED[e.key]);
+      return;
+    }
+    // Hardware-Tastatur mit Strg/Alt: als Kombination weitergeben (Umschalt bleibt erhalten, Strg+Umschalt+C)
+    if ((e.ctrlKey || e.altKey || e.metaKey) && !altGr && e.key.length === 1) {
       e.preventDefault();
-      const syms = [];
-      if (e.ctrlKey) syms.push(KS.ctrl);
-      if (e.altKey) syms.push(KS.alt);
-      if (e.metaKey) syms.push(KS.win);
-      syms.push(charKeysym(e.key.toLowerCase())); sendChord(syms);
+      sendChord([...held, charKeysym(e.key.toLowerCase())], 3);
     }
   });
   node.addEventListener('beforeinput', onKbBeforeInput);

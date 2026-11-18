@@ -24,15 +24,17 @@ public sealed class GuacRelay(GuacdOptions options, ILogger<GuacRelay> log)
     private readonly SemaphoreSlim _slots = new(options.MaxConnections);
     private sealed class Active { public CancellationTokenSource Soft = null!; public volatile bool Replaced; }
 
-    /// <summary>Messwerte vom Bildaufbau (nur fuer das Log): wann kamen die ersten Bildanweisungen von guacd, und wie viel in den ersten 15 s.</summary>
+    /// <summary>Messwerte vom Bildaufbau (nur fuer das Log): wann kamen Größe, erste Bilddaten und ein richtiges Bild (20 kB) von guacd, und wie viel in den ersten 15 s.</summary>
     private sealed class PictureStats
     {
-        public long FirstSizeMs = -1, FirstImgMs = -1, BytesFirst15s;
+        public long FirstSizeMs = -1, FirstBlobMs = -1, Big20kMs = -1, BytesFirst15s, Total;
         public void Note(ReadOnlySpan<byte> block, long ms)
         {
             if (ms < 15000) BytesFirst15s += block.Length;
+            Total += block.Length;
+            if (Big20kMs < 0 && Total > 20 * 1024) Big20kMs = ms;                       // ab hier ist ein richtiges Bild (nicht nur Rahmen und Zeiger) angekommen
+            if (FirstBlobMs < 0 && block.IndexOf("4.blob,"u8) >= 0) FirstBlobMs = ms;   // erste Bilddaten
             if (FirstSizeMs < 0 && block.IndexOf("4.size,"u8) >= 0) FirstSizeMs = ms;
-            if (FirstImgMs < 0 && block.IndexOf("3.img,"u8) >= 0) FirstImgMs = ms;
         }
     }
     private readonly ConcurrentDictionary<string, Active> _active = new();
@@ -92,7 +94,7 @@ public sealed class GuacRelay(GuacdOptions options, ILogger<GuacRelay> log)
             finally
             {
                 if (spec.Slot is { } slot2) _active.TryRemove(new KeyValuePair<string, Active>(slot2, mine));
-                log.LogInformation("Bildaufbau ({Protocol}): Größe nach {Size} ms, erstes Bild nach {Img} ms, {Kb} kB in den ersten 15 s", spec.Protocol, stats.FirstSizeMs, stats.FirstImgMs, stats.BytesFirst15s / 1024);
+                log.LogInformation("Bildaufbau ({Protocol}): Größe nach {Size} ms, erste Bilddaten nach {Blob} ms, 20 kB erreicht nach {Big} ms, {Kb} kB in den ersten 15 s", spec.Protocol, stats.FirstSizeMs, stats.FirstBlobMs, stats.Big20kMs, stats.BytesFirst15s / 1024);
                 log.LogInformation("Remote-Verbindung beendet nach {Seconds} s{Replaced}", (int)clock.Elapsed.TotalSeconds, mine.Replaced ? " (von einer neuen Verbindung abgelöst)" : "");
                 await CloseAsync(ws).ConfigureAwait(false);
             }

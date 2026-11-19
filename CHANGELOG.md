@@ -4,7 +4,23 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
-## [Unveröffentlicht]
+## [0.5.0] - 2026-11-19
+
+### Neu
+- Mehrere Hosts: ein Host ist ein Rechner oder Server mit eigenen Verbindungen und eigenem Agenten. Die Desktop-Oberfläche (Menü „Hosts“, Dock, Ansicht „Hosts“, Dienste nach Host gruppiert und filterbar) und die Handy-Shell (Server-Seite, Host-Auswahl bei den Diensten) zeigen sie mit Statuspunkt grün/grau je Host und Dienst. Online heißt: Agent verbunden oder ein Dienst antwortet am Port; Rechnername und Betriebssystem meldet der Agent. Siehe [docs/HOSTS.md](docs/HOSTS.md).
+- Im Verbindungsdialog gibt es ein Feld „Host“ (auch „Neuer Host …“); „Agent einrichten“ und „Agent entfernen“ stehen im neuen Host-Dialog.
+- Tägliches Backup: der Server schreibt die Datenbank (komprimiert) und eine Kopie des Schlüssels für gespeicherte Passwörter als getrennte Dateien in einen Backup-Ordner (`/backup`, im Compose-Beispiel `~/julos-backup`), mit Aufbewahrung (Standard 14 Tage), Uhrzeit und Schalter per Umgebungsvariable (`JULOS_BACKUP`, `JULOS_BACKUP_TIME`, `JULOS_BACKUP_KEEP_DAYS`, `JULOS_BACKUP_KEY`). Ohne eingebundenen Ordner wird nichts geschrieben, sondern laut gewarnt. Kein zusätzlicher Container.
+- Wiederherstellung auf der Konsole: `dotnet JulOS.dll backup restore DATEI --key SCHLÜSSELDATEI` (alles oder nichts, prüft am Ende, dass sich gespeicherte Passwörter entschlüsseln lassen); `backup create` sichert sofort. „Über JulOS“ zeigt das letzte Backup mit Zeit und Größe. Anleitung: [docs/BACKUP.md](docs/BACKUP.md).
+- Module Caddy und DDNS, erste Stufe, nur lesend und standardmäßig aus (`JULOS_CADDY`, `JULOS_DDNS`, siehe [docs/MODULES.md](docs/MODULES.md)): Caddy zeigt „Domain → Ziel“ aus einem nur lesend eingebundenen Caddyfile und/oder der Admin-API (ein fester Abruf), mit einer Erreichbarkeitsprüfung nur der gelisteten Ziele; DDNS vergleicht die öffentliche Adresse (Router oder Lookup-Dienst) mit der Namensauflösung der eingestellten Namen („Synchron“ oder „Nicht synchron“, mit Zeit der Prüfung), ohne Token und ohne zu schreiben. Fenster im Desktop (Dock, Launcher, Menü) und Karten in der Handy-Shell erscheinen nur, wenn der Server das Modul eingeschaltet hat.
+- Stream-Engine, wahlweise und standardmäßig aus (`JULOS_RDP_GFX=on`): das H.264, das ein RDP-Server durch die Grafik-Pipeline (RDPGFX) schickt, geht ohne neue Kodierung an den Browser (weniger CPU, eine Kodierstufe weniger). Liefert der Server kein passendes H.264, bricht etwas ab oder braucht der Browser ein Schlüsselbild, verbindet dieselbe Sitzung ohne Pipeline neu und kodiert wie bisher selbst. Das xrdp von Debian 13 liefert so kein H.264, Windows-Server (komprimierte Nachrichten) sind nicht unterstützt und nicht geprüft; Einzelheiten in [docs/RDPGFX.md](docs/RDPGFX.md). Gegen einen Server, der H.264 sendet, noch nicht erprobt.
+- Stream-Engine: Sitzungserhalt. Bricht die Verbindung zum Browser ab (Handy wechselt das Netz, Tab im Hintergrund), bleibt die RDP-Sitzung auf dem Server `JULOS_STREAM_KEEP_SECONDS` Sekunden (Standard 300, 0 = aus) erhalten; der Browser nimmt sie mit einem Sitzungs-Token wieder auf, ohne neuen Login am Ziel und mit sofortigem Schlüsselbild, und zeigt „Verbindung wird wiederhergestellt …“ statt eines Abbruchs. Schließen in der App, Abmelden, Ablösen und Ablauf beenden die Sitzung wirklich.
+- Stream-Engine: Laufwerksumleitung (RDPDR). Ein Ordner des Servers (Einstellung `JULOS_DRIVE_ROOT`, aus, wenn leer) kann je Verbindung als Laufwerk in den Desktop gereicht werden; im Verbindungsdialog zwei Schalter, beide aus: „freigeben“ und „Schreiben erlauben“ (ohne den zweiten nur Lesen). Streng abgesichert: fester Wurzelpfad nur aus der Server-Einstellung, nur Windows-Pfade unterhalb der Wurzel, kein `..`, keine versteckten Namen, keine Symlinks, keine Unicode-Tricks, `openat2` mit `RESOLVE_BENEATH`. Siehe [docs/DRIVES.md](docs/DRIVES.md). Auf einem echten Windows-Ziel noch nicht erprobt.
+
+### Geändert
+- Der Agent gehört jetzt zum Host statt zu einer einzelnen Verbindung und bedient alle Verbindungen seines Hosts. Die Wege dafür sind `/api/hosts/{id}/agent/code` und `/api/hosts/{id}/agent`; `/api/agents` und `/api/connections/{id}/agent/*` entfallen. Aufrufe des Agenten nehmen weiter `?c=<Verbindung>` oder neu `?h=<Host>`.
+- Migration 008: bestehende Verbindungen kommen auf einen Standard-Host „Mein Rechner“ pro Benutzer, bestehende Agenten behalten ihr Token (hatte ein Benutzer mehrere, bekommt jeder weitere einen eigenen Host mit dem Namen seiner Verbindung). Offene Einrichtungscodes (10 Minuten) entfallen.
+- Der Agent meldet Rechnername und Betriebssystem (nur zur Anzeige); ältere Agenten funktionieren unverändert.
+- Entwicklung: `deploy/dev/e2e.sh` startet einen eigenen Test-Stack und prüft in einem echten Browser (Playwright in Docker, Chromium) sechs Abläufe: Ersteinrichtung und Anmeldung, Verbindungen anlegen, RDP-Stream mit Bild, Klick und Tastatur im Ziel, SSH-Terminal, Handy- und Desktop-Oberfläche ohne Konsolenfehler. Beschreibung in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md), optionaler Schritt vor dem Tag in [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Behoben
 - Mikrofon: Die Kopfzeile `Permissions-Policy` sperrte das Mikrofon für die Seite (`microphone=()`); sie erlaubt es jetzt für die eigene Seite (`microphone=(self)`), alle anderen Rechte bleiben gesperrt.
@@ -14,39 +30,7 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 - Guacamole entfernt, die Strom-Engine ist der einzige Weg für Desktop-Verbindungen (eigener RDP-Client auf dem Server, H.264 im Browser mit WebCodecs). Weg sind der Relay und das Protokoll für guacd, der JavaScript-Client, die Wahl „Bildübertragung“ im Verbindungsdialog und in den Einstellungen sowie der automatische Rückfall; kann der Browser kein H.264 oder kommt keine Verbindung zustande, zeigt die Sitzung eine klare Meldung mit „Neu verbinden“. Wer einen Desktop aufmacht, ohne dass der Server den Kodierer (libopenh264) laden kann, bekommt die Meldung, dass die Bildübertragung nicht verfügbar ist.
 - Für Betreiber: Der `guacd`-Container und alle `JULOS_GUACD*`-Einstellungen werden nicht mehr gebraucht und können aus der Compose-Datei (und aus `.env`) entfernt werden; wer die mitgelieferten Compose-Dateien nutzt, bekommt sie schon ohne guacd. Gespeicherte Verbindungen bleiben unverändert: alte Einträge mit der Engine „guac“ nutzen jetzt ebenfalls den Strom, die Spalte `engine` der Datenbank bleibt als Rest bestehen, wird nicht mehr gelesen und es gibt keine Migration. Das Laufwerk (`JULOS_DRIVE_ROOT`) steht jetzt jeder Desktop-Verbindung offen, die es einschaltet; die Felder `engine` in der Verbindungs-API und im Ticket-Aufruf entfallen (alte Clients dürfen sie weiter mitschicken, sie werden ignoriert).
 - Die Hilfswege für Guacamole in der App (Foto über den Helfer, „Bild aus der VM holen“) sind weg, Bilder und Dateien gehen über den Strom; die Agent-Schnittstellen `/api/upload`, `/api/upload-file` und `/api/clipboard/pull` bleiben bestehen.
-## [Unreleased]
 
-### Neu
-- Tägliches Backup: der Server schreibt die Datenbank (komprimiert) und eine Kopie des Schlüssels für gespeicherte Passwörter als getrennte Dateien in einen Backup-Ordner (`/backup`, im Compose-Beispiel `~/julos-backup`), mit Aufbewahrung (Standard 14 Tage), Uhrzeit und Schalter per Umgebungsvariable (`JULOS_BACKUP`, `JULOS_BACKUP_TIME`, `JULOS_BACKUP_KEEP_DAYS`, `JULOS_BACKUP_KEY`). Ohne eingebundenen Ordner wird nichts geschrieben, sondern laut gewarnt. Kein zusätzlicher Container.
-- Wiederherstellung auf der Konsole: `dotnet JulOS.dll backup restore DATEI --key SCHLÜSSELDATEI` (alles oder nichts, prüft am Ende, dass sich gespeicherte Passwörter entschlüsseln lassen); `backup create` sichert sofort. „Über JulOS“ zeigt das letzte Backup mit Zeit und Größe. Anleitung: [docs/BACKUP.md](docs/BACKUP.md).
-## [Unreleased]
-
-### Geändert
-- Entwicklung: `deploy/dev/e2e.sh` startet einen eigenen Test-Stack und prüft in einem echten Browser (Playwright in Docker, Chromium) sechs Abläufe: Ersteinrichtung und Anmeldung, Verbindungen anlegen, RDP-Stream mit Bild, Klick und Tastatur im Ziel, SSH-Terminal, Handy- und Desktop-Oberfläche ohne Konsolenfehler. Beschreibung in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md), optionaler Schritt vor dem Tag in [docs/RELEASING.md](docs/RELEASING.md).
-## [Unreleased]
-
-### Neu
-- Module Caddy und DDNS, erste Stufe, nur lesend und standardmäßig aus (`JULOS_CADDY`, `JULOS_DDNS`, siehe [docs/MODULES.md](docs/MODULES.md)): Caddy zeigt „Domain → Ziel“ aus einem nur lesend eingebundenen Caddyfile und/oder der Admin-API (ein fester Abruf), mit einer Erreichbarkeitsprüfung nur der gelisteten Ziele; DDNS vergleicht die öffentliche Adresse (Router oder Lookup-Dienst) mit der Namensauflösung der eingestellten Namen („Synchron“ oder „Nicht synchron“, mit Zeit der Prüfung), ohne Token und ohne zu schreiben. Fenster im Desktop (Dock, Launcher, Menü) und Karten in der Handy-Shell erscheinen nur, wenn der Server das Modul eingeschaltet hat.
-## [Unreleased]
-
-### Neu
-- Stream-Engine, wahlweise und standardmäßig aus (`JULOS_RDP_GFX=on`): das H.264, das ein RDP-Server durch die Grafik-Pipeline (RDPGFX) schickt, geht ohne neue Kodierung an den Browser (weniger CPU, eine Kodierstufe weniger). Liefert der Server kein passendes H.264, bricht etwas ab oder braucht der Browser ein Schlüsselbild, verbindet dieselbe Sitzung ohne Pipeline neu und kodiert wie bisher selbst. Das xrdp von Debian 13 liefert so kein H.264, Windows-Server (komprimierte Nachrichten) sind nicht unterstützt und nicht geprüft; Einzelheiten in [docs/RDPGFX.md](docs/RDPGFX.md). Gegen einen Server, der H.264 sendet, noch nicht erprobt.
-## [Unreleased]
-
-### Neu
-- Stream-Engine: Sitzungserhalt. Bricht die Verbindung zum Browser ab (Handy wechselt das Netz, Tab im Hintergrund), bleibt die RDP-Sitzung auf dem Server `JULOS_STREAM_KEEP_SECONDS` Sekunden (Standard 300, 0 = aus) erhalten; der Browser nimmt sie mit einem Sitzungs-Token wieder auf, ohne neuen Login am Ziel und mit sofortigem Schlüsselbild, und zeigt „Verbindung wird wiederhergestellt …“ statt eines Abbruchs. Schließen in der App, Abmelden, Ablösen und Ablauf beenden die Sitzung wirklich.
-- Stream-Engine: Laufwerksumleitung (RDPDR). Ein Ordner des Servers (Einstellung `JULOS_DRIVE_ROOT`, aus, wenn leer) kann je Verbindung als Laufwerk in den Desktop gereicht werden; im Verbindungsdialog zwei Schalter, beide aus: „freigeben“ und „Schreiben erlauben“ (ohne den zweiten nur Lesen). Streng abgesichert: fester Wurzelpfad nur aus der Server-Einstellung, nur Windows-Pfade unterhalb der Wurzel, kein `..`, keine versteckten Namen, keine Symlinks, keine Unicode-Tricks, `openat2` mit `RESOLVE_BENEATH`. Siehe [docs/DRIVES.md](docs/DRIVES.md). Auf einem echten Windows-Ziel noch nicht erprobt.
-
-## [Unreleased]
-
-### Neu
-- Mehrere Hosts: ein Host ist ein Rechner oder Server mit eigenen Verbindungen und eigenem Agenten. Die Desktop-Oberfläche (Menü „Hosts“, Dock, Ansicht „Hosts“, Dienste nach Host gruppiert und filterbar) und die Handy-Shell (Server-Seite, Host-Auswahl bei den Diensten) zeigen sie mit Statuspunkt grün/grau je Host und Dienst. Online heißt: Agent verbunden oder ein Dienst antwortet am Port; Rechnername und Betriebssystem meldet der Agent. Siehe [docs/HOSTS.md](docs/HOSTS.md).
-- Im Verbindungsdialog gibt es ein Feld „Host“ (auch „Neuer Host …“); „Agent einrichten“ und „Agent entfernen“ stehen im neuen Host-Dialog.
-
-### Geändert
-- Der Agent gehört jetzt zum Host statt zu einer einzelnen Verbindung und bedient alle Verbindungen seines Hosts. Die Wege dafür sind `/api/hosts/{id}/agent/code` und `/api/hosts/{id}/agent`; `/api/agents` und `/api/connections/{id}/agent/*` entfallen. Aufrufe des Agenten nehmen weiter `?c=<Verbindung>` oder neu `?h=<Host>`.
-- Migration 008: bestehende Verbindungen kommen auf einen Standard-Host „Mein Rechner“ pro Benutzer, bestehende Agenten behalten ihr Token (hatte ein Benutzer mehrere, bekommt jeder weitere einen eigenen Host mit dem Namen seiner Verbindung). Offene Einrichtungscodes (10 Minuten) entfallen.
-- Der Agent meldet Rechnername und Betriebssystem (nur zur Anzeige); ältere Agenten funktionieren unverändert.
 
 ## [0.4.0] - 2026-11-19
 

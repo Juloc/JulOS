@@ -1,9 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" fill="#0e1014"/>
-  <g transform="translate(256 256) scale(.78) translate(-256 -256)">
-    <rect x="96" y="120" width="320" height="200" rx="22" fill="#171a21" stroke="#6aa8ff" stroke-width="14"/>
-    <rect x="124" y="148" width="264" height="144" rx="8" fill="#2f6fe0"/>
-    <path d="M200 368h112M256 320v48" stroke="#6aa8ff" stroke-width="16" stroke-linecap="round"/>
-    <rect x="150" y="392" width="212" height="34" rx="10" fill="#1f242d" stroke="#6aa8ff" stroke-width="8"/>
-  </g>
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a06cf0"/><stop offset="1" stop-color="#3f8cf5"/></linearGradient></defs>
+  <rect width="512" height="512" fill="url(#g)"/>
+  <g transform="translate(256 256) scale(.72) translate(-268 -256)"><path d="M128 88 408 256 128 424Z" fill="#fff" stroke="#fff" stroke-width="57.6" stroke-linejoin="round"/></g>
 </svg>

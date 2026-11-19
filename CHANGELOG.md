@@ -4,6 +4,11 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [0.13.1] - 2026-11-19
+
+### Geändert
+- **Neues Browser- und App-Icon** passend zum Logo der Oberfläche (weißes, rundes Dreieck auf dem Verlauf Lila nach Blau) statt des alten blauen Monitors aus der Anfangszeit: `icon.svg` und `icon-maskable.svg`, PNGs in 32, 180 (Apple, deckend), 192 und 512 Pixeln sowie randlose (maskable) Varianten. Das Manifest heißt jetzt „JulOS“ (Kurzname vorher „Desktop“) mit aktueller Beschreibung. Die PNGs erzeugt `tools/make-icons.py` (nur Standardbibliothek). Service-Worker-Cache `pd-v59`; beim ersten Start nach dem Update wird das Icon neu geladen, eine bereits installierte App zeigt das neue Icon je nach Android-Version erst nach erneutem Installieren.
+
 ## [0.13.0] - 2026-11-19
 
 ### Neu

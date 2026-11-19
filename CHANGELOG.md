@@ -4,7 +4,7 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
-## [Unveröffentlicht]
+## [0.6.0] - 2026-11-19
 
 ### Neu
 - Statusleiste je Stream-Sitzung (ein-/ausblendbar): Bilder pro Sekunde, Reaktionszeit (Eingabe bis neues Bild), Datenrate, Auflösung und Kodierer. Desktop: Menü „Ansicht“ → „Statusleiste“ (Fußzeile des Sitzungsfensters); Handy: Sitzungsmenü → „Leistung anzeigen“ (Overlay). Rein im Browser gezählt, ausgeblendet ohne Kosten ([docs/STATUSBAR.md](docs/STATUSBAR.md)).
@@ -14,32 +14,22 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 - Agent aktualisieren: der Host-Dialog zeigt „Agent 0.x, Update verfügbar“, wenn der Server einen neueren Agenten mitliefert. „Jetzt aktualisieren“ schickt dem verbundenen Agenten über seine bestehende Verbindung die Anweisung, die Datei selbst von der Adresse seines Servers zu holen; der Server nennt nur den festen Pfad und die SHA-256-Summe, der Agent lädt in eine Temp-Datei, prüft Summe, Python-Gültigkeit und Version, ersetzt sich atomar (`os.replace`) und startet neu. Ein Schalter je Agent „Automatisch aktualisieren“ (Standard aus) macht es beim Verbinden, höchstens alle 10 Minuten je Host. Agenten vor 0.4.0 kennen die Anweisung nicht und müssen einmal neu eingerichtet werden. Siehe [docs/AGENT_API.md](docs/AGENT_API.md).
 - Agent-Betrieb auf dem Linux-Rechner: `julos-agent.py status`, `stop`, `uninstall [--yes]` und `check`; Prüfung der Voraussetzungen (Python 3.8, PyGObject/GTK/Wnck, grafische Sitzung) mit klarer Meldung beim Start; Log mit Rotation in `~/.local/state/julos/agent.log` statt `/tmp`; `install-linux-agent.sh --systemd` richtet einen systemd-Benutzerdienst ein (Standard bleibt der Autostart-Eintrag), `--no-start` richtet nur ein. Der Agent läuft pro Benutzer nur einmal.
 - Agent 0.4.0 (Version im Skript hochgezählt; die Serverversion ändert die Hauptsitzung beim Release).
-
-### Geändert
-- Neue Auflösungen (Tastatur auf/zu, Adressleiste, Drehen, Zoom) gehen erst an den Server, wenn sich die gewünschte Größe 0,4 s nicht mehr geändert hat und nur bei echtem Unterschied; der Server stellt sie per DisplayControl um, ohne neuen RDP-Login.
-
-### Behoben
-- Stream-Engine: Beim Wechsel der Auflösung wurde das Bild kurz schwarz (das Canvas wurde geleert). Das alte Bild bleibt jetzt stehen, bis das erste Bild in der neuen Größe da ist.
-## [Unveroeffentlicht]
-
-### Neu
 - Compose: Gesundheitsprüfung für den Dienst `julos` (`dotnet JulOS.dll health` fragt `/api/health` und prüft auch die Datenbank), Datenordner `/data` als benanntes Volume mit einem einmaligen Starter, der es dem Server-Benutzer gibt (damit der Schlüssel für gespeicherte Passwörter wirklich entsteht), `no-new-privileges` und `cap_drop: ALL`; ein schreibgeschütztes Wurzeldateisystem steht als auskommentierte Möglichkeit bereit. Siehe [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 - CI: neuer Ablauf `tests.yml` mit Server-Tests gegen PostgreSQL, Anzeige-Engine-Tests, Browser-Logik-Tests und Agent-Syntaxprüfung sowie einer NuGet-Schwachstellenmeldung (nur melden).
-
 - Konto in der Oberfläche: Passwort ändern und Authenticator neu einrichten im Profil der Handy-Shell und in den Desktop-Einstellungen (auch im System-Menü). Beides verlangt jedes Mal das aktuelle Passwort; ein neuer Authenticator gilt erst, wenn sein erster Code eingegeben wurde, und bringt neue Wiederherstellungscodes (die alten entfallen). Andere Geräte werden abgemeldet, dieses bleibt angemeldet. Mit Ratenbegrenzung wie bei der Anmeldung und Einträgen im Server-Log.
 - Das Authenticator-Geheimnis wird auch als QR-Code gezeigt (bei der Ersteinrichtung und beim Neueinrichten), im Browser erzeugt, ohne externe Bibliothek.
-
 - Eingabe: Die Zurück- und Vorwärts-Taste der Maus erreichen jetzt das Ziel (Taste 3 und 4), das Mausrad geht auch waagerecht und in feinen Schritten durch (Windows-Einheiten statt fester Rasten), und beim Fokusverlust oder Tab-Wechsel werden alle gedrückten Tasten und Maustasten am Ziel losgelassen (kein hängendes Alt mehr nach Alt+Tab). Im Vollbild werden Systemtasten (Esc, Alt+Tab, Windows-Taste, Strg+W/T/N) mit der Tastatursperre des Browsers (Chrome, Edge) an das Ziel gegeben.
-
 - Verbindungsfelder: Domäne (Desktop), Notizen und Tastaturlayout des Ziels (Desktop: Deutsch, Deutsch Österreich/Schweiz, Englisch USA/UK, Französisch, Spanisch, Italienisch; Standard Deutsch wie bisher) im Verbindungsdialog. Das Layout geht als Windows-Kennung an den RDP-Server statt fest `0x407` und bestimmt, welche Taste der Browser für Strg-Kombinationen nimmt. Migration 009 (rückwärtskompatibel, Standardwerte); API und Auszüge älterer Versionen funktionieren unverändert.
-
 - Netzwerkwerkzeuge: Ping, DNS-Abfrage und Port-Test vom Server aus, in einem schlichten Dialog (Handy: Profil, Desktop: Menü „System“). Sie laufen nur gegen Hosts gespeicherter Verbindungen, die zur Erlaubnisliste (`JULOS_ALLOWED_HOSTS`) passen, nie gegen freie Eingaben; mit Sitzung, Ratenbegrenzung (30 je Minute und Benutzer), Grenzen (bis 10 Ports, bis 8 Pings) und Log-Einträgen. Abschaltbar mit `JULOS_NETTOOLS=off`.
 
 ### Geändert
+- Neue Auflösungen (Tastatur auf/zu, Adressleiste, Drehen, Zoom) gehen erst an den Server, wenn sich die gewünschte Größe 0,4 s nicht mehr geändert hat und nur bei echtem Unterschied; der Server stellt sie per DisplayControl um, ohne neuen RDP-Login.
 - Dockerfile: die SDK-Stufe läuft mit `--platform=$BUILDPLATFORM`, der arm64-Bau braucht dafür keine Emulation mehr.
 
 ### Behoben
+- Stream-Engine: Beim Wechsel der Auflösung wurde das Bild kurz schwarz (das Canvas wurde geleert). Das alte Bild bleibt jetzt stehen, bis das erste Bild in der neuen Größe da ist.
 - Service Worker: Der Eintrag für die entfernte Guacamole-Bibliothek in der Dateiliste der App-Hülle (`sw.js`) ließ die Installation des Service Workers scheitern (404), sodass die Hülle nie zwischengespeichert wurde. Der Eintrag ist weg, die neuen Dateien (Konto, QR-Code, Netzwerkwerkzeuge) stehen in der Liste, die Cache-Version ist `pd-v40`.
+
 
 ## [0.5.0] - 2026-11-19
 

@@ -4,7 +4,7 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
-## [Unveröffentlicht]
+## [0.8.1] - 2026-11-19
 
 ### Behoben
 - Zwischenablage, Text vom Browser in die VM: der Text ging mit CR LF an xrdp, das ihn unverändert weitergibt; in der VM bekam jede Zeile ein CR (`^M` im Terminal, Fehler in Skripten). Jetzt geht LF hinaus; CR LF erst, wenn die VM selbst Text mit CR LF schickt (Windows-Rechner). `JULOS_CLIP_EOL=auto|lf|crlf` stellt es fest ein. Gegen ein echtes xrdp reproduziert und per Display-Test abgesichert.

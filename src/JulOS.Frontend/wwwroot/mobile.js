@@ -1,5 +1,6 @@
 import { ico, setTheme } from './app.js';
 import { Sessions } from './sessions.js';
+import { SCHEMES, normalizeScheme } from './scheme.js';
 import { looksLikeAddress } from './quick.js';
 import { favouriteList, recentList, filterByFolder, groupByFolder, folderIconSvg, folderName, setFavorite } from './folders.js';
 import { connectionState, dotClass as hostDot, stateText, serviceState, hostDetail, agentSummary, servicesSummary } from './hosts.js';
@@ -452,7 +453,7 @@ function renderMonitoring() {
 const seg = (id, opts, val) => `<div class="m3-seg" role="radiogroup" id="${id}">${opts.map(([v, l]) => `<button type="button" class="mb m3-state" role="radio" aria-checked="${v === val}" data-v="${v}"><span class="m3-seg-check">${icon('check')}</span>${l}</button>`).join('')}</div>`;
 function curSeed() { const s = readStore('seed', DEFAULT_SEED); return /^#[0-9a-f]{6}$/i.test(s) ? s.toLowerCase() : DEFAULT_SEED; }
 function renderProfile() {
-  const pg = $('#pg-profile'), top = pg.scrollTop, seed = curSeed(), scheme = readStore('scheme', 'auto');
+  const pg = $('#pg-profile'), top = pg.scrollTop, seed = curSeed(), scheme = normalizeScheme(readStore('scheme', 'auto'));
   const planned = showPlaceholders();
   pg.innerHTML = `
     <div class="m3-h" data-head><h1>Profil</h1><p>Konto, Darstellung und Sicherheit</p></div>
@@ -461,7 +462,7 @@ function renderProfile() {
 
     <div class="grp-t">Darstellung</div>
     <div class="m3-card grp">
-      <div class="setrow"><div class="lab">Helligkeit</div>${seg('mScheme', [['auto', 'Automatisch'], ['light', 'Hell'], ['dark', 'Dunkel']], scheme)}</div>
+      <div class="setrow"><div class="lab">Helligkeit</div>${seg('mScheme', SCHEMES, scheme)}</div>
       <div class="setrow"><div class="lab">Farbe</div><div class="swatches2" role="radiogroup" aria-label="Farbe" id="mSwatches">${SWATCHES.map(([h, n]) => `<button type="button" class="mb sw" role="radio" aria-checked="${h === seed}" aria-label="${n}" data-seed="${h}" style="background:${h}">${icon('check')}</button>`).join('')}</div></div>
       <div class="setrow line"><div class="lab">Server und Monitoring zeigen<small>Seiten, für die es noch keine Daten gibt</small></div><button type="button" class="mb m3-switch m3-state" role="switch" aria-checked="${planned}" id="mPlanned" aria-label="Server und Monitoring zeigen"></button></div>
     </div>

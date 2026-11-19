@@ -1,4 +1,5 @@
-import { remoteApi } from './app.js';
+import { remoteApi, getScheme, setTheme } from './app.js';
+import { SCHEMES } from './scheme.js';
 import { Sessions } from './sessions.js';
 import { looksLikeAddress } from './quick.js';
 import { filterByFolder, groupByFolder, recentList, folderIconSvg, folderName, setFavorite } from './folders.js';
@@ -74,22 +75,22 @@ const P = {
 };
 const ic = (n) => `<svg class="dk-i" viewBox="0 0 24 24" aria-hidden="true">${P[n] || ''}</svg>`;
 // Der Verlauf steht einmal in DEFS (versteckte SVG im Desktop); jedes Logo verweist nur darauf
-const DEFS = `<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="dkl" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a06cf0"/><stop offset="1" stop-color="#3f8cf5"/></linearGradient></defs></svg>`;
+const DEFS = `<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="dkl" x1="0" y1="0" x2="1" y2="1"><stop offset="0" style="stop-color:var(--dk-logo-a)"/><stop offset="1" style="stop-color:var(--dk-logo-b)"/></linearGradient></defs></svg>`;
 const LOGO = `<svg viewBox="0 0 32 32" aria-hidden="true">
-  <path d="M8 5.5 25.5 16 8 26.5z" fill="url(#dkl)" stroke="url(#dkl)" stroke-width="3.6" stroke-linejoin="round"/><path d="M8 5.5 25.5 16 15 16z" fill="#fff" opacity=".28"/></svg>`;
+  <path d="M8 5.5 25.5 16 8 26.5z" fill="url(#dkl)" stroke="url(#dkl)" stroke-width="3.6" stroke-linejoin="round"/><path d="M8 5.5 25.5 16 15 16z" style="fill:var(--dk-logo-hi)" opacity=".28"/></svg>`;
 
 /* Programme: Farben, Symbole, Ziele. soon = gibt es noch keinen Server-Teil dafuer (siehe docs/IDEAS.md). mod = nur sichtbar, wenn der Server das Modul eingeschaltet hat (docs/MODULES.md). */
 const APPS = [
-  { id: 'home', name: 'Start', ic: 'home', g: ['#8f8cf7', '#5f6cf0'] },
-  { id: 'desktop', name: 'Desktop', sub: 'RDP', ic: 'monitor', g: ['#4fb4f0', '#3b6cf0'] },
+  { id: 'home', name: 'Start', ic: 'home', g: ['#7b78ee', '#5160e6'] },
+  { id: 'desktop', name: 'Desktop', sub: 'RDP', ic: 'monitor', g: ['#3a99dc', '#2f5fe0'] },
   { id: 'terminal', name: 'Terminal', sub: 'SSH', ic: 'terminal', g: ['#5b6275', '#2c3142'] },
-  { id: 'settings', name: 'Einstellungen', ic: 'sliders', g: ['#a2a8be', '#6f7590'] },
-  { id: 'files', name: 'Dateien', ic: 'folder', g: ['#f7c76a', '#ee9b3a'] },
-  { id: 'hosts', name: 'Hosts', sub: 'Rechner und Server', ic: 'server', g: ['#7fd6c2', '#2a9d8f'] },
-  { id: 'docker', name: 'Docker', ic: 'box', g: ['#55b9f5', '#2b7bd8'], soon: true },
-  { id: 'caddy', name: 'Caddy', sub: 'Domains', ic: 'globe', g: ['#5fd49a', '#1fa971'], mod: 'caddy' },
-  { id: 'ddns', name: 'DDNS', sub: 'Adresse', ic: 'cloud', g: ['#8fd0ff', '#5a9cf5'], mod: 'ddns' },
-  { id: 'monitor', name: 'Monitor', ic: 'activity', g: ['#ee8fc8', '#a05cf0'] },
+  { id: 'settings', name: 'Einstellungen', ic: 'sliders', g: ['#7d849f', '#555b78'] },
+  { id: 'files', name: 'Dateien', ic: 'folder', g: ['#c28418', '#a86408'] },
+  { id: 'hosts', name: 'Hosts', sub: 'Rechner und Server', ic: 'server', g: ['#2fa08c', '#1c7a70'] },
+  { id: 'docker', name: 'Docker', ic: 'box', g: ['#3a95e0', '#1f69bf'], soon: true },
+  { id: 'caddy', name: 'Caddy', sub: 'Domains', ic: 'globe', g: ['#1fa06a', '#12804f'], mod: 'caddy' },
+  { id: 'ddns', name: 'DDNS', sub: 'Adresse', ic: 'cloud', g: ['#3f8fe0', '#2d66cc'], mod: 'ddns' },
+  { id: 'monitor', name: 'Monitor', ic: 'activity', g: ['#cf5fae', '#8c45d6'] },
 ];
 const appById = (id) => APPS.find((a) => a.id === id);
 let modules = { caddy: false, ddns: false };   // vom Server (GET /api/modules), nach der Anmeldung geladen
@@ -116,12 +117,12 @@ function scene(withBlossoms) {
   let blossoms = '';
   if (withBlossoms) {
     const cluster = (cx, cy, rx, ry, n, dir) => {
-      let s = `<path d="M${cx - dir * rx * 1.2} ${cy - ry * 0.5} Q ${cx} ${cy + ry * 0.2} ${cx + dir * rx * 0.8} ${cy + ry * 0.9}" stroke="#7a5a6a" stroke-opacity=".55" stroke-width="5" fill="none" stroke-linecap="round"/>`;
+      let s = `<path d="M${cx - dir * rx * 1.2} ${cy - ry * 0.5} Q ${cx} ${cy + ry * 0.2} ${cx + dir * rx * 0.8} ${cy + ry * 0.9}" style="stroke:var(--wp-branch)" stroke-opacity=".55" stroke-width="5" fill="none" stroke-linecap="round"/>`;
       for (let i = 0; i < n; i++) {
         const a = rnd() * 6.283, d = Math.sqrt(rnd());
         const x = cx + Math.cos(a) * rx * d, y = cy + Math.sin(a) * ry * d, r = 6 + rnd() * 16;
-        const tone = ['#f7c3d9', '#f3a6c6', '#fbdbe8', '#ee92b8', '#ffffff'][Math.floor(rnd() * 5)];
-        s += `<circle cx="${x.toFixed(0)}" cy="${y.toFixed(0)}" r="${r.toFixed(0)}" fill="${tone}" opacity="${(0.45 + rnd() * 0.5).toFixed(2)}"/>`;
+        const tone = ['var(--wp-b1)', 'var(--wp-b2)', 'var(--wp-b3)', 'var(--wp-b4)', 'var(--wp-b5)'][Math.floor(rnd() * 5)];
+        s += `<circle cx="${x.toFixed(0)}" cy="${y.toFixed(0)}" r="${r.toFixed(0)}" style="fill:${tone}" opacity="${(0.45 + rnd() * 0.5).toFixed(2)}"/>`;
       }
       return s;
     };
@@ -130,20 +131,20 @@ function scene(withBlossoms) {
   }
   return `<svg viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
     <defs>
-      <linearGradient id="dks" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b9b6ec"/><stop offset=".42" stop-color="#ecc6e0"/><stop offset=".62" stop-color="#d9dcf6"/></linearGradient>
-      <linearGradient id="dkw" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#cdd6f5"/><stop offset=".6" stop-color="#d7cdee"/><stop offset="1" stop-color="#b9bde8"/></linearGradient>
-      <linearGradient id="dkm" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9aa0dd"/><stop offset="1" stop-color="#c9c4ee"/></linearGradient>
-      <radialGradient id="dkg" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#fff" stop-opacity=".85"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+      <linearGradient id="dks" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--wp-s1)"/><stop offset=".42" style="stop-color:var(--wp-s2)"/><stop offset=".62" style="stop-color:var(--wp-s3)"/></linearGradient>
+      <linearGradient id="dkw" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--wp-w1)"/><stop offset=".6" style="stop-color:var(--wp-w2)"/><stop offset="1" style="stop-color:var(--wp-w3)"/></linearGradient>
+      <linearGradient id="dkm" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--wp-m1)"/><stop offset="1" style="stop-color:var(--wp-m2)"/></linearGradient>
+      <radialGradient id="dkg" cx=".5" cy=".5" r=".5"><stop offset="0" style="stop-color:var(--wp-glow)" stop-opacity=".85"/><stop offset="1" style="stop-color:var(--wp-glow)" stop-opacity="0"/></radialGradient>
       <filter id="dkb" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="9"/></filter>
     </defs>
     <rect width="1600" height="900" fill="url(#dks)"/>
     <ellipse cx="860" cy="470" rx="620" ry="190" fill="url(#dkg)"/>
-    <path d="M0 520 L180 450 L330 500 L520 420 L700 500 L900 440 L1100 510 L1300 440 L1480 500 L1600 460 V600 H0z" fill="#c4c2ec" opacity=".75"/>
+    <path d="M0 520 L180 450 L330 500 L520 420 L700 500 L900 440 L1100 510 L1300 440 L1480 500 L1600 460 V600 H0z" style="fill:var(--wp-far)" opacity=".75"/>
     <path d="M430 600 L760 330 Q800 300 840 330 L1170 600z" fill="url(#dkm)"/>
-    <path d="M700 380 L760 330 Q800 300 840 330 L905 385 Q870 365 850 392 Q830 372 805 400 Q785 372 760 395 Q735 372 700 380z" fill="#fff" opacity=".88"/>
+    <path d="M700 380 L760 330 Q800 300 840 330 L905 385 Q870 365 850 392 Q830 372 805 400 Q785 372 760 395 Q735 372 700 380z" style="fill:var(--wp-snow)" opacity=".88"/>
     <path d="M0 600 H1600 V900 H0z" fill="url(#dkw)"/>
-    <path d="M430 600 L760 750 L1170 600z" fill="#9aa0dd" opacity=".22"/>
-    <g fill="#fff" opacity=".35"><ellipse cx="500" cy="660" rx="260" ry="4"/><ellipse cx="1150" cy="700" rx="320" ry="5"/><ellipse cx="820" cy="760" rx="380" ry="5"/><ellipse cx="300" cy="820" rx="260" ry="5"/></g>
+    <path d="M430 600 L760 750 L1170 600z" style="fill:var(--wp-shade)" opacity=".22"/>
+    <g style="fill:var(--wp-refl)" opacity=".35"><ellipse cx="500" cy="660" rx="260" ry="4"/><ellipse cx="1150" cy="700" rx="320" ry="5"/><ellipse cx="820" cy="760" rx="380" ry="5"/><ellipse cx="300" cy="820" rx="260" ry="5"/></g>
     ${blossoms}
   </svg>`;
 }
@@ -503,7 +504,7 @@ function buildDock() {
     return b;
   };
   dock.append(
-    item('launcher', 'Launcher', { ic: 'grid', g: ['#b08cf5', '#6a58e6'] }, true),
+    item('launcher', 'Launcher', { ic: 'grid', g: ['#8f6af0', '#6a58e6'] }, true),
     item('home', 'Start', appById('home')),
     item('files', 'Dateien', appById('files')),
     item('hosts', 'Hosts', appById('hosts')),
@@ -713,7 +714,7 @@ function openHome(view) {
     head.append(back, fwd, find);
     back.addEventListener('click', () => { if (nav.back.length) { nav.fwd.push(nav.view); nav.view = nav.back.pop(); renderHome(); } });
     fwd.addEventListener('click', () => { if (nav.fwd.length) { nav.back.push(nav.view); nav.view = nav.fwd.pop(); renderHome(); } });
-    w = createWindow({ id: 'home', title: 'Start', icon: `<span class="dk-ti" style="--g1:#8f8cf7;--g2:#5f6cf0;width:22px;height:22px;border-radius:7px">${ic('home')}</span>`,
+    w = createWindow({ id: 'home', title: 'Start', icon: `<span class="dk-ti" style="--g1:#7b78ee;--g2:#5160e6;width:22px;height:22px;border-radius:7px">${ic('home')}</span>`,
       rect: defaultRect('home', 960, 640, -30, 0), minW: 640, minH: 420, head, onClose: () => { stopOverview(); nav.view = 'start'; nav.back = []; nav.fwd = []; } });
     w.head.querySelector('.dk-wt').style.minWidth = '60px';
     w.body.innerHTML = '<div class="dk-home"><nav class="dk-side" aria-label="Bereiche"></nav><div class="dk-main"></div></div>';
@@ -765,7 +766,7 @@ function renderStart(m) {
       <div class="dk-hi"><h2>${greeting()}</h2><p>Dein Server-Arbeitsplatz an einem Ort.</p></div>
       <div class="dk-hd"><span class="dk-hero-date"></span><b class="dk-hero-time"></b></div></section>
     <h3>Deine Dienste <button type="button" class="dk-b dk-more" data-go="dienste">Alle Dienste ›</button></h3>
-    <div class="dk-tiles">${conns.map(connTile).join('')}<button type="button" class="dk-b dk-tile add" data-act="add"><span class="dk-ti" style="--g1:#cfc8f7;--g2:#b3aaf2;box-shadow:none">${ic('plus')}</span><span class="dk-tt"><b>Verbindung</b><i>hinzufügen</i></span></button></div>
+    <div class="dk-tiles">${conns.map(connTile).join('')}<button type="button" class="dk-b dk-tile add" data-act="add"><span class="dk-ti" style="--g1:#7b78ee;--g2:#5160e6;box-shadow:none">${ic('plus')}</span><span class="dk-tt"><b>Verbindung</b><i>hinzufügen</i></span></button></div>
     ${recent.length ? `<h3>Zuletzt benutzt</h3><div class="dk-tiles">${recent.map(connTile).join('')}</div>` : ''}
     <h3>Schnellaktionen</h3>
     <div class="dk-qa">
@@ -887,13 +888,15 @@ function renderSettings(m) {
     <div class="dk-card"><h4>Fernsteuerung</h4><p>Solange ein Sitzungsfenster vorn ist, zeigt die obere Leiste seine Menüs: Tasten, Kombinationen (frei belegbar), Ansicht (Zoom, Vollbild) und Fenster (Programme der Ziel-Maschine). Der Name der Verbindung öffnet Neu verbinden, Text senden und Beenden.</p></div>
     <div class="dk-card"><h4>Dock</h4><p>Wann der Dock unten zu sehen ist. Du erreichst die Wahl auch mit Rechtsklick auf den Dock.</p>
       <div class="dk-btns">${DOCK_MODES.map(([id, label]) => `<button type="button" class="dk-b dk-btn${id === dockMode ? ' pri' : ''}" data-dockmode="${id}" aria-pressed="${id === dockMode}">${label}</button>`).join('')}</div></div>
-    <div class="dk-card"><h4>Darstellung</h4><p>Die Desktop-Oberfläche ist zurzeit immer hell. Ein dunkles Design folgt später.</p></div>`;
+    <div class="dk-card"><h4>Darstellung</h4><p>Hell, Dunkel oder wie das System (folgt der Einstellung deines Geräts). Die Wahl gilt auf jedem Gerät, auch am Handy.</p>
+      <div class="dk-btns" role="group" aria-label="Darstellung">${SCHEMES.map(([id, label]) => `<button type="button" class="dk-b dk-btn${id === getScheme() ? ' pri' : ''}" data-scheme="${id}" aria-pressed="${id === getScheme()}">${label}</button>`).join('')}</div></div>`;
 }
 function onMainClick(e) {
-  const t = e.target.closest('[data-conn],[data-edit],[data-extra],[data-act],[data-go],[data-app],[data-dockmode],[data-hostfilter],[data-folderfilter],[data-groupby],[data-fav],[data-hostedit],[data-hostagent]'); if (!t) return;
+  const t = e.target.closest('[data-conn],[data-edit],[data-extra],[data-act],[data-go],[data-app],[data-dockmode],[data-scheme],[data-hostfilter],[data-folderfilter],[data-groupby],[data-fav],[data-hostedit],[data-hostagent]'); if (!t) return;
   const find = (id) => ctx.state.connections.find((c) => c.id === id);
   const host = (id) => ctx.state.hosts.find((h) => h.id === id);
-  if (t.dataset.dockmode) setDockMode(t.dataset.dockmode);
+  if (t.dataset.scheme) setTheme({ scheme: t.dataset.scheme });   // das Ereignis julos:scheme (app.js) zeichnet die Einstellungen neu
+  else if (t.dataset.dockmode) setDockMode(t.dataset.dockmode);
   else if (t.dataset.hostfilter !== undefined) { hostFilter.id = t.dataset.hostfilter; renderHome(); }
   else if (t.dataset.folderfilter !== undefined) { folderFilter.id = t.dataset.folderfilter; renderHome(); }
   else if (t.dataset.groupby) { folderFilter.by = t.dataset.groupby; renderHome(); }
@@ -1058,6 +1061,11 @@ export async function init(context) {
     const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'desktop.css'; l.onload = l.onerror = done; document.head.appendChild(l);
   });
   document.documentElement.classList.add('desktop');
+  // Die Wahl Hell / Dunkel / System (auch vom Handy oder vom Server) steht in den Einstellungen: nur die Knoepfe nachziehen, der Fokus bleibt
+  document.addEventListener('julos:scheme', () => {
+    const cur = getScheme();
+    for (const b of document.querySelectorAll('#desktop [data-scheme]')) { const on = b.dataset.scheme === cur; b.classList.toggle('pri', on); b.setAttribute('aria-pressed', String(on)); }
+  });
   root = $('#desktop');
   root.replaceChildren();
   const wp = el('div', 'dk-wp'); wp.innerHTML = scene(true);

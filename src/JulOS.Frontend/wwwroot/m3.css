@@ -3,7 +3,7 @@
  *
  * Farben: Rollen wie in M3 (primary, secondary, tertiary, surface-container ..., outline, error), berechnet aus EINER Grundfarbe
  * (--m3-seed, Standard Violett; mobile.js setzt sie aus der gespeicherten Wahl). oklch(from ...) hebt die Helligkeit auf die Tonstufe der Rolle,
- * light-dark() waehlt hell oder dunkel nach color-scheme (das setzt app.js aus "Hell / Dunkel / Automatisch").
+ * light-dark() waehlt hell oder dunkel nach color-scheme (das setzt app.js aus "Hell / Dunkel / System").
  * Tonstufe T (Material) entspricht in OKLab etwa L = (T + 16) / 116. */
 :root {
   --m3-seed: #9a67ea;

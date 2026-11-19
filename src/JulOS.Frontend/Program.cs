@@ -18,7 +18,6 @@ using JulOS.Integrations.Agent;
 using JulOS.Integrations.Display;
 using JulOS.Integrations.Display.Rdp.Drive;
 using JulOS.Integrations.Display.Video;
-using JulOS.Integrations.Guacamole;
 using JulOS.Integrations.Ssh;
 using JulOS.Workers;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -59,18 +58,13 @@ builder.Services.AddSingleton(BackupOptions.Parse(builder.Configuration["JULOS_B
     builder.Configuration["JULOS_BACKUP_KEEP_DAYS"], builder.Configuration["JULOS_BACKUP_KEY"], builder.Configuration["JULOS_DATA"]));
 builder.Services.AddSingleton<BackupService>();
 builder.Services.AddHostedService<BackupWorker>();
-builder.Services.AddSingleton<GuacTickets>();
 builder.Services.AddSingleton<ScreenTickets>();
-// Laufwerksumleitung (nur Stream-Engine): der eine Ordner, der je Verbindung als Laufwerk gereicht werden darf (leer oder "off": keine Freigabe), siehe docs/DRIVES.md
+// Laufwerksumleitung: der eine Ordner, der je Verbindung als Laufwerk gereicht werden darf (leer oder "off": keine Freigabe), siehe docs/DRIVES.md
 builder.Services.AddSingleton(sp => DriveRoot.FromSetting(builder.Configuration["JULOS_DRIVE_ROOT"], sp.GetRequiredService<ILoggerFactory>().CreateLogger("JulOS.Drive")));
 builder.Services.AddSingleton<SshTickets>();
 builder.Services.AddHostedService<TicketSweepWorker>();
-// guacd (Container im selben Netz), erreichbar nur fuer den Server
-var guacd = (builder.Configuration["JULOS_GUACD"] ?? "guacd:4822").Split(':');
-builder.Services.AddSingleton(new GuacdOptions(guacd[0], guacd.Length > 1 ? int.Parse(guacd[1]) : 4822));
 // Obergrenze offener Fernsteuer-Sitzungen pro Benutzer (alle Arten zusammen), siehe docs/SESSIONS.md
 builder.Services.AddSingleton(new SessionRegistry(int.TryParse(builder.Configuration["JULOS_MAX_SESSIONS_PER_USER"], out var maxSessions) ? maxSessions : SessionRegistry.DefaultMaxPerUser));
-builder.Services.AddSingleton<GuacRelay>();
 // Bildkodierer: JULOS_ENCODER (auto, software, vaapi) und JULOS_CODEC (auto, h264, h265), siehe docs/ENCODERS.md
 builder.Services.AddSingleton(sp =>
 {

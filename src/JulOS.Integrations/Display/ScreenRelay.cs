@@ -34,7 +34,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
     /// <summary>Hoechstens so lange darf der Erhalt eingestellt werden; ein Tippfehler soll keine Sitzung tagelang offen halten.</summary>
     public const int MaxKeepSeconds = 3600;
 
-    // Fehlercodes wie bei Guacamole, damit die Seite dieselben Texte zeigt
+    // Statuscodes der Fehlermeldungen (die Seite uebersetzt sie in Texte, siehe statusText in app.js)
     public const int ErrorBusy = 513, ErrorTimeout = 514, ErrorConnectFailed = 515, ErrorUnreachable = 520, ErrorLogonFailed = 769;
 
     private const int ReceiveBuffer = 256;

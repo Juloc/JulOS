@@ -6,7 +6,6 @@ using System.Text.Json;
 using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
 using JulOS.Integrations;
-using JulOS.Integrations.Guacamole;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -17,20 +16,19 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace JulOS.Backend.Tests;
 
-/// <summary>Ticket und WebSocket durch den ganzen Server (echte Middleware und Datenbank, guacd ist ein Fake im Speicher).</summary>
+/// <summary>Ticket und WebSocket durch den ganzen Server (echte Middleware und Datenbank; der Desktop-Strom verbindet gegen einen geschlossenen Port, sodass der Fehlerweg geprueft wird).</summary>
 public sealed class RemoteHttpTests
 {
     private const string Password = "korrektes pferd batterie";
     private const string SetupCode = "TEST-CODE-0000";
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
 
-    private sealed class Server(TestDb db, string guacd, string? allowed = null, Action<IServiceCollection>? configure = null, string? secretKey = null, string? driveRoot = null) : WebApplicationFactory<Program>
+    private sealed class Server(TestDb db, string? allowed = null, Action<IServiceCollection>? configure = null, string? secretKey = null, string? driveRoot = null) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseSetting("JULOS_DB", db.ConnectionString);
             builder.UseSetting("JULOS_SETUP_CODE", SetupCode);
-            builder.UseSetting("JULOS_GUACD", guacd);
             if (allowed is not null) builder.UseSetting("JULOS_ALLOWED_HOSTS", allowed);
             if (secretKey is not null) builder.UseSetting("JULOS_SECRET_KEY", secretKey);
             if (driveRoot is not null) builder.UseSetting("JULOS_DRIVE_ROOT", driveRoot);
@@ -79,98 +77,62 @@ public sealed class RemoteHttpTests
     private static async Task<WebSocket> OpenAsync(Server app, string ticket, string? cookie, string origin = "http://localhost")
     {
         var ws = app.Server.CreateWebSocketClient();
-        ws.SubProtocols.Add("guacamole");                 // wie der Tunnel der Guacamole-Bibliothek im Browser
         ws.ConfigureRequest = r =>
         {
             if (cookie is not null) r.Headers["Cookie"] = cookie;
             if (origin.Length > 0) r.Headers["Origin"] = origin;
         };
-        return await ws.ConnectAsync(new Uri($"ws://localhost/api/remote/ws?ticket={ticket}"), CancellationToken.None);
+        return await ws.ConnectAsync(new Uri($"ws://localhost/api/remote/screen?ticket={ticket}"), CancellationToken.None);
     }
 
-    private static async Task<string> ReadAsync(WebSocket ws)
+    /// <summary>Liest Nachrichten des Bildschirm-Stroms bis zur ersten Fehlermeldung (Typ 4: Code, UTF-8-Text).</summary>
+    private static async Task<(int Code, string Text)> ReadErrorAsync(WebSocket ws)
     {
         using var cts = new CancellationTokenSource(Wait);
         var buf = new byte[70000];
-        var r = await ws.ReceiveAsync(buf, cts.Token);
-        return Encoding.UTF8.GetString(buf, 0, r.Count);
+        while (true)
+        {
+            var r = await ws.ReceiveAsync(buf, cts.Token);
+            Assert.NotEqual(WebSocketMessageType.Close, r.MessageType);
+            if (buf[0] == 4) return (buf[1] << 8 | buf[2], Encoding.UTF8.GetString(buf, 3, r.Count - 3));
+        }
     }
 
     [Fact]
-    public async Task Desktop_and_terminal_connect_through_the_server_with_a_one_time_ticket()
+    public async Task A_desktop_ticket_opens_the_screen_socket_once_and_a_failed_connection_is_reported()
     {
+        Assert.SkipUnless(JulOS.Integrations.Display.ScreenStream.IsAvailable, "libopenh264 fehlt: ohne Kodierer gibt es keine Desktop-Verbindung");
         await using var db = await TestDb.CreateAsync();
-        await using var guacd = new FakeGuacd { Greeting = GuacProtocol.Encode("sync", "7") };
-        await using var app = new Server(db, $"127.0.0.1:{guacd.Port}");
+        await using var app = new Server(db);
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (cookie, userId) = await SignedInAsync(app, c, db);
-        var connection = await new ConnectionStore(db.Data).CreateAsync(userId, "Test", "desktop", "ziel", 3389, "tester");
+        var connection = await new ConnectionStore(db.Data).CreateAsync(userId, "Test", "desktop", "127.0.0.1", 1, "tester");
 
-        var ticket = await TicketAsync(c, cookie, connection.Id);
+        var response = await c.SendAsync(Post("/api/remote/ticket", new { connection = connection.Id, password = "geheim", width = 858, height = 1449 }, cookie));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var j = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("stream", j.GetProperty("engine").GetString());
+        Assert.Equal("desktop", j.GetProperty("kind").GetString());
+        Assert.Equal((856, 1448), (j.GetProperty("width").GetInt32(), j.GetProperty("height").GetInt32()));     // Breite durch 2, Hoehe gerade
+        var ticket = j.GetProperty("ticket").GetString()!;
+
+        // Das Ziel ist nicht erreichbar: der Server sagt es im Klartext und schliesst
         using var ws = await OpenAsync(app, ticket, cookie);
-        Assert.Equal("guacamole", ws.SubProtocol);        // ohne gewaehltes Unterprotokoll bricht der Browser den Aufbau ab
-        Assert.StartsWith("0.,", await ReadAsync(ws));
-        Assert.Equal("4.sync,1.7;", await ReadAsync(ws));
-        Assert.Equal(["select", "rdp"], guacd.Handshake[0]);
-        Assert.Equal(["size", "856", "1448", "96"], guacd.Handshake[1]);
-        // Zugangsdaten kommen aus der gespeicherten Verbindung und dem getippten Passwort
-        var connect = guacd.Handshake[5];
-        Assert.Contains("ziel", connect); Assert.Contains("3389", connect); Assert.Contains("tester", connect); Assert.Contains("geheim", connect);
-
-        await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
-        await guacd.Closed.Task.WaitAsync(Wait);
+        var (code, text) = await ReadErrorAsync(ws);
+        Assert.True(code is 515 or 520, $"unexpected status {code}: {text}");
+        Assert.False(string.IsNullOrEmpty(text));
 
         // dasselbe Ticket ein zweites Mal: abgelehnt
         var again = await Assert.ThrowsAnyAsync<Exception>(() => OpenAsync(app, ticket, cookie));
         Assert.Contains("403", again.ToString());
     }
 
-    private static async Task<string> SidTicketAsync(HttpClient c, string cookie, Guid connection, string sid)
-    {
-        var r = await c.SendAsync(Post("/api/remote/ticket", new { connection, password = "geheim", width = 856, height = 1448, sid }, cookie));
-        Assert.Equal(HttpStatusCode.OK, r.StatusCode);
-        return JsonDocument.Parse(await r.Content.ReadAsStringAsync()).RootElement.GetProperty("ticket").GetString()!;
-    }
-
-    [Fact]
-    public async Task Several_sessions_to_one_target_run_side_by_side_a_reload_replaces_only_itself_and_the_limit_is_per_user()
-    {
-        await using var db = await TestDb.CreateAsync();
-        await using var guacd = new FakeGuacd { AcceptMany = true };
-        await using var app = new Server(db, $"127.0.0.1:{guacd.Port}", configure: s => s.AddSingleton(new SessionRegistry(2)));
-        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
-        var (cookie, userId) = await SignedInAsync(app, c, db);
-        var connection = await new ConnectionStore(db.Data).CreateAsync(userId, "Test", "desktop", "ziel", 3389, "tester");
-
-        using var one = await OpenAsync(app, await SidTicketAsync(c, cookie, connection.Id, "sitzung-eins"), cookie);
-        Assert.StartsWith("0.,", await ReadAsync(one));
-        using var two = await OpenAsync(app, await SidTicketAsync(c, cookie, connection.Id, "sitzung-zwei"), cookie);
-        Assert.StartsWith("0.,", await ReadAsync(two));          // zwei Sitzungen zum selben Ziel: keine loest die andere ab
-
-        // dritte: Obergrenze (hier 2), mit Meldung im Klartext
-        using var three = await OpenAsync(app, await SidTicketAsync(c, cookie, connection.Id, "sitzung-drei"), cookie);
-        await ReadAsync(three);
-        var refused = await ReadAsync(three);
-        Assert.Contains("Es sind schon 2 Sitzungen offen", refused);
-        Assert.EndsWith(",3.797;", refused);
-
-        // Neuladen der ersten Sitzung (gleiche Kennung): loest nur die erste ab, trotz Obergrenze
-        using var oneAgain = await OpenAsync(app, await SidTicketAsync(c, cookie, connection.Id, "sitzung-eins"), cookie);
-        Assert.StartsWith("0.,", await ReadAsync(oneAgain));
-        var told = await ReadAsync(one);
-        Assert.Contains("3.777", told);
-        Assert.Equal(WebSocketState.Open, two.State);            // die zweite Sitzung ist unberuehrt
-
-        await oneAgain.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
-        await two.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
-    }
-
     [Fact]
     public async Task Ticket_and_socket_need_a_session_and_the_own_origin()
     {
+        Assert.SkipUnless(JulOS.Integrations.Display.ScreenStream.IsAvailable, "libopenh264 fehlt: ohne Kodierer gibt es keine Desktop-Verbindung");
         await using var db = await TestDb.CreateAsync();
-        await using var guacd = new FakeGuacd();
-        await using var app = new Server(db, $"127.0.0.1:{guacd.Port}");
+        await using var app = new Server(db);
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
 
         // ohne Anmeldung
@@ -178,7 +140,7 @@ public sealed class RemoteHttpTests
         await Assert.ThrowsAnyAsync<Exception>(() => OpenAsync(app, "egal", null));
 
         var (cookie, userId) = await SignedInAsync(app, c, db);
-        var connection = await new ConnectionStore(db.Data).CreateAsync(userId, "Test", "desktop", "ziel", 3389, "tester");
+        var connection = await new ConnectionStore(db.Data).CreateAsync(userId, "Test", "desktop", "127.0.0.1", 1, "tester");
 
         // fehlende Angaben, fremde Verbindung
         Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Post("/api/remote/ticket", new { connection = connection.Id }, cookie))).StatusCode);
@@ -190,15 +152,14 @@ public sealed class RemoteHttpTests
         Assert.Contains("403", ex.ToString());
         // das Ticket wurde dabei nicht verbraucht, die eigene Seite kommt durch
         using var ws = await OpenAsync(app, ticket, cookie);
-        Assert.StartsWith("0.,", await ReadAsync(ws));
+        Assert.NotEqual(0, (await ReadErrorAsync(ws)).Code);
     }
 
     [Fact]
     public async Task The_allow_list_limits_the_targets()
     {
         await using var db = await TestDb.CreateAsync();
-        await using var guacd = new FakeGuacd();
-        await using var app = new Server(db, $"127.0.0.1:{guacd.Port}", allowed: "erlaubt.example, 10.0.0.5");
+        await using var app = new Server(db, allowed: "erlaubt.example, 10.0.0.5");
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (cookie, userId) = await SignedInAsync(app, c, db);
         var store = new ConnectionStore(db.Data);
@@ -213,8 +174,7 @@ public sealed class RemoteHttpTests
     public async Task Another_users_connection_cannot_be_used()
     {
         await using var db = await TestDb.CreateAsync();
-        await using var guacd = new FakeGuacd();
-        await using var app = new Server(db, $"127.0.0.1:{guacd.Port}");
+        await using var app = new Server(db);
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (cookie, _) = await SignedInAsync(app, c, db);
         await db.ExecAsync("insert into users (name, password_hash, totp_secret, totp_confirmed) values ('anna', 'x', 'x', true)");
@@ -227,14 +187,14 @@ public sealed class RemoteHttpTests
     [Fact]
     public async Task A_logged_out_session_is_no_longer_alive_for_open_connections()
     {
+        Assert.SkipUnless(JulOS.Integrations.Display.ScreenStream.IsAvailable, "libopenh264 fehlt: ohne Kodierer gibt es keine Desktop-Verbindung");
         await using var db = await TestDb.CreateAsync();
-        await using var guacd = new FakeGuacd();
-        await using var app = new Server(db, $"127.0.0.1:{guacd.Port}");
+        await using var app = new Server(db);
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (cookie, userId) = await SignedInAsync(app, c, db);
-        var connection = await new ConnectionStore(db.Data).CreateAsync(userId, "Test", "desktop", "ziel", 3389, "u");
+        var connection = await new ConnectionStore(db.Data).CreateAsync(userId, "Test", "desktop", "127.0.0.1", 1, "u");
         using var ws = await OpenAsync(app, await TicketAsync(c, cookie, connection.Id), cookie);
-        await ReadAsync(ws);
+        await ReadErrorAsync(ws);
 
         // die Sitzung pruefen wir hier direkt ueber ihre stabile Kennung (der Relay fragt dasselbe alle 60 s)
         var id = await db.ScalarAsync<Guid>("select id from sessions limit 1");
@@ -281,7 +241,7 @@ public sealed class RemoteHttpTests
     {
         var (sshHost, sshPort, targetPassword) = RealSshTests.Target();
         await using var db = await TestDb.CreateAsync();
-        await using var app = new Server(db, "127.0.0.1:1");
+        await using var app = new Server(db);
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (cookie, userId) = await SignedInAsync(app, c, db);
         var store = new ConnectionStore(db.Data);
@@ -366,11 +326,11 @@ public sealed class RemoteHttpTests
     public async Task The_remembered_rdp_certificate_is_never_sent_to_the_browser_and_is_forgotten_when_the_target_changes()
     {
         await using var db = await TestDb.CreateAsync();
-        await using var app = new Server(db, "127.0.0.1:1");
+        await using var app = new Server(db);
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (cookie, userId) = await SignedInAsync(app, c, db);
         var store = new ConnectionStore(db.Data);
-        var connection = await store.CreateAsync(userId, "Desktop", "desktop", "ziel", 3389, "jul", "stream");
+        var connection = await store.CreateAsync(userId, "Desktop", "desktop", "ziel", 3389, "jul");
         const string fingerprint = "SHA256:AB:CD:EF:01";
         await store.SetCertFingerprintAsync(userId, connection.Id, fingerprint);
         Assert.Equal(fingerprint, (await store.GetAsync(userId, connection.Id))!.CertFingerprint);
@@ -382,17 +342,17 @@ public sealed class RemoteHttpTests
         Assert.DoesNotContain("cert", text, StringComparison.OrdinalIgnoreCase);
 
         // Anderer Benutzername: das Zertifikat gehoert zum Ziel, es bleibt; anderes Ziel: weg
-        var rename = await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{connection.Id}", new { name = "Desktop", kind = "desktop", host = "ziel", port = 3389, username = "anderer", engine = "stream" }, cookie));
+        var rename = await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{connection.Id}", new { name = "Desktop", kind = "desktop", host = "ziel", port = 3389, username = "anderer" }, cookie));
         Assert.Equal(HttpStatusCode.OK, rename.StatusCode);
         Assert.DoesNotContain("cert", (await rename.Content.ReadAsStringAsync()), StringComparison.OrdinalIgnoreCase);
         Assert.Equal(fingerprint, (await store.GetAsync(userId, connection.Id))!.CertFingerprint);
-        var move = await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{connection.Id}", new { name = "Desktop", kind = "desktop", host = "anderes-ziel", port = 3389, username = "anderer", engine = "stream" }, cookie));
+        var move = await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{connection.Id}", new { name = "Desktop", kind = "desktop", host = "anderes-ziel", port = 3389, username = "anderer" }, cookie));
         Assert.Equal(HttpStatusCode.OK, move.StatusCode);
         Assert.Null((await store.GetAsync(userId, connection.Id))!.CertFingerprint);
 
         // und nach einem Port-Wechsel ebenfalls
         await store.SetCertFingerprintAsync(userId, connection.Id, fingerprint);
-        var port = await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{connection.Id}", new { name = "Desktop", kind = "desktop", host = "anderes-ziel", port = 3390, username = "anderer", engine = "stream" }, cookie));
+        var port = await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{connection.Id}", new { name = "Desktop", kind = "desktop", host = "anderes-ziel", port = 3390, username = "anderer" }, cookie));
         Assert.Equal(HttpStatusCode.OK, port.StatusCode);
         Assert.Null((await store.GetAsync(userId, connection.Id))!.CertFingerprint);
     }
@@ -401,7 +361,7 @@ public sealed class RemoteHttpTests
     public async Task The_terminal_socket_needs_a_session_a_ticket_and_the_own_origin()
     {
         await using var db = await TestDb.CreateAsync();
-        await using var app = new Server(db, "127.0.0.1:1");
+        await using var app = new Server(db);
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (cookie, userId) = await SignedInAsync(app, c, db);
         var connection = await new ConnectionStore(db.Data).CreateAsync(userId, "T", "terminal", "ziel", 22, "u");
@@ -416,7 +376,7 @@ public sealed class RemoteHttpTests
         })).ToString());
         Assert.Contains("403", (await Assert.ThrowsAnyAsync<Exception>(() => OpenSshAsync(app, ticket, cookie, "http://boese.example"))).ToString());
         Assert.Contains("403", (await Assert.ThrowsAnyAsync<Exception>(() => OpenSshAsync(app, "falsch", cookie))).ToString());
-        // das Ticket gilt fuer einen anderen Weg (Guacamole-Tunnel) nicht
+        // das Ticket gilt fuer einen anderen Weg (Bildschirm-Strom) nicht
         Assert.Contains("403", (await Assert.ThrowsAnyAsync<Exception>(() => OpenAsync(app, ticket, cookie))).ToString());
     }
 
@@ -447,7 +407,7 @@ public sealed class RemoteHttpTests
     public async Task Agent_upload_and_log_need_a_session_and_the_own_page()
     {
         await using var db = await TestDb.CreateAsync();
-        await using var app = new Server(db, "127.0.0.1:1");
+        await using var app = new Server(db);
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         foreach (var path in new[] { "/api/agent/health", "/api/agent/windows", "/api/agent/apps" })
             Assert.Equal(HttpStatusCode.Unauthorized, (await c.SendAsync(GetWith(path, null))).StatusCode);
@@ -473,7 +433,7 @@ public sealed class RemoteHttpTests
         try
         {
             await using var db = await TestDb.CreateAsync();
-            await using var app = new Server(db, "127.0.0.1:1", configure: s => s.AddSingleton(new UploadOptions(dir, TimeSpan.FromMilliseconds(500))));
+            await using var app = new Server(db, configure: s => s.AddSingleton(new UploadOptions(dir, TimeSpan.FromMilliseconds(500))));
             var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
             var (cookie, _) = await SignedInAsync(app, c, db);
 
@@ -534,7 +494,7 @@ public sealed class RemoteHttpTests
     {
         await using var db = await TestDb.CreateAsync();
         await using var agent = new FakeAgent();
-        await using var app = new Server(db, "127.0.0.1:1", configure: s => s.AddSingleton(new AgentOptions(agent.SocketPath)));
+        await using var app = new Server(db, configure: s => s.AddSingleton(new AgentOptions(agent.SocketPath)));
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (cookie, _) = await SignedInAsync(app, c, db);
 
@@ -573,7 +533,7 @@ public sealed class RemoteHttpTests
     public async Task Without_an_agent_the_window_bar_is_off_and_the_rest_answers_502()
     {
         await using var db = await TestDb.CreateAsync();
-        await using var app = new Server(db, "127.0.0.1:1", configure: s => s.AddSingleton(new AgentOptions("/tmp/julos-kein-agent.sock")));
+        await using var app = new Server(db, configure: s => s.AddSingleton(new AgentOptions("/tmp/julos-kein-agent.sock")));
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (cookie, _) = await SignedInAsync(app, c, db);
 
@@ -589,7 +549,7 @@ public sealed class RemoteHttpTests
         try
         {
             await using var db = await TestDb.CreateAsync();
-            await using var app = new Server(db, "127.0.0.1:1", configure: s => s.AddSingleton(new UploadOptions(dir, TimeSpan.FromMilliseconds(400))));
+            await using var app = new Server(db, configure: s => s.AddSingleton(new UploadOptions(dir, TimeSpan.FromMilliseconds(400))));
             var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
             var (cookie, _) = await SignedInAsync(app, c, db);
 
@@ -639,7 +599,7 @@ public sealed class RemoteHttpTests
     {
         await using var db = await TestDb.CreateAsync();
         var logs = new CaptureLogs();
-        await using var app = new Server(db, "127.0.0.1:1", configure: s => s.AddLogging(l => l.AddProvider(logs)));
+        await using var app = new Server(db, configure: s => s.AddLogging(l => l.AddProvider(logs)));
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (cookie, _) = await SignedInAsync(app, c, db);
 
@@ -689,9 +649,9 @@ public sealed class RemoteHttpTests
     [Fact]
     public async Task A_stored_password_is_kept_encrypted_used_by_the_server_and_never_sent_back()
     {
+        Assert.SkipUnless(JulOS.Integrations.Display.ScreenStream.IsAvailable, "libopenh264 fehlt: ohne Kodierer gibt es keine Desktop-Verbindung");
         await using var db = await TestDb.CreateAsync();
-        await using var guacd = new FakeGuacd();
-        await using var app = new Server(db, $"127.0.0.1:{guacd.Port}", secretKey: TestKey);
+        await using var app = new Server(db, secretKey: TestKey);
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (cookie, _) = await SignedInAsync(app, c, db);
         const string stored = "Gespeichert-Passwort-123";
@@ -712,14 +672,11 @@ public sealed class RemoteHttpTests
         Assert.True(list.GetProperty("canStorePasswords").GetBoolean());
         Assert.True(list.GetProperty("connections")[0].GetProperty("hasPassword").GetBoolean());
 
-        // Ticket ohne getipptes Passwort: der Server nimmt das gespeicherte und gibt es an guacd
+        // Ticket ohne getipptes Passwort: der Server nimmt das gespeicherte und reicht es an den RDP-Client weiter
         var noPassword = await c.SendAsync(Post("/api/remote/ticket", new { connection = id, width = 856, height = 1448 }, cookie));
         Assert.Equal(HttpStatusCode.OK, noPassword.StatusCode);
         var ticket = JsonDocument.Parse(await noPassword.Content.ReadAsStringAsync()).RootElement.GetProperty("ticket").GetString()!;
         Assert.DoesNotContain(stored, await noPassword.Content.ReadAsStringAsync());
-        using (var ws = await OpenAsync(app, ticket, cookie)) { await ReadAsync(ws); }
-        await guacd.Closed.Task.WaitAsync(Wait);
-        Assert.Contains(stored, guacd.Handshake[5]);
 
         // unveraendertes Ziel behaelt das Passwort, anderes Ziel oder "vergessen" entfernt es
         var same = await Json(await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{id}", new { name = "Neuer Name", kind = "desktop", host = "ziel", username = "jul" }, cookie)));
@@ -740,8 +697,7 @@ public sealed class RemoteHttpTests
     public async Task Without_a_secret_key_passwords_cannot_be_stored()
     {
         await using var db = await TestDb.CreateAsync();
-        await using var guacd = new FakeGuacd();
-        await using var app = new Server(db, $"127.0.0.1:{guacd.Port}");
+        await using var app = new Server(db);
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (cookie, _) = await SignedInAsync(app, c, db);
 
@@ -755,7 +711,7 @@ public sealed class RemoteHttpTests
     public async Task Connections_can_be_created_listed_changed_and_deleted_by_their_owner_only()
     {
         await using var db = await TestDb.CreateAsync();
-        await using var app = new Server(db, "127.0.0.1:1", allowed: "erlaubt.example, 10.0.0.5, ziel");
+        await using var app = new Server(db, allowed: "erlaubt.example, 10.0.0.5, ziel");
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (cookie, userId) = await SignedInAsync(app, c, db);
 
@@ -778,7 +734,7 @@ public sealed class RemoteHttpTests
 
         // fremde Verbindungen sind unsichtbar und unveraenderlich
         await db.ExecAsync("insert into users (name, password_hash, totp_secret, totp_confirmed) values ('anna', 'x', 'x', true)");
-        var annas = await new ConnectionStore(db.Data).CreateAsync(await db.ScalarAsync<Guid>("select id from users where name = 'anna'"), "Annas", "terminal", "ziel", 22, "a", "guac");
+        var annas = await new ConnectionStore(db.Data).CreateAsync(await db.ScalarAsync<Guid>("select id from users where name = 'anna'"), "Annas", "terminal", "ziel", 22, "a");
         Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{annas.Id}", new { name = "x", kind = "terminal", host = "ziel" }, cookie))).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Send(HttpMethod.Delete, $"/api/connections/{annas.Id}", null, cookie))).StatusCode);
         Assert.Equal(2, (await Json(await c.SendAsync(GetWith("/api/connections", cookie)))).GetProperty("connections").GetArrayLength());
@@ -790,48 +746,40 @@ public sealed class RemoteHttpTests
     }
 
     [Fact]
-    public async Task The_engine_is_saved_per_connection_kept_on_change_and_decides_the_ticket()
+    public async Task The_stream_is_the_only_engine_old_engine_values_are_ignored_and_a_ticket_always_comes_from_the_stream()
     {
+        Assert.SkipUnless(JulOS.Integrations.Display.ScreenStream.IsAvailable, "libopenh264 fehlt: ohne Kodierer gibt es keine Desktop-Verbindung");
         await using var db = await TestDb.CreateAsync();
-        await using var guacd = new FakeGuacd();
-        await using var app = new Server(db, $"127.0.0.1:{guacd.Port}", allowed: "ziel", secretKey: TestKey);
+        await using var app = new Server(db, allowed: "ziel", secretKey: TestKey);
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (cookie, _) = await SignedInAsync(app, c, db);
 
-        // Ohne Angabe: Guacamole. Mit Angabe wird gespeichert, ein Terminal ignoriert die Engine (eigener SSH-Client).
-        var plain = await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "A", kind = "desktop", host = "ziel", username = "jul" }, cookie)));
-        Assert.Equal("guac", plain.GetProperty("engine").GetString());
-        var streamed = await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "B", kind = "desktop", host = "ziel", username = "jul", engine = "stream", password = "pw" }, cookie)));
-        Assert.Equal("stream", streamed.GetProperty("engine").GetString());
-        var id = streamed.GetProperty("id").GetGuid();
-        var shell = await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "C", kind = "terminal", host = "ziel", engine = "stream" }, cookie)));
-        Assert.Equal("guac", shell.GetProperty("engine").GetString());
-        Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "D", kind = "desktop", host = "ziel", engine = "vnc" }, cookie))).StatusCode);
+        // Die API kennt keine Engine mehr: weder Antworten noch Listen tragen ein Feld dafuer, ein altes Feld in der Anfrage wird ueberhoert
+        var plain = await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "A", kind = "desktop", host = "ziel", username = "jul", password = "pw", engine = "guac" }, cookie)));
+        Assert.False(plain.TryGetProperty("engine", out _));
+        var id = plain.GetProperty("id").GetGuid();
+        var list = await (await c.SendAsync(GetWith("/api/connections", cookie))).Content.ReadAsStringAsync();
+        Assert.DoesNotContain("engine", list);
 
-        // Eine Aenderung ohne Engine behaelt die bisherige; mit Engine wechselt sie
-        var kept = await Json(await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{id}", new { name = "B2", kind = "desktop", host = "ziel", username = "jul" }, cookie)));
-        Assert.Equal("stream", kept.GetProperty("engine").GetString());
-        var list = (await Json(await c.SendAsync(GetWith("/api/connections", cookie)))).GetProperty("connections");
-        Assert.Equal(new[] { "guac", "stream", "guac" }, list.EnumerateArray().Select(x => x.GetProperty("engine").GetString()));
+        // Zeilen aus der Zeit mit zwei Engines ('guac' war der Standard der Spalte) werden wie alle anderen behandelt
+        await db.ExecAsync("update connections set engine = 'guac' where id = $1", id);
+        var ticket = await Json(await c.SendAsync(Post("/api/remote/ticket", new { connection = id, width = 856, height = 1448, engine = "guac" }, cookie)));
+        Assert.Equal("stream", ticket.GetProperty("engine").GetString());
+        var renamed = await Json(await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{id}", new { name = "A2", kind = "desktop", host = "ziel", username = "jul" }, cookie)));
+        Assert.Equal("A2", renamed.GetProperty("name").GetString());
+        Assert.True(renamed.GetProperty("hasPassword").GetBoolean());
 
-        // Das Ticket folgt der Engine der Verbindung (Stream nur, wenn der Kodierer da ist); die Seite kann sie ausdruecklich ueberstimmen
-        var expected = JulOS.Integrations.Display.ScreenStream.IsAvailable ? "stream" : "guac";
-        var byConnection = await Json(await c.SendAsync(Post("/api/remote/ticket", new { connection = id, width = 856, height = 1448 }, cookie)));
-        Assert.Equal(expected, byConnection.GetProperty("engine").GetString());
-        var forcedGuac = await Json(await c.SendAsync(Post("/api/remote/ticket", new { connection = id, width = 856, height = 1448, engine = "guac" }, cookie)));
-        Assert.Equal("guac", forcedGuac.GetProperty("engine").GetString());
-        var plainId = plain.GetProperty("id").GetGuid();
-        var plainForced = await Json(await c.SendAsync(Post("/api/remote/ticket", new { connection = plainId, password = "x", width = 856, height = 1448, engine = "stream" }, cookie)));
-        Assert.Equal(expected, plainForced.GetProperty("engine").GetString());
-        var shellTicket = await Json(await c.SendAsync(Post("/api/remote/ticket", new { connection = shell.GetProperty("id").GetGuid(), password = "x", engine = "stream" }, cookie)));
-        Assert.Equal("ssh", shellTicket.GetProperty("engine").GetString());          // ein Terminal nutzt immer den eigenen SSH-Client
+        // Ein Terminal nutzt weiter den eigenen SSH-Client
+        var shell = await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "C", kind = "terminal", host = "ziel" }, cookie)));
+        var shellTicket = await Json(await c.SendAsync(Post("/api/remote/ticket", new { connection = shell.GetProperty("id").GetGuid(), password = "x" }, cookie)));
+        Assert.Equal("ssh", shellTicket.GetProperty("engine").GetString());
     }
 
     [Fact]
     public async Task Bad_connection_input_and_forbidden_targets_are_refused_with_a_reason()
     {
         await using var db = await TestDb.CreateAsync();
-        await using var app = new Server(db, "127.0.0.1:1", allowed: "ziel");
+        await using var app = new Server(db, allowed: "ziel");
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (cookie, _) = await SignedInAsync(app, c, db);
 
@@ -864,63 +812,59 @@ public sealed class RemoteHttpTests
     public async Task Drive_switches_are_off_by_default_and_the_server_without_a_root_refuses_to_turn_them_on()
     {
         await using var db = await TestDb.CreateAsync();
-        await using var app = new Server(db, "127.0.0.1:1");
+        await using var app = new Server(db);
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (cookie, _) = await SignedInAsync(app, c, db);
 
-        var created = await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "PC", kind = "desktop", host = "ziel", username = "jul", engine = "stream" }, cookie)));
+        var created = await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "PC", kind = "desktop", host = "ziel", username = "jul" }, cookie)));
         Assert.False(created.GetProperty("driveShare").GetBoolean());
         Assert.False(created.GetProperty("driveWrite").GetBoolean());
         var list = await Json(await c.SendAsync(GetWith("/api/connections", cookie)));
         Assert.False(list.GetProperty("driveAvailable").GetBoolean());
 
-        var refused = await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "PC2", kind = "desktop", host = "ziel", username = "jul", engine = "stream", driveShare = true }, cookie));
+        var refused = await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "PC2", kind = "desktop", host = "ziel", username = "jul", driveShare = true }, cookie));
         Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
         Assert.Contains("JULOS_DRIVE_ROOT", await refused.Content.ReadAsStringAsync());
         var id = created.GetProperty("id").GetGuid();
-        var update = await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{id}", new { name = "PC", kind = "desktop", host = "ziel", username = "jul", engine = "stream", driveShare = true }, cookie));
+        var update = await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{id}", new { name = "PC", kind = "desktop", host = "ziel", username = "jul", driveShare = true }, cookie));
         Assert.Equal(HttpStatusCode.BadRequest, update.StatusCode);
     }
 
     [Fact]
-    public async Task Drive_switches_only_apply_to_the_stream_and_writing_needs_the_share()
+    public async Task Drive_switches_only_apply_to_desktops_and_writing_needs_the_share()
     {
         var root = Path.Combine(Path.GetTempPath(), "julos-driveroot-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(root);
         try
         {
             await using var db = await TestDb.CreateAsync();
-            await using var app = new Server(db, "127.0.0.1:1", driveRoot: root);
+            await using var app = new Server(db, driveRoot: root);
             var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
             var (cookie, _) = await SignedInAsync(app, c, db);
             Assert.True((await Json(await c.SendAsync(GetWith("/api/connections", cookie)))).GetProperty("driveAvailable").GetBoolean());
 
             async Task<JsonElement> Create(object body) => await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/connections", body, cookie)));
 
-            var rw = await Create(new { name = "RW", kind = "desktop", host = "ziel", engine = "stream", driveShare = true, driveWrite = true });
+            var rw = await Create(new { name = "RW", kind = "desktop", host = "ziel", driveShare = true, driveWrite = true });
             Assert.True(rw.GetProperty("driveShare").GetBoolean());
             Assert.True(rw.GetProperty("driveWrite").GetBoolean());
-            var ro = await Create(new { name = "RO", kind = "desktop", host = "ziel", engine = "stream", driveShare = true });
+            var ro = await Create(new { name = "RO", kind = "desktop", host = "ziel", driveShare = true });
             Assert.True(ro.GetProperty("driveShare").GetBoolean());
             Assert.False(ro.GetProperty("driveWrite").GetBoolean());
-            var writeOnly = await Create(new { name = "W", kind = "desktop", host = "ziel", engine = "stream", driveWrite = true });
+            var writeOnly = await Create(new { name = "W", kind = "desktop", host = "ziel", driveWrite = true });
             Assert.False(writeOnly.GetProperty("driveShare").GetBoolean());
             Assert.False(writeOnly.GetProperty("driveWrite").GetBoolean());                       // writing without the drive does not exist
-            var guac = await Create(new { name = "G", kind = "desktop", host = "ziel", engine = "guac", driveShare = true, driveWrite = true });
-            Assert.False(guac.GetProperty("driveShare").GetBoolean());                            // only the own stream carries the drive
             var terminal = await Create(new { name = "T", kind = "terminal", host = "ziel", driveShare = true });
             Assert.False(terminal.GetProperty("driveShare").GetBoolean());
 
             // switching the read-only drive off keeps nothing; changing only the name keeps the switches as they were
             var id = rw.GetProperty("id").GetGuid();
-            var renamed = await Json(await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{id}", new { name = "RW2", kind = "desktop", host = "ziel", engine = "stream" }, cookie)));
+            var renamed = await Json(await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{id}", new { name = "RW2", kind = "desktop", host = "ziel" }, cookie)));
             Assert.True(renamed.GetProperty("driveShare").GetBoolean());
             Assert.True(renamed.GetProperty("driveWrite").GetBoolean());
-            var off = await Json(await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{id}", new { name = "RW2", kind = "desktop", host = "ziel", engine = "stream", driveShare = false }, cookie)));
+            var off = await Json(await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{id}", new { name = "RW2", kind = "desktop", host = "ziel", driveShare = false }, cookie)));
             Assert.False(off.GetProperty("driveShare").GetBoolean());
             Assert.False(off.GetProperty("driveWrite").GetBoolean());
-            var toGuac = await Json(await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{ro.GetProperty("id").GetGuid()}", new { name = "RO", kind = "desktop", host = "ziel", engine = "guac" }, cookie)));
-            Assert.False(toGuac.GetProperty("driveShare").GetBoolean());
 
             // the root never reaches the browser, in no response
             var text = await (await c.SendAsync(GetWith("/api/connections", cookie))).Content.ReadAsStringAsync();
@@ -936,13 +880,13 @@ public sealed class RemoteHttpTests
     [Fact]
     public async Task A_stream_ticket_carries_the_drive_only_when_the_connection_asks_for_it()
     {
-        Assert.SkipUnless(JulOS.Integrations.Display.ScreenStream.IsAvailable, "libopenh264 fehlt: der Server nimmt dann Guacamole");
+        Assert.SkipUnless(JulOS.Integrations.Display.ScreenStream.IsAvailable, "libopenh264 fehlt: ohne Kodierer gibt es keine Desktop-Verbindung");
         var root = Path.Combine(Path.GetTempPath(), "julos-driveroot-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(root);
         try
         {
             await using var db = await TestDb.CreateAsync();
-            await using var app = new Server(db, "127.0.0.1:1", driveRoot: root);
+            await using var app = new Server(db, driveRoot: root);
             var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
             var (cookie, userId) = await SignedInAsync(app, c, db);
             var store = new ConnectionStore(db.Data);
@@ -950,11 +894,11 @@ public sealed class RemoteHttpTests
             async Task<JsonElement> Ticket(Guid connection) =>
                 await Json(await c.SendAsync(Post("/api/remote/ticket", new { connection, password = "x", width = 800, height = 600 }, cookie)));
 
-            var plain = await store.CreateAsync(userId, "plain", "desktop", "ziel", 3389, "u", "stream");
+            var plain = await store.CreateAsync(userId, "plain", "desktop", "ziel", 3389, "u");
             Assert.Equal(JsonValueKind.Null, (await Ticket(plain.Id)).GetProperty("drive").ValueKind);
-            var ro = await store.CreateAsync(userId, "ro", "desktop", "ziel", 3389, "u", "stream", driveShare: true);
+            var ro = await store.CreateAsync(userId, "ro", "desktop", "ziel", 3389, "u", driveShare: true);
             Assert.Equal("ro", (await Ticket(ro.Id)).GetProperty("drive").GetString());
-            var rw = await store.CreateAsync(userId, "rw", "desktop", "ziel", 3389, "u", "stream", driveShare: true, driveWrite: true);
+            var rw = await store.CreateAsync(userId, "rw", "desktop", "ziel", 3389, "u", driveShare: true, driveWrite: true);
             Assert.Equal("rw", (await Ticket(rw.Id)).GetProperty("drive").GetString());
 
             // a request cannot ask for more than the connection has: the body has no drive field at all

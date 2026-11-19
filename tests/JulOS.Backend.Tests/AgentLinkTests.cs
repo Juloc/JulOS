@@ -27,7 +27,6 @@ public sealed class AgentLinkTests
         {
             builder.UseSetting("JULOS_DB", db.ConnectionString);
             builder.UseSetting("JULOS_SETUP_CODE", SetupCode);
-            builder.UseSetting("JULOS_GUACD", "127.0.0.1:1");
             builder.ConfigureServices(s => s.AddTransient<IStartupFilter, LoopbackFilter>());
             if (configure is not null) builder.ConfigureTestServices(configure);
         }

@@ -1,7 +1,4 @@
-using System.Net.WebSockets;
 using JulOS.Integrations;
-using JulOS.Integrations.Guacamole;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace JulOS.Backend.Tests;
 

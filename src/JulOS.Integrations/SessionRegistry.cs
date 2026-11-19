@@ -1,7 +1,7 @@
 namespace JulOS.Integrations;
 
 /// <summary>
-/// Merkt sich die offenen Fernsteuer-Sitzungen (alle Arten: Guacamole, Stream, spaeter das native Terminal).
+/// Merkt sich die offenen Fernsteuer-Sitzungen (Desktop-Stream und Terminal).
 /// Pro Slot (Benutzer + Verbindung + Sitzungskennung des Browsers) ist nur ein WebSocket offen: ein neuer loest den alten ab, sonst nichts.
 /// Dazu gilt eine Obergrenze offener Sitzungen pro Benutzer (ein ablosender WebSocket zaehlt nicht doppelt).
 /// </summary>
@@ -9,7 +9,7 @@ public sealed class SessionRegistry(int maxPerUser = SessionRegistry.DefaultMaxP
 {
     public const int DefaultMaxPerUser = 8;
 
-    /// <summary>Guacamole-Statuscode "zu viele" (CLIENT_TOO_MANY); die Seite zeigt dazu die Meldung des Servers.</summary>
+    /// <summary>Statuscode "zu viele offene Sitzungen"; die Seite zeigt dazu die Meldung des Servers.</summary>
     public const int TooManyStatus = 797;
 
     /// <summary>

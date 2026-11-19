@@ -19,7 +19,7 @@ public static class SshProtocol
     // Codes wie bei den anderen Verbindungen, dazu die des Terminals
     public const int ErrorBusy = 513, ErrorTimeout = 514, ErrorConnectFailed = 515, ErrorUnreachable = 520, ErrorLogonFailed = 769,
         ErrorHostKeyChanged = 800, EndShellClosed = 801, EndSessionExpired = 802,
-        EndTaken = 777;                 // wie bei Guacamole: eine neuere Sitzung im selben Slot hat uebernommen
+        EndTaken = 777;                 // eine neuere Sitzung im selben Slot hat uebernommen
 
     public const int MaxClientMessage = 64 * 1024;
     public const int MinCols = 2, MaxCols = 500, MinRows = 1, MaxRows = 300;

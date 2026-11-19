@@ -144,7 +144,7 @@ public sealed partial class RdpClient
                     Data(body);
                     break;
                 case 10:
-                    throw new RdpException("This server passes the session on to another one (a connection broker), which JulOS's own engine cannot follow yet. Open this connection with Guacamole.");
+                    throw new RdpException("This server passes the session on to another one (a connection broker), which JulOS's own engine cannot follow yet.");
             }
         }
     }
@@ -168,7 +168,7 @@ public sealed partial class RdpClient
         }
 
         // A real licence exchange, as terminal servers with client access licences start it.
-        throw new RdpException("This server asks for a Remote Desktop licence (a terminal server). JulOS's own engine cannot do that yet - open this connection with Guacamole.");
+        throw new RdpException("This server asks for a Remote Desktop licence (a terminal server). JulOS's own engine cannot do that yet.");
     }
 
     // ---- capabilities -----------------------------------------------------------------------------------

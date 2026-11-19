@@ -30,6 +30,16 @@ internal static class AgentLinkEndpoints
     {
         var log = app.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("AgentLink");
 
+        // Die drei Dateien fuer die Ziel-Maschine (kein Geheimnis, wie der Rest des Quelltexts): so passt, was dort laeuft, zur Version dieses Servers
+        app.MapGet("/agent-files/{name}", (string name, HttpContext ctx) =>
+        {
+            if (name is not ("julos-agent.py" or "julos-clip.py" or "install-linux-agent.sh")) return Results.NotFound();
+            var path = Path.Combine(AppContext.BaseDirectory, "agent-files", name);
+            if (!File.Exists(path)) return Results.NotFound();
+            ctx.Response.Headers.CacheControl = "no-cache";
+            return Results.File(path, "text/plain; charset=utf-8", fileDownloadName: name);
+        });
+
         // Code gegen Token tauschen (der Code gilt einmal und nur kurz). Wenige Versuche je Adresse und insgesamt: der Code hat 50 Bit.
         app.MapPost(EnrollPath, async (AgentEnrollRequest body, HttpContext ctx, AgentStore store, HitCounter hits) =>
         {

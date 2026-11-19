@@ -96,6 +96,12 @@ dialog label { margin-bottom: 10px; }
 .row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .row button { flex: 1 1 auto; }
 .hint { color: var(--muted); font-size: .85rem; margin: 4px 0 8px; }
+/* Agent einrichten (Verbindungsdialog) */
+.agentbox { border-top: 1px solid rgba(127,127,127,.3); margin-top: 10px; padding-top: 6px; }
+.agentbox h3 { margin: 6px 0 2px; font-size: 1rem; }
+.agentstate { margin: 2px 0; font-weight: 600; }
+.agentcode { font: 700 1.5rem/1.2 ui-monospace, monospace; letter-spacing: .12em; text-align: center; margin: 6px 0; user-select: all; }
+.agentcmd { white-space: pre-wrap; word-break: break-all; font: .78rem/1.4 ui-monospace, monospace; background: rgba(127,127,127,.15); border-radius: 8px; padding: 8px; margin: 4px 0 8px; user-select: all; }
 .close { width: 100%; }
 .swatches { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0 14px; }
 .swatches .sw { width: 44px; height: 44px; border-radius: 50%; border: 3px solid transparent; cursor: pointer; flex: 0 0 auto; }

@@ -9,6 +9,8 @@ COPY src/JulOS.Frontend/JulOS.Frontend.csproj src/JulOS.Frontend/
 RUN dotnet restore src/JulOS.Frontend/JulOS.Frontend.csproj
 COPY src src
 COPY database database
+# Agent-Dateien fuer die Ziel-Maschine (werden unter /agent-files/ ausgeliefert)
+COPY tools/julos-agent.py tools/julos-clip.py tools/install-linux-agent.sh tools/
 # Commit und Bauzeit kommen vom Aufrufer (Workflow); sie stehen nur in "Ueber JulOS". Die Version steht in Directory.Build.props.
 ARG COMMIT=
 ARG BUILD_DATE=

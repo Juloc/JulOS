@@ -1,13 +1,19 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
+using JulOS.Integrations.Display.Rdp.Drive;
 
 namespace JulOS.Integrations.Display.Rdp.Channels;
 
-// The device redirection channel "rdpdr" (MS-RDPEFS), with no devices at all. It only exists because Windows
-// does not talk on "rdpsnd" to a client that does not announce "rdpdr" as well (MS-RDPEA <1>): it goes through
-// the handshake - version and client id, the computer's name, capabilities, an empty device list - and then
-// has nothing to say.
+// The device redirection channel "rdpdr" (MS-RDPEFS). Without a drive it has no devices at all: it only exists
+// because Windows does not talk on "rdpsnd" to a client that does not announce "rdpdr" as well (MS-RDPEA <1>):
+// it goes through the handshake - version and client id, the computer's name, capabilities, an empty device
+// list - and then has nothing to say.
+//
+// With a SharedDrive it announces exactly one device, a file system rooted at one folder of the server, and
+// answers the server's I/O requests for it through a DriveService (read only unless the drive says otherwise;
+// every path goes through the DriveJail). The drive is announced only when the server's capabilities include
+// the drive set (a server that forbids drive redirection gets an empty list as before).
 //
 // Everything happens on the thread that calls Receive and Closed; the properties may be read from any thread.
 public sealed class RdpdrChannel : StaticChannel
@@ -32,6 +38,12 @@ public sealed class RdpdrChannel : StaticChannel
     private const ushort UserLoggedOn = 0x554C;
 
     private const ushort CapabilityGeneral = 1;
+    private const ushort CapabilityDrive = 4;
+    private const uint DriveVersion2 = 2;
+    private const uint DeviceTypeFilesystem = 8;
+
+    /// <summary>The id of the one device this client announces.</summary>
+    public const uint DriveDeviceId = 1;
     private const uint GeneralVersion2 = 2;
     private const int GeneralLength = 44;
 
@@ -63,13 +75,32 @@ public sealed class RdpdrChannel : StaticChannel
     private bool _serverSendsLogon;
     private bool _confirmed;
     private bool _listSent;
+    private bool _loggedOn;
+
+    // The shared drive: whether the server's capabilities have the drive set, whether it accepted the device, and the service for this session.
+    private readonly SharedDrive? _drive;
+    private bool _serverHasDrive;
+    private bool _driveAnnounced;
+    private DriveService? _service;
 
     // computerName is sent in UTF-16 with its terminator. announceEmptyDeviceList: when the server is ready for
     // devices, tell it that there are none (an empty Client Device List Announce Request). FreeRDP 3 and
     // IronRDP send nothing in that case; both are within the specification, which only says the client
     // announces "its devices" then.
-    public RdpdrChannel(string computerName = DefaultComputerName, bool announceEmptyDeviceList = true)
+    //
+    // drive: a folder of the server to hand to the remote session as a drive (see SharedDrive); null: none.
+    public RdpdrChannel(string computerName = DefaultComputerName, bool announceEmptyDeviceList = true, SharedDrive? drive = null)
     {
+        if (drive is not null)
+        {
+            var jail = DriveJail.TryCreate(drive.Root, out var rootError);
+            if (!SharedDrive.IsValidName(drive.Name) || jail is null)
+            {
+                throw new ArgumentException(string.IsNullOrEmpty(rootError) ? "The drive needs a valid name and an existing root folder." : rootError, nameof(drive));
+            }
+        }
+
+        _drive = drive;
         ArgumentNullException.ThrowIfNull(computerName);
         if (computerName.Length is 0 or > MaxComputerNameLength || computerName.Contains('\0'))
         {
@@ -148,26 +179,36 @@ public sealed class RdpdrChannel : StaticChannel
 
         var outgoing = new List<byte[]>();
         string? note;
+        DriveService? service = null;
+        DriveService? old = null;
         lock (_gate)
         {
+            var before = _service;
             note = packet switch
             {
                 ServerAnnounce => Announce(reader, outgoing),
                 ServerCapability => Capabilities(reader, outgoing),
                 ClientIdConfirm => Confirm(reader, outgoing),
                 UserLoggedOn => LoggedOn(outgoing),
-                DeviceReply => "ignored a device announce response: no device was announced",
-
-                // A request for a device that was never announced is ignored (MS-RDPEFS 3.1.5.2).
-                DeviceIoRequest => "ignored an I/O request: there are no devices",
+                DeviceReply => DeviceResponse(reader),
+                DeviceIoRequest => IoRequest(reader, out service),
                 _ => $"dropped the unknown message {packet:X4}",
             };
+
+            if (!ReferenceEquals(before, _service) && before is not null)
+            {
+                old = before;
+            }
         }
 
+        old?.Dispose();
         if (note is not null)
         {
             Report(note);
         }
+
+        // The disk is read and written on the drive's own thread; this only hands the request over
+        service?.Submit(message);
 
         foreach (var answer in outgoing)
         {
@@ -177,12 +218,32 @@ public sealed class RdpdrChannel : StaticChannel
 
     public override void Closed()
     {
+        DriveService? service;
         lock (_gate)
         {
             _announced = false;
             _capabilities = false;
             _confirmed = false;
             _listSent = false;
+            _loggedOn = false;
+            _driveAnnounced = false;
+            _serverHasDrive = false;
+            service = _service;
+            _service = null;
+        }
+
+        service?.Dispose();
+    }
+
+    /// <summary>Whether the server accepted the drive and requests for it are answered (tests, display).</summary>
+    public bool DriveReady
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _service is not null;
+            }
         }
     }
 
@@ -201,6 +262,10 @@ public sealed class RdpdrChannel : StaticChannel
         _capabilities = false;
         _confirmed = false;
         _listSent = false;
+        _loggedOn = false;
+        _driveAnnounced = false;
+        _serverHasDrive = false;
+        _service = null;                        // the session starts over: the drive is announced and accepted again (the old service is disposed by Receive)
         _serverIoCodes = AllIoCodes;
         _serverSendsLogon = true;
         _minor = MinorVersions.FirstOrDefault(version => version <= minor, MinorVersions[^1]);
@@ -236,6 +301,7 @@ public sealed class RdpdrChannel : StaticChannel
 
         uint ioCodes = AllIoCodes;
         var logon = true;
+        var drive = false;
         for (var i = 0; i < count; i++)
         {
             if (!reader.TryU16(out var type) || !reader.TryU16(out var length) || length < 8 || !reader.TryBytes(length - 4, out var set))
@@ -245,6 +311,11 @@ public sealed class RdpdrChannel : StaticChannel
 
             // The general set: its version, then osType, osVersion, the protocol version, ioCode1, ioCode2 and
             // extendedPDU. Version 1 has no SpecialTypeDeviceCap at the end; neither is needed here.
+            if (type == CapabilityDrive)
+            {
+                drive = true;
+            }
+
             if (type == CapabilityGeneral && set.Length >= 4 + 24)
             {
                 ioCodes = BinaryPrimitives.ReadUInt32LittleEndian(set[16..]);
@@ -254,10 +325,13 @@ public sealed class RdpdrChannel : StaticChannel
 
         _serverIoCodes = ioCodes;
         _serverSendsLogon = logon;
+        _serverHasDrive = drive && _drive is not null;
 
-        // Only the general set: this client supports no device type, so it lists none (MS-RDPEFS 3.2.5.1.8).
-        outgoing.Add(Message(ClientCapability, 4 + GeneralLength)
-            .U16(1)
+        // The general set; with a drive (and a server that has the drive set) the drive set as well. Without devices only the general set:
+        // this client supports no device type, so it lists none (MS-RDPEFS 3.2.5.1.8).
+        var driveSet = _serverHasDrive ? 8 : 0;
+        var capabilities = Message(ClientCapability, 4 + GeneralLength + driveSet)
+            .U16(_serverHasDrive ? (ushort)2 : (ushort)1)
             .U16(0)
             .U16(CapabilityGeneral)
             .U16(GeneralLength)
@@ -271,8 +345,13 @@ public sealed class RdpdrChannel : StaticChannel
             .U32(ExtendedPdus)
             .U32(EnableAsyncIo)
             .U32(0)
-            .U32(0)
-            .ToArray());
+            .U32(0);
+        if (_serverHasDrive)
+        {
+            capabilities.U16(CapabilityDrive).U16(8).U32(DriveVersion2);
+        }
+
+        outgoing.Add(capabilities.ToArray());
         _capabilities = true;
         AnnounceIfDue(false, outgoing);
         return null;
@@ -305,6 +384,7 @@ public sealed class RdpdrChannel : StaticChannel
             return "ignored a user logged on before the server announced itself";
         }
 
+        _loggedOn = true;
         AnnounceIfDue(true, outgoing);
         return null;
     }
@@ -318,14 +398,96 @@ public sealed class RdpdrChannel : StaticChannel
             return;
         }
 
-        var due = loggedOn || (_capabilities && _confirmed && (!_serverSendsLogon || _minor < 0x000A));
+        // A drive can only be announced when the server's capabilities are known (they say whether it takes drives at all); a "logged on" that
+        // came first is remembered until then.
+        if (_drive is not null && !_capabilities)
+        {
+            return;
+        }
+
+        var due = loggedOn || _loggedOn || (_capabilities && _confirmed && (!_serverSendsLogon || _minor < 0x000A));
         if (!due)
         {
             return;
         }
 
         _listSent = true;
-        outgoing.Add(Message(DeviceListAnnounce, 4).U32(0).ToArray());
+        if (!_serverHasDrive || _drive is null)
+        {
+            outgoing.Add(Message(DeviceListAnnounce, 4).U32(0).ToArray());
+            return;
+        }
+
+        // One device: a file system (MS-RDPEFS 2.2.1.3). PreferredDosName is 8 bytes of ASCII with NULs; the device data is the drive's name,
+        // ASCII with a terminator, as the clients of the common servers send it.
+        _driveAnnounced = true;
+        var dos = new byte[8];
+        Encoding.ASCII.GetBytes(_drive.Name, dos);
+        var data = Encoding.ASCII.GetBytes(_drive.Name + "\0");
+        outgoing.Add(Message(DeviceListAnnounce, 4 + 20 + data.Length)
+            .U32(1)
+            .U32(DeviceTypeFilesystem)
+            .U32(DriveDeviceId)
+            .Bytes(dos)
+            .U32((uint)data.Length)
+            .Bytes(data)
+            .ToArray());
+    }
+
+    // The server's answer to the device list: device id and NTSTATUS. Only success makes the drive usable.
+    private string? DeviceResponse(ByteReader reader)
+    {
+        if (!reader.TryU32(out var device) || !reader.TryU32(out var status))
+        {
+            return "dropped a device announce response that is too short";
+        }
+
+        if (!_driveAnnounced || device != DriveDeviceId || _drive is null)
+        {
+            return "ignored a device announce response: no such device was announced";
+        }
+
+        if (status != 0)
+        {
+            _driveAnnounced = false;
+            return $"the server refused the drive ({status:X8})";
+        }
+
+        if (_service is not null)
+        {
+            return null;
+        }
+
+        try
+        {
+            _service = new DriveService(_drive, DriveDeviceId, Transmit, Report);
+        }
+        catch (Exception exception) when (exception is ArgumentException or IOException or PlatformNotSupportedException)
+        {
+            _driveAnnounced = false;
+            return "the drive cannot be served: " + exception.Message;
+        }
+
+        return $"the drive {_drive.Name} is shared ({(_drive.Writable ? "read and write" : "read only")})";
+    }
+
+    // A request for a device (MS-RDPEFS 2.2.1.4). Only the one this client announced and the server accepted is served; a request for any other
+    // device is ignored (MS-RDPEFS 3.1.5.2), as is every request when there is no drive.
+    private string? IoRequest(ByteReader reader, out DriveService? service)
+    {
+        service = null;
+        if (!reader.TryU32(out var device))
+        {
+            return "dropped an I/O request that is too short";
+        }
+
+        if (_service is null || device != DriveDeviceId)
+        {
+            return "ignored an I/O request: there are no devices";
+        }
+
+        service = _service;
+        return null;
     }
 
     private void Transmit(byte[] message)

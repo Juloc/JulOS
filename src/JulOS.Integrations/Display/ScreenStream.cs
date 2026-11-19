@@ -1,6 +1,7 @@
 using System.Threading.Channels;
 using JulOS.Integrations.Display.Rdp;
 using JulOS.Integrations.Display.Rdp.Channels;
+using JulOS.Integrations.Display.Rdp.Drive;
 using JulOS.Integrations.Display.Refine;
 using JulOS.Integrations.Display.Video;
 using Microsoft.Extensions.Logging;
@@ -136,6 +137,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     private long _lastAskedAt, _resizedAt;
 
     private readonly CertificateTrust? _trust;
+    private readonly SharedDrive? _drive;
 
     // RDPGFX (alles unter _gfxGate): der Kanal dieser Verbindung, ob die Bilder des Servers gerade durchgereicht werden (_passthrough), welche
     // Bilder der Browser noch nicht bestaetigt hat (Folgenummer und Nummer des Bildes beim Server) und ob ein Schluesselbild fehlt.
@@ -153,9 +155,10 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     private string? _gfxLeft;
 
     /// <param name="graphicsPipeline">Ob die Bilder des Servers durchgereicht werden duerfen (RDPGFX); ohne Angabe entscheidet JULOS_RDP_GFX.</param>
-    public ScreenStream(RdpOptions options, int maxKilobitsPerSecond = 16_000, ILogger? log = null, EncoderSelector? encoders = null, VideoCodecs clientCodecs = VideoCodecs.H264, CertificateTrust? trust = null, bool? graphicsPipeline = null)
+    public ScreenStream(RdpOptions options, int maxKilobitsPerSecond = 16_000, ILogger? log = null, EncoderSelector? encoders = null, VideoCodecs clientCodecs = VideoCodecs.H264, CertificateTrust? trust = null, bool? graphicsPipeline = null, SharedDrive? drive = null)
     {
         _trust = trust;
+        _drive = drive;
         _gfxWanted = (graphicsPipeline ?? GfxAllowed) && !GfxSettings.IsAvoided(options.Host, options.Port);
         _options = options;
         _maxKilobitsPerSecond = maxKilobitsPerSecond;
@@ -243,8 +246,9 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         rdp.AddChannel(channels);
         rdp.AddChannel(_clipboardChannel);
         rdp.AddChannel(_soundChannel);
-        // Windows spricht auf "rdpsnd" nur mit einem Client, der auch "rdpdr" meldet (ohne Geraete); fuer den Ton also noetig
-        rdp.AddChannel(new RdpdrChannel());
+        // Windows spricht auf "rdpsnd" nur mit einem Client, der auch "rdpdr" meldet (ohne Geraete); fuer den Ton also noetig.
+        // Mit einem Laufwerk meldet er genau eines: den Ordner des Servers (siehe SharedDrive, docs/DRIVES.md).
+        rdp.AddChannel(MakeDeviceChannel());
         _display = display;
         var fallback = false;
         try
@@ -549,6 +553,26 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         }
     }
 
+    private RdpdrChannel MakeDeviceChannel()
+    {
+        if (_drive is not null)
+        {
+            try
+            {
+                var channel = new RdpdrChannel(drive: _drive);
+                _log?.LogInformation("Laufwerk {Name} wird freigegeben ({Mode})", _drive.Name, _drive.Writable ? "Lesen und Schreiben" : "nur Lesen");
+                return channel;
+            }
+            catch (ArgumentException e)
+            {
+                // Eine Wurzel, die es nicht (mehr) gibt: die Sitzung laeuft ohne Laufwerk, statt gar nicht
+                _log?.LogWarning("Laufwerk nicht freigegeben: {Reason}", e.Message);
+            }
+        }
+
+        return new RdpdrChannel();
+    }
+
     // ---- Eingabe vom Browser ----
 
     public void MouseMove(int x, int y) => _rdp?.MouseMove(x, y);
@@ -725,11 +749,76 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     }
 
     void IRdpHandler.Cursor(int hotX, int hotY, int width, int height, ReadOnlySpan<byte> rgba) =>
-        _events.Writer.TryWrite(new ScreenCursor(CursorKind.Shape, hotX, hotY, width, height, rgba.ToArray()));
+        PublishCursor(new ScreenCursor(CursorKind.Shape, hotX, hotY, width, height, rgba.ToArray()));
 
-    void IRdpHandler.CursorHidden() => _events.Writer.TryWrite(new ScreenCursor(CursorKind.Hidden, 0, 0, 0, 0, null));
+    void IRdpHandler.CursorHidden() => PublishCursor(new ScreenCursor(CursorKind.Hidden, 0, 0, 0, 0, null));
 
-    void IRdpHandler.CursorDefault() => _events.Writer.TryWrite(new ScreenCursor(CursorKind.Default, 0, 0, 0, 0, null));
+    void IRdpHandler.CursorDefault() => PublishCursor(new ScreenCursor(CursorKind.Default, 0, 0, 0, 0, null));
+
+    // Die letzte Form wird gemerkt: ein Browser, der sich wieder anhaengt (Resume), hat sie nicht gesehen.
+    private volatile ScreenCursor? _lastCursor;
+    private volatile ScreenEncoderInfo? _lastEncoderInfo;
+
+    private void PublishCursor(ScreenCursor cursor)
+    {
+        _lastCursor = cursor;
+        _events.Writer.TryWrite(cursor);
+    }
+
+    /// <summary>
+    /// Kein Browser mehr dran (die Verbindung riss ab, die Sitzung wird erhalten): nichts kodieren, den Ton aus. Der Desktop laeuft weiter,
+    /// die Aenderungen sammeln sich im Bild. <see cref="Resume"/> holt den neuen Browser auf den Stand.
+    /// </summary>
+    public void Park()
+    {
+        Volatile.Write(ref _paused, true);
+        Audio.OutputOn = false;
+    }
+
+    /// <summary>
+    /// Ein neuer Browser hat sich an die erhaltene Sitzung gehaengt (der Aufrufer liest die Ereignisse noch nicht): was noch unterwegs war, gilt
+    /// als verloren, der Browser bekommt Groesse, Zeigerform und Kodierer neu gemeldet und als naechstes ein Schluesselbild des ganzen Bildes.
+    /// </summary>
+    public void Resume()
+    {
+        // Was der alte Browser noch haette hoeren sollen, ist veraltet
+        while (_events.Reader.TryRead(out _))
+        {
+        }
+
+        lock (_pacerGate)
+        {
+            _window.Reset();
+            _pacer.Reset(Volatile.Read(ref _sequence));
+        }
+
+        var frame = _frame;
+        if (frame is not null)
+        {
+            _events.Writer.TryWrite(new ScreenSize(frame.Width, frame.Height));
+            if (_lastEncoderInfo is { } info)
+            {
+                _events.Writer.TryWrite(info);
+            }
+
+            if (_lastCursor is { } cursor)
+            {
+                _events.Writer.TryWrite(cursor);
+            }
+
+            // Die Ueberlagerung (verlustfreie Teile) des neuen Browsers ist leer: alles wieder nachbessern
+            _refiner?.Mark(0, 0, frame.Width, frame.Height, Environment.TickCount64);
+        }
+
+        Volatile.Write(ref _lastAckAt, Environment.TickCount64);
+        lock (_gate)
+        {
+            _forceKey = true;
+        }
+
+        Volatile.Write(ref _paused, false);
+        Wake();
+    }
 
     // ---- Kodierschleife ----
 
@@ -1156,7 +1245,9 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
         _log?.LogInformation("Kodierer: {Name} ({Codec}, {Kind}), {Width} x {Height}", choice.Encoder.Name, choice.Encoder.Codec.Label(),
             choice.Encoder.IsHardware ? "GPU" : "CPU", width, height);
-        _events.Writer.TryWrite(new ScreenEncoderInfo(choice.Encoder.Codec, choice.Encoder.IsHardware, choice.Encoder.Name));
+        var info = new ScreenEncoderInfo(choice.Encoder.Codec, choice.Encoder.IsHardware, choice.Encoder.Name);
+        _lastEncoderInfo = info;
+        _events.Writer.TryWrite(info);
     }
 
     internal VideoCodecs ClientCodecs

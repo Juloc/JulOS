@@ -148,6 +148,8 @@ dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj    # 
 | `JULOS_CADDY`, `JULOS_DDNS` | `off` (default) or `read`: the read-only Caddy and DDNS modules; their other settings (`JULOS_CADDYFILE`, `JULOS_CADDY_ADMIN_URL`, `JULOS_DDNS_HOSTS`, `JULOS_DDNS_FRITZBOX_URL`, `JULOS_DDNS_IP_URL`, `JULOS_DDNS_CACHE_SECONDS`) are in [MODULES.md](MODULES.md) |
 | `JULOS_SETUP_CODE` | optional fixed setup code (otherwise a random one is logged while no account exists) |
 | `JULOS_MAX_SESSIONS_PER_USER` | most remote sessions (RDP, SSH, all engines together) one user may have open at once, default `8` |
+| `JULOS_DRIVE_ROOT` | the one folder that connections may hand to the desktop as a drive (stream engine only); empty or `off` (default) disables drive redirection; see DRIVES.md |
+| `JULOS_STREAM_KEEP_SECONDS` | how long a stream (RDP) session lives on without a browser after the connection dropped, default `300`, `0` = off, at most `3600`; see SESSIONS.md |
 | `JULOS_TRUSTED_PROXIES` | networks whose `X-Forwarded-*` headers are trusted (default: private networks) |
 
 ## Things learned from the test instance

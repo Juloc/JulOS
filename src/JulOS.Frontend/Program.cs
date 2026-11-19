@@ -16,6 +16,7 @@ using JulOS.Frontend.SystemInfo;
 using JulOS.Integrations;
 using JulOS.Integrations.Agent;
 using JulOS.Integrations.Display;
+using JulOS.Integrations.Display.Rdp.Drive;
 using JulOS.Integrations.Display.Video;
 using JulOS.Integrations.Guacamole;
 using JulOS.Integrations.Ssh;
@@ -60,6 +61,8 @@ builder.Services.AddSingleton<BackupService>();
 builder.Services.AddHostedService<BackupWorker>();
 builder.Services.AddSingleton<GuacTickets>();
 builder.Services.AddSingleton<ScreenTickets>();
+// Laufwerksumleitung (nur Stream-Engine): der eine Ordner, der je Verbindung als Laufwerk gereicht werden darf (leer oder "off": keine Freigabe), siehe docs/DRIVES.md
+builder.Services.AddSingleton(sp => DriveRoot.FromSetting(builder.Configuration["JULOS_DRIVE_ROOT"], sp.GetRequiredService<ILoggerFactory>().CreateLogger("JulOS.Drive")));
 builder.Services.AddSingleton<SshTickets>();
 builder.Services.AddHostedService<TicketSweepWorker>();
 // guacd (Container im selben Netz), erreichbar nur fuer den Server
@@ -75,7 +78,9 @@ builder.Services.AddSingleton(sp =>
     var settings = EncoderSettings.Parse(builder.Configuration["JULOS_ENCODER"], builder.Configuration["JULOS_CODEC"], message => encoderLog.LogWarning("{Message}", message));
     return EncoderSelector.CreateDefault(settings, encoderLog);
 });
-builder.Services.AddSingleton<ScreenRelay>();
+// Sitzungserhalt: so lange lebt eine RDP-Sitzung ohne Browser weiter (JULOS_STREAM_KEEP_SECONDS, Standard 300, 0 = aus), siehe docs/SESSIONS.md
+builder.Services.AddSingleton(sp => new ScreenRelay(sp.GetRequiredService<ILogger<ScreenRelay>>(), registry: sp.GetRequiredService<SessionRegistry>(),
+    encoders: sp.GetRequiredService<EncoderSelector>(), keep: ScreenRelay.ParseKeep(builder.Configuration["JULOS_STREAM_KEEP_SECONDS"])));
 builder.Services.AddSingleton<SshRelay>(sp => new SshRelay(sp.GetRequiredService<ILogger<SshRelay>>(), registry: sp.GetRequiredService<SessionRegistry>()));
 // Agent in der Sitzung der Ziel-Maschine (Unix-Socket) und der gemeinsame Ordner fuer Foto-Uploads, beide vom Host eingebunden
 builder.Services.AddSingleton(new AgentOptions(builder.Configuration["JULOS_AGENT_SOCKET"] ?? "/uploads/.agent/agent.sock"));

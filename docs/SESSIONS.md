@@ -105,9 +105,34 @@ Sessions.addEventListener('opened' | 'closed' | 'activated' | 'statechange' | 's
   Die erste zeigt dann „Übernommen“ mit Erklärung (kein Wiederholen, kein „Anmeldung fehlgeschlagen“); „Neu verbinden“ holt den Desktop zurück.
   SSH-Sitzungen zum selben Ziel sind unabhängig voneinander.
 
+## Sitzungserhalt (Stream-Engine)
+
+Bricht nur die Verbindung zwischen Browser und Server ab (Handy wechselt das Netz, Tab im Hintergrund, kurzer Funkloch), bleibt die
+**RDP-Sitzung auf dem Server erhalten** und der Browser hängt sich wieder an dieselbe: kein neuer Login am Ziel, Fenster und Zustand auf dem
+Desktop bleiben, sofort ein Schlüsselbild. Die Überlagerung zeigt „Verbindung wird wiederhergestellt …“ statt eines Abbruchs.
+
+- **Einstellung:** `JULOS_STREAM_KEEP_SECONDS`, Standard `300`, `0` schaltet es aus (dann endet die Sitzung wie früher mit der Verbindung), höchstens `3600`.
+- **Ablauf:** Der Server nennt dem Browser gleich nach dem Verbinden ein zufälliges **Token** (Nachricht 11, 192 Bit). Reißt der WebSocket ab,
+  wird die Kodierung pausiert, der Ton aus, Ereignisse werden verworfen; die Sitzung hält ihren Platz in der Obergrenze. Der Browser verbindet
+  mit `/api/remote/screen?resume=<Token>` (Anmeldung der App-Sitzung wie immer, kein Ticket, kein Passwort). Ein zweiter Browser mit demselben
+  Token löst den ersten ab (der alte Socket ist dann meist schon tot, aber vom Server noch nicht bemerkt).
+- **Was die Sitzung wirklich beendet:** „Schließen“ in der App (Nachricht 17, der Browser sagt es ausdrücklich), der ferne Rechner (Abmelden,
+  Ziel weg, von einer anderen Sitzung übernommen), das Ablösen im selben Slot (neuer Login), der Ablauf der Zeit, die **Abmeldung aus der App**
+  (wartende Sitzungen prüfen das alle 10 s) und das Herunterfahren des Servers. Der Browser, der ein Neuladen oder das Schließen des Tabs
+  erlebt, sagt nichts: die Sitzung wartet dann bis zum Ablauf.
+- **Token abgelehnt** (abgelaufen, Neustart, Sitzung dort beendet, fremder Benutzer): Nachricht 12, der Browser baut ganz normal neu auf (Ticket,
+  neuer Login). Unbekannt und fremd sind für den Browser nicht zu unterscheiden. Ist die Ursache eine andere Sitzung zum selben Ziel, zeigt der
+  Browser „Übernommen“ und holt den Desktop nicht zurück.
+- **Browser:** `resume.js` (reine Logik, `tests/frontend/resume.test.mjs`) entscheidet; ein Token gilt erst, wenn ein Bild gezeichnet wurde (sonst
+  wäre ein falsches Passwort eine Endlosschleife). Die Versuche (1 s bis 3 s Abstand) zählen nicht gegen die drei normalen, solange die Sitzung
+  wartet (5 s weniger als der Server); das `online`-Ereignis löst sofort einen aus.
+- **Sicherheit:** das Token gehört einem Benutzer und gilt nur, solange die Sitzung wartet; es steht in der Adresse des WebSockets (wie das Ticket)
+  und nirgends sonst. Der WebSocket braucht weiterhin die App-Sitzung und denselben Ursprung. Ein wartender Desktop läuft weiter: wer ihn
+  nicht fünf Minuten offen lassen will, stellt die Zeit kleiner. Guacamole und SSH haben diesen Erhalt nicht.
+
 ## Grenzen (Stand heute)
 
 - Das Fensterleisten-/Programm-Modus-Backend (Agent) gehört zu genau einer Verbindung: ist für sie ein Agent eingerichtet (er meldet sich vom Ziel aus beim
   Server, siehe AGENT_API.md), zeigt jede Sitzung dieser Verbindung dessen Fenster. Ohne eingerichteten Agenten gilt wie bisher der lokale Socket (derselbe Rechner).
-- Die Sitzungen leben im Speicher der Seite: nach einem Neuladen (oder einem beendeten PWA-Prozess) sind sie weg und werden neu geöffnet.
+- Die Sitzungen leben im Speicher der Seite: nach einem Neuladen (oder einem beendeten PWA-Prozess) sind sie weg und werden neu geöffnet (die RDP-Sitzung selbst wartet noch bis zum Ablauf, ohne dass die neue Seite sie wieder aufnimmt: das Token steht nur im Speicher).
 - Obergrenze pro Benutzer: `JULOS_MAX_SESSIONS_PER_USER` (Standard 8), global 16 je Engine.

@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.Net.Sockets;
 using System.Net.WebSockets;
+using System.Security.Cryptography;
 using JulOS.Integrations.Display.Rdp;
 using JulOS.Integrations.Display.Video;
 using Microsoft.Extensions.Logging;
@@ -13,10 +14,25 @@ namespace JulOS.Integrations.Display;
 /// seine Eingaben (siehe <see cref="ScreenProtocol"/>) an den fernen Rechner. Pro Slot (Benutzer, Verbindung, Sitzung des Browsers) ist nur ein
 /// WebSocket offen: ein neuer loest den alten ab, der alten Seite wird das gesagt (sonst bliebe dort ein Standbild stehen). Andere Sitzungen
 /// bleiben unberuehrt; die Obergrenze pro Benutzer steckt in der <see cref="SessionRegistry"/>.
+///
+/// Sitzungserhalt: Die RDP-Sitzung gehoert nicht dem WebSocket. Reisst dieser ab (Handy wechselt das Netz, Tab im Hintergrund), lebt die Sitzung
+/// <paramref name="keep"/> lang weiter (Bildkodierung pausiert, Ereignisse werden verworfen); der Browser haengt sich mit dem Sitzungs-Token
+/// (Nachricht 11) wieder an: ohne neue Anmeldung am Ziel, mit sofortigem Schluesselbild. Ein ausdruecklich beendete Sitzung (Nachricht 17), ein
+/// Ende des fernen Rechners, ein Ablosen im selben Slot, eine abgemeldete App-Sitzung und der Ablauf beenden sie wirklich. Ohne <paramref name="keep"/>
+/// (null oder 0) endet sie mit dem WebSocket wie frueher.
 /// </summary>
-public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, SessionRegistry? registry = null, EncoderSelector? encoders = null)
+public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, SessionRegistry? registry = null, EncoderSelector? encoders = null, TimeSpan? keep = null) : IDisposable
 {
     public static readonly TimeSpan SessionCheck = TimeSpan.FromSeconds(60);
+
+    /// <summary>So oft wird bei einer wartenden Sitzung nachgesehen, ob die App-Sitzung noch lebt (Abmeldung beendet sie).</summary>
+    public static readonly TimeSpan WaitCheck = TimeSpan.FromSeconds(10);
+
+    /// <summary>So lange ohne Browser lebt eine Sitzung, wenn nichts anderes eingestellt ist (JULOS_STREAM_KEEP_SECONDS).</summary>
+    public const int DefaultKeepSeconds = 300;
+
+    /// <summary>Hoechstens so lange darf der Erhalt eingestellt werden; ein Tippfehler soll keine Sitzung tagelang offen halten.</summary>
+    public const int MaxKeepSeconds = 3600;
 
     // Fehlercodes wie bei Guacamole, damit die Seite dieselben Texte zeigt
     public const int ErrorBusy = 513, ErrorTimeout = 514, ErrorConnectFailed = 515, ErrorUnreachable = 520, ErrorLogonFailed = 769;
@@ -24,105 +40,477 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
     private const int ReceiveBuffer = 256;
     private readonly SemaphoreSlim _slots = new(maxSessions);
     private readonly SessionRegistry _sessions = registry ?? new SessionRegistry(int.MaxValue);   // ohne Angabe (Tests): keine Obergrenze, aber Ablosen je Slot
+    private readonly Dictionary<string, Live> _kept = [];
+    private readonly Lock _keptGate = new();
+
+    /// <summary>Wie lange eine Sitzung ohne Browser weiterlebt; null: gar nicht.</summary>
+    public TimeSpan? Keep { get; } = keep is { } k && k >= TimeSpan.FromSeconds(1) ? (k > TimeSpan.FromSeconds(MaxKeepSeconds) ? TimeSpan.FromSeconds(MaxKeepSeconds) : k) : null;
+
+    /// <summary>Wie viele Sitzungen gerade ohne Browser warten (Tests, Anzeige).</summary>
+    public int DetachedCount
+    {
+        get
+        {
+            lock (_keptGate)
+            {
+                return _kept.Values.Count(l => l.Detached);
+            }
+        }
+    }
+
+    /// <summary>Die Sekunden aus JULOS_STREAM_KEEP_SECONDS: leer = Standard, 0 oder Unsinn = aus.</summary>
+    public static TimeSpan? ParseKeep(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return TimeSpan.FromSeconds(DefaultKeepSeconds);
+        }
+
+        return int.TryParse(value.Trim(), out var seconds) && seconds > 0 ? TimeSpan.FromSeconds(Math.Min(seconds, MaxKeepSeconds)) : null;
+    }
 
     /// <param name="sessionAlive">Wird regelmaessig gefragt; bei false endet die Sitzung (Abmeldung, abgelaufene Sitzung der App).</param>
     /// <param name="owner">Der Benutzer (fuer die Obergrenze offener Sitzungen und das Ablosen im selben Slot).</param>
     /// <param name="clientCodecs">Was der Browser dekodieren kann (aus der Adresse, siehe <see cref="ScreenProtocol.ParseCodecs"/>); ohne Angabe nur H.264.</param>
-    public async Task RunAsync(WebSocket ws, ScreenTarget target, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan? sessionCheck = null, Guid? owner = null, VideoCodecs clientCodecs = VideoCodecs.H264)
+    /// <param name="resume">Das Sitzungs-Token einer wartenden Sitzung (aus der Adresse, <c>resume=</c>): statt eine neue zu bauen, haengt sich der WebSocket an diese.</param>
+    public async Task RunAsync(WebSocket ws, ScreenTarget? target, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan? sessionCheck = null, Guid? owner = null, VideoCodecs clientCodecs = VideoCodecs.H264, string? resume = null)
     {
+        if (!string.IsNullOrEmpty(resume))
+        {
+            await ResumeAsync(ws, resume, sessionAlive, ct, sessionCheck ?? SessionCheck, owner ?? Guid.Empty, clientCodecs).ConfigureAwait(false);
+            return;
+        }
+
+        if (target is null)
+        {
+            await FinishAsync(ws, ScreenProtocol.Error(ErrorConnectFailed, "Kein Ziel."), ct).ConfigureAwait(false);
+            return;
+        }
+
         if (!await _slots.WaitAsync(0, ct).ConfigureAwait(false))
         {
             await FinishAsync(ws, ScreenProtocol.Error(ErrorBusy, "Zu viele gleichzeitige Verbindungen."), ct).ConfigureAwait(false);
             return;
         }
 
+        Live? live = null;
         try
         {
-            await RunCoreAsync(ws, target, sessionAlive, ct, sessionCheck ?? SessionCheck, owner, clientCodecs).ConfigureAwait(false);
+            live = await StartAsync(ws, target, sessionAlive, ct, owner ?? Guid.Empty, clientCodecs).ConfigureAwait(false);
+            if (live is not null)
+            {
+                await ServeAsync(ws, live, sessionAlive, ct, sessionCheck ?? SessionCheck).ConfigureAwait(false);
+            }
         }
         finally
         {
-            _slots.Release();
+            if (live is null)
+            {
+                _slots.Release();     // sonst gibt die Sitzung ihren Platz beim Ende selbst zurueck (EndAsync)
+            }
         }
     }
 
-    private async Task RunCoreAsync(WebSocket ws, ScreenTarget target, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan sessionCheck, Guid? owner, VideoCodecs clientCodecs)
+    // ---- eine Sitzung, die vom WebSocket unabhaengig lebt ----
+
+    private sealed class Live
+    {
+        public required string Token;
+        public required Guid Owner;
+        public required ScreenStream Stream;
+        public required Task Run;
+        public required CancellationTokenSource Stop;
+        public required SessionLease Lease;
+        public required ScreenTarget Target;
+        public required long Started;
+        public Func<CancellationToken, Task<bool>> Alive = _ => Task.FromResult(true);
+
+        // Ein Browser zur Zeit: wer sich anhaengt, nimmt der Vorgaengerin den Platz (Cancel), wartet bis sie fertig ist und haelt dann die Sperre.
+        public readonly SemaphoreSlim AttachLock = new(1, 1);
+        public CancellationTokenSource? Attached;          // unter Gate: bricht den laufenden Anschluss ab
+        public volatile bool Detached;                      // kein Browser dran (Ereignisse werden verworfen)
+        public volatile bool Ended;
+        public CancellationTokenSource? Waiting;            // Verwerfen und Ablaufzeit
+        public Task? Drain;
+        public readonly Lock Gate = new();
+    }
+
+    private string NewToken() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(24)).Replace('+', '-').Replace('/', '_').TrimEnd('=');
+
+    private async Task<Live?> StartAsync(WebSocket ws, ScreenTarget target, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, Guid owner, VideoCodecs clientCodecs)
     {
         if (!ScreenStream.IsAvailable)
         {
             log.LogWarning("Bildschirm-Engine nicht verfuegbar: {Reason}", ScreenStream.UnavailableReason);
             await FinishAsync(ws, ScreenProtocol.Error(ErrorUnreachable, "Der Bildkodierer ist auf diesem Server nicht verfügbar."), ct).ConfigureAwait(false);
-            return;
+            return null;
         }
 
-        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var mine = _sessions.TryOpen(owner ?? Guid.Empty, target.Slot, () => stop.Cancel());
-        if (mine is null)
+        var stop = new CancellationTokenSource();
+        var lease = _sessions.TryOpen(owner, target.Slot, () => stop.Cancel());
+        if (lease is null)
         {
+            stop.Dispose();
             await FinishAsync(ws, ScreenProtocol.Error(SessionRegistry.TooManyStatus, _sessions.LimitMessage), ct).ConfigureAwait(false);
+            return null;
+        }
+
+        var stream = new ScreenStream(target.Options, target.MaxKilobitsPerSecond, log, encoders, clientCodecs, target.Trust, target.Drive);
+        log.LogInformation("Bildschirm-Verbindung offen (RDP; der Browser kann {Codecs})", clientCodecs);
+        var live = new Live
+        {
+            Token = NewToken(), Owner = owner, Stream = stream, Stop = stop, Lease = lease, Target = target, Started = Environment.TickCount64,
+            Run = stream.RunAsync(stop.Token), Alive = sessionAlive,
+        };
+        if (Keep is not null)
+        {
+            lock (_keptGate)
+            {
+                _kept[live.Token] = live;
+            }
+        }
+
+        // Endet der ferne Rechner, waehrend kein Browser dran ist, raeumt das hier auf (sonst haette niemand mehr einen Grund dazu)
+        _ = AfterRunAsync(live);
+        return live;
+    }
+
+    private async Task AfterRunAsync(Live live)
+    {
+        try { await live.Run.ConfigureAwait(false); }
+        catch (Exception e) when (e is not OutOfMemoryException) { /* ServeAsync liest das Ergebnis */ }
+        if (live.Detached)
+        {
+            log.LogInformation("Wartende Sitzung: der ferne Rechner hat sie beendet.");
+            await EndAsync(live).ConfigureAwait(false);
+        }
+    }
+
+    private async Task ResumeAsync(WebSocket ws, string token, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan sessionCheck, Guid owner, VideoCodecs clientCodecs)
+    {
+        Live? live;
+        lock (_keptGate)
+        {
+            _kept.TryGetValue(token, out live);
+        }
+
+        // Fremde und unbekannte Token gleich: dieselbe Antwort, kein Hinweis darauf, ob es das Token gibt
+        if (live is null || live.Ended || live.Owner != owner)
+        {
+            log.LogInformation("Wiederaufnahme abgelehnt (unbekannt, abgelaufen oder fremd).");
+            await FinishAsync(ws, ScreenProtocol.ResumeFailed(), ct).ConfigureAwait(false);
+            await CloseAsync(ws).ConfigureAwait(false);
             return;
         }
 
-        var started = Environment.TickCount64;
-        await using var stream = new ScreenStream(target.Options, target.MaxKilobitsPerSecond, log, encoders, clientCodecs, target.Trust);
-        byte[]? last = null;
+        live.Alive = sessionAlive;
+        CancellationTokenSource? previous;
+        lock (live.Gate)
+        {
+            previous = live.Attached;
+        }
+
+        try { previous?.Cancel(); }
+        catch (ObjectDisposedException) { /* war schon fertig */ }
         try
         {
-            log.LogInformation("Bildschirm-Verbindung offen (RDP; der Browser kann {Codecs})", clientCodecs);
-            var run = stream.RunAsync(stop.Token);
-            var send = PumpToBrowserAsync(ws, stream, ct);
-            var receive = ReceiveFromBrowserAsync(ws, stream, ct);
-            var watch = WatchAsync(sessionAlive, sessionCheck, stop.Token);
-            var first = await Task.WhenAny(run, send, receive, watch).ConfigureAwait(false);
+            await live.AttachLock.WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
 
-            if (first == run)
+        // Ab hier gehoert die Sperre uns; ServeAsync gibt sie frei
+        if (live.Ended)
+        {
+            live.AttachLock.Release();
+            await FinishAsync(ws, ScreenProtocol.ResumeFailed(), ct).ConfigureAwait(false);
+            await CloseAsync(ws).ConfigureAwait(false);
+            return;
+        }
+
+        await StopWaitingAsync(live).ConfigureAwait(false);
+        log.LogInformation("Sitzung wieder aufgenommen nach {Seconds} s", (Environment.TickCount64 - live.Started) / 1000);
+        live.Stream.SetClientCodecs(clientCodecs);
+        live.Stream.Resume();
+        await ServeAsync(ws, live, sessionAlive, ct, sessionCheck, alreadyLocked: true).ConfigureAwait(false);
+    }
+
+    /// <summary>Haelt das Verwerfen der Ereignisse und die Ablaufzeit an (ein Browser kommt).</summary>
+    private static async Task StopWaitingAsync(Live live)
+    {
+        CancellationTokenSource? waiting;
+        Task? drain;
+        lock (live.Gate)
+        {
+            waiting = live.Waiting;
+            drain = live.Drain;
+            live.Waiting = null;
+            live.Drain = null;
+            live.Detached = false;
+        }
+
+        if (waiting is not null)
+        {
+            try { await waiting.CancelAsync().ConfigureAwait(false); }
+            catch (ObjectDisposedException) { /* egal */ }
+        }
+
+        if (drain is not null)
+        {
+            try { await drain.ConfigureAwait(false); }
+            catch (OperationCanceledException) { /* gewollt */ }
+        }
+
+        waiting?.Dispose();
+    }
+
+    private enum Outcome { BrowserGone, UserEnded, SessionDead, RemoteEnded, Replaced }
+
+    private async Task ServeAsync(WebSocket ws, Live live, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan sessionCheck, bool alreadyLocked = false)
+    {
+        if (!alreadyLocked)
+        {
+            await live.AttachLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+
+        using var attach = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        lock (live.Gate)
+        {
+            live.Attached = attach;
+        }
+
+        byte[]? last = null;
+        var outcome = Outcome.BrowserGone;
+        try
+        {
+            try
             {
-                try { await run.ConfigureAwait(false); }
-                catch (OperationCanceledException) { /* abgebrochen */ }
-                catch (RdpException e) when (e.CertificateFingerprint is not null)
+                if (Keep is { } keepFor)
                 {
-                    log.LogWarning("RDP-Zertifikat des Ziels hat sich geändert: Verbindung nicht aufgebaut, nichts gesendet");
-                    last = ScreenProtocol.CertificateChanged(e.CertificateFingerprint, target.Trust?.Stored);
+                    await SendOnceAsync(ws, ScreenProtocol.Session(live.Token, (int)keepFor.TotalSeconds), ct).ConfigureAwait(false);
                 }
-                catch (RdpException e) { last = ScreenProtocol.Error(e.IsLogonFailure ? ErrorLogonFailed : ErrorConnectFailed, e.Message); }
-                catch (Exception e) when (e is SocketException or IOException or TimeoutException)
+
+                var send = PumpToBrowserAsync(ws, live.Stream, attach.Token);
+                var receive = ReceiveFromBrowserAsync(ws, live.Stream, attach.Token);
+                var watch = WatchAsync(sessionAlive, sessionCheck, attach.Token);
+                var first = await Task.WhenAny(live.Run, send, receive, watch).ConfigureAwait(false);
+
+                if (live.Lease.Replaced)
                 {
-                    last = ScreenProtocol.Error(e is TimeoutException ? ErrorTimeout : ErrorUnreachable,
-                        e is TimeoutException ? "Zeitüberschreitung beim Verbinden." : "Das Ziel ist nicht erreichbar.");
+                    outcome = Outcome.Replaced;
+                    last = ScreenProtocol.Taken();
                 }
-
-                last ??= stream.EndReason is { } reason ? ScreenProtocol.Error(ErrorConnectFailed, reason) : null;
-            }
-            else if (mine.Replaced)
-            {
-                last = ScreenProtocol.Taken();
-            }
-            else if (first == watch)
-            {
-                log.LogInformation("Sitzung beendet, Bildschirm-Verbindung wird geschlossen.");
-            }
-
-            // Zuerst sagen, warum es endet (ein abgebrochenes Senden oder Empfangen reisst den WebSocket ein), dann die Schleifen beenden
-            if (last is not null)
-            {
-                await FinishAsync(ws, last, ct).ConfigureAwait(false);
-            }
-
-            await stop.CancelAsync().ConfigureAwait(false);
-            foreach (var task in new[] { run, send, receive, watch })
-            {
-                try { await task.ConfigureAwait(false); }
-                catch (Exception e) when (e is OperationCanceledException or WebSocketException or IOException or ObjectDisposedException or RdpException)
+                else if (first == live.Run)
                 {
-                    log.LogDebug("Bildschirm-Ende: {Type} {Message}", e.GetType().Name, e.Message);
+                    outcome = Outcome.RemoteEnded;
+                    last = await RunResultAsync(live).ConfigureAwait(false);
                 }
+                else if (first == watch && watch.IsCompletedSuccessfully)
+                {
+                    outcome = Outcome.SessionDead;
+                    log.LogInformation("Sitzung beendet, Bildschirm-Verbindung wird geschlossen.");
+                }
+                else if (first == receive && receive.IsCompletedSuccessfully && receive.Result)
+                {
+                    outcome = Outcome.UserEnded;
+                }
+
+                // Zuerst sagen, warum es endet (ein abgebrochenes Senden oder Empfangen reisst den WebSocket ein), dann die Schleifen beenden
+                if (last is not null)
+                {
+                    await FinishAsync(ws, last, ct).ConfigureAwait(false);
+                }
+
+                await attach.CancelAsync().ConfigureAwait(false);
+                foreach (var task in new[] { send, receive, watch })
+                {
+                    try { await task.ConfigureAwait(false); }
+                    catch (Exception e) when (e is OperationCanceledException or WebSocketException or IOException or ObjectDisposedException or RdpException)
+                    {
+                        log.LogDebug("Bildschirm-Ende: {Type} {Message}", e.GetType().Name, e.Message);
+                    }
+                }
+            }
+            catch (Exception e) when (e is OperationCanceledException or WebSocketException or IOException or ObjectDisposedException or InvalidOperationException)
+            {
+                // der Browser ist weg, bevor oder waehrend wir ihm etwas gesendet haben: wie ein Abbruch der Leitung
+                log.LogDebug("Bildschirm: {Type} {Message}", e.GetType().Name, e.Message);
+                await attach.CancelAsync().ConfigureAwait(false);
+            }
+
+            // Die Leitung riss ab, und es gibt etwas zu erhalten: warten. Alles andere beendet die Sitzung wirklich.
+            if (outcome == Outcome.BrowserGone && Keep is { } keepIt && !live.Run.IsCompleted && !live.Ended)
+            {
+                Detach(live, keepIt);
+            }
+            else
+            {
+                await EndAsync(live).ConfigureAwait(false);
+                log.LogInformation("Bildschirm-Verbindung beendet nach {Seconds} s{Replaced}", (Environment.TickCount64 - live.Started) / 1000, live.Lease.Replaced ? " (von einer neuen Verbindung abgelöst)" : "");
             }
         }
         finally
         {
-            mine.Dispose();
-            log.LogInformation("Bildschirm-Verbindung beendet nach {Seconds} s{Replaced}", (Environment.TickCount64 - started) / 1000, mine.Replaced ? " (von einer neuen Verbindung abgelöst)" : "");
+            lock (live.Gate)
+            {
+                if (ReferenceEquals(live.Attached, attach))
+                {
+                    live.Attached = null;
+                }
+            }
+
+            live.AttachLock.Release();
             await CloseAsync(ws).ConfigureAwait(false);
+        }
+    }
+
+    // Der Grund, warum der ferne Rechner (oder der Start) endete, als letzte Nachricht an den Browser; null bei Abbruch durch uns.
+    private async Task<byte[]?> RunResultAsync(Live live)
+    {
+        byte[]? last = null;
+        try { await live.Run.ConfigureAwait(false); }
+        catch (OperationCanceledException) { /* abgebrochen */ }
+        catch (RdpException e) when (e.CertificateFingerprint is not null)
+        {
+            log.LogWarning("RDP-Zertifikat des Ziels hat sich geändert: Verbindung nicht aufgebaut, nichts gesendet");
+            last = ScreenProtocol.CertificateChanged(e.CertificateFingerprint, live.Target.Trust?.Stored);
+        }
+        catch (RdpException e) { last = ScreenProtocol.Error(e.IsLogonFailure ? ErrorLogonFailed : ErrorConnectFailed, e.Message); }
+        catch (Exception e) when (e is SocketException or IOException or TimeoutException)
+        {
+            last = ScreenProtocol.Error(e is TimeoutException ? ErrorTimeout : ErrorUnreachable,
+                e is TimeoutException ? "Zeitüberschreitung beim Verbinden." : "Das Ziel ist nicht erreichbar.");
+        }
+
+        return last ?? (live.Stream.EndReason is { } reason ? ScreenProtocol.Error(ErrorConnectFailed, reason) : null);
+    }
+
+    // Kein Browser mehr: die Sitzung pausiert, Ereignisse werden verworfen, nach "keepFor" (oder wenn die App-Sitzung weg ist) endet sie.
+    private void Detach(Live live, TimeSpan keepFor)
+    {
+        live.Stream.Park();
+        var waiting = new CancellationTokenSource();
+        lock (live.Gate)
+        {
+            live.Detached = true;
+            live.Waiting = waiting;
+            live.Drain = DrainAsync(live.Stream, waiting.Token);
+        }
+
+        log.LogInformation("Browser weg: die Sitzung bleibt {Seconds} s erhalten.", (int)keepFor.TotalSeconds);
+        _ = ExpireAsync(live, keepFor, waiting.Token);
+    }
+
+    private static async Task DrainAsync(ScreenStream stream, CancellationToken ct)
+    {
+        try
+        {
+            await foreach (var _ in stream.Events.ReadAllAsync(ct).ConfigureAwait(false))
+            {
+                // niemand hoert zu
+            }
+        }
+        catch (OperationCanceledException) { /* ein Browser kommt zurueck */ }
+    }
+
+    private async Task ExpireAsync(Live live, TimeSpan keepFor, CancellationToken ct)
+    {
+        try
+        {
+            var until = Environment.TickCount64 + (long)keepFor.TotalMilliseconds;
+            while (true)
+            {
+                var left = until - Environment.TickCount64;
+                if (left <= 0)
+                {
+                    log.LogInformation("Wartende Sitzung abgelaufen, wird beendet.");
+                    break;
+                }
+
+                await Task.Delay((int)Math.Min(left, WaitCheck.TotalMilliseconds), ct).ConfigureAwait(false);
+                if (Environment.TickCount64 < until && !await live.Alive(ct).ConfigureAwait(false))
+                {
+                    log.LogInformation("Wartende Sitzung: die App-Sitzung ist beendet, die Sitzung wird beendet.");
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return;                // ein Browser ist zurueck oder die Sitzung endet anderswo
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            log.LogDebug("Wartende Sitzung: {Type} {Message}", e.GetType().Name, e.Message);
+        }
+
+        await EndAsync(live).ConfigureAwait(false);
+    }
+
+    private async Task EndAsync(Live live)
+    {
+        lock (live.Gate)
+        {
+            if (live.Ended)
+            {
+                return;
+            }
+
+            live.Ended = true;
+        }
+
+        lock (_keptGate)
+        {
+            if (_kept.TryGetValue(live.Token, out var current) && ReferenceEquals(current, live))
+            {
+                _kept.Remove(live.Token);
+            }
+        }
+
+        try { await live.Stop.CancelAsync().ConfigureAwait(false); }
+        catch (ObjectDisposedException) { /* egal */ }
+        CancellationTokenSource? waiting;
+        lock (live.Gate)
+        {
+            waiting = live.Waiting;
+            live.Waiting = null;
+        }
+
+        try { waiting?.Cancel(); }
+        catch (ObjectDisposedException) { /* egal */ }
+        try { await live.Run.ConfigureAwait(false); }
+        catch (Exception e) when (e is OperationCanceledException or WebSocketException or IOException or ObjectDisposedException or RdpException or SocketException or TimeoutException)
+        {
+            log.LogDebug("Bildschirm-Ende: {Type} {Message}", e.GetType().Name, e.Message);
+        }
+
+        if (live.Drain is { } drain)
+        {
+            try { await drain.ConfigureAwait(false); }
+            catch (OperationCanceledException) { /* gewollt */ }
+        }
+
+        await live.Stream.DisposeAsync().ConfigureAwait(false);
+        live.Lease.Dispose();
+        live.Stop.Dispose();
+        _slots.Release();
+    }
+
+    /// <summary>Beendet alle Sitzungen (Server faehrt herunter): die RDP-Verbindungen werden getrennt.</summary>
+    public void Dispose()
+    {
+        Live[] all;
+        lock (_keptGate)
+        {
+            all = [.. _kept.Values];
+        }
+
+        foreach (var live in all)
+        {
+            try { live.Stop.Cancel(); }
+            catch (ObjectDisposedException) { /* egal */ }
         }
     }
 
@@ -224,7 +612,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         ws.SendAsync(message, WebSocketMessageType.Binary, true, ct);
 
     /// <summary>Browser -> Stream: kleine binaere Nachrichten (siehe ScreenProtocol); nur die Zwischenablage darf laenger sein und kommt dann in Teilen.</summary>
-    private static async Task ReceiveFromBrowserAsync(WebSocket ws, ScreenStream stream, CancellationToken ct)
+    private static async Task<bool> ReceiveFromBrowserAsync(WebSocket ws, ScreenStream stream, CancellationToken ct)
     {
         const int maxMessage = 1 + ClipboardBridge.MaxTextBytes;
         var buffer = new byte[ReceiveBuffer];
@@ -239,7 +627,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                     if (used >= maxMessage)
                     {
                         await ws.CloseOutputAsync(WebSocketCloseStatus.MessageTooBig, "zu lang", CancellationToken.None).ConfigureAwait(false);
-                        return;
+                        return true;
                     }
 
                     Array.Resize(ref buffer, Math.Min(maxMessage, buffer.Length * 4));
@@ -248,7 +636,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                 result = await ws.ReceiveAsync(buffer.AsMemory(used), ct).ConfigureAwait(false);
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
-                    return;
+                    return false;
                 }
 
                 used += result.Count;
@@ -258,14 +646,20 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             if (result.MessageType != WebSocketMessageType.Binary || used == 0)
             {
                 await ws.CloseOutputAsync(WebSocketCloseStatus.PolicyViolation, "ungültig", CancellationToken.None).ConfigureAwait(false);
-                return;
+                return true;
             }
 
             // Zu lange Nachrichten, die nicht zur Zwischenablage gehoeren, sind nicht von uns
             if (used > ReceiveBuffer && !ScreenProtocol.MayBeLong(buffer[0]))
             {
                 await ws.CloseOutputAsync(WebSocketCloseStatus.PolicyViolation, "ungültig", CancellationToken.None).ConfigureAwait(false);
-                return;
+                return true;
+            }
+
+            // Der Browser beendet die Sitzung ausdruecklich (Schliessen): nicht erhalten
+            if (buffer[0] == ScreenProtocol.FromBrowserEnd)
+            {
+                return true;
             }
 
             Handle(stream, buffer.AsSpan(0, used));
@@ -274,6 +668,8 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                 buffer = new byte[ReceiveBuffer];                 // der grosse Puffer war nur fuer einen Text
             }
         }
+
+        return false;
     }
 
     internal static void Handle(ScreenStream stream, ReadOnlySpan<byte> m)

@@ -6,6 +6,8 @@
  * Nachrichten (alle binaer, Zahlen big endian), siehe ScreenProtocol auf dem Server:
  *   Server -> Browser: 1 Bild (flags, folge u32, H.264), 2 Zeiger, 3 Groesse, 4 Fehler, 5 uebernommen, 6 Zwischenablage (UTF-8-Text),
  *                      7 Bild aus der VM (format 1 PNG / 2 BMP), 8 Dateiliste der VM, 9 Dateistueck, 10 Ergebnis eines Sendens,
+ *                      11 Sitzung (sekunden u16, Token: so lange erhaelt der Server die Sitzung ohne Browser; mit dem Token geht connect('resume=...')),
+ *                      12 Token unbekannt (neu aufbauen),
  *                      30 Kodierer (codec, GPU ja/nein, Name: nur zum Anzeigen); ein Bild hat in flags Bit 1 gesetzt, wenn es H.265 ist
  *                      40 Nachbesserung (x, y, breite, hoehe u16, PNG: ein ruhendes Rechteck verlustfrei, kommt ueber das Video),
  *                      41 Nachbesserung weg (anzahl u16, je x, y, breite, hoehe: dort hat sich der Bildschirm geaendert)
@@ -13,6 +15,7 @@
  *                      9 Zwischenablage (UTF-8-Text, bis 1 MiB; der ferne Rechner holt ihn, wenn er einfuegt),
  *                      10 Senden Anfang (Bild als BMP oder Datei), 11 Stueck, 12 Ende, 13 Abbruch, 14 Datei der VM holen, 15 Holen Abbruch,
  *                      16 Pause (1 = die Ansicht ist nicht zu sehen: der Server kodiert nicht, 0 = weiter),
+ *                      17 Beenden (die Sitzung wird geschlossen: der Server erhaelt sie nicht fuer ein Wiederverbinden),
  *                      30 Codecs (Menge: 1 H.264, 2 H.265; beim Verbinden steht sie in der Adresse als codecs=, danach nur noch bei einem Wechsel zurueck auf H.264)
  *
  * Ton (20 und 21 in beide Richtungen: Ton vom fernen Rechner, Zustand, "Ton an", Mikrofon): siehe stream-audio.js, erreichbar als client.audio.
@@ -25,9 +28,9 @@
 import { StreamAudio } from './stream-audio.js';
 import { codecMask, probeCodecs, codecStringOf, decoderConfig, CODEC_H264, CODEC_HEVC } from './codecs.js';
 
-const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, image: 7, files: 8, fileChunk: 9, result: 10, audio: 20, audioStatus: 21, encoder: 30, refine: 40, refineClear: 41 };
+const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, image: 7, files: 8, fileChunk: 9, result: 10, session: 11, resumeFailed: 12, audio: 20, audioStatus: 21, encoder: 30, refine: 40, refineClear: 41 };
 const OUT = { ack: 1, move: 2, button: 3, wheel: 4, key: 5, unicode: 6, resize: 7, keyframe: 8, clipboard: 9,
-  sendBegin: 10, sendChunk: 11, sendEnd: 12, sendCancel: 13, fileRequest: 14, fileCancel: 15, pause: 16, codecs: 30 };
+  sendBegin: 10, sendChunk: 11, sendEnd: 12, sendCancel: 13, fileRequest: 14, fileCancel: 15, pause: 16, end: 17, codecs: 30 };
 const CHUNK = 128 * 1024;                 // so gross sind die Stuecke beim Senden (der Server nimmt bis 256 kB)
 const BUFFER_HIGH = 1024 * 1024;          // darueber wartet das Senden, bis der Socket leer laeuft (sonst steht die Maus hinter einer Datei)
 
@@ -168,6 +171,7 @@ export class StreamClient {
     this.url = url;
     this.display = new StreamDisplay();
     this.onstatechange = null; this.onerror = null; this.onclipboard = null;
+    this.onsession = null; this.onresumefailed = null;                            // Sitzungserhalt: Token des Servers, Token abgelehnt (siehe resume.js)
     this.onclipimage = null; this.onclipfiles = null; this.onclipresult = null;   // Bilder, Dateien und Meldungen der VM (siehe docs/CLIPBOARD.md)
     this.nativeClipboard = true;        // Bilder und Dateien gehen ueber den Stream (app.js fragt danach)
     this.nextTransfer = 1; this.transfers = new Map(); this.fetches = new Map();
@@ -222,9 +226,11 @@ export class StreamClient {
     socket.onerror = () => { if (this.socket === socket && !this.connected && this.onerror) this.onerror({ code: 520, message: 'Keine Verbindung zum Server.' }); };
   }
 
-  disconnect() {
+  // keep: nur die Leitung kappen (der Server haelt die Sitzung, ein neuer Client nimmt sie mit dem Token wieder auf); sonst "Beenden" melden
+  disconnect(keep = false) {
     clearInterval(this.watch);
     this.closing = true;
+    if (!keep) this.send1(OUT.end);
     const s = this.socket; this.socket = null;
     if (s) { try { s.close(); } catch { /* egal */ } }
     this.closeDecoder();
@@ -274,6 +280,11 @@ export class StreamClient {
         if (this.onerror) this.onerror(code === 800 ? { code, message: 'Das Zertifikat des Ziels hat sich geändert.', fingerprint, previous } : { code, message });
         break;
       }
+      case IN.session: if (this.onsession && buffer.byteLength > 3) this.onsession({ keep: v.getUint16(1), token: new TextDecoder().decode(new Uint8Array(buffer, 3)) }); break;
+      case IN.resumeFailed:
+        this.closing = true;
+        if (this.onresumefailed) this.onresumefailed();
+        break;
       case IN.taken:
         this.closing = true;
         if (this.onerror) this.onerror({ code: 777, message: 'Sitzung übernommen.' });
@@ -445,6 +456,7 @@ export class StreamClient {
     }
     if (!this.drawn && ++this.failures >= 3) {
       this.closing = true;
+      this.send1(OUT.end);                          // die Sitzung ist unbrauchbar: nicht fuer ein Wiederverbinden erhalten
       const s = this.socket; this.socket = null;
       if (s) { try { s.close(); } catch { /* egal */ } }
       if (this.onerror) this.onerror({ code: 1001, message: 'Der Browser kann das Bild nicht dekodieren.' });

@@ -25,6 +25,8 @@ globalThis.VideoDecoder = FakeDecoder;
 globalThis.EncodedVideoChunk = FakeChunk;
 globalThis.WebSocket = FakeSocket;
 globalThis.ImageData = class {};
+// newer node versions have no usable localStorage unless started with a file for it; stream.js only reads one setting from it
+Object.defineProperty(globalThis, 'localStorage', { value: { getItem: () => null, setItem() {} }, configurable: true });
 
 // the client's watchdog interval must not keep node alive when a test ends early
 const realSetInterval = globalThis.setInterval;
@@ -120,4 +122,37 @@ test('the encoder message is kept for display', async () => {
   assert.deepEqual(c.encoder, { codec: 'H.265', hardware: true, name: 'VAAPI Intel iHD' });
   assert.equal(c.stats.encoder, 'VAAPI Intel iHD (H.265, GPU)');
   c.disconnect();
+});
+
+// ---- Sitzungserhalt: Token des Servers, Beenden, abgelehntes Token ----
+
+const sessionMessage = (keep, token) => { const t = new TextEncoder().encode(token); const m = new Uint8Array(3 + t.length); m[0] = 11; new DataView(m.buffer).setUint16(1, keep); m.set(t, 3); return m.buffer; };
+
+test('the session message hands the token and the keep time to the page', async () => {
+  const { c } = await connected({ h264: true, hevc: false });
+  let got = null; c.onsession = (o) => { got = o; };
+  c.receive(sessionMessage(300, 'abc-DEF_123'));
+  assert.deepEqual(got, { keep: 300, token: 'abc-DEF_123' });
+  c.disconnect(true);
+});
+
+test('closing for good tells the server (message 17); dropping the line for a resume does not', async () => {
+  const closing = await connected({ h264: true, hevc: false });
+  closing.c.disconnect();
+  assert.ok(sentTypes(closing.s).includes(17), 'End is sent before the socket closes');
+
+  const dropping = await connected({ h264: true, hevc: false });
+  dropping.c.disconnect(true);
+  assert.ok(!sentTypes(dropping.s).includes(17), 'the server must keep the session');
+});
+
+test('a resume connects with the token in the address and a refused token is reported once', async () => {
+  const StreamClient = await loadModule({ h264: true, hevc: false });
+  const c = new StreamClient('ws://x/api/remote/screen');
+  c.connect('resume=tok123');
+  assert.match(FakeSocket.last.url, /^ws:\/\/x\/api\/remote\/screen\?resume=tok123&codecs=1$/);
+  let refused = 0; c.onresumefailed = () => { refused++; };
+  c.receive(new Uint8Array([12]).buffer);
+  assert.equal(refused, 1);
+  assert.equal(c.closing, true, 'the client does not report a drop for this');
 });

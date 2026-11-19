@@ -176,6 +176,15 @@ paste, scrollback and fonts are the browser's own. Terminals never went through 
 - **Browser:** `terminal.js` (`TerminalView`: xterm.js, WebGL renderer when available, fit, unicode 11, font stack, theme from the app tokens, scrollback 10 000 lines, selection and copy/paste, mouse reporting, flow control, host key dialog) and `terminal-session.js` (`TerminalSession`, the session kind for `Sessions`; it extends `RemoteSession`, so key bar, menu and overlay are the ones of the remote view).
   Size follows the container: xterm fits locally at once, the new columns and rows go to the server (SSH `window-change`) 180 ms after the last change, so a keyboard animation does not flood the target; the terminal never changes the size of its container, so there is no feedback loop. Phone: the page's own input field (`#kb`, the proven Gboard handling) types, the key bar sends X11 keysyms that `keysymBytes` turns into bytes (arrows follow the application cursor mode, modifiers use the xterm parameter form); drag scrolls (as scrollback, as arrow keys in vim/less, as mouse wheel for programs with mouse support), long press selects a word and drag extends it, a small menu copies and pastes, two fingers change the font size. Desktop: xterm takes the keys directly, Ctrl+Shift+C / Ctrl+Insert copy, Ctrl+Shift+V / Shift+Insert paste, Ctrl+C copies when there is a selection and is ^C otherwise, right click opens the copy/paste menu.
 
+## Network tools (ping, DNS, port test)
+
+`POST /api/tools/ping`, `/api/tools/dns`, `/api/tools/ports` and `GET /api/tools/targets` (dialog `#netDlg`, `wwwroot/nettools.js`; phone: Profil, desktop: menu System). They measure from the server, not from the browser.
+There is **no free input for addresses**: a target must be the host of one of the user's saved connections *and* pass `JULOS_ALLOWED_HOSTS` (`NetToolRules`), so the server cannot be used as a scanner or a resolver for arbitrary
+targets beyond what saving a connection already allows (SECURITY-REVIEW Nr. 1). Ports: 1 to 10 per call, TCP connect only (no bytes sent), `open`, `closed` (refused) or `filtered` (no answer in 1.5 s). Ping: ICMP echo without special rights
+(no custom payload: that needs privileges; a container needs `net.ipv4.ping_group_range` to allow it, which Docker sets by default), 1 to 8 echoes, 2 s each; where it is not possible the answer says so and the port test still works.
+DNS: the system resolver (A and AAAA, no other record types), 4 s. Every call needs a session and the `X-JulOS` header, is limited to 30 a minute per user, at most 4 run at once on the server, and is logged (tool, target, user).
+`JULOS_NETTOOLS=off` switches all four routes off (404).
+
 ## Order of work (one step at a time, each tested before the next)
 
 0. Test instance (`deploy/dev`) with throwaway SSH and RDP targets.

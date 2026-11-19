@@ -17,6 +17,8 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 - Verbindungsfelder: Domäne (Desktop), Notizen und Tastaturlayout des Ziels (Desktop: Deutsch, Deutsch Österreich/Schweiz, Englisch USA/UK, Französisch, Spanisch, Italienisch; Standard Deutsch wie bisher) im Verbindungsdialog. Das Layout geht als Windows-Kennung an den RDP-Server statt fest `0x407` und bestimmt, welche Taste der Browser für Strg-Kombinationen nimmt. Migration 009 (rückwärtskompatibel, Standardwerte); API und Auszüge älterer Versionen funktionieren unverändert.
 
+- Netzwerkwerkzeuge: Ping, DNS-Abfrage und Port-Test vom Server aus, in einem schlichten Dialog (Handy: Profil, Desktop: Menü „System“). Sie laufen nur gegen Hosts gespeicherter Verbindungen, die zur Erlaubnisliste (`JULOS_ALLOWED_HOSTS`) passen, nie gegen freie Eingaben; mit Sitzung, Ratenbegrenzung (30 je Minute und Benutzer), Grenzen (bis 10 Ports, bis 8 Pings) und Log-Einträgen. Abschaltbar mit `JULOS_NETTOOLS=off`.
+
 ### Geändert
 - Dockerfile: die SDK-Stufe läuft mit `--platform=$BUILDPLATFORM`, der arm64-Bau braucht dafür keine Emulation mehr.
 

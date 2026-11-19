@@ -272,14 +272,14 @@
           <label>Neues Passwort (mindestens 12 Zeichen) <input id="pwNew" type="password" autocomplete="new-password" minlength="12" required></label>
           <label>Neues Passwort wiederholen <input id="pwNew2" type="password" autocomplete="new-password" minlength="12" required></label>
           <p class="hint">Alle anderen Geräte werden dabei abgemeldet.</p>
-          <div class="acct-btns"><button type="submit" class="primary">Passwort ändern</button></div>
+          <div class="dlg-btns"><button type="submit" class="primary">Passwort ändern</button></div>
           <p id="pwMsg" class="msg" role="alert"></p>
         </form>
         <h3>Authenticator neu einrichten</h3>
         <form id="totpBeginForm" autocomplete="off">
           <p class="hint">Du bekommst einen neuen Schlüssel (als Text und QR-Code) und neue Wiederherstellungscodes. Der alte Authenticator und die alten Codes gelten erst nach der Bestätigung nicht mehr; alle anderen Geräte werden abgemeldet.</p>
           <label>Aktuelles Passwort <input id="totpCur" type="password" autocomplete="current-password" required></label>
-          <div class="acct-btns"><button type="submit" class="primary">Neuen Schlüssel anfordern</button></div>
+          <div class="dlg-btns"><button type="submit" class="primary">Neuen Schlüssel anfordern</button></div>
           <p id="totpMsg" class="msg" role="alert"></p>
         </form>
       </div>
@@ -291,16 +291,29 @@
         <p class="hint">Oder den Schlüssel von Hand eintragen:</p>
         <code id="acctSecret" class="mono"></code>
         <label>Code aus der App <input id="totpCode" type="text" inputmode="numeric" pattern="[0-9 ]*" autocomplete="one-time-code" required></label>
-        <div class="acct-btns"><button type="submit" class="primary">Bestätigen und ersetzen</button><button id="totpAbort" type="button" class="ghost">Abbrechen</button></div>
+        <div class="dlg-btns"><button type="submit" class="primary">Bestätigen und ersetzen</button><button id="totpAbort" type="button" class="ghost">Abbrechen</button></div>
         <p id="totpFinishMsg" class="msg" role="alert"></p>
       </form>
       <div id="totpDone" hidden>
         <h3>Neue Wiederherstellungscodes</h3>
         <p class="hint">Der neue Authenticator gilt. Jeder Code gilt einmal und ersetzt den Authenticator, falls das Handy weg ist; die alten Codes sind ungültig. Speichere diese jetzt, sie werden nicht noch einmal gezeigt.</p>
         <pre id="acctRecovery" class="mono"></pre>
-        <div class="acct-btns"><button id="acctCopy" type="button" class="ghost">Codes kopieren</button></div>
+        <div class="dlg-btns"><button id="acctCopy" type="button" class="ghost">Codes kopieren</button></div>
         <p id="totpDoneMsg" class="msg" role="alert"></p>
       </div>
+      <div class="row"><button class="ghost close" data-act="close" type="button">Schließen</button></div>
+    </dialog>
+
+    <!-- Netzwerkwerkzeuge: Ping, DNS, Port-Test gegen gespeicherte Ziele (nettools.js) -->
+    <dialog id="netDlg">
+      <h2>Netzwerkwerkzeuge</h2>
+      <p class="hint">Prüft vom Server aus, nicht von diesem Gerät, und nur Ziele deiner gespeicherten Verbindungen (und nur, was die Erlaubnisliste des Servers zulässt).</p>
+      <label>Ziel <select id="netTarget"></select></label>
+      <div class="dlg-btns"><button id="netPing" type="button" class="ghost">Ping</button><button id="netDns" type="button" class="ghost">DNS-Abfrage</button></div>
+      <label>Ports <span class="opt">(bis zu 10, mit Komma getrennt)</span> <input id="netPorts" type="text" inputmode="numeric" autocomplete="off" placeholder="22, 3389"></label>
+      <div class="dlg-btns"><button id="netPortGo" type="button" class="primary">Ports prüfen</button></div>
+      <pre id="netOut" class="mono" aria-live="polite"></pre>
+      <p id="netMsg" class="msg" role="alert"></p>
       <div class="row"><button class="ghost close" data-act="close" type="button">Schließen</button></div>
     </dialog>
 

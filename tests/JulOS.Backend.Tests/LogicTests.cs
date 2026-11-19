@@ -209,4 +209,33 @@ public sealed class LogicTests
         Assert.Equal(client, KeyboardLayouts.ClientKey(code));
         Assert.Equal(code != "unbekannt", KeyboardLayouts.IsKnown(code));
     }
+
+    [Fact]
+    public void Network_tool_targets_are_the_saved_hosts_inside_the_allow_list()
+    {
+        string[] saved = ["b.example", "A.example", "a.example", "10.0.0.5", "fremd.example"];
+        Assert.Equal(["10.0.0.5", "A.example", "b.example", "fremd.example"], NetToolRules.Targets(saved, new HostPolicy(null)));
+        var policy = new HostPolicy("a.example, 10.0.0.5");
+        Assert.Equal(["10.0.0.5", "A.example"], NetToolRules.Targets(saved, policy));
+        Assert.Equal("A.example", NetToolRules.Resolve(" a.EXAMPLE ", saved, policy));         // any spelling, the saved one comes back
+        Assert.Null(NetToolRules.Resolve("b.example", saved, policy));                          // saved but not allowed
+        Assert.Null(NetToolRules.Resolve("169.254.169.254", saved, new HostPolicy(null)));      // not saved
+        Assert.Null(NetToolRules.Resolve("", saved, policy));
+        Assert.Null(NetToolRules.Resolve(null, saved, policy));
+    }
+
+    [Fact]
+    public void Network_tool_ports_and_ping_count_are_limited()
+    {
+        Assert.Equal([22, 3389], NetToolRules.Ports([22, 3389, 22]).Ports!);
+        Assert.Null(NetToolRules.Ports(null).Ports);
+        Assert.Null(NetToolRules.Ports([]).Ports);
+        Assert.Null(NetToolRules.Ports([0]).Ports);
+        Assert.Null(NetToolRules.Ports([65536]).Ports);
+        Assert.NotNull(NetToolRules.Ports(Enumerable.Range(1, NetToolRules.MaxPorts)).Ports);
+        Assert.Null(NetToolRules.Ports(Enumerable.Range(1, NetToolRules.MaxPorts + 1)).Ports);
+        Assert.Equal(4, NetToolRules.PingCount(null));
+        Assert.Equal(1, NetToolRules.PingCount(0));
+        Assert.Equal(NetToolRules.MaxPingCount, NetToolRules.PingCount(1000));
+    }
 }

@@ -12,7 +12,7 @@ import { serviceState, connectionState, dotClass, stateText, groupConnections, h
 
 const $ = (s, r = document) => r.querySelector(s);
 const BAR_H = 34;
-let ctx = null;            // von shell.js: { state, esc, api, connect, edit, add, editHost, addHost, devices, account, signOut }
+let ctx = null;            // von shell.js: { state, esc, api, connect, edit, add, editHost, addHost, devices, account, nettools, signOut }
 let root = null;
 const wins = new Map();    // id -> Fenster
 let zTop = 10;
@@ -364,6 +364,7 @@ const MENUS = () => ({
     { label: 'Geräte und Sitzungen …', icon: 'shield', run: () => ctx.devices() },
     { label: 'Einstellungen', icon: 'sliders', run: () => openHome('einstellungen') },
     { label: 'System-Übersicht', icon: 'activity', run: () => openHome('system') },
+    { label: 'Netzwerkwerkzeuge …', icon: 'globe', run: () => ctx.nettools() },
     { sep: true },
     { label: 'Abmelden', icon: 'power', run: () => ctx.signOut() },
   ],

@@ -983,4 +983,90 @@ public sealed class RemoteHttpTests
         Assert.Equal(("azerty", 0x40Cu, "CORP"), (french.Layout, french.Target.Options.KeyboardLayout, french.Target.Options.Domain));
     }
 
+    [Fact]
+    public async Task Network_tools_run_only_against_saved_allowed_targets_and_need_a_session()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db, allowed: "127.0.0.1,localhost");
+        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        Assert.Equal(HttpStatusCode.Unauthorized, (await c.GetAsync("/api/tools/targets")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await c.SendAsync(Post("/api/tools/ports", new { host = "127.0.0.1", ports = new[] { 80 } }))).StatusCode);
+        var (cookie, userId) = await SignedInAsync(app, c, db);
+        var store = new ConnectionStore(db.Data);
+        await store.CreateAsync(userId, "lokal", "terminal", "127.0.0.1", 22, "u");
+        await store.CreateAsync(userId, "name", "terminal", "LOCALHOST", 22, "u");
+        await store.CreateAsync(userId, "fremd", "terminal", "nicht-erlaubt.example", 22, "u");       // saved before the list existed, now outside it
+
+        var targets = await Json(await c.SendAsync(Send(HttpMethod.Get, "/api/tools/targets", null, cookie)));
+        Assert.Equal(["127.0.0.1", "LOCALHOST"], targets.GetProperty("targets").EnumerateArray().Select(t => t.GetString()).ToArray());
+
+        // a target that is not saved, or saved but outside the allow-list, is refused for every tool (no free input field: no open SSRF)
+        foreach (var path in new[] { "ping", "dns", "ports" })
+            foreach (var host in new[] { "169.254.169.254", "postgres", "nicht-erlaubt.example", "", null })
+                Assert.Equal(HttpStatusCode.Forbidden, (await c.SendAsync(Send(HttpMethod.Post, "/api/tools/" + path, new { host, ports = new[] { 80 } }, cookie))).StatusCode);
+
+        // changing requests need the custom header and the own origin like everything else
+        var plain = new HttpRequestMessage(HttpMethod.Post, "/api/tools/dns") { Content = JsonContent.Create(new { host = "127.0.0.1" }) };
+        plain.Headers.Add("Cookie", cookie);
+        Assert.Equal(HttpStatusCode.Forbidden, (await c.SendAsync(plain)).StatusCode);
+
+        // DNS: a name resolves, an address is itself; the case of the saved name is kept
+        var dns = await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/tools/dns", new { host = "localhost" }, cookie)));
+        Assert.Equal("LOCALHOST", dns.GetProperty("host").GetString());
+        Assert.Contains(dns.GetProperty("addresses").EnumerateArray().Select(a => a.GetString()), a => a is "127.0.0.1" or "::1");
+        var literal = await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/tools/dns", new { host = "127.0.0.1" }, cookie)));
+        Assert.Equal(["127.0.0.1"], literal.GetProperty("addresses").EnumerateArray().Select(a => a.GetString()).ToArray());
+
+        // ports: one open (a listener of this test), one closed
+        using var listener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var open = ((IPEndPoint)listener.LocalEndpoint).Port;
+        using var spare = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+        spare.Start(); var closed = ((IPEndPoint)spare.LocalEndpoint).Port; spare.Stop();
+        var ports = await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/tools/ports", new { host = "127.0.0.1", ports = new[] { open, closed, open } }, cookie)));
+        var results = ports.GetProperty("results").EnumerateArray().ToDictionary(r => r.GetProperty("port").GetInt32(), r => r.GetProperty("state").GetString());
+        Assert.Equal(2, results.Count);                                      // the duplicate is dropped
+        Assert.Equal("open", results[open]);
+        Assert.Equal("closed", results[closed]);
+
+        foreach (var bad in new object[] { new { host = "127.0.0.1", ports = new int[0] }, new { host = "127.0.0.1", ports = new[] { 0 } }, new { host = "127.0.0.1", ports = new[] { 70000 } }, new { host = "127.0.0.1", ports = Enumerable.Range(1, 11).ToArray() }, new { host = "127.0.0.1" } })
+            Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Send(HttpMethod.Post, "/api/tools/ports", bad, cookie))).StatusCode);
+
+        // ping: always an answer of the right shape; in a sandbox without ICMP rights it says so instead of failing
+        var ping = await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/tools/ping", new { host = "127.0.0.1", count = 100 }, cookie)));
+        Assert.Equal("127.0.0.1", ping.GetProperty("address").GetString());
+        Assert.InRange(ping.GetProperty("sent").GetInt32(), 1, NetToolRules.MaxPingCount);            // count is limited
+        if (ping.GetProperty("received").GetInt32() > 0) Assert.True(ping.GetProperty("minMs").GetInt64() >= 0);
+        else Assert.True(ping.TryGetProperty("note", out _) || ping.GetProperty("replies").EnumerateArray().All(r => r.GetProperty("status").GetString() is "timeout" or "error" or "unavailable"));
+    }
+
+    [Fact]
+    public async Task Network_tools_are_limited_per_user_and_minute_and_can_be_switched_off()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db);
+        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (cookie, userId) = await SignedInAsync(app, c, db);
+        await new ConnectionStore(db.Data).CreateAsync(userId, "lokal", "terminal", "127.0.0.1", 22, "u");
+        var statuses = new List<HttpStatusCode>();
+        for (var i = 0; i < 32; i++) statuses.Add((await c.SendAsync(Send(HttpMethod.Post, "/api/tools/dns", new { host = "127.0.0.1" }, cookie))).StatusCode);
+        Assert.Equal(30, statuses.Count(s => s == HttpStatusCode.OK));
+        Assert.Equal(2, statuses.Count(s => s == HttpStatusCode.TooManyRequests));
+
+        await using var off = new OffServer(db);
+        var d = off.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        Assert.Equal(HttpStatusCode.NotFound, (await d.SendAsync(Send(HttpMethod.Get, "/api/tools/targets", null, cookie))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await d.SendAsync(Send(HttpMethod.Post, "/api/tools/ports", new { host = "127.0.0.1", ports = new[] { 22 } }, cookie))).StatusCode);
+    }
+
+    private sealed class OffServer(TestDb db) : WebApplicationFactory<Program>
+    {
+        protected override void ConfigureWebHost(IWebHostBuilder builder)
+        {
+            builder.UseSetting("JULOS_DB", db.ConnectionString);
+            builder.UseSetting("JULOS_NETTOOLS", "off");
+            builder.ConfigureServices(s => s.AddTransient<IStartupFilter, LoopbackFilter>());
+        }
+    }
+
 }

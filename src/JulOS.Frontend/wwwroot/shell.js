@@ -2,6 +2,7 @@ import { ico } from './app.js';
 import { Sessions } from './sessions.js';
 import { agentSummary, hostDetail } from './hosts.js';
 import { initAccount } from './account.js';
+import { initNetTools } from './nettools.js';
 import { qrSvg } from './qr.js';
 import './terminal-session.js';      // Sitzungsart 'terminal' (natives SSH-Terminal)
 
@@ -478,8 +479,9 @@ Sessions.addEventListener('home', () => { if (!D) goHome(); });
 Sessions.addEventListener('switcher', () => { if (M) M.openSwitcher(); else goHome(); });
 
 const openAccount = initAccount({ api, setMsg });
-if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), signOut, home: goHome, account: openAccount });
-if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), devices: openDevices, account: openAccount, signOut });
+const openNetTools = initNetTools({ api, setMsg, connections: () => state.connections });
+if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), signOut, home: goHome, account: openAccount, nettools: openNetTools });
+if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), devices: openDevices, account: openAccount, nettools: openNetTools, signOut });
 
 /* ---------- Geraete und Sitzungen ---------- */
 function describeAgent(ua) {

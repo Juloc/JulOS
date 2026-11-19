@@ -12,6 +12,7 @@
  * ===================================================================== */
 
 import { t } from './i18n.js';
+import { micDeniedHint, micPermission } from './audiodiag.js';
 
 const TO_SERVER = { audio: 20, microphone: 21 };
 const WORKLET = '/stream-audio-worklet.js';
@@ -38,12 +39,13 @@ export class StreamAudio {
     this.wanted = false;                // der Benutzer will Ton hoeren
     this.volume = 1;
     this.remote = { output: false, microphone: false, recording: false, micRate: 16000 };
-    this.stats = { bufferedMs: 0, targetMs: 0, underruns: 0, dropped: 0, peak: 0, received: 0, blocks: 0, ignored: 0 };
+    this.stats = { bufferedMs: 0, targetMs: 0, underruns: 0, dropped: 0, peak: 0, received: 0, played: 0, blocks: 0, ignored: 0 };   // blocks/ignored: Nachrichten 20 vom Server; die uebrigen meldet der Worklet
     this.micStarting = false;
     this.mic = null;                    // { stream, source, node, ctx } solange das Mikrofon an ist
     this.micLevel = 0; this.micChunks = 0;
     this.onchange = null; this.onmicwait = null;
     this.closed = false;
+    this.createdAt = Date.now();        // Beginn der Verbindung (die Diagnose wartet nach dem Verbinden etwas, bevor sie fehlenden Ton benennt)
     this.lastOn = null;
     this.resume = () => this.tryResume();
     this.visible = () => { if (!document.hidden) this.tryResume(); };
@@ -90,7 +92,13 @@ export class StreamAudio {
       this.gain = this.ctx.createGain(); this.gain.gain.value = this.volume;
       this.gain.connect(this.ctx.destination);
       this.ctx.onstatechange = () => { this.syncServer(); this.changed(); };
-      await this.ctx.audioWorklet.addModule(WORKLET);
+      try { await this.ctx.audioWorklet.addModule(WORKLET); }
+      catch (e) {
+        // Ohne den Worklet gibt es keinen Ton; der Zustand wird zurueckgesetzt, damit ein spaeteres Einschalten neu beginnt (sonst bliebe ein Kontext ohne Spieler stehen)
+        const dead = this.ctx; this.ctx = null; this.gain = null; this.wanted = false;
+        dead.close().catch(() => {});
+        throw new Error(t('stream.audioFailed', { reason: e && e.message ? e.message : e }));
+      }
       if (this.closed) { this.ctx.close().catch(() => {}); return; }
       this.player = new AudioWorkletNode(this.ctx, 'jul-player', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
       this.player.port.onmessage = (e) => { if (e.data && e.data.type === 'stats') { Object.assign(this.stats, e.data); } };
@@ -156,20 +164,27 @@ export class StreamAudio {
     if (problem) throw new Error(problem);
     this.micStarting = true;
     micOwner = this;                    // gleich beanspruchen: zwei Antippen kurz hintereinander duerfen nicht zwei Aufnahmen starten
+    // Der AudioContext entsteht gleich hier, in der Eingabe des Benutzers (Safari und iOS geben ihn nur dort frei); die Freigabe-Abfrage des Browsers danach zaehlt nicht mehr dazu
+    let ctx = null;
+    try { ctx = new AudioContext({ latencyHint: 'interactive' }); ctx.resume().catch(() => {}); } catch { ctx = null; }
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
     } catch (e) {
       this.micStarting = false; micOwner = null; notifyMic();
+      if (ctx) ctx.close().catch(() => {});
       const name = e && e.name;
-      if (name === 'NotAllowedError' || name === 'SecurityError') throw new Error(t('stream.micDenied'));
+      // Die Namen der Fehler sind je Browser verschieden (abgelehnt, weggeklickt, ohne Oberflaeche fuer die Frage): wo der Browser den Zustand "verweigert" nennt, gilt er
+      if (name === 'NotAllowedError' || name === 'SecurityError' || (name !== 'NotFoundError' && name !== 'OverconstrainedError' && name !== 'NotReadableError' && await micPermission() === 'denied')) {
+        throw new Error(t('stream.micDenied') + ' ' + micDeniedHint());
+      }
       if (name === 'NotFoundError' || name === 'OverconstrainedError') throw new Error(t('stream.micNotFound'));
       if (name === 'NotReadableError') throw new Error(t('stream.micInUse'));
-      throw new Error(t('stream.micOpenFailed'));
+      throw new Error(t('stream.micOpenFailed', { reason: name || (e && e.message) || '?' }));
     }
     try {
       const rate = this.remote.micRate || 16000;
-      const ctx = new AudioContext({ latencyHint: 'interactive' });
+      if (!ctx) ctx = new AudioContext({ latencyHint: 'interactive' });
       await ctx.audioWorklet.addModule(WORKLET);
       const source = ctx.createMediaStreamSource(stream);
       const node = new AudioWorkletNode(ctx, 'jul-capture', { numberOfInputs: 1, numberOfOutputs: 0, processorOptions: { rate } });
@@ -179,13 +194,15 @@ export class StreamAudio {
       this.mic = { stream, source, node, ctx, rate };
       this.micChunks = 0;
       // Der ferne Rechner verlangt Ton erst, wenn dort ein Programm aufnimmt (xrdp: dann erst oeffnet er den Kanal). Kommt nichts, den Benutzer das wissen lassen.
-      setTimeout(() => { if (this.mic && !this.remote.recording && this.onmicwait) this.onmicwait(this.remote.microphone); }, 6000);
+      clearTimeout(this.micWait);
+      this.micWait = setTimeout(() => { if (this.mic && !this.remote.recording && this.onmicwait) this.onmicwait(this.remote.microphone); }, 6000);
       for (const track of stream.getAudioTracks()) track.onended = () => this.stopMic();    // vom Browser oder System beendet (Anzeige "Mikrofon" am Handy)
       this.micStarting = false;
       this.changed(); notifyMic();
     } catch (e) {
       this.micStarting = false; micOwner = null; notifyMic();
       for (const track of stream.getAudioTracks()) track.stop();
+      if (ctx) ctx.close().catch(() => {});
       throw new Error(t('stream.micStartFailed', { reason: e && e.message ? e.message : e }));
     }
   }
@@ -203,6 +220,7 @@ export class StreamAudio {
 
   stopMic() {
     const mic = this.mic; if (!mic) return;
+    clearTimeout(this.micWait);
     this.mic = null; this.micLevel = 0; if (micOwner === this) micOwner = null;
     for (const track of mic.stream.getTracks()) track.stop();
     try { mic.node.disconnect(); mic.source.disconnect(); } catch { /* egal */ }

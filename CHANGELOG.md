@@ -6,7 +6,21 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+### Behoben
+- Ton und Mikrofon am PC: die Oberfläche für den PC (Menüleiste oben) hatte keinen einzigen Knopf für Ton, Lautstärke und Mikrofon (sie standen nur im Menü der Handy-Ansicht, das am PC nicht angezeigt wird). Neu: Menü „Ton“ in der Menüleiste (Ton vom Rechner, Lautstärke, Mikrofon, Diagnose), für RDP und VNC.
+- Die rote Anzeige „Mikrofon an“ saß am PC unter der Menüleiste und war weder zu sehen noch anzutippen; sie sitzt jetzt darunter.
+- Ein Browser, der eine erhaltene Sitzung wieder aufnahm (Neuladen, Pop-out, Netzwechsel), bekam den Stand des Tons nicht mehr gemeldet (Menü blieb bei „kein Ton vom Rechner“, die Hinweise zum Mikrofon waren falsch). Der Server schickt ihn beim Wiederaufnehmen erneut.
+- Ein Fehler beim Laden des Audio-Moduls ließ einen halben Zustand zurück (Ton ließ sich danach nie mehr einschalten); jetzt wird zurückgesetzt und der Grund gemeldet.
+- VNC bot Menüeinträge für Ton und Mikrofon an, die nichts bewirken konnten; jetzt steht dort „gibt es bei VNC nicht“ und es entsteht kein AudioContext.
+- Mikrofon: der AudioContext entsteht jetzt vor der Freigabe-Frage des Browsers, in der Eingabe des Benutzers (Safari und iOS geben ihn sonst nicht frei); der Hinweis-Timer wird beim Ausschalten beendet.
+- Display-Tests: das Mikrofon wird auf einem frisch gestarteten Ziel wiederholt aufgenommen, bis Sitzung und PipeWire stehen (vorher blieb der Test dort rot).
+
 ### Neu
+- „Ton und Mikrofon: Diagnose“ (Dialog, `audiodiag.js`): Ton-Kanal des Desktops, Wiedergabe (läuft, wartet auf eine Eingabe, pausiert), empfangene Stücke, Pegel, Puffer, Aussetzer, Mikrofon-Kanal, Aufnahme, Pegel und Zustand der Freigabe des Browsers; nie ein Ton, nur Zähler.
+- Hinweise: wartet der Browser auf eine Eingabe, sagt es ein Hinweis einmal; vor der Frage nach dem Mikrofon steht „Zulassen wählen“; nach einem Nein eine Anleitung je Browser (Chrome und Edge, Firefox, Safari und iOS, Android), wie bei der Zwischenablage. Auch andere Fehlernamen des Browsers werden über den Zustand „verweigert“ erkannt, der Name steht sonst in der Meldung.
+- Der Worklet zählt die ausgegebenen Samples (`played`), damit Tests und die Diagnose belegen, dass wirklich gespielt wird.
+- Browser-Tests 13 bis 15 in echtem Chromium mit Ersatz-Mikrofon: Ton aus dem Desktop kommt an und wird gespielt (Pegel, Samples), Hintergrund-Sitzung bekommt nichts; Mikrofon im Menü einschalten, im Desktop nimmt ein Programm den Testton auf; verweigertes Mikrofon zeigt die Anleitung. Der Hilfsdienst im Test-Desktop kann Ton spielen und aufnehmen.
+- Doku: [docs/AUDIO.md](docs/AUDIO.md) (was jede Seite braucht, Prüfliste für die echte VM, Grenzen), Abschnitt „If the display tests are red“ in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): ein älteres Test-Ziel ohne PipeWire, `xclip` und `/dev/fuse` machte drei Display-Tests rot, obwohl der Code stimmt (frisch gebaut sind sie grün). Der Service Worker hält `audiodiag.js` bereit (Version pd-v53).
 - Einrichtung von Claude Code und Codex auf den eigenen Rechnern: Skript `tools/julos-setup-ai-cli.sh` (Trockenlauf als Standard, `--yes` führt aus; prüft Summe und Signatur, richtet `PATH` für Login-Shells und einen tmux-Block für Programm-Sitzungen ein, schreibt nie Anmeldedaten), Anforderungen, Anmeldung ohne Browser und Berechtigungen in `docs/AI-CLI-SETUP.md`, Geräte-Checkliste in `docs/AI-CLI-DEVICES.md`. Der Plan für „KI-Werkzeuge“ in JulOS ist dort beschrieben, noch nicht gebaut.
 
 ## [0.10.0] - 2026-11-19

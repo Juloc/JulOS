@@ -965,7 +965,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
     /// <summary>
     /// Ein neuer Browser hat sich an die erhaltene Sitzung gehaengt (der Aufrufer liest die Ereignisse noch nicht): was noch unterwegs war, gilt
-    /// als verloren, der Browser bekommt Groesse, Zeigerform und Kodierer neu gemeldet und als naechstes ein Schluesselbild des ganzen Bildes.
+    /// als verloren, der Browser bekommt Groesse, Zeigerform, Kodierer und den Stand des Tons neu gemeldet und als naechstes ein Schluesselbild des ganzen Bildes.
     /// </summary>
     public void Resume()
     {
@@ -973,6 +973,9 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         while (_events.Reader.TryRead(out _))
         {
         }
+
+        // Der neue Browser kennt den Stand des Tons nicht (die Bruecke meldet nur Aenderungen): ohne das bliebe sein Menue bei "kein Ton vom Rechner"
+        _events.Writer.TryWrite(new ScreenAudioStatus(Audio.Status));
 
         lock (_pacerGate)
         {

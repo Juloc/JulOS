@@ -8,7 +8,7 @@ export default defineConfig({
   fullyParallel: false,
   retries: 1,                         // ein Wiederholungsversuch (die Ersteinrichtung ist davon ausgenommen, siehe Test)
   timeout: 45_000,
-  globalTimeout: 260_000,             // harte Obergrenze: ein haengender Lauf soll nicht ewig blockieren
+  globalTimeout: 480_000,             // harte Obergrenze: ein haengender Lauf soll nicht ewig blockieren
   expect: { timeout: 20_000 },
   reporter: [['list']],
   use: {

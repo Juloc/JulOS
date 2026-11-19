@@ -8,8 +8,28 @@ setzen und lesen (xclip), ohne dass der Test-Container Docker braucht. Hoert auf
   POST /clear                                   alle Besitzer beenden (die Auswahl ist leer)
   POST /entry                                   ein kleines Fenster "clip-entry" mit einem Eingabefeld (Koerper = Inhalt), zum Markieren und Kopieren mit der Tastatur
   POST /entry-close                             schliesst es wieder
+Ton (fuer die Browser-Tests, wie deploy/dev/play-tone.sh und record-mic.sh, nur dass kein Docker noetig ist):
+  POST /tone?s=3                                spielt s Sekunden einen 440-Hz-Ton ueber das Tongeraet der Sitzung (paplay, im Hintergrund)
+  POST /record-start                            nimmt das Mikrofon der Sitzung auf (parecord, 16 Bit, 16 kHz, Mono) in eine Datei; so oeffnet xrdp den Mikrofon-Kanal (503, wenn parecord gleich endet)
+  GET  /record-level                            {"samples": n, "loud": Zahl der Samples ueber 4000, "peak": hoechster Betrag} der Aufnahme bisher
+  POST /record-stop                             beendet die Aufnahme
+  GET  /sinks                                   pactl list short sinks und sources (Diagnose)
 """
-import http.server, os, subprocess, time, urllib.parse
+import http.server, json, math, os, struct, subprocess, tempfile, time, urllib.parse, wave
+
+REC = "/tmp/julos-rec.raw"
+env = dict(os.environ, XDG_RUNTIME_DIR="/run/user/%d" % os.getuid())
+recorder = None
+
+
+def tone_file(seconds):
+    rate = 44100
+    f = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    f.close()
+    with wave.open(f.name, "wb") as w:
+        w.setnchannels(2); w.setsampwidth(2); w.setframerate(rate)
+        w.writeframes(b"".join(struct.pack("<hh", v, v) for v in (int(12000 * math.sin(2 * math.pi * 440 * i / rate)) for i in range(int(rate * seconds)))))
+    return f.name
 
 SELS = ("clipboard", "primary", "secondary")
 
@@ -41,6 +61,13 @@ class H(http.server.BaseHTTPRequestHandler):
         if u.path == "/targets":
             r = subprocess.run(["xclip", "-selection", sel_of(q), "-o", "-t", "TARGETS"], capture_output=True, timeout=10)
             return self.reply(200, r.stdout) if r.returncode == 0 else self.reply(404, r.stderr)
+        if u.path == "/record-level":
+            data = open(REC, "rb").read() if os.path.exists(REC) else b""
+            samples = struct.unpack("<%dh" % (len(data) // 2), data[: len(data) & ~1])
+            return self.reply(200, json.dumps({"samples": len(samples), "loud": sum(1 for x in samples if abs(x) > 4000), "peak": max((abs(x) for x in samples), default=0)}).encode(), "application/json")
+        if u.path == "/sinks":
+            r = subprocess.run("pactl list short sinks; pactl list short sources", shell=True, capture_output=True, timeout=10, env=env)
+            return self.reply(200, r.stdout + r.stderr)
         self.reply(404)
 
     def do_POST(self):
@@ -61,6 +88,24 @@ class H(http.server.BaseHTTPRequestHandler):
             return self.reply(200, b"ok")
         if u.path == "/entry-close":
             subprocess.run(["pkill", "-u", str(os.getuid()), "-f", "clip-entry.py"])
+            return self.reply(200, b"ok")
+        if u.path == "/tone":
+            wav = tone_file(float(q.get("s", ["3"])[0]))
+            subprocess.Popen("paplay %s; rm -f %s" % (wav, wav), shell=True, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return self.reply(200, b"ok")
+        if u.path in ("/record-start", "/record-stop"):
+            global recorder
+            if recorder is not None:
+                recorder.terminate()
+                recorder = None
+            if u.path == "/record-start":
+                if os.path.exists(REC):
+                    os.remove(REC)
+                recorder = subprocess.Popen(["parecord", "--raw", "--format=s16le", "--rate=16000", "--channels=1", "--latency-msec=50", REC], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                time.sleep(1.5)
+                if recorder.poll() is not None:          # kein Tongeraet (die Sitzung ist noch nicht ganz oben): der Aufrufer versucht es erneut
+                    recorder = None
+                    return self.reply(503, b"parecord endete gleich")
             return self.reply(200, b"ok")
         if u.path == "/clear":
             subprocess.run(["pkill", "-KILL", "-u", str(os.getuid()), "-x", "xclip"])

@@ -95,6 +95,8 @@ html.desktop body { background: var(--dk-body); }
 /* ---------- Menueleiste ---------- */
 .dk-bar { position: absolute; left: 0; right: 0; top: 0; height: 34px; z-index: 5000; display: flex; align-items: center; gap: 2px; padding: 0 12px; background: var(--dk-bar);
   backdrop-filter: blur(22px) saturate(1.5); border-bottom: 1px solid var(--dk-bar-edge); color: var(--dk-t1); font-size: 13.5px; }
+/* Die rote Anzeige "Mikrofon an" (style.css) sass am PC unter der Menueleiste und liess sich weder sehen noch antippen: darunter setzen */
+html.desktop #micLive { top: 42px; z-index: 4000; }
 .dk-bar .dk-logo { display: flex; align-items: center; gap: 8px; font-weight: 650; font-size: 15px; padding: 0 10px 0 2px; color: var(--dk-t1); }
 .dk-bar .dk-logo svg { width: 22px; height: 22px; }
 .dk-bar .dk-mi { height: 26px; padding: 0 11px; border-radius: 7px; display: inline-flex; align-items: center; gap: 6px; }

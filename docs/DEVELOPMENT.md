@@ -112,7 +112,25 @@ numbers use `Intl` with `de-DE` or `en-GB` (`fmtDate`, `fmtTime`, `fmtDay`, `fmt
 
 ## Display tests against the test desktop
 
-`deploy/dev/test-display.sh` runs `tests/JulOS.Display.Tests` in an SDK container on the test network (`JULOS_DEV_NET` names another compose project's network, for example `julos-xyz_default`). The integration tests (`ScreenStreamTests`) are skipped without `JULOS_TEST_RDP_HOST`; the script sets it and also plays a tone and records the microphone in the desktop in the background, which the sound test (PCM blocks arrive, loud enough) and the microphone test (a 600 Hz tone sent as the browser would arrives in the recording) check. Close any browser tab connected to the same desktop first: a second client takes the xrdp session over.
+`deploy/dev/test-display.sh` runs `tests/JulOS.Display.Tests` in an SDK container on the test network (`JULOS_DEV_PROJECT=<compose project>` or `JULOS_DEV_NETWORK=<network>` name another stack's network, for example `julos-xyz_default`). The integration tests (`ScreenStreamTests`) are skipped without `JULOS_TEST_RDP_HOST`; the script sets it and also plays a tone and records the microphone in the desktop in the background, which the sound test (PCM blocks arrive, loud enough) and the microphone test (a 600 Hz tone sent as the browser would arrives in the recording) check. Close any browser tab connected to the same desktop first: a second client takes the xrdp session over.
+
+### If the display tests are red: rebuild the test desktop
+
+Three tests need things that only a **current build** of the throwaway desktop has: `Sound_played_on_the_desktop_arrives_as_pcm` and
+`The_microphone_reaches_a_program_recording_on_the_desktop` need PipeWire with `pipewire-module-xrdp` (the devices `xrdp-sink` and `xrdp-source`, started by
+`deploy/dev/rdp-target/julos-audio.sh`), and `An_image_and_a_file_from_the_browser_are_taken_by_the_clipboard_of_a_real_xrdp` needs `xclip` and `/dev/fuse` (compose gives the container the device).
+A container that was created before those files existed stays as it was: `docker compose up -d` does not rebuild it. All three then fail (no sound, no microphone channel, no files) although the code is fine.
+Check with `docker exec julos-dev-rdp-target-1 sh -c 'which pipewire; ls /dev/fuse'` (both must print a path), and rebuild with
+
+```bash
+docker compose -p julos-dev -f deploy/dev/compose.yaml --env-file deploy/dev/.env up -d --build rdp-target
+```
+
+(`--build` makes the image, the changed compose entry recreates the container; the other services of the stack keep running. Any browser tab or test connected to the desktop drops its session.)
+On a freshly started target the first seconds have no session yet: the script retries the recording until the session and PipeWire are up, so the microphone test is green on a cold target too.
+To try the tests without touching the shared target, build one of your own: `docker build -t myprefix-rdp-target -f deploy/dev/rdp-target/Dockerfile .`, run it with
+`--network <net> --network-alias rdp-target --shm-size 1g --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor:unconfined` (container name containing `rdp-target`) and point
+`JULOS_DEV_NETWORK=<net>` at that network. Sound and microphone themselves: [AUDIO.md](AUDIO.md).
 
 ## VNC tests
 
@@ -121,7 +139,7 @@ numbers use `Intl` with `de-DE` or `en-GB` (`fmtDate`, `fmtTime`, `fmtDay`, `fmt
 ## Browser tests (real browser, Playwright in Docker)
 
 ```bash
-deploy/dev/e2e.sh             # builds the stack from this working folder, runs six flows in Chromium, tears the stack down (about 1 minute)
+deploy/dev/e2e.sh             # builds the stack from this working folder, runs fifteen flows in Chromium, tears the stack down (about 1 minute)
 E2E_KEEP=1 deploy/dev/e2e.sh  # leave the stack running afterwards (the next run starts in about 40 s); stop it with: deploy/dev/e2e.sh down
 ```
 
@@ -138,7 +156,7 @@ Credentials are throwaway and live outside the repository in `~/.cache/julos-e2e
 database and the SSH target (kept, because the database volume remembers its password), and the test account that each run creates itself. The RDP target
 uses its fixed test login `ubuntu` / `ubuntu`.
 
-What the six flows check (`deploy/dev/e2e/tests/e2e.spec.mjs`, in this order, each builds on the earlier ones: run the whole file; `-g` filters only work after flow 1 has run in the same run):
+What the flows check (`deploy/dev/e2e/tests/e2e.spec.mjs`, in this order, each builds on the earlier ones: run the whole file; a `-g` filter must include flows 1 and 2, because the account and the connections are created there, for example `deploy/dev/e2e.sh -g '[^0-9](1|2|13|14) [A-Z]'`; next to another session's run use `E2E_PROJECT=<own name> JULOS_E2E_STATE=<own folder>`, which separates stack and credentials):
 
 1. **First-time setup and login:** setup code from the server log, account, authenticator code computed from the shown secret, new device, wrong password is refused, login with password and code.
 2. **Create connections:** a desktop (RDP, engine Stream) and a terminal (SSH) through the dialog; both are still there after a reload.
@@ -147,12 +165,23 @@ What the six flows check (`deploy/dev/e2e/tests/e2e.spec.mjs`, in this order, ea
 5. **Native SSH terminal:** a shell prompt appears, `echo e2e-$((6*7))` prints `e2e-42`.
 6. **Layouts:** `/?phone` (390x844, touch) and `/?desktop` (1280x800) load, show the saved connection and log no console errors or page errors.
 
+Flows 7 to 12 (language, clipboard, VNC, program sessions) are described in their titles in the spec. Flows 13 to 15 are the sound and microphone flows and use a **Chromium of their own** (not the runner's default) started
+with `--use-fake-device-for-media-stream` (a microphone without hardware that plays a test beep), `--use-fake-ui-for-media-stream` (the permission question is answered yes; flow 15 leaves it out and sets the permission to denied
+through the browser protocol) and `--autoplay-policy=no-user-gesture-required` (flows 13 and 14 only). The target's probe service (`deploy/dev/rdp-target/clip-probe.py`) plays a tone (`POST /tone`) and records the microphone (`/record-start`, `/record-level`) inside the desktop session, so the browser container needs no Docker:
+
+13. **Sound:** a tone played in the desktop arrives in the browser (the page is opened with `?debug`, `__pd.cur().client.audio` gives the counters): audio blocks arrive, the AudioWorklet writes samples to the output, the level is near that of the tone; the diagnosis dialog says "playback running";
+    after the window is minimised the server hears "off" and nothing arrives, after it is restored the sound comes back.
+14. **Microphone:** a program records in the desktop, the microphone is switched on in the menu "Sound", the desktop offers the channel and asks for sound, the recording contains the fake microphone's beep (loud samples above a threshold), the red pill is visible and can be clicked off, the diagnosis shows permission "granted".
+15. **Microphone denied:** with the permission denied the menu shows the instructions for Chromium, the microphone stays off, the diagnosis shows "denied".
+
+The VNC flow (9) also checks that the "Sound" menu of a VNC session says there is no sound instead of offering controls.
+
 Against flakiness: every wait is a condition with a timeout (picture, agent, window title, terminal text), never a fixed sleep; each flow uses its own browser context
-with the saved login; a failed flow is retried once (flow 1 is not: the account exists after the first try); the whole run has a hard limit of 150 s.
+with the saved login; a failed flow is retried once (flow 1 is not: the account exists after the first try); the whole run has a hard limit of 480 s.
 Screenshots and traces of failed flows go to `~/.cache/julos-e2e/out/results` (`npx playwright show-trace <file>/trace.zip`, in any Node setup). The run prints the load first:
 the development VM has 6 cores, keep it below about 6 or the waits get slow.
 
-Not covered: H.265 and the GPU encoder, sound and microphone, the clipboard and file transfer,
+Not covered: H.265 and the GPU encoder, sound and microphone with real hardware and in Safari, the clipboard and file transfer,
 the files window, several simultaneous sessions, a real touch keyboard, and any other browser than Chromium. `dotnet test` and `test-display.sh` cover the engine
 parts; the phone keeps its own checklist in [PHONE-TEST.md](PHONE-TEST.md). The click in flow 4 uses the position of the maximise button of a new terminal window of the test desktop
 (`deploy/dev/rdp-target`); if that image gets another window manager theme or size, the position in the test has to follow.

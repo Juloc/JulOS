@@ -12,7 +12,8 @@ tone() { for _ in $(seq 12); do sleep 4; SECONDS_LONG=3 docker exec -i -u ubuntu
 tone & tone_pid=$!
 # Fuer den Mikrofontest: im Desktop aufnehmen (die Rohdaten kommen in eine Datei, die der Test liest)
 probe=$(mktemp -d)
-record() { sleep 5; docker exec -i -u ubuntu -e SECONDS_LONG=40 "$target" bash -s < deploy/dev/record-mic.sh > "$probe/rec.raw" 2>/dev/null || true; }
+# Auf einem frisch gestarteten Ziel gibt es die Sitzung (und PipeWire) erst nach einigen Sekunden; bis dahin bricht record-mic.sh ab, also erneut versuchen
+record() { sleep 5; for _ in $(seq 10); do docker exec -i -u ubuntu -e SECONDS_LONG=40 "$target" bash -s < deploy/dev/record-mic.sh > "$probe/rec.raw" 2>/dev/null || true; [ -s "$probe/rec.raw" ] && break; sleep 3; done; }
 record & record_pid=$!
 trap 'kill $tone_pid $record_pid 2>/dev/null || true; rm -rf "$probe"' EXIT
 docker run --rm --network "$net" --user "$(id -u):$(id -g)" -e HOME=/tmp -e DOTNET_CLI_HOME=/tmp -e DOTNET_NOLOGO=1 \

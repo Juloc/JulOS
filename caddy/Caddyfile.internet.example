@@ -1,0 +1,40 @@
+# Internetzugang MIT Agenten auf anderen Rechnern (Stand der Empfehlungen: docs/SECURITY-REVIEW.md "Empfehlungen fuer das Internet-Ziel").
+# Problem des einfachen Beispiels (Caddyfile.example): "mode require_and_verify" verlangt ein Client-Zertifikat fuer ALLES, auch fuer die Agenten
+# (Python ohne Zertifikat) auf den Hosts. Hier gilt: Browser brauchen das Zertifikat, die Agenten kommen nur an ihre drei Wege.
+# Anpassen: Domain, Pfade, Adresse des JulOS-Servers. Mit "caddy validate" pruefen, bevor es live geht.
+desktop.example.com {
+	tls {
+		client_auth {
+			# Ein Zertifikat ist freiwillig, ein falsches wird schon beim Verbindungsaufbau abgewiesen; was ohne Zertifikat durchkommt, regelt die Sperre unten
+			mode verify_if_given
+			trust_pool file /etc/caddy/julos-ca.crt
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# Ohne Client-Zertifikat nur die Wege der Agenten (Einrichtungscode, Verbindung, Dateien zum Installieren/Aktualisieren); alles andere: abgewiesen, bevor JulOS es sieht
+	@browserWithoutCert {
+		not path /api/agent-link /api/agent-link/enroll /agent-files/*
+		expression {http.request.tls.client.subject} == ""
+	}
+	respond @browserWithoutCert 403
+
+	# Kein Client darf X-Forwarded-* selbst setzen: Caddy ueberschreibt sie (trusted_proxies leer lassen) und JulOS glaubt nur dieser Adresse (JULOS_TRUSTED_PROXIES=<Adresse-dieses-Caddy>/32)
+	request_body {
+		max_size 80MB      # groesster erlaubter Upload (64 MB Datei) plus Rahmen; die API selbst nimmt sonst nur 64 KiB
+	}
+
+	reverse_proxy <IP-des-Docker-Hosts>:8080 {
+		flush_interval -1
+		transport http {
+			read_timeout 1h
+			write_timeout 1h
+		}
+	}
+}

@@ -4,6 +4,15 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Sicherheit
+- **Sicherheits-Audit** (Stand 0.13.1, [docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md) neu geschrieben): 23 Funde (keiner kritisch oder hoch), Lieferketten-Tabelle (Hash, NuGet, Basisimage, vendored JavaScript), Empfehlungen für das Internet-Ziel mit Aufwand, Ablauf bei gestohlener Sitzung, verlorenem Handy und gekapertem Host.
+- **Test über jede Route** (`RouteSecurityTests`): alle registrierten Endpunkte werden aufgezählt und ohne Sitzung aufgerufen; alles außer einer ausdrücklichen Erlaubnisliste muss 401 liefern. Dazu: jede schreibende Route ohne Kopfzeile oder mit fremdem Origin = 403, WebSocket mit fremdem Origin abgelehnt, Sicherheits-Kopfzeilen überall.
+- **Behoben:** Fenster-IDs aus der Liste eines Agenten werden geprüft (nur Zahlen, Server und Client): eine ID wie `../../auth/logout-others?` ließ den Browser beim Antippen eine andere Route aufrufen. Der **Root-Helfer** verlangt die Anfrage-Zeile innerhalb von 15 s (ein stummer Client konnte sonst einen der vier Plätze für immer belegen). Offene Desktop- und Terminal-Verbindungen bemerken eine Abmeldung nach höchstens 15 s statt 60 s.
+- Beim Start warnt der Server im Log, solange `JULOS_TRUSTED_PROXIES` nicht gesetzt ist.
+- Neu: `caddy/Caddyfile.internet.example` (Client-Zertifikat für Browser, Agenten kommen nur an ihre drei Wege; mit Caddy geprüft), `.github/dependabot.yml` (NuGet, Actions, Docker, Compose), `.github/workflows/supply-chain.yml` (wöchentlich auf bekannte Schwachstellen), GitHub-Aktionen auf Commit-SHAs festgelegt, Abschnitt „Updates and security“ in `docs/RELEASING.md`.
+
 ## [0.13.1] - 2026-11-19
 
 ### Geändert

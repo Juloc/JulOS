@@ -38,6 +38,7 @@ Status: Linux (X11, XFCE tested) first. Windows is planned and the agent API is 
 - **Touch**: tap = click, long press = right click, drag, two-finger scroll, pinch zoom (resolution adapts), touchpad mode.
 - **PWA**: installable (needs HTTPS), standalone/fullscreen, offline shell. Material You palette from a seed colour or from an image.
 - **Several sessions at once** (up to 8 per user, RDP and SSH, also two to the same target): on the phone a strip with one chip per session (state dot) and a sheet with cards to switch or close; on a wide screen each session is its own window and the keyboard goes only to the focused one. Sessions in the background keep running but pause the expensive work. See [docs/SESSIONS.md](docs/SESSIONS.md).
+- **Status bar, frame rate and pop-out** (desktop and phone): an optional status bar per stream session (frames per second, reaction time, data rate, resolution, encoder), a per-session frame rate (automatic, 60, 30, economy), and on a wide screen a session can move into its own browser window without a second login. See [docs/STATUSBAR.md](docs/STATUSBAR.md) and [docs/SESSIONS.md](docs/SESSIONS.md).
 - **Reconnect** with animation, keyboard auto-open on text fields, visual viewport aware layout.
 
 ## Quick start

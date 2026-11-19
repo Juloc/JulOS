@@ -33,6 +33,7 @@ Stand: erst Linux (X11, XFCE getestet). Windows ist eingeplant, die Agent-API is
 - **Passwortmanager**: Anmeldeformular und Passwort-Dialog sind fuer Autofill erkennbar (Bitwarden usw.).
 - **Touch**: Tippen = Klick, Halten = Rechtsklick, Ziehen, Zwei-Finger-Scrollen, Pinch-Zoom (Aufloesung passt sich an), Touchpad-Modus.
 - **Mehrere Sitzungen gleichzeitig** (bis zu 8 je Benutzer, RDP und SSH, auch zwei zum selben Ziel): am Handy eine Leiste mit einem Chip je Sitzung (Zustandspunkt) und ein Sheet mit Karten zum Wechseln und Schliessen; am grossen Bildschirm ist jede Sitzung ein eigenes Fenster, die Tastatur gehoert nur dem Fenster mit Fokus. Sitzungen im Hintergrund laufen weiter, aber ohne teure Arbeit. Siehe [docs/SESSIONS.md](docs/SESSIONS.md).
+- **Statusleiste, Bildrate und Pop-out** (Desktop und Handy): je Stream-Sitzung eine optionale Statusleiste (Bilder pro Sekunde, Reaktionszeit, Datenrate, Auflösung, Kodierer), eine Bildrate je Sitzung (automatisch, 60, 30, sparsam) und am großen Bildschirm lässt sich eine Sitzung ohne zweiten Login in ein eigenes Browserfenster lösen. Siehe [docs/STATUSBAR.md](docs/STATUSBAR.md) und [docs/SESSIONS.md](docs/SESSIONS.md).
 - **PWA**: installierbar (braucht HTTPS), Standalone/Vollbild, Offline-Huelle. Material-You-Palette aus Grundfarbe oder Bild.
 - **Neu verbinden** mit Animation, Auto-Tastatur bei Textfeldern, Layout folgt dem sichtbaren Viewport.
 

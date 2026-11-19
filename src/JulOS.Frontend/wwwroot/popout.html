@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="popout.css">
+  <title>JulOS</title>
+</head>
+<body>
+  <header class="po-bar">
+    <span class="po-title" id="poTitle"></span>
+    <span class="po-sp"></span>
+    <label class="po-field">Bildrate <select id="poQuality"></select></label>
+    <button type="button" id="poPerf" aria-pressed="false">Statusleiste</button>
+    <button type="button" id="poBack" class="po-primary" title="Die Sitzung wieder in das Hauptfenster holen">Wieder anheften</button>
+  </header>
+  <main class="po-stage" id="poStage">
+    <div class="po-display" id="poDisplay"></div>
+    <div class="po-touch" id="poTouch" tabindex="0" aria-label="Fernen Desktop bedienen"></div>
+    <div class="sv-perf" id="poPerfBar"></div>
+    <div class="po-overlay" id="poOverlay"><p id="poMsg">Verbinde …</p><button type="button" id="poClose" hidden>Fenster schließen</button></div>
+  </main>
+  <script type="module" src="popout.js"></script>
+</body>
+</html>

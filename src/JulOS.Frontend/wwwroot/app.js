@@ -2,6 +2,7 @@ import { StreamClient } from './stream.js';
 import { MouseInput, mouseState } from './mouse.js';
 import { Resume } from './resume.js';
 import { StatusBar } from './statusbar.js';
+import { openPopout } from './popout-main.js';
 import { QUALITIES, normalizeQuality, qualityOf, nextQuality } from './perf.js';
 import { StreamAudio } from './stream-audio.js';
 import { SizeGate, LayoutLog } from './layoutlog.js';
@@ -448,6 +449,7 @@ export class RemoteSession extends Session {
     this.client = null; this.display = null; this.mouse = null;
     this.connected = false; this.everConnected = false; this.intentional = false; this.fatal = false; this.disposed = false;
     this.firstLogin = true; this.streamWorked = false;   // streamWorked: auf dieser Verbindung kam schon einmal ein Bild
+    this.popped = null;                            // laeuft die Sitzung in einem eigenen Fenster (popout-main.js)? Dann steht hier dessen Griff
     this.resume = new Resume();                    // Sitzungserhalt des Streams: Token, Zeitfenster, Versuche (siehe resume.js)
     this.gen = 0;                                  // zaehlt jeden Verbindungsversuch: spaete Antworten eines alten Versuchs werden verworfen
     this.k = clamp(store.get('k.' + conn.id, store.get('k', pcDefaultK())), 0.35, 1.8);   // Remote-Pixel pro Handy-Pixel (kleiner = Inhalt groesser), je Verbindung gemerkt
@@ -594,6 +596,30 @@ export class RemoteSession extends Session {
     } catch (e) { this.toast(e.message, 4800); }
     this.updateAudioMenu();
   }
+  /* ---------- Eigenes Fenster (Pop-out): dieselbe Strom-Sitzung in einem Browserfenster, ohne zweiten Login (popout-main.js, popout.js) ---------- */
+  popOut() {
+    if (this.popped) { try { this.popped.win.focus(); } catch { /* egal */ } return; }
+    const r = openPopout(this, () => this.popBack(), { perf: S.perf });
+    if (!r.ok) { this.toast(r.reason, 4200); return; }
+    this.popped = r;
+    this.resume.confirm();                               // ein Bild kam schon (Voraussetzung fuer das Fenster): das Token darf die Sitzung wieder aufnehmen
+    this.intentional = true; this.teardown(true);        // nur die Leitung kappen: der Server haelt die Sitzung, das Fenster nimmt sie mit dem Token auf
+    this.setState('connected', 'In eigenem Fenster');
+    this.el.reconnectBtn.textContent = 'Wieder anheften';
+    this.showOverlay('Diese Sitzung läuft in einem eigenen Fenster.');
+  }
+  /** Das Fenster ist zu oder will zurueck (oder der Benutzer tippt "Wieder anheften"): die Sitzung hier wieder aufnehmen. */
+  popBack() {
+    const p = this.popped; if (!p) return;
+    this.popped = null; p.stop();
+    this.el.reconnectBtn.textContent = 'Neu verbinden';
+    this.quality = normalizeQuality(store.get('q.' + this.conn.id, this.quality)); this.statusBar.setQuality(this.quality);
+    setPerf(store.get('perf', S.perf));                  // was im Fenster geschaltet wurde, gilt auch hier
+    if (this.disposed) return;
+    this.intentional = false; this.retry = 0; this.resume.lost();     // das Token gilt ab jetzt (die Zeit ohne Browser zaehlt erst ab hier)
+    this.start();
+  }
+
   /** Bildrate dieser Sitzung waehlen ('auto' | '60' | '30' | 'eco'): merken, an den Server schicken, anzeigen. */
   setQualityMode(id) {
     id = normalizeQuality(id);
@@ -606,6 +632,7 @@ export class RemoteSession extends Session {
   refreshAll() { this.updateMenuLabels(); this.renderRows(); }
   dispose() {
     this.disposed = true; this.intentional = true;
+    if (this.popped) { const p = this.popped; this.popped = null; p.end(); }      // die Sitzung endet: das Fenster beendet sie am Server und geht zu
     this.teardown();
     this.ro.disconnect(); this.lay.dispose();
     clearTimeout(this.toastTimer); clearTimeout(this.zoomTimer); this.statusBar.dispose();
@@ -682,6 +709,7 @@ export class RemoteSession extends Session {
   }
 
   async start() {
+    if (this.popped) { const p = this.popped; this.popped = null; p.stop(); this.el.reconnectBtn.textContent = 'Neu verbinden'; }   // zurueck ins Hauptfenster: das Fenster gibt die Leitung ab
     this.intentional = false; this.fatal = false; this.connectStarted = Date.now();
     if (this.client && this.client.drawn) this.resume.confirm();      // ein Bild kam schon (zum Beispiel Seite wieder sichtbar, bevor der tote Socket gemeldet wurde): das Token darf die Sitzung aufnehmen
     this.teardown(true);                   // der Server haelt eine Stream-Sitzung weiter, die nehmen wir gleich wieder auf (sonst endet sie dort nach Ablauf)
@@ -2002,6 +2030,9 @@ export const remoteApi = {
   activateWindow: (id) => { const s = cur(); return s && s.activateWindow(id, s.W.mode === 'apps'); },
   toggleMode: () => cur() && cur().toggleMode(),
   openApps: () => cur() && openApps(cur()),
+  /** Eigenes Fenster (nur Desktop-Oberflaeche): oeffnen oder wieder anheften; popped sagt, ob die Sitzung gerade dort ist */
+  popOut: () => { const s = cur(); if (s) { if (s.popped) s.popBack(); else s.popOut(); } },
+  popped: () => !!(cur() && cur().popped), canPopOut: () => !!cur(),
   /** Statusleiste und Bildrate */
   perfShown: () => S.perf, setPerf: (on) => setPerf(on),
   quality: () => (cur() ? cur().quality : 'auto'), setQuality: (id) => cur() && cur().setQualityMode(id), qualities: QUALITIES,

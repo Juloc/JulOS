@@ -7,6 +7,9 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 ## [Unveröffentlicht]
 
 ### Neu
+- Statusleiste je Stream-Sitzung (ein-/ausblendbar): Bilder pro Sekunde, Reaktionszeit (Eingabe bis neues Bild), Datenrate, Auflösung und Kodierer. Desktop: Menü „Ansicht“ → „Statusleiste“ (Fußzeile des Sitzungsfensters); Handy: Sitzungsmenü → „Leistung anzeigen“ (Overlay). Rein im Browser gezählt, ausgeblendet ohne Kosten ([docs/STATUSBAR.md](docs/STATUSBAR.md)).
+- Bildrate je Sitzung wählbar: „Automatisch“ (Standard, wie bisher), 60, 30 oder „Sparsam“ (15 Bilder/s, gut ein Drittel der Bitrate). Neue Nachricht 31 im Stream-Protokoll; der Server begrenzt das Bildintervall und die Bitrate-Obergrenze, die Leitungsmessung darf weiter darunter bleiben.
+- Pop-out: eine Stream-Sitzung in ein eigenes Browserfenster lösen (nur Desktop-Oberfläche; Knopf in der Titelleiste oder Sitzungsmenü). Das Fenster übernimmt dieselbe Sitzung ohne zweiten RDP-Login (Sitzungserhalt), „Wieder anheften“ oder Schließen gibt sie dem Hauptfenster zurück ([docs/SESSIONS.md](docs/SESSIONS.md)).
 - Handy: Bei geöffneter Bildschirmtastatur wird die Verbindung nicht mehr neu ausgehandelt. Neue Einstellung im Sitzungsmenü, Zeile „Bei Tastatur“ (auf diesem Gerät gemerkt): „Bild verschieben“ (Standard) lässt die Auflösung gleich, das Bild behält seine Größe und wird nur so verschoben, dass die zuletzt angetippte Stelle (Textfeld) sichtbar bleibt, mit zwei Fingern verschiebbar; „Auflösung folgt“ ist das bisherige Verhalten. Siehe [docs/PHONE-TEST.md](docs/PHONE-TEST.md).
 
 ### Geändert

@@ -18,6 +18,7 @@ export function sessionMenu(deps) {
   const funcs = R.group('funcs');
   return [
     { label: 'Neu verbinden', icon: 'play', run: () => R.reconnect() },
+    ...(R.canPopOut() ? [{ label: R.popped() ? 'Wieder anheften' : 'In eigenem Fenster öffnen', icon: 'blank', run: () => R.popOut() }] : []),
     { sep: true },
     ...(funcs ? funcs.items.filter((d) => d.type === 'action').map((d) => ({ label: d.label.startsWith(':') ? d.value : d.label, icon: 'blank', run: () => R.press(d) })) : []),
     { sep: true },

@@ -66,6 +66,7 @@ const P = {
   download: '<path d="M12 3v12m0 0-4-4m4 4 4-4M5 21h14"/>',
   up: '<path d="m18 15-6-6-6 6"/>',
   check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  popout: '<path d="M14 4h6v6M20 4l-8.5 8.5M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/>',
   blank: '',
 };
 const ic = (n) => `<svg class="dk-i" viewBox="0 0 24 24" aria-hidden="true">${P[n] || ''}</svg>`;
@@ -955,6 +956,12 @@ export function sessionOpened(session, n) {
     onVisible: (on) => session.setVisible(on),
     onClose: () => { Sessions.close(session.id); } });
   w.session = session; sessWins.set(session.id, w);
+  // Eigenes Browserfenster (Pop-out): nur Fernsteuer-Sitzungen, und dieses Layout gibt es nur auf grossen Bildschirmen mit Maus
+  if (typeof session.popOut === 'function') {
+    const pop = btn('dk-po', ic('popout'), 'In eigenem Fenster öffnen'); pop.title = 'In eigenem Fenster öffnen';
+    pop.addEventListener('click', (ev) => { ev.stopPropagation(); if (session.popped) session.popBack(); else session.popOut(); });
+    w.head.querySelector('.dk-wc').prepend(pop);
+  }
   const dot = el('span', 'dk-sdot busy'); dot.title = session.stateText; w.head.querySelector('.dk-wt').prepend(dot);
   w.dot = dot;
   session.addEventListener('titlechange', (e) => { w.head.querySelector('.dk-wt span:last-child').textContent = e.detail.title; w.el.setAttribute('aria-label', e.detail.title); renderBar(); });

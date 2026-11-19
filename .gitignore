@@ -7,3 +7,5 @@ obj/
 TestResults/
 *.user
 deploy/dev/.env
+__pycache__/
+*.pyc

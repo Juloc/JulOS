@@ -49,6 +49,21 @@ internal static unsafe partial class LibVa
     // VAPictureH264.flags and VAPictureHEVC.flags
     public const uint PictureH264Invalid = 1, PictureH264ShortTermReference = 8, PictureHevcInvalid = 1, PictureHevcRpsStCurrBefore = 16;
 
+    // libva writes "libva info: ..." lines to stderr by itself; the server's log has its own words for what happens. Errors stay (level 1) unless
+    // the operator sets LIBVA_MESSAGING_LEVEL. libva reads the variable from the real process environment, which .NET's own SetEnvironmentVariable
+    // does not touch on Linux, hence setenv.
+    [LibraryImport("libc", StringMarshalling = StringMarshalling.Utf8)]
+    private static partial int setenv(string name, string value, int overwrite);
+
+    public static void QuietenMessages()
+    {
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("LIBVA_MESSAGING_LEVEL")) && OperatingSystem.IsLinux())
+        {
+            try { setenv("LIBVA_MESSAGING_LEVEL", "1", 0); }
+            catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException) { /* only the messages stay as they are */ }
+        }
+    }
+
     // ---- functions ----
     [LibraryImport(VaDrm)] public static partial nint vaGetDisplayDRM(int fd);
 

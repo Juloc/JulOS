@@ -24,6 +24,7 @@ GPU (there is no software HEVC encoder here), so a machine without a GPU always 
 | `JULOS_CODEC` | `auto` (default), `h264`, `h265` | `auto` and `h265`: HEVC when the browser and a GPU encoder both can, else H.264. `h264`: never HEVC. |
 | `JULOS_VAAPI_DEVICE` | a path, e.g. `/dev/dri/renderD129` | Use this render node instead of the first `renderD*` that works (machines with two GPUs). |
 | `LIBVA_DRIVER_NAME` | `iHD`, `i965`, `radeonsi`, ... | Forces libva's driver (normally found by itself). |
+| `LIBVA_MESSAGING_LEVEL` | `0`, `1`, `2` | libva's own messages on stderr. The server sets 1 (errors only) unless you set it; `2` also prints which driver file libva loads, useful for a GPU that is not found. |
 
 At start the server logs what it found (`Bildkodierer: ...`), and "Über JulOS" shows the engine ("Stream (GPU (VAAPI: H.264, H.265), sonst H.264 auf der CPU)").
 Every session logs `Kodierer: <name> (H.265, GPU), 1920 x 1080` when it starts.

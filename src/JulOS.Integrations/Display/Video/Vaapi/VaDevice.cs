@@ -72,6 +72,7 @@ internal sealed class VaDevice : IDisposable
         var device = new VaDevice(path);
         try
         {
+            LibVa.QuietenMessages();
             device._file = File.OpenHandle(path, FileMode.Open, FileAccess.ReadWrite);
             device.Display = LibVa.vaGetDisplayDRM((int)device._file.DangerousGetHandle());
             if (device.Display == 0)

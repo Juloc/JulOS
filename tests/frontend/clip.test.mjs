@@ -88,3 +88,13 @@ test('progress reads "done of total (percent)" and falls back to the amount alon
   assert.equal(progressText(1024, -1), '1 kB');
   assert.equal(progressText(2048, 1024), '2 kB von 1 kB (100 %)');
 });
+
+test('the agent image path is only for stored desktop connections (quick connections and terminals have no agent route)', async () => {
+  const { agentImageEligible } = await import('../../src/JulOS.Frontend/wwwroot/clip.js');
+  assert.equal(agentImageEligible({ id: 'c1', kind: 'desktop' }), true);
+  assert.equal(agentImageEligible({ id: 'c1', kind: 'vnc' }), false);
+  assert.equal(agentImageEligible({ id: 'c1', kind: 'terminal' }), false);
+  assert.equal(agentImageEligible({ quick: { host: 'x' }, kind: 'desktop' }), false);
+  assert.equal(agentImageEligible({ kind: 'desktop' }), false);
+  assert.equal(agentImageEligible(null), false);
+});

@@ -16,7 +16,7 @@ import { t, tp, tk, applyDom, getPref, setPref, isPref } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
 import { ClipDiag } from './clipdiag.js';
 import { queryState, browserKind, readDeviceText, copyToDevice } from './clipperm.js';
-import { LIMITS, fmtSize, bmpFromImage, pngFromBytes, filesFromTransfer, itemsFromFiles, planSend, topLevel, progressText, startDownload, saveBlob } from './clip.js';
+import { LIMITS, fmtSize, bmpFromImage, pngFromImage, agentImageEligible, pngFromBytes, filesFromTransfer, itemsFromFiles, planSend, topLevel, progressText, startDownload, saveBlob } from './clip.js';
 
 /* =====================================================================
  * JulOS – Fernsteuerung
@@ -1571,9 +1571,23 @@ export class RemoteSession extends Session {
     } catch (e) { if (!ctl.signal.aborted) this.toast(t('app.errImage', { msg: e.message }), 4200); return false; }
     finally { this.hideXfer(); }
     this.dbg('image-sent', { kb: Math.round(file.size / 1024), auto: S.autoPaste });
+    await this.pushImageViaAgent(file);
     if (S.autoPaste) { await sleep(250); await this.sendChord([KS.ctrl, charKeysym('v')]); this.toast(t('app.imagePasted')); }
     else this.toast(t('app.imageInClipboard'), 3500);
     return true;
+  }
+
+  /* Zusaetzlich ueber den Agenten (POST /api/upload): xrdp reicht Bilder nur als image/bmp weiter, Chromium, Electron und GTK fragen nach image/png (im Log des
+     Kanaldienstes steht dann "unknown target image/png") und bekommen nichts. Der Helfer des Agenten setzt PNG und BMP; er kommt NACH dem RDP-Weg und
+     bleibt damit der Besitzer der Zwischenablage. Ohne verbundenen Agenten antwortet der Server 502: dann bleibt es beim RDP-Weg. */
+  async pushImageViaAgent(file) {
+    if (!agentImageEligible(this.conn)) return;
+    try {
+      const png = await pngFromImage(file);
+      if (!png) { this.dbg('image-agent', { skipped: 'too-big' }); return; }
+      const r = await fetch('/api/upload?c=' + encodeURIComponent(this.conn.id), { method: 'POST', headers: { 'Content-Type': 'image/png', 'X-JulOS': '1' }, body: png });
+      this.dbg('image-agent', { status: r.status, kb: Math.round(png.size / 1024) });
+    } catch (e) { this.dbg('image-agent', { error: e.message }); }
   }
 
   /* Von der VM an den Browser: das Neueste dieser Sitzung steht im Dialog "Text senden" (renderRemoteItem) */

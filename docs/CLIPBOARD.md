@@ -37,7 +37,7 @@ dialog "Text senden" with the text and the button to copy it by hand.
 
 | | Own stream |
 | --- | --- |
-| Browser to remote, image | RDP clipboard channel, `CF_DIB` (the browser sends a 24-bit BMP) |
+| Browser to remote, image | RDP clipboard channel, `CF_DIB` (the browser sends a 24-bit BMP), **and** for a stored desktop connection with a connected agent additionally as a PNG through the agent (`POST /api/upload`, the clipboard helper `julos-clip.py` puts PNG and BMP on the clipboard of the desktop session) |
 | Browser to remote, file or folder | RDP clipboard channel, `FileGroupDescriptorW` (folders as entries with relative paths, a folder before its contents); up to 200 files; the bytes lie as files in a folder of the server until the remote reads them (ranges) |
 | Remote to browser, image | sent as soon as the remote copies (`PNG`, else `CF_DIB`) |
 | Remote to browser, file or folder | the remote's list is shown (paths, sizes); "Laden" starts a browser download: one file as itself, a folder or several entries as a ZIP, streamed through the server (no size limit) |
@@ -186,3 +186,15 @@ Server side, one line per event at debug level, never with the text (`Zwischenab
 
 The real development VM with Chromium (not allowed to log in): suspected, not proven, are (1) a restarted `xrdp-chansrv` that leaves an open connection without the clipboard channel (the diagnosis now says so), (2) a program in the VM that
 takes over `CLIPBOARD` after each copy, (3) Firefox and Safari on a phone, which only write to the clipboard right after a touch. Other browsers than Chromium, a Windows host (CR LF switching is covered by unit tests only) and clipboard managers were not tested end to end.
+
+### Images do not paste into Chromium, Electron or GTK programs (xrdp offers only image/bmp)
+
+The RDP clipboard carries a pasted picture as `CF_DIB`. xrdp's channel server (`xrdp-chansrv`, 0.10.x) turns that into the X selection target `image/bmp` and answers
+nothing else: Chromium, Electron (for example a browser or a chat client in the desktop) and most GTK programs ask for `image/png`, which chansrv does not know, and the
+chansrv log says `clipboard_event_selection_request: unknown target image/png`. The program then sees an empty clipboard. A file manager such as Thunar does not paste a
+picture at all (it pastes files or text), its message "nothing on the clipboard that can be pasted here" is its normal answer to an image.
+
+Since 0.10.2 the browser therefore sends the picture a second time through the agent when the connection is a stored desktop connection (the server picks the agent of the
+connection's host): the clipboard helper in the desktop session sets the image with GTK, which offers PNG and BMP, after the RDP path, so it stays the owner of the clipboard.
+Needs: the agent of the host is connected (host dialog) and `julos-clip.py` runs in the desktop session (autostart of the agent installer). Without an agent the server
+answers 502 and only the RDP path remains. To check: the diagnosis in the dialog "Text senden" and the debug event `image-agent` (status 200 means the helper took it).

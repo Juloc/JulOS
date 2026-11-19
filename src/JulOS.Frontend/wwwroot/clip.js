@@ -40,6 +40,27 @@ export async function bmpFromImage(blob) {
 }
 
 /* PNG aus Bytes, die der Server als PNG oder BMP gemeldet hat (navigator.clipboard.write nimmt nur PNG) */
+/* Ein Bild als PNG (zu grosse Bilder verkleinert, hoechstens `maxBytes`): fuer den Weg ueber den Agenten (POST /api/upload, der Server nimmt png, jpg, webp
+   und gif bis 14 MB). Die RDP-Zwischenablage kennt von sich aus nur CF_DIB (BMP); xrdp bietet den Programmen in der VM dann nur image/bmp an, Chromium,
+   Electron und GTK-Programme fragen aber nach image/png und bekommen nichts. Der Helfer des Agenten legt das Bild als PNG und BMP in die Zwischenablage. */
+export async function pngFromImage(blob, maxBytes = 12 * 1024 * 1024) {
+  const bmp = await createImageBitmap(blob);
+  let scale = Math.min(1, LIMITS.imageSide / Math.max(bmp.width, bmp.height));
+  try {
+    for (let tries = 0; tries < 4; tries++, scale /= 2) {
+      const w = Math.max(1, Math.round(bmp.width * scale)), h = Math.max(1, Math.round(bmp.height * scale));
+      const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(bmp, 0, 0, w, h);
+      const out = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+      if (out && out.size <= maxBytes) return out;
+    }
+    return null;
+  } finally { if (bmp.close) bmp.close(); }
+}
+
+/* Ob zusaetzlich der Weg ueber den Agenten in Frage kommt: nur fuer gespeicherte Desktop-Verbindungen (der Server ordnet den Agenten der Verbindung zu) */
+export const agentImageEligible = (conn) => !!(conn && conn.id && !conn.quick && conn.kind === 'desktop');
+
 export async function pngFromBytes(bytes, format) {
   if (format === 1) return new Blob([bytes], { type: 'image/png' });
   const bmp = await createImageBitmap(new Blob([bytes], { type: 'image/bmp' }));

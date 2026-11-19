@@ -4,6 +4,11 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [0.10.2] - 2026-11-19
+
+### Behoben
+- Zwischenablage, Bild vom Browser in die VM: Programme wie Chromium-Browser, Electron-Anwendungen und GTK-Programme in der VM bekamen das eingefügte Bild nicht („unknown target image/png“ im Log von `xrdp-chansrv`), weil xrdp ein Bild aus der RDP-Zwischenablage nur als `image/bmp` anbietet. Bei einer gespeicherten Desktop-Verbindung legt der Browser das Bild jetzt zusätzlich über den Agenten ab (`POST /api/upload`, der Helfer in der Sitzung setzt PNG und BMP); ohne verbundenen Agenten bleibt es beim bisherigen Weg. Ein Dateimanager fügt Bilder weiterhin nicht ein (er kennt nur Dateien und Text). Siehe [docs/CLIPBOARD.md](docs/CLIPBOARD.md).
+
 ## [0.10.1] - 2026-11-19
 
 ### Behoben

@@ -9,7 +9,6 @@ html.m3, html.m3 body { background: var(--m3-surface); }
     var(--m3-surface); }
 #mobile.leaving { animation: m3-shell-out var(--m3-dur-short) var(--m3-ease-accel) forwards; }
 #mobile.entering { animation: m3-shell-in var(--m3-dur-medium) var(--m3-ease-decel); }
-#mobile.snacking .m3-fab { transform: translateY(-60px); }
 #remote.m3-in { animation: m3-fade-in var(--m3-dur-medium) var(--m3-ease-decel); }
 
 /* ---------- Obere App-Leiste (klein; bekommt beim Scrollen die getonte Flaeche, der grosse Titel der Seite wandert in die Leiste) ---------- */
@@ -21,7 +20,7 @@ html.m3, html.m3 body { background: var(--m3-surface); }
 .m3-bar .logo .bt.sub { opacity: 0; transform: translateY(6px); transition: opacity var(--m3-dur-short) linear, transform var(--m3-dur-medium) var(--m3-ease); }
 .m3-bar.titled .logo .bt.sub { opacity: 1; transform: none; }
 .m3-bar .m3-iconbtn { width: 44px; height: 44px; }
-.m3-bar .avatar { width: 36px; height: 36px; border-radius: 50%; margin-left: 2px; background: var(--m3-primary-container); color: var(--m3-on-primary-container); font: var(--m3-title-s); display: flex; align-items: center; justify-content: center; text-transform: uppercase; box-shadow: 0 0 0 2px var(--m3-glass-strong); }
+.m3-bar .avatar { width: var(--m3-touch); height: var(--m3-touch); border-radius: 50%; margin-left: 2px; background: var(--m3-primary-container); color: var(--m3-on-primary-container); font: var(--m3-title-s); display: flex; align-items: center; justify-content: center; text-transform: uppercase; box-shadow: 0 0 0 2px var(--m3-glass-strong); }
 
 /* ---------- Bildschirmflaeche und Seiten ---------- */
 .m3-stage { flex: 1 1 auto; min-height: 0; position: relative; }
@@ -56,29 +55,21 @@ html.m3, html.m3 body { background: var(--m3-surface); }
 .meter.warn .bar i { background: var(--m3-error); }
 .meter .mv small { font: var(--m3-body-s); color: var(--m3-on-surface-variant); font-weight: 400; }
 
-.grid3, .grid4 { display: grid; gap: 8px; }
-.grid3 { grid-template-columns: repeat(3, 1fr); }
-.grid4 { grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); }
-.tile { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 6px; min-height: 76px; padding: 10px 4px 8px; border-radius: var(--m3-shape-tile); background: var(--m3-glass); border: 1px solid var(--m3-glass-edge);
-  backdrop-filter: blur(14px) saturate(1.3); -webkit-backdrop-filter: blur(14px) saturate(1.3); box-shadow: var(--m3-elev-1); color: var(--m3-on-surface); text-align: center; transition: border-radius var(--m3-dur-medium) var(--m3-ease), transform var(--m3-dur-short) var(--m3-ease); min-width: 0; }
-.tile:active { border-radius: var(--m3-shape-lg); transform: scale(.97); }
-.tile .ti { width: 34px; height: 34px; border-radius: 12px; display: flex; align-items: center; justify-content: center; background: var(--m3-primary-container); color: var(--m3-on-primary-container); }
+/* Kacheln: zwei Spalten; Symbol links, Name (zwei Zeilen), darunter Statuspunkt und Host; rechts oben die Zahl offener Sitzungen oder der Stern */
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--m3-sp-2); }
+.tile { position: relative; display: flex; align-items: center; gap: var(--m3-sp-3); min-height: 72px; min-width: 0; padding: var(--m3-sp-3); border-radius: var(--m3-shape-tile); background: var(--m3-glass); border: 1px solid var(--m3-glass-edge);
+  backdrop-filter: blur(14px) saturate(1.3); -webkit-backdrop-filter: blur(14px) saturate(1.3); box-shadow: var(--m3-elev-1); color: var(--m3-on-surface); text-align: left; transition: border-radius var(--m3-dur-medium) var(--m3-ease), transform var(--m3-dur-short) var(--m3-ease); }
+.tile:active { border-radius: var(--m3-shape-lg); transform: scale(.98); }
+.tile .ti { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 14px; display: flex; align-items: center; justify-content: center; background: var(--m3-primary-container); color: var(--m3-on-primary-container); }
 .tile .ti svg { width: 22px; height: 22px; }
 .tile.terminal .ti { background: var(--m3-tertiary-container); color: var(--m3-on-tertiary-container); }
-.tile .tn { font: var(--m3-label-m); max-width: 100%; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; line-height: 1.15; }
-.tile .badge { position: absolute; top: 6px; right: 8px; color: var(--m3-on-surface-variant); }
-.tile .badge svg { width: 13px; height: 13px; fill: currentColor; }
-.tile .fav { position: absolute; top: 6px; left: 8px; color: var(--m3-primary); }
-.tile .fav svg { width: 13px; height: 13px; fill: currentColor; }
-.grid3 .tile { min-height: 72px; justify-content: center; }
-/* Kachel im Komponentenblatt: zwei Spalten, Symbol links, Name (zwei Zeilen) und Host-Zeile mit Statuspunkt rechts davon */
-.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--m3-sp-2); }
-.grid2 .tile { flex-direction: row; align-items: center; justify-content: flex-start; text-align: left; gap: var(--m3-sp-3); min-height: 72px; padding: var(--m3-sp-3); }
-.grid2 .tile .ti { flex: 0 0 auto; }
 .tile .tx { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.tile .tn { font: var(--m3-label-l); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; line-height: 1.2; }
 .tile .th { display: flex; align-items: center; gap: 6px; font: var(--m3-body-s); color: var(--m3-on-surface-variant); min-width: 0; }
 .tile .th > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tile .th .hdot { position: static; flex: 0 0 auto; }
+.tile .fav { position: absolute; top: 6px; right: 8px; color: var(--m3-primary); }
+.tile .fav svg { width: 13px; height: 13px; fill: currentColor; }
+.tile .hdot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; }
 
 .acts { padding: 4px 0; overflow: hidden; }
 .acts .m3-li { min-height: 52px; padding: 6px 14px; }
@@ -89,12 +80,7 @@ html.m3, html.m3 body { background: var(--m3-surface); }
 .empty-card { padding: 18px 16px; display: flex; gap: 14px; align-items: center; color: var(--m3-on-surface-variant); font: var(--m3-body-m); }
 .empty-card .lead { width: 44px; height: 44px; border-radius: 16px; background: var(--m3-primary-container); color: var(--m3-on-primary-container); display: flex; align-items: center; justify-content: center; flex: 0 0 auto; }
 
-/* ---------- Dienste ---------- */
-.chips { display: flex; gap: 8px; margin: 12px 0 12px; overflow-x: auto; scrollbar-width: none; padding: 2px 2px; }
-.chips::-webkit-scrollbar { display: none; }
-.quick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.quick .m3-btn { height: 56px; border-radius: var(--m3-shape-lg); flex-direction: column; gap: 2px; white-space: normal; padding: 0 6px; text-align: center; font: var(--m3-label-m); line-height: 1.15; }
-.quick .m3-btn svg { width: 20px; height: 20px; }
+/* ---------- Verbindungen ---------- */
 .empty-hint { text-align: center; padding: 28px 20px; color: var(--m3-on-surface-variant); font: var(--m3-body-m); }
 
 /* ---------- Platzhalter-Seiten ---------- */
@@ -137,12 +123,10 @@ html.m3, html.m3 body { background: var(--m3-surface); }
 .sesslist .sx { flex: 0 0 auto; width: 40px; height: 40px; min-height: 0; padding: 0; border: 0; border-radius: var(--m3-shape-full); background: transparent; color: var(--m3-on-surface-variant); display: inline-flex; align-items: center; justify-content: center; }
 .sesslist .sx svg { width: 22px; height: 22px; fill: currentColor; }
 .tile .liveb { position: absolute; top: 6px; right: 8px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--m3-ok); color: var(--m3-surface); font: var(--m3-label-s); line-height: 18px; text-align: center; }
-.tile.live .badge { right: 30px; }
 
 /* ---------- Hosts (docs/HOSTS.md): Statuspunkt gruen/grau, Host-Karten ---------- */
 .hdot { background: var(--m3-outline); }
 .hdot.ok { background: var(--m3-ok); }
-.tile .hdot { position: absolute; top: 8px; left: 9px; width: 8px; height: 8px; border-radius: 50%; }
 .m3-li .hl .hdot { display: inline-block; margin-right: 7px; vertical-align: 1px; }
 .m3-li .hl small { font: var(--m3-label-s); color: var(--m3-on-surface-variant); margin-left: 4px; }
 .m3-card.host { margin-top: 12px; padding-bottom: 10px; }

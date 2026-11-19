@@ -13,8 +13,8 @@ namespace JulOS.Integrations.Display;
 ///   4 Fehler     code(2) UTF-8-Text ...            (Codes wie bei Guacamole: 769 Anmeldung abgelehnt, 515 Verbindung misslungen ...)
 ///   5 Uebernommen
 ///   6 Zwischenablage UTF-8-Text ...          (der ferne Rechner hat Text kopiert; bis ClipboardBridge.MaxTextBytes)
-///  32 Ton          kanaele(1) rate(4) zeit(4, ms des Servers) PCM ...   (16 Bit, little endian, verschachtelt; nur wenn der Browser den Ton eingeschaltet hat)
-///  33 Ton-Zustand  flags(1: Bit0 der ferne Rechner liefert Ton, Bit1 er bietet ein Mikrofon, Bit2 er nimmt gerade auf) mikrofonrate(4)
+///  20 Ton          kanaele(1) rate(4) zeit(4, ms des Servers) PCM ...   (16 Bit, little endian, verschachtelt; nur wenn der Browser den Ton eingeschaltet hat)
+///  21 Ton-Zustand  flags(1: Bit0 der ferne Rechner liefert Ton, Bit1 er bietet ein Mikrofon, Bit2 er nimmt gerade auf) mikrofonrate(4)
 /// Browser an Server:
 ///   1 Bestaetigung   (ein Bild ist dekodiert)
 ///   2 Maus bewegt    x(2) y(2)
@@ -25,9 +25,9 @@ namespace JulOS.Integrations.Display;
 ///   7 Fenstergroesse breite(2) hoehe(2)
 ///   8 Schluesselbild bitte
 ///   9 Zwischenablage UTF-8-Text ...          (der Browser legt Text ab; der ferne Rechner holt ihn beim Einfuegen)
-///  32 Ton ein/aus  an(1)                                  (ohne diese Nachricht kommt kein Ton)
-///  33 Mikrofon     rate(4) PCM ...                         (Mono, 16 Bit, little endian; wird verworfen, solange der ferne Rechner keinen Ton verlangt)
-/// Die Tonnachrichten haben ihren eigenen Nummernbereich ab 32, damit sie nicht mit anderen Erweiterungen zusammenstossen.
+///  20 Ton ein/aus  an(1)                                  (ohne diese Nachricht kommt kein Ton)
+///  21 Mikrofon     rate(4) PCM ...                         (Mono, 16 Bit, little endian; wird verworfen, solange der ferne Rechner keinen Ton verlangt)
+/// Die Tonnachrichten haben ihren eigenen Nummernbereich ab 20, damit sie nicht mit anderen Erweiterungen zusammenstossen.
 /// </summary>
 public static class ScreenProtocol
 {
@@ -35,8 +35,8 @@ public static class ScreenProtocol
     public const byte FromBrowserAck = 1, FromBrowserMove = 2, FromBrowserButton = 3, FromBrowserWheel = 4, FromBrowserKey = 5,
         FromBrowserUnicode = 6, FromBrowserResize = 7, FromBrowserKeyFrame = 8, FromBrowserClipboard = 9;
 
-    public const byte ToBrowserAudio = 32, ToBrowserAudioStatus = 33;
-    public const byte FromBrowserAudio = 32, FromBrowserMicrophone = 33;
+    public const byte ToBrowserAudio = 20, ToBrowserAudioStatus = 21;
+    public const byte FromBrowserAudio = 20, FromBrowserMicrophone = 21;
 
     public const int AudioHeader = 10;
     public const int AudioStatusLength = 6;

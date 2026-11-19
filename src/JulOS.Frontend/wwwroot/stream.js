@@ -8,7 +8,7 @@
  *   Browser -> Server: 1 Bestaetigung, 2 Maus bewegt, 3 Maustaste, 4 Mausrad, 5 Taste (Scancode), 6 Zeichen, 7 Fenstergroesse, 8 Schluesselbild,
  *                      9 Zwischenablage (UTF-8-Text, bis 1 MiB; der ferne Rechner holt ihn, wenn er einfuegt)
  *
- * Ton (32 und 33 in beide Richtungen: Ton vom fernen Rechner, Zustand, "Ton an", Mikrofon): siehe stream-audio.js, erreichbar als client.audio.
+ * Ton (20 und 21 in beide Richtungen: Ton vom fernen Rechner, Zustand, "Ton an", Mikrofon): siehe stream-audio.js, erreichbar als client.audio.
  *
  * Zwischenablage: wie bei Guacamole als Strom (onclipboard(stream, 'text/plain') mit onblob/onend, createClipboardStream() mit sendBlob/sendEnd),
  * damit Guacamole.StringReader und StringWriter in app.js unveraendert funktionieren. Nur Text.
@@ -16,7 +16,7 @@
 
 import { StreamAudio } from './stream-audio.js';
 
-const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, audio: 32, audioStatus: 33 };
+const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, audio: 20, audioStatus: 21 };
 const OUT = { ack: 1, move: 2, button: 3, wheel: 4, key: 5, unicode: 6, resize: 7, keyframe: 8, clipboard: 9 };
 
 /* ---------- Tasten: X11-Keysyms (so arbeitet app.js) -> RDP-Scancodes ---------- */

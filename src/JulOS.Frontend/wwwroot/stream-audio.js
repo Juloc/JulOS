@@ -1,17 +1,17 @@
 /* =====================================================================
- * Ton fuer den Bildschirm-Stream (siehe ScreenProtocol auf dem Server, Nachrichten 32 und 33).
+ * Ton fuer den Bildschirm-Stream (siehe ScreenProtocol auf dem Server, Nachrichten 20 und 21).
  *
- *   Ton vom fernen Rechner  Server -> Browser: 32 (kanaele u8, rate u32, zeit u32, PCM 16 Bit). Die Stuecke gehen unveraendert an einen
+ *   Ton vom fernen Rechner  Server -> Browser: 20 (kanaele u8, rate u32, zeit u32, PCM 16 Bit). Die Stuecke gehen unveraendert an einen
  *                           AudioWorklet (stream-audio-worklet.js), der sie abspielt; hier wird nichts pro Sample gerechnet.
  *   Mikrofon                getUserMedia mit Echo- und Rauschunterdrueckung -> AudioWorklet (auf die Rate des fernen Rechners herunterrechnen,
- *                           16 Bit Mono, 20-ms-Stuecke) -> Browser -> Server: 33 (rate u32, PCM).
- *   Zustand                 Server -> Browser: 33 (flags u8: 1 der ferne Rechner liefert Ton, 2 er bietet ein Mikrofon, 4 er nimmt gerade auf; rate u32).
+ *                           16 Bit Mono, 20-ms-Stuecke) -> Browser -> Server: 21 (rate u32, PCM).
+ *   Zustand                 Server -> Browser: 21 (flags u8: 1 der ferne Rechner liefert Ton, 2 er bietet ein Mikrofon, 4 er nimmt gerade auf; rate u32).
  *
  * Ton und Mikrofon sind aus, bis die Seite sie einschaltet (der Browser verlangt dafuer eine Eingabe des Benutzers, das Mikrofon dazu
- * eine Freigabe). Der Server schickt erst Ton, wenn "Ton an" (Nachricht 32 an den Server) gekommen ist.
+ * eine Freigabe). Der Server schickt erst Ton, wenn "Ton an" (Nachricht 20 an den Server) gekommen ist.
  * ===================================================================== */
 
-const TO_SERVER = { audio: 32, microphone: 33 };
+const TO_SERVER = { audio: 20, microphone: 21 };
 const WORKLET = '/stream-audio-worklet.js';
 
 export class StreamAudio {
@@ -43,7 +43,7 @@ export class StreamAudio {
 
   /* ---- Nachrichten vom Server ---- */
   frame(buffer) {
-    // 32: kanaele(1) rate(4) zeit(4) PCM ...
+    // 20: kanaele(1) rate(4) zeit(4) PCM ...
     this.stats.blocks++;
     if (!this.player || !this.wanted || !this.ctx || this.ctx.state !== 'running' || buffer.byteLength <= 10) { this.stats.ignored++; return; }
     const v = new DataView(buffer);
@@ -53,7 +53,7 @@ export class StreamAudio {
   }
 
   status(buffer) {
-    // 33: flags(1) mikrofonrate(4)
+    // 21: flags(1) mikrofonrate(4)
     const v = new DataView(buffer);
     const flags = v.getUint8(1);
     const remote = { output: !!(flags & 1), microphone: !!(flags & 2), recording: !!(flags & 4), micRate: v.getInt32(2) };

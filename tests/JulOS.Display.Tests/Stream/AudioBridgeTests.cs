@@ -196,14 +196,14 @@ public sealed class AudioBridgeTests
         var length = ScreenProtocol.WriteAudio(buffer, new AudioBlock(new byte[] { 1, 2, 3, 4 }, 44100, 2, 0x01020304));
 
         Assert.Equal(ScreenProtocol.AudioHeader + 4, length);
-        Assert.Equal(32, buffer[0]);
+        Assert.Equal(20, buffer[0]);
         Assert.Equal(2, buffer[1]);
         Assert.Equal(44100, BinaryPrimitives.ReadInt32BigEndian(buffer.AsSpan(2)));
         Assert.Equal(0x01020304u, BinaryPrimitives.ReadUInt32BigEndian(buffer.AsSpan(6)));
         Assert.Equal([1, 2, 3, 4], buffer[10..14]);
 
         Assert.Equal(6, ScreenProtocol.WriteAudioStatus(buffer, new AudioStatus(true, true, false, 16000)));
-        Assert.Equal([33, 3, 0, 0, 0x3E, 0x80], buffer[..6]);
+        Assert.Equal([21, 3, 0, 0, 0x3E, 0x80], buffer[..6]);
     }
 }
 

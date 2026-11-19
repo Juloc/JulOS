@@ -13,6 +13,7 @@ deploy/dev/smoke.sh     # walk-through on the running instance: setup, login, wi
 - The SSH target is reachable from the server container as `test-ssh:2222` with user `tester` and the password `DEV_TARGET_PASSWORD` from `deploy/dev/.env`.
 - The RDP target is an xrdp + XFCE desktop (`rdp-target:3389`, throwaway login `ubuntu` / `ubuntu`, no published port). It behaves like the Linux VM, including reusing a disconnected session when you connect again.
 - `guacd` is published on `127.0.0.1:44822` (local only) so the tests can talk to a real one.
+- The test desktop has sound and a microphone: PipeWire is started in the session by `deploy/dev/rdp-target/julos-audio.sh` (autostart; a real VM has systemd for that) and `pipewire-module-xrdp` adds the devices `xrdp-sink` and `xrdp-source`. It takes a few seconds after the first login of a fresh container before audio works. `deploy/dev/play-tone.sh` plays a 440 Hz tone in the session and `deploy/dev/record-mic.sh` records the microphone to stdout (both are run with `docker exec -i -u ubuntu <rdp-target> bash -s < script`).
 - The test desktop also runs the real agent and clipboard helper from `tools/` (autostart when a session logs in), and shares a folder with the server (`/uploads` there, `~/julos-uploads` in the desktop), like the live setup. The server runs as the desktop user (`user: "1020:1020"`).
 - Stop with `docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/.env down` (add `-v` to also drop the database).
 
@@ -61,6 +62,10 @@ Cookies belong to the host name, not the port: two stacks opened as `127.0.0.1:.
 `my-ui.localhost:18280`.
 To connect, add a Desktop connection to `rdp-target` (login `ubuntu` / `ubuntu`) and a Terminal connection to `test-ssh` port `2222`
 (user `tester`, password `DEV_TARGET_PASSWORD` from `deploy/dev/.env`).
+
+## Display tests against the test desktop
+
+`deploy/dev/test-display.sh` runs `tests/JulOS.Display.Tests` in an SDK container on the test network (`JULOS_DEV_NET` names another compose project's network, for example `julos-xyz_default`). The integration tests (`ScreenStreamTests`) are skipped without `JULOS_TEST_RDP_HOST`; the script sets it and also plays a tone and records the microphone in the desktop in the background, which the sound test (PCM blocks arrive, loud enough) and the microphone test (a 600 Hz tone sent as the browser would arrives in the recording) check. Close any browser tab connected to the same desktop first: a second client takes the xrdp session over.
 
 ## Build and test without Docker
 

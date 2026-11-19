@@ -78,3 +78,13 @@ höchstens eine Änderung pro Sekunde, nichts, während die Tastatur ein- oder a
 und ein Programm-Wechsel in der Fensterleiste ändert die Anzeigegröße erst nach zwei gleichen Abfragen (4 s) und höchstens alle 8 s.
 
 Aufräumen: `adb reverse --remove tcp:18080` und Kabel abziehen.
+
+## Ton und Mikrofon (Stream-Engine)
+
+Noch nicht auf einem echten Handy geprüft; so prüfst du es (Verbindung mit Engine "Stream", Seite über `localhost` per `adb reverse`, weil Ton im Browser und das Mikrofon eine sichere Seite brauchen):
+
+1. Verbinden, Menü (⋮) öffnen: "Ton vom Rechner" steht auf "an" (oder "bitte antippen", dann einmal irgendwo tippen), "Lautstärke" schaltet 100 / 60 / 30 / 0 %.
+2. Im Desktop einen Ton abspielen (Terminal: `speaker-test -t sine -f 440 -c 2` oder ein Video). Er soll ohne Knacken und ohne wachsende Verzögerung kommen; mit `?debug` zeigt `__pd.S.client.audio.stats` Puffer in ms (Ziel um 60), Aussetzer und verworfene Samples.
+3. Mikrofon im Menü einschalten: der Browser fragt nach der Freigabe, oben erscheint die rote Anzeige "Mikrofon an" (antippen beendet es). Im Desktop eine Aufnahme starten (`parecord`, ein Anruf, Sprachaufnahme): xrdp öffnet den Kanal erst dann, "wartet auf Programm" wechselt zu "nimmt auf".
+4. Abgelehnte Freigabe, kein Mikrofon, belegtes Mikrofon: eine deutsche Meldung, kein Absturz. Bildschirm sperren oder Tab verdecken: der Ton pausiert (der Server schickt dann nichts) und läuft beim Zurückkehren weiter.
+

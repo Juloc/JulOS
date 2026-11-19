@@ -172,6 +172,24 @@ public sealed class AudioBridgeTests
     }
 
     [Fact]
+    public async Task Messages_from_the_browser_switch_the_sound_and_reach_the_microphone_without_harm()
+    {
+        await using var stream = new ScreenStream(new Rdp.RdpOptions { Host = "unused", UserName = "u", Password = "p", Width = 800, Height = 600 });
+        Assert.False(stream.Audio.OutputOn);
+
+        ScreenRelay.Handle(stream, [ScreenProtocol.FromBrowserAudio, 1]);
+        Assert.True(stream.Audio.OutputOn);
+        ScreenRelay.Handle(stream, [ScreenProtocol.FromBrowserAudio, 0]);
+        Assert.False(stream.Audio.OutputOn);
+
+        // too short, an absurd rate, an odd length and a message while nobody records: all without an exception
+        ScreenRelay.Handle(stream, [ScreenProtocol.FromBrowserAudio]);
+        ScreenRelay.Handle(stream, [ScreenProtocol.FromBrowserMicrophone, 0, 0, 0, 0]);
+        ScreenRelay.Handle(stream, [ScreenProtocol.FromBrowserMicrophone, 0xFF, 0xFF, 0xFF, 0xFF, 1, 2, 3]);
+        ScreenRelay.Handle(stream, [ScreenProtocol.FromBrowserMicrophone, 0, 0, 0x3E, 0x80, 1, 2, 3, 4]);
+    }
+
+    [Fact]
     public void The_message_to_the_browser_has_the_kind_format_time_and_sound()
     {
         var buffer = new byte[64];

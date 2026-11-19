@@ -15,6 +15,7 @@ class JulPlayer extends AudioWorkletProcessor {
     this.rate = 0; this.channels = 2; this.size = 0; this.left = null; this.right = null;
     this.write = 0; this.pos = 0;                 // Schreib- und Leseposition, in Samples der Quellrate (wachsen ohne Ende, der Index ist modulo)
     this.targetMs = 60; this.buffering = true;
+    this.underrunAt = -1;                         // Bild, an dem der letzte Aussetzer begann (currentFrame)
     this.underruns = 0; this.dropped = 0; this.calm = 0; this.reported = 0; this.peak = 0; this.received = 0;
     this.port.onmessage = (e) => this.onmessage(e.data);
   }
@@ -22,6 +23,8 @@ class JulPlayer extends AudioWorkletProcessor {
   onmessage(m) {
     if (m.type === 'reset') { this.write = 0; this.pos = 0; this.buffering = true; return; }
     if (m.type !== 'pcm') return;
+    // Kommt nach einer langen Pause (ein Klang endete, ein neuer beginnt) wieder Ton, war das kein Ruckeln: wieder mit der kleinen Reserve beginnen
+    if (this.underrunAt >= 0 && currentFrame - this.underrunAt > sampleRate) { this.targetMs = 60; this.underrunAt = -1; }
     if (m.rate !== this.rate || m.channels !== this.channels || !this.left) this.format(m.rate, m.channels);
     const data = new Int16Array(m.buffer, m.offset, m.length), ch = m.channels, frames = (data.length / ch) | 0, size = this.size;
     for (let i = 0; i < frames; i++) {
@@ -70,7 +73,7 @@ class JulPlayer extends AudioWorkletProcessor {
     if (i < n) {
       // Aussetzer: Stille fuer den Rest, neu auffuellen, und die Reserve etwas groesser machen
       for (; i < n; i++) { l[i] = 0; if (r !== l) r[i] = 0; }
-      this.buffering = true; this.underruns++; this.calm = 0;
+      this.buffering = true; this.underruns++; this.calm = 0; this.underrunAt = currentFrame;
       this.targetMs = Math.min(200, this.targetMs * 1.4);
     } else if (++this.calm > 3000) { this.calm = 0; this.targetMs = Math.max(40, this.targetMs - 5); }   // etwa alle 8 s ohne Aussetzer 5 ms weniger
     this.report();

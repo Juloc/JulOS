@@ -119,6 +119,8 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         rdp.AddChannel(channels);
         rdp.AddChannel(_clipboardChannel);
         rdp.AddChannel(_soundChannel);
+        // Windows spricht auf "rdpsnd" nur mit einem Client, der auch "rdpdr" meldet (ohne Geraete); fuer den Ton also noetig
+        rdp.AddChannel(new RdpdrChannel());
         _display = display;
         try
         {

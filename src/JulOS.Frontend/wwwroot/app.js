@@ -771,7 +771,11 @@ async function connect() {
   const tunnel = isStream ? null : new Guacamole.WebSocketTunnel(wsBase + '/api/remote/ws');
   const client = isStream ? new StreamClient(wsBase + '/api/remote/screen') : new Guacamole.Client(tunnel);
   S.engine = engine;
-  if (isStream) client.audio.onchange = updateAudioMenu;
+  if (isStream) {
+    client.audio.onchange = updateAudioMenu;
+    client.audio.onmicwait = (offered) => toast(offered ? 'Das Mikrofon ist an, aber im Desktop nimmt noch kein Programm auf.'
+      : 'Das Mikrofon ist an. Der Desktop meldet noch keinen Mikrofon-Kanal; er wird erst geöffnet, wenn dort ein Programm aufnimmt.', 5200);
+  }
   const display = client.getDisplay();
   S.tunnel = tunnel; S.client = client; S.display = display; S.lastSent = { w, h }; S.gate = new SizeGate(); S.sizeHoldUntil = 0;
   lay.note('conn', { engine });
@@ -1227,7 +1231,7 @@ function updateAudioMenu() {
   if (!a) return;
   el.soundLabel.textContent = !a.remote.output ? 'kein Ton vom Rechner' : !a.wanted ? 'aus' : a.state === 'running' ? 'an' : 'bitte antippen';
   el.volumeLabel.textContent = Math.round(a.volume * 100) + ' %';
-  el.micLabel.textContent = a.micOn ? 'an' : a.remote.microphone ? 'aus' : 'nicht angeboten';
+  el.micLabel.textContent = !a.micOn ? 'aus' : a.remote.recording ? 'an, nimmt auf' : 'an, wartet auf Programm';
 }
 async function audioAction(act) {
   const a = audioOf(); if (!a) return;

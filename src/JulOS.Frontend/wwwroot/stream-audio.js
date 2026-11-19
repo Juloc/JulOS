@@ -25,7 +25,7 @@ export class StreamAudio {
     this.stats = { bufferedMs: 0, targetMs: 0, underruns: 0, dropped: 0, peak: 0, received: 0, blocks: 0, ignored: 0 };
     this.mic = null;                    // { stream, source, node, ctx } solange das Mikrofon an ist
     this.micLevel = 0; this.micChunks = 0;
-    this.onchange = null; this.onmicerror = null;
+    this.onchange = null; this.onmicwait = null;
     this.closed = false;
     this.lastOn = null;
     this.resume = () => this.tryResume();
@@ -57,11 +57,9 @@ export class StreamAudio {
     const v = new DataView(buffer);
     const flags = v.getUint8(1);
     const remote = { output: !!(flags & 1), microphone: !!(flags & 2), recording: !!(flags & 4), micRate: v.getInt32(2) };
-    const changedRate = remote.micRate !== this.remote.micRate;
+    // Die laufende Aufnahme behaelt ihre Rate; aendert der ferne Rechner seine, rechnet der Server um. Der Kanal kann kommen und gehen
+    // (xrdp oeffnet ihn erst, wenn im Desktop ein Programm aufnimmt, Windows gleich beim Anmelden): das beendet das Mikrofon hier nicht.
     this.remote = remote;
-    // Hat der ferne Rechner das Mikrofon verlangt, waehrend wir schon aufnehmen, rechnet der Server um; die Rate aendert sich nur, wenn wir neu beginnen
-    if (this.mic && !remote.microphone) this.stopMic();
-    if (changedRate) { /* die laufende Aufnahme behaelt ihre Rate, der Server rechnet um */ }
     this.changed();
   }
 
@@ -121,7 +119,6 @@ export class StreamAudio {
   /* ---- Mikrofon ---- */
   micProblem() {
     if (!this.micSupported) return 'Das Mikrofon braucht eine sichere Verbindung (https) und einen Browser, der es freigeben kann.';
-    if (!this.remote.microphone) return 'Der ferne Rechner bietet kein Mikrofon an. (Auf Linux braucht xrdp dafür das Pulse-Audio-Modul, unter Windows muss die Audioaufnahme in der RDP-Sitzung erlaubt sein.)';
     return '';
   }
 
@@ -150,6 +147,8 @@ export class StreamAudio {
       if (ctx.state !== 'running') await ctx.resume();
       this.mic = { stream, source, node, ctx, rate };
       this.micChunks = 0;
+      // Der ferne Rechner verlangt Ton erst, wenn dort ein Programm aufnimmt (xrdp: dann erst oeffnet er den Kanal). Kommt nichts, den Benutzer das wissen lassen.
+      setTimeout(() => { if (this.mic && !this.remote.recording && this.onmicwait) this.onmicwait(this.remote.microphone); }, 6000);
       for (const track of stream.getAudioTracks()) track.onended = () => this.stopMic();    // vom Browser oder System beendet (Anzeige "Mikrofon" am Handy)
       this.changed();
     } catch (e) {

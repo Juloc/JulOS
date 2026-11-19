@@ -3,6 +3,7 @@ import { Sessions } from './sessions.js';
 import { agentSummary, hostDetail } from './hosts.js';
 import { createHostInfoStore, agentDetail, installCommand, pickTerminal } from './hostinfo.js';
 import { initHostInfoDialog } from './hostinfo-dialog.js';
+import { initHostActionDialog } from './hostactions-dialog.js';
 import { loadOrganisation, takeOverLocal, mergePlacements, setFolder, touch, move, folderName } from './folders.js';
 import { initFolderDialog } from './folder-dialog.js';
 import { parseQuickTarget, quickConnection, DEFAULT_PORT as QUICK_PORT } from './quick.js';
@@ -49,7 +50,7 @@ const show = (name) => {
 };
 
 class ApiError extends Error {
-  constructor(status, message, retryAfter) { super(message); this.status = status; this.retryAfter = retryAfter; }
+  constructor(status, message, retryAfter, code) { super(message); this.status = status; this.retryAfter = retryAfter; this.code = code; }   // code: kurzer Fehlercode mancher Wege (Aktionen auf Hosts), den die Oberflaeche uebersetzt
 }
 
 /** Fragt den Server. Aenderungen tragen die Sonderkopfzeile, mit der der Server sie als von der eigenen Seite erkennt. */
@@ -64,7 +65,7 @@ async function api(path, { method = 'GET', body } = {}) {
   if (r.status !== 204) { try { data = await r.json(); } catch { /* kein JSON */ } }
   if (!r.ok) {
     const wait = data && data.retryAfter ? ' ' + t('shell.waitSeconds', { n: data.retryAfter }) : '';
-    throw new ApiError(r.status, ((data && data.error ? serverMsg(data.error) : '') || t('shell.errorStatus', { status: r.status })) + (r.status === 429 ? wait : ''), data && data.retryAfter);
+    throw new ApiError(r.status, ((data && data.error ? serverMsg(data.error) : '') || t('shell.errorStatus', { status: r.status })) + (r.status === 429 ? wait : ''), data && data.retryAfter, data && data.code);
   }
   return data;
 }
@@ -72,7 +73,7 @@ async function api(path, { method = 'GET', body } = {}) {
 const setMsg = (el, text, ok = false) => { el.textContent = text || ''; el.classList.toggle('ok', ok && !!text); };
 const busy = (form, on) => { for (const b of form.querySelectorAll('button[type=submit]')) b.disabled = on; };
 
-const state = { user: null, connections: [], folders: [], hosts: [], canStore: false, driveAvailable: false, editing: null, editingHost: null, starting: null };
+const state = { user: null, connections: [], folders: [], hosts: [], actionsPaused: false, canStore: false, driveAvailable: false, editing: null, editingHost: null, starting: null };
 
 /* ---------- Start: wo stehen wir? ---------- */
 async function boot() {
@@ -190,7 +191,7 @@ async function loadConnections() {
 
 /** Die Hosts mit Zustand (online/offline, Agent, Dienste); fragt der Server nach, prueft er die Ports kurz (docs/HOSTS.md). Ein Fehler laesst die alte Liste stehen. */
 async function loadHosts() {
-  try { state.hosts = (await api('/api/hosts')).hosts; }
+  try { const list = await api('/api/hosts'); state.hosts = list.hosts; state.actionsPaused = !!list.actionsPaused; }
   catch (e) { if (e.status === 401) return showLogin(t('shell.sessionExpired')); return; }
   fillHostSelect();
   if (D) D.hostsChanged();
@@ -701,7 +702,8 @@ Sessions.addEventListener('home', () => { if (!D) goHome(); });
 Sessions.addEventListener('switcher', () => { if (M) M.openSwitcher(); else goHome(); });
 
 const hostInfo = createHostInfoStore({ api, onChange: () => { if (D && D.hostInfoChanged) D.hostInfoChanged(); if (M && M.hostInfoChanged) M.hostInfoChanged(); } });
-const openHostInfo = initHostInfoDialog({ state, api, esc, store: hostInfo });
+const openHostAction = initHostActionDialog({ api, esc });
+const openHostInfo = initHostInfoDialog({ state, api, esc, store: hostInfo, openAction: openHostAction, reloadHosts: loadHosts });
 const openAccount = initAccount({ api, setMsg });
 const openNetTools = initNetTools({ api, setMsg, connections: () => state.connections });
 if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), hostInfo: openHostInfo, info: hostInfo, signOut, home: goHome, account: openAccount, devices: openDevices, nettools: openNetTools });

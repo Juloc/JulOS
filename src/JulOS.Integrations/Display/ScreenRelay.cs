@@ -741,6 +741,9 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             case ScreenProtocol.FromBrowserCodecs when m.Length >= 2:
                 stream.SetClientCodecs((VideoCodecs)(m[1] & 3));
                 break;
+            case ScreenProtocol.FromBrowserQuality when m.Length >= 2 && StreamQualityPolicy.Parse(m[1]) is { } quality:
+                stream.SetQuality(quality);
+                break;
         }
     }
 

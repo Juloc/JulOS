@@ -130,6 +130,35 @@ Desktop bleiben, sofort ein Schlüsselbild. Die Überlagerung zeigt „Verbindun
   und nirgends sonst. Der WebSocket braucht weiterhin die App-Sitzung und denselben Ursprung. Ein wartender Desktop läuft weiter: wer ihn
   nicht fünf Minuten offen lassen will, stellt die Zeit kleiner. SSH hat diesen Erhalt nicht.
 
+## Eigenes Fenster (Pop-out)
+
+Auf großen Bildschirmen mit Maus (Desktop-Oberfläche) lässt sich eine Stream-Sitzung in ein **eigenes Browserfenster** lösen: Knopf in der Titelleiste des
+Sitzungsfensters oder Menü „<Verbindungsname>“ → „In eigenem Fenster öffnen“. Es gibt **keinen zweiten RDP-Login**: das neue Fenster nimmt dieselbe
+Sitzung des Servers mit dem Sitzungs-Token auf (siehe Sitzungserhalt oben, `ScreenRelay`).
+
+- **Ablauf:** Das Hauptfenster (`popout-main.js`, `RemoteSession.popOut` in `app.js`) öffnet `popout.html?c=<Verbindung>&s=<Sitzungskennung>` mit `window.open`
+  (direkt aus dem Klick, sonst blockiert der Browser das Fenster; dann kommt eine Meldung), legt Token, Wartezeit, Zoomfaktor, Bildratenstufe und
+  Statusleisten-Wahl unter `window.__julosPopouts[sid]` ab und kappt nur seine Leitung (`disconnect(keep)`): der Server hält die Sitzung ohne Browser. Das
+  Fenster (`popout.js`) liest den Eintrag aus `window.opener` (gleiche Herkunft) und verbindet mit `?resume=<Token>`. **Das Token steht nie in der Adresse
+  des Fensters.** Das Sitzungsfenster im Hauptfenster zeigt „Diese Sitzung läuft in einem eigenen Fenster.“ mit „Wieder anheften“.
+- **Wieder anheften:** „Wieder anheften“ im Fenster oder im Hauptfenster, oder das Fenster einfach schließen (auch ein vom Browser beendetes Fenster wird
+  erkannt, das Hauptfenster sieht alle 0,6 s nach): das Hauptfenster nimmt die Sitzung mit demselben Token wieder auf, mit sofortigem Schlüsselbild. Die
+  Bildratenstufe und die Statusleiste, die im Fenster geschaltet wurden, gelten danach auch dort.
+- **Sitzung schließen:** Schließt das Hauptfenster die Sitzung (Fenster zu, „Sitzung beenden“), beendet das Pop-out sie am Server (Nachricht 17) und geht zu.
+  Wird das Hauptfenster neu geladen oder geschlossen, während das Pop-out offen ist, läuft die Sitzung im Pop-out weiter; schließt man es dann, endet sie
+  (niemand könnte sie wieder aufnehmen).
+- **Größe:** Das Fenster bestimmt die Auflösung des fernen Desktops (wie ein Sitzungsfenster, mit demselben Zoomfaktor); Größenänderungen gehen nach 0,35 s
+  an den Server (Display Control), ohne neuen Login.
+- **Umfang des Fensters:** Bild, Maus, Hardware-Tastatur (physische Tasten als Scancodes, `popout-keys.js`; das Ziel entscheidet mit seiner Belegung, was sie
+  schreiben; beim Verlust des Fokus werden gehaltene Tasten losgelassen; Einfügen über die Zwischenablage), Text der Zwischenablage in beide Richtungen, Ton,
+  Statusleiste, Bildrate. Touch, Dateiübertragung, Sondertastenleiste, Fensterliste der VM und Mikrofon gibt es nur im Hauptfenster. Zeichen ohne Taste
+  (Emoji, Eingabemethoden) lassen sich im Pop-out nicht tippen.
+- **Grenzen:** Pro Sitzung ein Pop-out; die Sitzung muss verbunden sein und schon ein Bild gezeigt haben (vorher kann ein Login gescheitert sein). Ein
+  Pop-out auf einem anderen Bildschirm behält die Pixeldichte des Fensters, in dem es startet. Auf dem Handy gibt es den Knopf nicht (die Desktop-Oberfläche wird
+  dort nicht geladen).
+- **Tests:** `tests/frontend/popout.test.mjs` (Tasten, Adresse, Übergabe, blockiertes Fenster, vom Browser beendetes Fenster); die Rückgabe und das
+  gleichbleibende Bild prüft der Handtest im Browser (zwei Fenster, ein RDP-Login im Server-Log).
+
 ## Grenzen (Stand heute)
 
 - Das Fensterleisten-/Programm-Modus-Backend (Agent) gehört zu genau einer Verbindung: ist für sie ein Agent eingerichtet (er meldet sich vom Ziel aus beim

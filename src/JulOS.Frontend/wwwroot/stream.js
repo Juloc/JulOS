@@ -14,6 +14,7 @@
  *   Browser -> Server: 1 Bestaetigung (Folgenummer u32: alle Bilder bis dahin), 2 Maus bewegt, 3 Maustaste (0 links, 1 Mitte, 2 rechts, 3 zurueck, 4 vor), 4 Mausrad (Betrag i16 in Windows-Einheiten, 120 je Raste; Byte: waagerecht), 5 Taste (Scancode), 6 Zeichen, 7 Fenstergroesse, 8 Schluesselbild,
  *                      9 Zwischenablage (UTF-8-Text, bis 1 MiB; der ferne Rechner holt ihn, wenn er einfuegt),
  *                      10 Senden Anfang (Bild als BMP oder Datei), 11 Stueck, 12 Ende, 13 Abbruch, 14 Datei der VM holen, 15 Holen Abbruch,
+ *                      31 Bildrate (Stufe: 0 automatisch, 1 hoechstens 60 Bilder/s, 2 hoechstens 30, 3 sparsam; je Sitzung),
  *                      16 Pause (1 = die Ansicht ist nicht zu sehen: der Server kodiert nicht, 0 = weiter),
  *                      17 Beenden (die Sitzung wird geschlossen: der Server erhaelt sie nicht fuer ein Wiederverbinden),
  *                      30 Codecs (Menge: 1 H.264, 2 H.265; beim Verbinden steht sie in der Adresse als codecs=, danach nur noch bei einem Wechsel zurueck auf H.264)
@@ -25,11 +26,12 @@
  * ===================================================================== */
 
 import { StreamAudio } from './stream-audio.js';
+import { StreamPerf, normalizeQuality, qualityOf } from './perf.js';
 import { codecMask, probeCodecs, codecStringOf, decoderConfig, CODEC_H264, CODEC_HEVC } from './codecs.js';
 
 const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, image: 7, files: 8, fileChunk: 9, result: 10, session: 11, resumeFailed: 12, audio: 20, audioStatus: 21, encoder: 30, refine: 40, refineClear: 41 };
 const OUT = { ack: 1, move: 2, button: 3, wheel: 4, key: 5, unicode: 6, resize: 7, keyframe: 8, clipboard: 9,
-  sendBegin: 10, sendChunk: 11, sendEnd: 12, sendCancel: 13, fileRequest: 14, fileCancel: 15, pause: 16, end: 17, codecs: 30 };
+  sendBegin: 10, sendChunk: 11, sendEnd: 12, sendCancel: 13, fileRequest: 14, fileCancel: 15, pause: 16, end: 17, codecs: 30, quality: 31 };
 const CHUNK = 128 * 1024;                 // so gross sind die Stuecke beim Senden (der Server nimmt bis 256 kB)
 const BUFFER_HIGH = 1024 * 1024;          // darueber wartet das Senden, bis der Socket leer laeuft (sonst steht die Maus hinter einer Datei)
 
@@ -201,6 +203,8 @@ export class StreamClient {
     this.hevcOk = !!codecSupport.hevc;  // ob H.265 angeboten wird; nach einem Fehler des H.265-Dekodierers nicht mehr
     this.hevc = false;                  // ob der Dekodierer gerade H.265 dekodiert
     this.encoder = null;                // was der Server meldet: { codec, hardware, name }
+    this.perf = new StreamPerf();       // Zaehler fuer die Leistungsanzeige (perf.js, docs/STATUSBAR.md)
+    this.quality = 'auto';              // gewaehlte Bildrate-Stufe (Nachricht 31)
   }
 
   getDisplay() { return this.display; }
@@ -212,6 +216,13 @@ export class StreamClient {
     if (this.paused === on) return;
     this.paused = on;
     if (this.connected) this.send(Uint8Array.of(OUT.pause, on ? 1 : 0));
+  }
+
+  // Bildrate und Bitrate dieser Sitzung waehlen (Nachricht 31): 'auto' | '60' | '30' | 'eco'. Der Server behaelt die Stufe bis zur naechsten Nachricht;
+  // ein neuer Client schickt sie nach dem Verbinden erneut (die Sitzung der Seite kennt die Wahl).
+  setQuality(id) {
+    this.quality = normalizeQuality(id);
+    if (this.connected) this.send(Uint8Array.of(OUT.quality, qualityOf(this.quality).byte));
   }
 
   // Ein Dekodierer, der Bilder angenommen hat und sie nicht mehr herausgibt (manche halten Bilder zurueck, weil sie auf spaetere warten):
@@ -265,6 +276,7 @@ export class StreamClient {
 
   /* ---- vom Server ---- */
   receive(buffer) {
+    this.perf.received(buffer.byteLength);
     const v = new DataView(buffer);
     switch (v.getUint8(0)) {
       case IN.picture: this.picture(v, buffer); break;
@@ -280,7 +292,7 @@ export class StreamClient {
       }
       case IN.size:
         this.display.resize(v.getUint16(1), v.getUint16(3));
-        if (!this.connected) { this.connected = true; this.setState(3); if (this.paused) this.send(Uint8Array.of(OUT.pause, 1)); }
+        if (!this.connected) { this.connected = true; this.setState(3); if (this.paused) this.send(Uint8Array.of(OUT.pause, 1)); if (this.quality !== 'auto') this.setQuality(this.quality); }
         break;
       case IN.error: {
         const code = v.getUint16(1), message = new TextDecoder().decode(new Uint8Array(buffer, 3));
@@ -487,6 +499,7 @@ export class StreamClient {
         frame.close();
         this.drawn = true;
         this.output = sequence; this.activityAt = performance.now();
+        this.perf.drawn(this.activityAt, sequence);
         this.ack(sequence);                        // erst nach dem Zeichnen: so laeuft der Server dem Browser nie davon
       },
       error: () => { if (this.decoder === d) this.decoderFailed(); },
@@ -510,10 +523,10 @@ export class StreamClient {
       this.display.setPointer(x, y); l.x = x; l.y = y;
     }
     for (const [name, button] of [['left', 0], ['middle', 1], ['right', 2], ['back', 3], ['forward', 4]]) {
-      if (!!s[name] !== l[name]) { this.send(Uint8Array.of(OUT.button, button, s[name] ? 1 : 0)); l[name] = !!s[name]; }
+      if (!!s[name] !== l[name]) { this.send(Uint8Array.of(OUT.button, button, s[name] ? 1 : 0)); l[name] = !!s[name]; if (s[name]) this.noteInput(); }
     }
     for (const [name, delta] of [['up', 120], ['down', -120]]) {
-      if (s[name] && !l[name]) this.sendWheel(delta, false);
+      if (s[name] && !l[name]) { this.noteInput(); this.sendWheel(delta, false); }
       l[name] = !!s[name];
     }
     // Raddrehung in Windows-Einheiten (120 je Raste, auch feinere Schritte), senkrecht und waagerecht
@@ -557,6 +570,7 @@ export class StreamClient {
     }
     const german = this.layout === 'de' ? GERMAN_KEYS[char] : undefined;
     if (german) { if (pressed) this.tapLayoutKey(german); return; }
+    if (pressed) this.noteInput();
     if (pressed) for (const unit of char) { for (let i = 0; i < unit.length; i++) { this.send(Uint8Array.of(OUT.unicode, unit.charCodeAt(i) >> 8, unit.charCodeAt(i) & 255)); } }
   }
 
@@ -568,9 +582,12 @@ export class StreamClient {
     if (altgr) this.key(0x38, 1, false);
   }
 
+  // Eingaben, auf die ein neues Bild folgen sollte: daraus rechnet die Leistungsanzeige die Reaktionszeit (nur ein Zeitstempel)
+  noteInput() { this.perf.input(performance.now(), this.received); }
+
   key(scancode, extended, pressed) {
     const id = (scancode << 1) | (extended ? 1 : 0);
-    if (pressed) this.held.add(id); else this.held.delete(id);
+    if (pressed) { this.held.add(id); this.noteInput(); } else this.held.delete(id);
     this.send(Uint8Array.of(OUT.key, scancode, (extended ? 1 : 0) | (pressed ? 2 : 0)));
   }
 

@@ -1,6 +1,7 @@
 using System.Threading.Channels;
 using JulOS.Integrations.Display.Rdp;
 using JulOS.Integrations.Display.Rdp.Channels;
+using JulOS.Integrations.Display.Rdp.Drive;
 using JulOS.Integrations.Display.Refine;
 using JulOS.Integrations.Display.Video;
 using Microsoft.Extensions.Logging;
@@ -124,10 +125,12 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     private long _lastAskedAt, _resizedAt;
 
     private readonly CertificateTrust? _trust;
+    private readonly SharedDrive? _drive;
 
-    public ScreenStream(RdpOptions options, int maxKilobitsPerSecond = 16_000, ILogger? log = null, EncoderSelector? encoders = null, VideoCodecs clientCodecs = VideoCodecs.H264, CertificateTrust? trust = null)
+    public ScreenStream(RdpOptions options, int maxKilobitsPerSecond = 16_000, ILogger? log = null, EncoderSelector? encoders = null, VideoCodecs clientCodecs = VideoCodecs.H264, CertificateTrust? trust = null, SharedDrive? drive = null)
     {
         _trust = trust;
+        _drive = drive;
         _options = options;
         _maxKilobitsPerSecond = maxKilobitsPerSecond;
         _kilobits = maxKilobitsPerSecond;
@@ -178,8 +181,9 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         rdp.AddChannel(channels);
         rdp.AddChannel(_clipboardChannel);
         rdp.AddChannel(_soundChannel);
-        // Windows spricht auf "rdpsnd" nur mit einem Client, der auch "rdpdr" meldet (ohne Geraete); fuer den Ton also noetig
-        rdp.AddChannel(new RdpdrChannel());
+        // Windows spricht auf "rdpsnd" nur mit einem Client, der auch "rdpdr" meldet (ohne Geraete); fuer den Ton also noetig.
+        // Mit einem Laufwerk meldet er genau eines: den Ordner des Servers (siehe SharedDrive, docs/DRIVES.md).
+        rdp.AddChannel(MakeDeviceChannel());
         _display = display;
         try
         {
@@ -210,6 +214,26 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         {
             _events.Writer.TryComplete();
         }
+    }
+
+    private RdpdrChannel MakeDeviceChannel()
+    {
+        if (_drive is not null)
+        {
+            try
+            {
+                var channel = new RdpdrChannel(drive: _drive);
+                _log?.LogInformation("Laufwerk {Name} wird freigegeben ({Mode})", _drive.Name, _drive.Writable ? "Lesen und Schreiben" : "nur Lesen");
+                return channel;
+            }
+            catch (ArgumentException e)
+            {
+                // Eine Wurzel, die es nicht (mehr) gibt: die Sitzung laeuft ohne Laufwerk, statt gar nicht
+                _log?.LogWarning("Laufwerk nicht freigegeben: {Reason}", e.Message);
+            }
+        }
+
+        return new RdpdrChannel();
     }
 
     // ---- Eingabe vom Browser ----

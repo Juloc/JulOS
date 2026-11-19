@@ -53,6 +53,9 @@ services:
       USER_NAME: tester
       USER_PASSWORD: ${DEV_TARGET_PASSWORD}
       PASSWORD_ACCESS: "true"
+    # nur lokal, damit die Tests (deploy/dev/test.sh) den SSH-Client des Servers gegen ein echtes Ziel pruefen koennen
+    ports:
+      - "127.0.0.1:42222:2222"
 
   # Wegwerf-Ziel fuer den Desktop (RDP mit xrdp und XFCE, wie die Linux-VM). Fester Test-Zugang "ubuntu" / "ubuntu";
   # es gibt keinen veroeffentlichten Port, nur guacd im selben Netz erreicht es (Host "rdp-target", Port 3389).

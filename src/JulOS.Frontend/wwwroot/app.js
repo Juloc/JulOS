@@ -1399,9 +1399,15 @@ export class RemoteSession extends Session {
   }
 }
 
-/** Fabriken: Desktop und Terminal laufen heute beide ueber diese Klasse (SSH ueber guacd); das native Terminal ersetzt 'terminal' spaeter. */
+/** Fabrik fuer Desktops. Terminals sind eine eigene Sitzungsart (terminal-session.js, natives SSH-Terminal). */
 Sessions.registerFactory('desktop', (conn, o) => new RemoteSession(conn, o));
-Sessions.registerFactory('terminal', (conn, o) => new RemoteSession(conn, o));
+
+/** Die Bildschirmtastatur der Seite (ein einziges Eingabefeld) fuer andere Sitzungsarten, zum Beispiel das Terminal. */
+export const softKeyboard = {
+  auto: () => S.autoKb,
+  isOpen: () => kbOpen,
+  open() { el.kb.blur(); el.kb.focus(); },
+};
 
 /* =====================================================================
  *  Tastatur (Android): ohne Autokorrektur, mit Sondertasten-Unterstuetzung.
@@ -1570,6 +1576,7 @@ el.typeBtn.addEventListener('click', async () => { const t = el.sendText.value; 
 el.pasteBtn.addEventListener('click', () => {
   const s = cur();
   if (!s || !s.client || !el.sendText.value) return;
+  if (s.pasteText) { s.pasteText(el.sendText.value); toast('Eingefügt', 1400); return; }        // Terminal: als Einfuegen in die Shell
   const stream = s.client.createClipboardStream('text/plain');
   const w = new Guacamole.StringWriter(stream); w.sendText(el.sendText.value); w.sendEnd();
   toast('In die Zwischenablage der VM gelegt (dort Strg+V)', 2200);

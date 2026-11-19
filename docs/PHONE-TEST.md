@@ -50,6 +50,21 @@ Guacamole, eine mit Stream.
 10. Alles ab Schritt 2 mit der **Stream**-Verbindung wiederholen.
 11. Zum Schluss: „App installieren“ in Chrome (geht auch über `localhost`) und die Schritte 2 bis 6 aus der installierten App wiederholen. Dort gibt es kein Messfeld (die App startet ohne `?debug`), erkannte Schleifen stehen aber trotzdem im Server-Log; darum die Uhrzeit notieren.
 
+## Terminal (SSH) auf dem Handy
+
+Eine Terminal-Verbindung zeigt echten Text (xterm.js), keinen Bildstrom. Prüfen, mit Wegwerf-Ziel `test-ssh` (Benutzer `tester`, Passwort aus `deploy/dev/.env`):
+
+1. Verbindung antippen: die erste Zeile der Shell erscheint in unter 5 s. Beim allerersten Mal blendet die Seite kurz „Neuer Host-Schlüssel gemerkt …“ ein.
+2. Auf das Terminal tippen: die Bildschirmtastatur geht auf, **das Terminal ändert dabei seine Größe genau einmal** (Zeilen werden weniger) und bleibt dann ruhig (`stty size` vor und nach dem Öffnen vergleichen). Tastatur zu und auf wiederholen: kein Zappeln.
+3. Tippen mit Gboard: Wörter, Umlaute, Rückschritt, Vorschläge übernehmen (Modus „ohne Vorschläge“ und „mit Vorschlägen“ im Menü ausprobieren). `echo äöü` muss genau das zurückgeben.
+4. Leiste: Esc, Tab, Pfeile (Gruppe „Tasten“), `Strg` tippen und dann `c` tippen (unterbricht `sleep 100`), `Strg+C`-Taste in „Combos“, in `vi` Esc und `:q!`.
+5. `ls -la /etc` und `seq 1 300`: mit einem Finger nach oben und unten wischen scrollt den Verlauf (läuft nach dem Wischen kurz nach). In `vi` oder `less` scrollt Wischen den Inhalt.
+6. Lange auf ein Wort drücken: das Wort ist markiert, danach ziehen verlängert die Auswahl, das kleine Menü zeigt „Kopieren · Einfügen · Alles“. Kopieren, in einer anderen App einfügen; dort etwas kopieren und im Terminal „Einfügen“ wählen.
+7. Zwei Finger auseinander/zusammen ändert die Schriftgröße, die Zoom-Tasten der Leiste ebenso.
+8. Handy sperren, nach 30 s entsperren: das Terminal zeigt „Die Verbindung wurde getrennt“ und „Neu verbinden“ (die Shell auf dem Ziel endet mit der Verbindung, ein stilles Neuverbinden gibt es absichtlich nicht).
+9. Zwei Terminal-Sitzungen gleichzeitig (Menü „Weitere Sitzung zu diesem Ziel“): beide laufen, im Umschalter wechseln.
+10. Host-Schlüssel ändern provozieren (siehe docs/DEVELOPMENT.md): die Warnung zeigt „Bisher“ und „Jetzt“, „Abbrechen“ verbindet nicht, „Neuen Schlüssel vertrauen“ verbindet und merkt den neuen.
+
 ## Was zurückschicken
 
 - Ein Screenshot des Messfelds (Lauter- und Ausschalttaste zusammen) **direkt nach** jedem Schritt, bei dem etwas auffiel, und bei jedem roten Balken.

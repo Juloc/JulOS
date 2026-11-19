@@ -177,7 +177,7 @@ public sealed class RemoteHttpTests
         await Assert.ThrowsAnyAsync<Exception>(() => OpenAsync(app, "egal", null));
 
         var (cookie, userId) = await SignedInAsync(app, c, db);
-        var connection = await new ConnectionStore(db.Data).CreateAsync(userId, "Test", "terminal", "ziel", 22, "tester");
+        var connection = await new ConnectionStore(db.Data).CreateAsync(userId, "Test", "desktop", "ziel", 3389, "tester");
 
         // fehlende Angaben, fremde Verbindung
         Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Post("/api/remote/ticket", new { connection = connection.Id }, cookie))).StatusCode);
@@ -231,7 +231,7 @@ public sealed class RemoteHttpTests
         await using var app = new Server(db, $"127.0.0.1:{guacd.Port}");
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (cookie, userId) = await SignedInAsync(app, c, db);
-        var connection = await new ConnectionStore(db.Data).CreateAsync(userId, "Test", "terminal", "ziel", 22, "u");
+        var connection = await new ConnectionStore(db.Data).CreateAsync(userId, "Test", "desktop", "ziel", 3389, "u");
         using var ws = await OpenAsync(app, await TicketAsync(c, cookie, connection.Id), cookie);
         await ReadAsync(ws);
 
@@ -244,31 +244,144 @@ public sealed class RemoteHttpTests
         Assert.False(await sessions.IsAliveAsync(id));
     }
 
-    [Fact]
-    public async Task A_terminal_connects_through_the_server_against_real_guacd_and_ssh_and_accepts_keys()
+    // ---- Terminal (eigener SSH-Client) ----
+
+    private static async Task<WebSocket> OpenSshAsync(Server app, string ticket, string cookie, string origin = "http://localhost")
     {
-        var real = Environment.GetEnvironmentVariable("JULOS_TEST_GUACD");
-        var password = Environment.GetEnvironmentVariable("JULOS_TEST_TARGET_PASSWORD");
-        Assert.SkipWhen(real is null || password is null, "JULOS_TEST_GUACD / JULOS_TEST_TARGET_PASSWORD nicht gesetzt (deploy/dev/test.sh benutzen)");
+        var ws = app.Server.CreateWebSocketClient();
+        ws.ConfigureRequest = r => { r.Headers["Cookie"] = cookie; if (origin.Length > 0) r.Headers["Origin"] = origin; };
+        return await ws.ConnectAsync(new Uri($"ws://localhost/api/remote/ssh?ticket={ticket}"), CancellationToken.None);
+    }
+
+    private static async Task<(byte Kind, JsonElement Body)> ReadMessageAsync(WebSocket ws)
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var buf = new byte[70000];
+        var r = await ws.ReceiveAsync(buf, cts.Token);
+        return buf[0] == 1 ? (1, default) : (buf[0], JsonDocument.Parse(buf.AsMemory(1, r.Count - 1)).RootElement.Clone());
+    }
+
+    private static async Task<string> ReadShellUntilAsync(WebSocket ws, string needle)
+    {
+        var all = new StringBuilder();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var buf = new byte[70000];
+        while (!all.ToString().Contains(needle))
+        {
+            var r = await ws.ReceiveAsync(buf, cts.Token);
+            if (r.MessageType == WebSocketMessageType.Close || buf[0] != 1) break;
+            all.Append(Encoding.UTF8.GetString(buf, 1, r.Count - 1));
+        }
+        return all.ToString();
+    }
+
+    [Fact]
+    public async Task A_terminal_runs_through_the_server_with_trust_on_first_use_and_a_changed_key_needs_confirmation()
+    {
+        var (sshHost, sshPort, targetPassword) = RealSshTests.Target();
         await using var db = await TestDb.CreateAsync();
-        await using var app = new Server(db, real!);
+        await using var app = new Server(db, "127.0.0.1:1");
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (cookie, userId) = await SignedInAsync(app, c, db);
-        var connection = await new ConnectionStore(db.Data).CreateAsync(userId, "Terminal", "terminal", "test-ssh", 2222, "tester");
+        var store = new ConnectionStore(db.Data);
+        var connection = await store.CreateAsync(userId, "Terminal", "terminal", sshHost, sshPort, "tester");
 
-        using var ws = await OpenAsync(app, await TicketAsync(c, cookie, connection.Id, password!), cookie);
-        Assert.StartsWith("0.,", await ReadAsync(ws));
-        var all = new StringBuilder();
-        while (!all.ToString().Contains("4.sync,")) all.Append(await ReadAsync(ws));
-        Assert.DoesNotContain("5.error,", all.ToString());
-        // Tasten werden angenommen und die Verbindung bleibt offen (die Terminal-Ausgabe kommt als Bild, nicht als Text, und wird hier nicht ausgewertet)
-        foreach (var ch in "echo julos-ok\n")
+        async Task<string> TicketFor(object body)
         {
-            var key = ch == '\n' ? 65293 : ch;                                     // Enter ist X11-Tastencode 0xFF0D
-            await ws.SendAsync(GuacProtocol.Encode("key", key.ToString(), "1"), WebSocketMessageType.Text, true, CancellationToken.None);
-            await ws.SendAsync(GuacProtocol.Encode("key", key.ToString(), "0"), WebSocketMessageType.Text, true, CancellationToken.None);
+            var r = await c.SendAsync(Post("/api/remote/ticket", body, cookie));
+            Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+            var j = JsonDocument.Parse(await r.Content.ReadAsStringAsync()).RootElement;
+            Assert.Equal("ssh", j.GetProperty("engine").GetString());
+            Assert.Equal("terminal", j.GetProperty("kind").GetString());
+            return j.GetProperty("ticket").GetString()!;
         }
-        await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+
+        // 1. erste Verbindung: Anmeldung, Shell, Eingabe/Ausgabe, Schluessel wird gemerkt
+        var ticket = await TicketFor(new { connection = connection.Id, password = targetPassword, cols = 90, rows = 25 });
+        string fingerprint;
+        using (var ws = await OpenSshAsync(app, ticket, cookie))
+        {
+            var (kind, ready) = await ReadMessageAsync(ws);
+            Assert.Equal(2, kind);
+            Assert.Equal("new", ready.GetProperty("hostKey").GetString());
+            fingerprint = ready.GetProperty("fingerprint").GetString()!;
+            await ws.SendAsync(Encoding.UTF8.GetBytes("\u0001stty size; echo ok$((20+22))\n"), WebSocketMessageType.Binary, true, CancellationToken.None);
+            var output = await ReadShellUntilAsync(ws, "ok42");
+            Assert.Contains("25 90", output);
+            await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+        }
+        var stored = (await store.GetAsync(userId, connection.Id))!.HostKey;
+        Assert.EndsWith(fingerprint, stored);
+        Assert.StartsWith("ssh-", stored);
+        // dasselbe Ticket ein zweites Mal: abgelehnt
+        Assert.Contains("403", (await Assert.ThrowsAnyAsync<Exception>(() => OpenSshAsync(app, ticket, cookie))).ToString());
+
+        // 2. zweite Verbindung: bekannt
+        using (var ws = await OpenSshAsync(app, await TicketFor(new { connection = connection.Id, password = targetPassword }), cookie))
+        {
+            Assert.Equal("known", (await ReadMessageAsync(ws)).Body.GetProperty("hostKey").GetString());
+            await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+        }
+
+        // 3. gespeicherter Schluessel weicht ab: Warnung mit beiden Fingerabdruecken, keine Shell, nichts ueberschrieben
+        await store.SetHostKeyAsync(userId, connection.Id, "ssh-ed25519 SHA256:alterSchluessel");
+        using (var ws = await OpenSshAsync(app, await TicketFor(new { connection = connection.Id, password = targetPassword }), cookie))
+        {
+            var (kind, end) = await ReadMessageAsync(ws);
+            Assert.Equal(3, kind);
+            Assert.Equal(800, end.GetProperty("code").GetInt32());
+            Assert.Equal("ssh-ed25519 SHA256:alterSchluessel", end.GetProperty("previous").GetString());
+            Assert.EndsWith(fingerprint, end.GetProperty("fingerprint").GetString());
+            Assert.DoesNotContain(targetPassword, end.ToString());
+        }
+        Assert.Equal("ssh-ed25519 SHA256:alterSchluessel", (await store.GetAsync(userId, connection.Id))!.HostKey);
+
+        // 4. eine Bestaetigung fuer einen anderen Schluessel hilft nicht; nur genau der gezeigte gilt
+        using (var ws = await OpenSshAsync(app, await TicketFor(new { connection = connection.Id, password = targetPassword, acceptHostKey = "ssh-ed25519 SHA256:irgendein" }), cookie))
+            Assert.Equal(800, (await ReadMessageAsync(ws)).Body.GetProperty("code").GetInt32());
+        using (var ws = await OpenSshAsync(app, await TicketFor(new { connection = connection.Id, password = targetPassword, acceptHostKey = stored }), cookie))
+        {
+            var (kind, ready) = await ReadMessageAsync(ws);
+            Assert.Equal(2, kind);
+            Assert.Equal("changed-accepted", ready.GetProperty("hostKey").GetString());
+            await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+        }
+        Assert.Equal(stored, (await store.GetAsync(userId, connection.Id))!.HostKey);
+
+        // 5. wrong password: Fehlertext, der Schluessel bleibt
+        using (var ws = await OpenSshAsync(app, await TicketFor(new { connection = connection.Id, password = "falsch-falsch-1" }), cookie))
+            Assert.Equal(769, (await ReadMessageAsync(ws)).Body.GetProperty("code").GetInt32());
+
+        // 6. Ziel geaendert: der Schluessel wird vergessen (gehoert zum alten Ziel); Benutzer geaendert: bleibt
+        var rename = await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{connection.Id}", new { name = "Terminal", kind = "terminal", host = sshHost, port = sshPort, username = "anderer" }, cookie));
+        Assert.Equal(HttpStatusCode.OK, rename.StatusCode);
+        Assert.Equal(stored, (await store.GetAsync(userId, connection.Id))!.HostKey);
+        var move = await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{connection.Id}", new { name = "Terminal", kind = "terminal", host = "anderes-ziel", port = sshPort, username = "tester" }, cookie));
+        Assert.Equal(HttpStatusCode.OK, move.StatusCode);
+        Assert.Null((await store.GetAsync(userId, connection.Id))!.HostKey);
+    }
+
+    [Fact]
+    public async Task The_terminal_socket_needs_a_session_a_ticket_and_the_own_origin()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db, "127.0.0.1:1");
+        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (cookie, userId) = await SignedInAsync(app, c, db);
+        var connection = await new ConnectionStore(db.Data).CreateAsync(userId, "T", "terminal", "ziel", 22, "u");
+        var r = await c.SendAsync(Post("/api/remote/ticket", new { connection = connection.Id, password = "x" }, cookie));
+        var ticket = JsonDocument.Parse(await r.Content.ReadAsStringAsync()).RootElement.GetProperty("ticket").GetString()!;
+
+        Assert.Contains("401", (await Assert.ThrowsAnyAsync<Exception>(async () =>
+        {
+            var ws = app.Server.CreateWebSocketClient();
+            ws.ConfigureRequest = h => h.Headers["Origin"] = "http://localhost";
+            await ws.ConnectAsync(new Uri($"ws://localhost/api/remote/ssh?ticket={ticket}"), CancellationToken.None);
+        })).ToString());
+        Assert.Contains("403", (await Assert.ThrowsAnyAsync<Exception>(() => OpenSshAsync(app, ticket, cookie, "http://boese.example"))).ToString());
+        Assert.Contains("403", (await Assert.ThrowsAnyAsync<Exception>(() => OpenSshAsync(app, "falsch", cookie))).ToString());
+        // das Ticket gilt fuer einen anderen Weg (Guacamole-Tunnel) nicht
+        Assert.Contains("403", (await Assert.ThrowsAnyAsync<Exception>(() => OpenAsync(app, ticket, cookie))).ToString());
     }
 
     // ---- Agent, Upload, Log ----
@@ -649,7 +762,7 @@ public sealed class RemoteHttpTests
         var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (cookie, _) = await SignedInAsync(app, c, db);
 
-        // Ohne Angabe: Guacamole. Mit Angabe wird gespeichert, ein Terminal bleibt immer bei Guacamole.
+        // Ohne Angabe: Guacamole. Mit Angabe wird gespeichert, ein Terminal ignoriert die Engine (eigener SSH-Client).
         var plain = await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "A", kind = "desktop", host = "ziel", username = "jul" }, cookie)));
         Assert.Equal("guac", plain.GetProperty("engine").GetString());
         var streamed = await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "B", kind = "desktop", host = "ziel", username = "jul", engine = "stream", password = "pw" }, cookie)));
@@ -675,7 +788,7 @@ public sealed class RemoteHttpTests
         var plainForced = await Json(await c.SendAsync(Post("/api/remote/ticket", new { connection = plainId, password = "x", width = 856, height = 1448, engine = "stream" }, cookie)));
         Assert.Equal(expected, plainForced.GetProperty("engine").GetString());
         var shellTicket = await Json(await c.SendAsync(Post("/api/remote/ticket", new { connection = shell.GetProperty("id").GetGuid(), password = "x", engine = "stream" }, cookie)));
-        Assert.Equal("guac", shellTicket.GetProperty("engine").GetString());
+        Assert.Equal("ssh", shellTicket.GetProperty("engine").GetString());          // ein Terminal nutzt immer den eigenen SSH-Client
     }
 
     [Fact]

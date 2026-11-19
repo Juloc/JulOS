@@ -1,5 +1,6 @@
 import { ico } from './app.js';
 import { Sessions } from './sessions.js';
+import './terminal-session.js';      // Sitzungsart 'terminal' (natives SSH-Terminal)
 
 /* =====================================================================
  * Startseite und Konto: Ersteinrichtung, Anmeldung, gespeicherte Verbindungen, Geraete.

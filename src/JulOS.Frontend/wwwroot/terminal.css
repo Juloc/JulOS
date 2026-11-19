@@ -1,0 +1,36 @@
+/* Terminal-Ansicht (terminal.js). Farben kommen aus dem App-Design (m3.css), die Terminalfarben setzt terminal.js. */
+@import url('/lib/xterm/xterm.css');
+
+.term-host { position: absolute; inset: 0; z-index: 6; overflow: hidden; touch-action: none; -webkit-tap-highlight-color: transparent; }
+.term-host[hidden] { display: none; }
+.term-host .xterm { height: 100%; padding: 4px 6px; box-sizing: border-box; }
+.term-host .xterm-viewport { overscroll-behavior: contain; background-color: transparent !important; }   /* der Rest unter der letzten Zeile zeigt die Farbe des Behaelters */
+.term-host.bell::after { content: ''; position: absolute; inset: 0; box-shadow: inset 0 0 0 3px var(--m3-primary, currentColor); opacity: .55; pointer-events: none; }
+.term-host ::selection { background: transparent; }
+
+.term-banner { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); max-width: min(92%, 560px); z-index: 20; padding: 8px 14px; border-radius: 999px;
+  background: var(--m3-inverse-surface, #333); color: var(--m3-inverse-on-surface, #fff); font: 500 .8125rem/1.25 system-ui, sans-serif; text-align: center; pointer-events: none; }
+
+.term-menu { position: absolute; z-index: 25; display: flex; gap: 2px; padding: 4px; border-radius: 14px; box-shadow: 0 2px 10px rgb(0 0 0 / .35);
+  background: var(--m3-inverse-surface, #333); color: var(--m3-inverse-on-surface, #fff); touch-action: manipulation; }
+.term-menu button { min-height: 40px; padding: 0 14px; border: 0; border-radius: 10px; background: transparent; color: inherit; font: 500 .875rem system-ui, sans-serif; cursor: pointer; }
+.term-menu button:hover, .term-menu button:active { background: rgb(255 255 255 / .16); }
+
+.term-dialog { position: absolute; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; background: rgb(8 10 14 / .78); }
+.term-dialog .box { width: min(92vw, 460px); max-height: 92%; overflow: auto; padding: 20px; border-radius: 28px; display: flex; flex-direction: column; gap: 10px;
+  background: var(--m3-surface-container, #222); color: var(--m3-on-surface, #eee); font: 400 .9rem/1.4 system-ui, sans-serif; }
+.term-dialog h2 { margin: 0; font: 600 1.15rem/1.3 system-ui, sans-serif; color: var(--m3-error, #f2b8b5); }
+.term-dialog p { margin: 0; }
+.term-dialog .fp { display: flex; flex-direction: column; gap: 2px; }
+.term-dialog .fp span { font-size: .75rem; color: var(--m3-on-surface-variant, #bbb); }
+.term-dialog code { padding: 6px 8px; border-radius: 8px; background: var(--m3-surface-highest, #333); font: .8125rem ui-monospace, "DejaVu Sans Mono", monospace; overflow-wrap: anywhere; user-select: all; }
+.term-dialog .hint { font-size: .8125rem; color: var(--m3-on-surface-variant, #bbb); }
+.term-dialog .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+.term-dialog button { min-height: 44px; padding: 0 18px; border: 0; border-radius: 999px; font: 500 .9rem system-ui, sans-serif; cursor: pointer; }
+.term-dialog button.primary { background: var(--m3-primary, #8ab4ff); color: var(--m3-on-primary, #000); }
+.term-dialog button.danger { background: transparent; color: var(--m3-error, #f2b8b5); outline: 1px solid var(--m3-error, #f2b8b5); }
+
+/* In der Sitzung (RemoteSession-Huelle): Bild und Touch-Ebene der Fernsteuerung entfallen, das Terminal fuellt die Buehne */
+.sv-terminal .sv-display, .sv-terminal .sv-touch, .sv-terminal .sv-zoom { display: none; }
+.sv-terminal .sv-stage { background: var(--m3-surface-lowest, #000); }
+.sv-terminal .mi[data-act="touchMode"], .sv-terminal .mi[data-act="autoPaste"] { display: none; }

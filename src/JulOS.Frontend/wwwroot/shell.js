@@ -1,6 +1,9 @@
 import { ico } from './app.js';
 import { Sessions } from './sessions.js';
 import { agentSummary, hostDetail } from './hosts.js';
+import { initAccount } from './account.js';
+import { initNetTools } from './nettools.js';
+import { qrSvg } from './qr.js';
 import './terminal-session.js';      // Sitzungsart 'terminal' (natives SSH-Terminal)
 
 /* =====================================================================
@@ -92,6 +95,7 @@ $('#setupForm').addEventListener('submit', async (e) => {
     setupInfo = { code, user };
     $('#setupSecret').textContent = r.secret;
     $('#setupOtpLink').href = r.uri;
+    try { $('#setupQr').innerHTML = qrSvg(r.uri, { label: 'QR-Code für den Authenticator' }); } catch { $('#setupQr').replaceChildren(); }
     $('#setupRecovery').textContent = r.recovery.join('\n');
     $('#setupPw').value = ''; $('#setupPw2').value = '';
     form.hidden = true; $('#setupSecretForm').hidden = false; setTimeout(() => $('#setupTotp').focus(), 50);
@@ -110,7 +114,7 @@ $('#setupSecretForm').addEventListener('submit', async (e) => {
   busy(form, true); setMsg(msg, '');
   try {
     const r = await api('/api/setup/finish', { method: 'POST', body: { code: setupInfo.code, user: setupInfo.user, totp: $('#setupTotp').value.replace(/\s+/g, '') } });
-    $('#setupSecret').textContent = ''; $('#setupRecovery').textContent = ''; $('#setupTotp').value = ''; setupInfo = null;
+    $('#setupSecret').textContent = ''; $('#setupRecovery').textContent = ''; $('#setupQr').replaceChildren(); $('#setupTotp').value = ''; setupInfo = null;
     showHome(r.user);
   } catch (err) { setMsg(msg, err.message); }
   finally { busy(form, false); }
@@ -196,6 +200,7 @@ $('#accountMenu').addEventListener('click', async (e) => {
   const act = e.target.closest('button')?.dataset.act;
   $('#accountMenu').hidden = true;
   if (act === 'devices') openDevices();
+  else if (act === 'account') openAccount();
   else if (act === 'signout') signOut();
 });
 
@@ -220,10 +225,13 @@ const showDriveChoice = () => {
   $('#connDriveWriteHint').hidden = !on || !share || !$('#connDriveWrite').checked;
   $('#connDriveOff').hidden = !on || state.driveAvailable;
 };
-$('#connKind').addEventListener('change', () => { $('#connPort').placeholder = DEFAULT_PORT[$('#connKind').value]; showDriveChoice(); });
+$('#connKind').addEventListener('change', () => { $('#connPort').placeholder = DEFAULT_PORT[$('#connKind').value]; showDriveChoice(); showDesktopFields(); });
 $('#connDrive').addEventListener('change', showDriveChoice);
 $('#connDriveWrite').addEventListener('change', showDriveChoice);
 $('#addConn').addEventListener('click', () => editDialog(null));
+
+// Domäne und Tastaturlayout gibt es nur beim Desktop (RDP)
+function showDesktopFields() { const on = $('#connKind').value === 'desktop'; $('#connDomainRow').hidden = !on; $('#connLayoutRow').hidden = !on; }
 
 function editDialog(c, kind) {
   state.editing = c;
@@ -235,6 +243,8 @@ function editDialog(c, kind) {
   $('#connPort').value = c ? String(c.port) : '';
   $('#connPort').placeholder = DEFAULT_PORT[$('#connKind').value];
   $('#connUser').value = c ? c.username : '';
+  $('#connDomain').value = c ? c.domain || '' : ''; $('#connLayout').value = c && c.layout ? c.layout : 'de'; $('#connNotes').value = c ? c.notes || '' : '';
+  showDesktopFields();
   fillHostSelect(c ? c.hostId : undefined);
   $('#connDelete').hidden = !c; $('#connDelete').textContent = 'Löschen';
   $('#connPw').value = ''; $('#connPw').disabled = !state.canStore;
@@ -401,7 +411,8 @@ $('#connForm').addEventListener('submit', async (e) => {
   const form = e.currentTarget, msg = $('#connMsg');
   const portText = $('#connPort').value.trim();
   if (portText && !/^\d{1,5}$/.test(portText)) return setMsg(msg, 'Der Port muss eine Zahl sein.');
-  const body = { name: $('#connName').value, kind: $('#connKind').value, host: $('#connHost').value, port: portText ? Number(portText) : null, username: $('#connUser').value };
+  const body = { name: $('#connName').value, kind: $('#connKind').value, host: $('#connHost').value, port: portText ? Number(portText) : null, username: $('#connUser').value, notes: $('#connNotes').value };
+  if (body.kind === 'desktop') { body.domain = $('#connDomain').value; body.layout = $('#connLayout').value; }
   const hostId = $('#connHostSel').value; if (hostId && hostId !== NEW_HOST) body.hostId = hostId;
   const drive = body.kind === 'desktop' && state.driveAvailable && $('#connDrive').checked;
   body.driveShare = drive; body.driveWrite = drive && $('#connDriveWrite').checked;
@@ -507,8 +518,10 @@ Sessions.addEventListener('closed', (e) => {
 Sessions.addEventListener('home', () => { if (!D) goHome(); });
 Sessions.addEventListener('switcher', () => { if (M) M.openSwitcher(); else goHome(); });
 
-if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), signOut, home: goHome });
-if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), devices: openDevices, signOut });
+const openAccount = initAccount({ api, setMsg });
+const openNetTools = initNetTools({ api, setMsg, connections: () => state.connections });
+if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), signOut, home: goHome, account: openAccount, nettools: openNetTools });
+if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), devices: openDevices, account: openAccount, nettools: openNetTools, signOut });
 
 /* ---------- Geraete und Sitzungen ---------- */
 function describeAgent(ua) {

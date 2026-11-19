@@ -175,4 +175,67 @@ public sealed class LogicTests
         Assert.False(ConnectionRules.Validate("PC", "terminal", "ziel", null, "u", null, null, true, true).Value!.DriveShare);
         Assert.False(ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", false, null, true, true).Value!.DriveWrite);
     }
+
+    [Fact]
+    public void Domain_notes_and_layout_have_defaults_belong_to_desktops_and_keep_the_earlier_value_when_not_given()
+    {
+        var plain = ConnectionRules.Validate("PC", "desktop", "ziel", null, "u").Value!;
+        Assert.Equal(("", "", "de"), (plain.Domain, plain.Notes, plain.Layout));
+        var set = ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", domain: " CORP ", notes: " a\r\nb ", layout: "en-us").Value!;
+        Assert.Equal(("CORP", "a\nb", "en-us"), (set.Domain, set.Notes, set.Layout));
+        var kept = ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", currentDomain: "CORP", currentNotes: "n", currentLayout: "fr").Value!;
+        Assert.Equal(("CORP", "n", "fr"), (kept.Domain, kept.Notes, kept.Layout));
+        var term = ConnectionRules.Validate("PC", "terminal", "ziel", null, "u", domain: "CORP", notes: "n", layout: "fr").Value!;
+        Assert.Equal(("", "n", "de"), (term.Domain, term.Notes, term.Layout));
+        Assert.Null(ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", layout: "xx").Value);
+        Assert.Null(ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", domain: "a b").Value);
+        Assert.Null(ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", notes: new string('x', ConnectionRules.MaxNotes + 1)).Value);
+        Assert.NotNull(ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", notes: new string('x', ConnectionRules.MaxNotes)).Value);
+    }
+
+    [Theory]
+    [InlineData("de", 0x407u, "de")]
+    [InlineData("de-at", 0xC07u, "de")]
+    [InlineData("de-ch", 0x807u, "qwertz")]
+    [InlineData("en-us", 0x409u, "qwerty")]
+    [InlineData("en-gb", 0x809u, "qwerty")]
+    [InlineData("fr", 0x40Cu, "azerty")]
+    [InlineData("es", 0x40Au, "qwerty")]
+    [InlineData("it", 0x410u, "qwerty")]
+    [InlineData("unbekannt", 0x407u, "de")]      // a code from a later version is German, never an error at connect time
+    public void Every_layout_maps_to_a_windows_id_and_a_key_style(string code, uint windows, string client)
+    {
+        Assert.Equal(windows, KeyboardLayouts.WindowsId(code));
+        Assert.Equal(client, KeyboardLayouts.ClientKey(code));
+        Assert.Equal(code != "unbekannt", KeyboardLayouts.IsKnown(code));
+    }
+
+    [Fact]
+    public void Network_tool_targets_are_the_saved_hosts_inside_the_allow_list()
+    {
+        string[] saved = ["b.example", "A.example", "a.example", "192.0.2.5", "fremd.example"];
+        Assert.Equal(["192.0.2.5", "A.example", "b.example", "fremd.example"], NetToolRules.Targets(saved, new HostPolicy(null)));
+        var policy = new HostPolicy("a.example, 192.0.2.5");
+        Assert.Equal(["192.0.2.5", "A.example"], NetToolRules.Targets(saved, policy));
+        Assert.Equal("A.example", NetToolRules.Resolve(" a.EXAMPLE ", saved, policy));         // any spelling, the saved one comes back
+        Assert.Null(NetToolRules.Resolve("b.example", saved, policy));                          // saved but not allowed
+        Assert.Null(NetToolRules.Resolve("169.254.169.254", saved, new HostPolicy(null)));      // not saved
+        Assert.Null(NetToolRules.Resolve("", saved, policy));
+        Assert.Null(NetToolRules.Resolve(null, saved, policy));
+    }
+
+    [Fact]
+    public void Network_tool_ports_and_ping_count_are_limited()
+    {
+        Assert.Equal([22, 3389], NetToolRules.Ports([22, 3389, 22]).Ports!);
+        Assert.Null(NetToolRules.Ports(null).Ports);
+        Assert.Null(NetToolRules.Ports([]).Ports);
+        Assert.Null(NetToolRules.Ports([0]).Ports);
+        Assert.Null(NetToolRules.Ports([65536]).Ports);
+        Assert.NotNull(NetToolRules.Ports(Enumerable.Range(1, NetToolRules.MaxPorts)).Ports);
+        Assert.Null(NetToolRules.Ports(Enumerable.Range(1, NetToolRules.MaxPorts + 1)).Ports);
+        Assert.Equal(4, NetToolRules.PingCount(null));
+        Assert.Equal(1, NetToolRules.PingCount(0));
+        Assert.Equal(NetToolRules.MaxPingCount, NetToolRules.PingCount(1000));
+    }
 }

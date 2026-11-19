@@ -14,6 +14,7 @@ using JulOS.Frontend.Hosts;
 using JulOS.Frontend.Modules;
 using JulOS.Frontend.Remote;
 using JulOS.Frontend.SystemInfo;
+using JulOS.Frontend.Tools;
 using JulOS.Integrations;
 using JulOS.Integrations.Agent;
 using JulOS.Integrations.Display;
@@ -31,6 +32,8 @@ if (args.Length > 0 && args[0] == "user") return await UserCli.RunAsync(args[1..
 if (args.Length > 0 && args[0] == "backup") return await BackupCli.RunAsync(args[1..]);
 // Diagnose ohne Datenbank: dotnet JulOS.dll diag encoders
 if (args.Length > 0 && args[0] == "diag") return DiagCli.Run(args[1..]);
+// Gesundheitspruefung fuer den Container-Healthcheck: dotnet JulOS.dll health
+if (args.Length > 0 && args[0] == "health") return await HealthCli.RunAsync();
 
 var builder = WebApplication.CreateSlimBuilder(args);
 builder.WebHost.ConfigureKestrel(o => o.AddServerHeader = false);
@@ -48,6 +51,7 @@ builder.Services.AddSingleton<UserStore>();
 builder.Services.AddSingleton<HostStore>();
 builder.Services.AddSingleton<ConnectionStore>();
 builder.Services.AddSingleton<TcpProbe>();
+builder.Services.AddSingleton<NetTools>();
 builder.Services.AddSingleton(new SecretBox(SecretBox.ResolveKey(builder.Configuration["JULOS_SECRET_KEY"], builder.Configuration["JULOS_DATA"])));
 builder.Services.AddSingleton(new HostPolicy(builder.Configuration["JULOS_ALLOWED_HOSTS"]));
 builder.Services.AddSingleton<SessionStore>();
@@ -176,6 +180,7 @@ app.MapAgentLink(info);
 app.MapSystem();
 app.MapFiles();
 app.MapModules();
+app.MapNetTools();
 
 app.Run();
 return 0;

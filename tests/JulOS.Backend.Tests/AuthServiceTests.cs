@@ -9,7 +9,7 @@ public sealed class AuthServiceTests
 {
     private const string Password = "korrektes pferd batterie";
 
-    private sealed class Rig(TestDb db)
+    internal sealed class Rig(TestDb db)
     {
         public ManualTime Time { get; } = new(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 30 * 30 + 1));
         public UserStore Users { get; } = new(db.Data);

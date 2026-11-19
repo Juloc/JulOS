@@ -333,6 +333,15 @@ function toggleFullscreen() {
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   else document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => toast('Vollbild nicht möglich'));
 }
+// Im Vollbild die Systemtasten (Esc, Alt+Tab, Windows-Taste, Strg+W/T/N) an den fernen Rechner geben statt an den Browser (Tastatursperre: nur Chrome und
+// Edge, nur im Vollbild und nur auf sicheren Seiten). Esc gedrueckt halten beendet das Vollbild weiterhin.
+const LOCKED_KEYS = ['Escape', 'Tab', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight', 'KeyW', 'KeyT', 'KeyN', 'F4', 'F5'];
+document.addEventListener('fullscreenchange', () => {
+  const kb = navigator.keyboard;
+  if (!kb || !kb.lock) return;
+  if (document.fullscreenElement) kb.lock(LOCKED_KEYS).catch(() => { /* nicht erlaubt: die Tasten bleiben beim Browser */ });
+  else if (kb.unlock) kb.unlock();
+});
 function openClipDlg() {
   const s = cur();
   el.remoteClip.value = (s && s.clipText) || '';
@@ -687,7 +696,7 @@ export class RemoteSession extends Session {
       return this.streamFailed('Dieser Browser kann das Bild nicht dekodieren (H.264 mit WebCodecs, die Seite braucht HTTPS). Bitte einen aktuellen Browser nutzen und „Neu verbinden“ tippen.');
     }
     if (stale()) return;
-    let ticket, driveMode = null;
+    let ticket, driveMode = null, keyLayout = 'de';
     // Eine erhaltene Sitzung des Servers wieder aufnehmen: kein Ticket, kein Passwort, kein neuer Login am Ziel (der Server nimmt das Token, siehe resume.js)
     const resumeToken = this.everConnected && this.resume.usable() ? this.resume.token : null;
     if (!resumeToken) try {
@@ -698,7 +707,7 @@ export class RemoteSession extends Session {
       if (stale()) return;
       if (resp.status === 401) return this.requestClose('Die Sitzung ist abgelaufen. Bitte neu anmelden.', 'auth');
       if (!resp.ok) throw new Error(data.error || 'Fehler ' + resp.status);
-      ticket = data.ticket; driveMode = data.drive || null;
+      ticket = data.ticket; driveMode = data.drive || null; keyLayout = data.layout || 'de';
     } catch (e) {
       if (stale()) return;
       const msg = e.name === 'TimeoutError' || e.name === 'TypeError' ? 'Keine Verbindung zum Server. Netz prüfen.' : e.message;
@@ -708,7 +717,7 @@ export class RemoteSession extends Session {
     }
 
     const wsBase = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
-    const client = new StreamClient(wsBase + '/api/remote/screen');
+    const client = new StreamClient(wsBase + '/api/remote/screen', keyLayout);
     this.wireAudio(client);
     client.onsession = (o) => { if (this.client === client) this.resume.offered(o.token, o.keep); };
     // Der Server kennt das Token nicht mehr (abgelaufen, Neustart, Sitzung dort beendet): ganz normal neu aufbauen, mit Ticket und neuem Login
@@ -1251,7 +1260,7 @@ export class RemoteSession extends Session {
     const fwd = (state) => {
       if (this.client !== client) return;
       const s = display.getScale() || 1;
-      client.sendMouseState(mouseState(state.x / s, state.y / s, state.left, state.middle, state.right, state.up, state.down));
+      client.sendMouseState({ ...state, x: state.x / s, y: state.y / s });
     };
     mouse.onmousedown = mouse.onmouseup = mouse.onmousemove = fwd;
     mouse.onmouseout = () => {};

@@ -32,3 +32,26 @@ public sealed class AppInfoTests
         Assert.Equal(declared, AppInfo.From(typeof(Program).Assembly, null).Version);
     }
 }
+
+/// <summary>Auswertung der Gesundheitspruefung fuer den Container-Healthcheck.</summary>
+public sealed class HealthCheckTests
+{
+    [Theory]
+    [InlineData("{\"ok\":true,\"db\":true,\"version\":\"1\"}", true)]
+    [InlineData("{\"ok\":false,\"db\":false,\"version\":\"1\"}", false)]
+    [InlineData("{\"db\":true}", false)]
+    [InlineData("[true]", false)]
+    [InlineData("<html>502</html>", false)]
+    [InlineData("", false)]
+    public void Only_a_true_ok_counts_as_healthy(string body, bool healthy) => Assert.Equal(healthy, HealthCheck.IsHealthy(body));
+
+    [Theory]
+    [InlineData(null, 8080)]
+    [InlineData("", 8080)]
+    [InlineData("9000", 9000)]
+    [InlineData("9000;9001", 9000)]
+    [InlineData("0", 8080)]
+    [InlineData("70000", 8080)]
+    [InlineData("abc", 8080)]
+    public void The_port_comes_from_the_server_setting(string? setting, int port) => Assert.Equal(port, HealthCheck.Port(setting));
+}

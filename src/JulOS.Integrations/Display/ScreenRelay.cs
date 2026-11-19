@@ -672,6 +672,9 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         return false;
     }
 
+    /// <summary>Maustasten wie im Browser: 0 links, 1 Mitte, 2 rechts, 3 zurueck, 4 vor.</summary>
+    internal static bool IsMouseButton(byte button) => button <= 4;
+
     internal static void Handle(ScreenStream stream, ReadOnlySpan<byte> m)
     {
         switch (m[0])
@@ -682,7 +685,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             case ScreenProtocol.FromBrowserMove when m.Length >= 5:
                 stream.MouseMove(BinaryPrimitives.ReadUInt16BigEndian(m[1..]), BinaryPrimitives.ReadUInt16BigEndian(m[3..]));
                 break;
-            case ScreenProtocol.FromBrowserButton when m.Length >= 3 && m[1] <= 2:
+            case ScreenProtocol.FromBrowserButton when m.Length >= 3 && IsMouseButton(m[1]):
                 stream.MouseButton(m[1], m[2] != 0);
                 break;
             case ScreenProtocol.FromBrowserWheel when m.Length >= 4:

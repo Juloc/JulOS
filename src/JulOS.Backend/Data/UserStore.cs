@@ -25,6 +25,13 @@ public sealed class UserStore(NpgsqlDataSource db)
         return await r.ReadAsync(ct) ? Read(r) : null;
     }
 
+    public async Task<UserRow?> FindByIdAsync(Guid id, CancellationToken ct = default)
+    {
+        await using var cmd = db.Cmd($"select {Columns} from users where id = $1", id);
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        return await r.ReadAsync(ct) ? Read(r) : null;
+    }
+
     /// <summary>Legt ein Konto samt Wiederherstellungscodes an (in einer Transaktion). Bei der Ersteinrichtung werden vorher unbestaetigte Konten entfernt.</summary>
     public async Task<UserRow> CreateAsync(string name, string passwordHash, string totpSecret, bool confirmed, IEnumerable<string> recoveryHashes, bool replacePending, CancellationToken ct = default)
     {
@@ -77,24 +84,26 @@ public sealed class UserStore(NpgsqlDataSource db)
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    public async Task SetPasswordAsync(Guid id, string passwordHash, bool endSessions, CancellationToken ct = default)
+    /// <param name="keepSession">Bei <paramref name="endSessions"/>: diese Sitzung (Id) bleibt bestehen, zum Beispiel die, in der das Passwort geaendert wird.</param>
+    public async Task SetPasswordAsync(Guid id, string passwordHash, bool endSessions, CancellationToken ct = default, Guid? keepSession = null)
     {
         await using var conn = await db.OpenConnectionAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
         await using (var cmd = conn.Cmd(tx, "update users set password_hash = $2 where id = $1", id, passwordHash)) await cmd.ExecuteNonQueryAsync(ct);
-        if (endSessions) await using (var cmd = conn.Cmd(tx, "delete from sessions where user_id = $1", id)) await cmd.ExecuteNonQueryAsync(ct);
+        if (endSessions) await using (var cmd = conn.Cmd(tx, "delete from sessions where user_id = $1 and ($2::uuid is null or id <> $2)", id, keepSession)) await cmd.ExecuteNonQueryAsync(ct);
         await tx.CommitAsync(ct);
     }
 
-    /// <summary>Neuer TOTP-Schluessel und neue Wiederherstellungscodes; beendet alle Sitzungen.</summary>
-    public async Task ReplaceTotpAsync(Guid id, string secret, IEnumerable<string> recoveryHashes, CancellationToken ct = default)
+    /// <summary>Neuer TOTP-Schluessel und neue Wiederherstellungscodes; beendet alle Sitzungen (ausser <paramref name="keepSession"/>).</summary>
+    /// <param name="lastStep">Der Zeitschritt, mit dem der neue Schluessel bestaetigt wurde (0 bei der Konsole): derselbe Code geht danach nicht noch einmal.</param>
+    public async Task ReplaceTotpAsync(Guid id, string secret, IEnumerable<string> recoveryHashes, CancellationToken ct = default, Guid? keepSession = null, long lastStep = 0)
     {
         await using var conn = await db.OpenConnectionAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
-        await using (var cmd = conn.Cmd(tx, "update users set totp_secret = $2, totp_last_step = 0, totp_confirmed = true where id = $1", id, secret)) await cmd.ExecuteNonQueryAsync(ct);
+        await using (var cmd = conn.Cmd(tx, "update users set totp_secret = $2, totp_last_step = $3, totp_confirmed = true where id = $1", id, secret, lastStep)) await cmd.ExecuteNonQueryAsync(ct);
         await using (var cmd = conn.Cmd(tx, "delete from recovery_codes where user_id = $1", id)) await cmd.ExecuteNonQueryAsync(ct);
         await InsertRecoveryAsync(conn, tx, id, recoveryHashes, ct);
-        await using (var cmd = conn.Cmd(tx, "delete from sessions where user_id = $1", id)) await cmd.ExecuteNonQueryAsync(ct);
+        await using (var cmd = conn.Cmd(tx, "delete from sessions where user_id = $1 and ($2::uuid is null or id <> $2)", id, keepSession)) await cmd.ExecuteNonQueryAsync(ct);
         await tx.CommitAsync(ct);
     }
 

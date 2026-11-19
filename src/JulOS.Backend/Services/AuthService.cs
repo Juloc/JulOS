@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
 using Microsoft.Extensions.Logging;
@@ -7,6 +8,12 @@ namespace JulOS.Backend.Services;
 public sealed record AuthResult(bool Ok, int Status, string? Error = null, int RetryAfter = 0, string? User = null, string? Token = null, int RecoveryLeft = 0);
 
 public sealed record SetupBegin(string Secret, string Uri, string[] Recovery);
+
+public sealed record TotpChange(string Secret, string Uri);
+
+public sealed record TotpChangeResult(bool Ok, int Status, string? Error = null, int RetryAfter = 0, TotpChange? Data = null);
+
+public sealed record RecoveryResult(bool Ok, int Status, string? Error = null, int RetryAfter = 0, string[]? Recovery = null);
 
 public sealed record SetupBeginResult(bool Ok, int Status, string? Error = null, int RetryAfter = 0, SetupBegin? Data = null);
 
@@ -110,6 +117,95 @@ public sealed class AuthService(UserStore users, SessionStore sessions, Password
         var token = await sessions.CreateAsync(user.Id, ip, userAgent, ct);
         log.LogInformation("Angemeldet: {User} von {Ip}{Recovery}", user.Name, ip, recoveryHash is not null ? " (Wiederherstellungscode)" : "");
         return new(true, 200, User: user.Name, Token: token, RecoveryLeft: await users.RecoveryLeftAsync(user.Id, ct));
+    }
+
+    // ---- Konto in der Oberflaeche: Passwort aendern, Authenticator neu einrichten. Immer mit gueltiger Sitzung (ApiGuard) UND dem aktuellen Passwort. ----
+
+    private const string TooMany = "Zu viele Versuche. Bitte später erneut versuchen.";
+    private const string WrongCurrent = "Das aktuelle Passwort stimmt nicht.";
+
+    /// <summary>So lange gilt ein neuer, noch nicht bestaetigter Authenticator-Schluessel.</summary>
+    public static readonly TimeSpan TotpChangeLifetime = TimeSpan.FromMinutes(10);
+
+    private readonly ConcurrentDictionary<Guid, (string Secret, DateTimeOffset Until)> _pendingTotp = new();
+
+    /// <summary>Prueft das aktuelle Passwort einer angemeldeten Person. Fehlversuche zaehlen je Konto ("acct:") und je Adresse; die teure Pruefung laeuft je Konto nur einmal gleichzeitig.</summary>
+    private async Task<(UserRow? User, AuthResult? Refused)> VerifyCurrentAsync(SessionIdentity who, string? current, string ip, CancellationToken ct)
+    {
+        var keys = new[] { "acct:" + who.UserId, "ip:" + ip };
+        var wait = keys.Max(limiter.Wait);
+        if (wait > TimeSpan.Zero) return (null, new(false, 429, TooMany, (int)Math.Ceiling(wait.TotalSeconds)));
+        if (current is null || current.Length is 0 or > PasswordPolicy.MaxLength) return (null, new(false, 400, "Eingabe ungültig."));
+        var busy = "acct-busy:" + who.UserId;
+        if (!limiter.TryBegin(busy, 1)) return (null, new(false, 429, TooMany, 5));
+        try
+        {
+            var user = await users.FindByIdAsync(who.UserId, ct);
+            if (user is null) return (null, new(false, 401, "Nicht angemeldet."));
+            var (ok, _) = await hasher.VerifyAsync(current, user.PasswordHash);
+            if (!ok)
+            {
+                foreach (var k in keys) limiter.Fail(k);
+                log.LogWarning("Konto: falsches aktuelles Passwort für {User} von {Ip}", user.Name, ip);
+                return (null, new(false, 403, WrongCurrent));
+            }
+            return (user, null);
+        }
+        finally { limiter.End(busy); }
+    }
+
+    /// <summary>Neues Passwort setzen. Alle anderen Geraete werden abgemeldet, dieses bleibt angemeldet.</summary>
+    public async Task<AuthResult> ChangePasswordAsync(SessionIdentity who, string? current, string? next, string ip, CancellationToken ct = default)
+    {
+        var (user, refused) = await VerifyCurrentAsync(who, current, ip, ct);
+        if (user is null) return refused!;
+        var problem = PasswordPolicy.Problem(next, user.Name);
+        if (problem.Length > 0) return new(false, 400, problem);
+        if (next == current) return new(false, 400, "Das neue Passwort muss sich vom aktuellen unterscheiden.");
+        await users.SetPasswordAsync(user.Id, await hasher.HashAsync(next!), endSessions: true, ct, keepSession: who.Id);
+        limiter.Succeed("acct:" + user.Id);
+        log.LogWarning("Konto: Passwort geändert für {User} von {Ip}, andere Geräte abgemeldet", user.Name, ip);
+        return new(true, 200, User: user.Name);
+    }
+
+    /// <summary>Schritt 1 fuer einen neuen Authenticator: mit dem aktuellen Passwort einen neuen Schluessel anfordern. Gilt erst nach <see cref="FinishTotpChangeAsync"/>.</summary>
+    public async Task<TotpChangeResult> BeginTotpChangeAsync(SessionIdentity who, string? current, string ip, CancellationToken ct = default)
+    {
+        var (user, refused) = await VerifyCurrentAsync(who, current, ip, ct);
+        if (user is null) return new(false, refused!.Status, refused.Error, refused.RetryAfter);
+        var now = clock.GetUtcNow();
+        foreach (var (id, p) in _pendingTotp) if (p.Until < now) _pendingTotp.TryRemove(id, out _);
+        var secret = Totp.NewSecret();
+        _pendingTotp[user.Id] = (secret, now + TotpChangeLifetime);
+        log.LogWarning("Konto: neuer Authenticator angefordert für {User} von {Ip}", user.Name, ip);
+        return new(true, 200, Data: new TotpChange(secret, Totp.Uri(user.Name, secret)));
+    }
+
+    /// <summary>Schritt 2: der erste Code aus dem neuen Authenticator. Danach gelten der neue Schluessel und neue Wiederherstellungscodes (die alten entfallen), andere Geraete werden abgemeldet.</summary>
+    public async Task<RecoveryResult> FinishTotpChangeAsync(SessionIdentity who, string? code, string ip, CancellationToken ct = default)
+    {
+        var keys = new[] { "acct:" + who.UserId, "ip:" + ip };
+        var wait = keys.Max(limiter.Wait);
+        if (wait > TimeSpan.Zero) return new(false, 429, TooMany, (int)Math.Ceiling(wait.TotalSeconds));
+        var now = clock.GetUtcNow();
+        if (!_pendingTotp.TryGetValue(who.UserId, out var pending) || pending.Until < now)
+        {
+            _pendingTotp.TryRemove(who.UserId, out _);
+            return new(false, 400, "Der neue Schlüssel ist abgelaufen. Bitte noch einmal beginnen.");
+        }
+        var step = Totp.Check(pending.Secret, (code ?? "").Replace(" ", ""), 0, now);
+        if (step is null)
+        {
+            foreach (var k in keys) limiter.Fail(k);
+            return new(false, 401, "Der Code stimmt nicht. Prüfe den Eintrag in der App und die Uhrzeit des Handys.");
+        }
+        // nur der Besitzer dieses Eintrags darf ihn einloesen, und nur einmal
+        if (!_pendingTotp.TryRemove(new KeyValuePair<Guid, (string, DateTimeOffset)>(who.UserId, pending))) return new(false, 400, "Der neue Schlüssel ist abgelaufen. Bitte noch einmal beginnen.");
+        var (plain, hashes) = RecoveryCodes.Generate();
+        await users.ReplaceTotpAsync(who.UserId, pending.Secret, hashes, ct, keepSession: who.Id, lastStep: step.Value);
+        limiter.Succeed("acct:" + who.UserId);
+        log.LogWarning("Konto: Authenticator ersetzt für {User} von {Ip}, neue Wiederherstellungscodes, andere Geräte abgemeldet", who.UserName, ip);
+        return new(true, 200, Recovery: plain);
     }
 
     public Task<bool> IsSessionAliveAsync(Guid sessionId, CancellationToken ct = default) => sessions.IsAliveAsync(sessionId, ct);

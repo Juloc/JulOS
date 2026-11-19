@@ -75,7 +75,7 @@ Browser installieren PWAs und erlauben die Zwischenablage-API nur ueber **HTTPS*
 Eine Fernsteuerung darf nicht allein durch das Desktop-Passwort geschuetzt sein.
 
 - **Eigene Anmeldung:** Passwort (Argon2id) plus Authenticator-Code, zehn Wiederherstellungscodes, langlebige rotierende Sitzungen (in PostgreSQL nur als Hash), Sperre mit wachsender Wartezeit. Jede API und der WebSocket brauchen eine Sitzung, siehe [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-- **Erster Start:** das erste Konto legst du im Browser an, mit einem einmaligen Setup-Code aus dem Server-Log. Danach ist die Einrichtung geschlossen.
+- **Erster Start:** das erste Konto legst du im Browser an, mit einem einmaligen Setup-Code aus dem Server-Log. Danach ist die Einrichtung geschlossen. Das Authenticator-Geheimnis siehst du auch als QR-Code; Passwort und Authenticator aenderst du spaeter in der App (Handy: Profil, Desktop: Einstellungen), jeweils mit dem aktuellen Passwort. Ein kleiner Dialog (Ping, DNS-Abfrage, Port-Test) prueft vom Server aus, ob die Ziele deiner gespeicherten Verbindungen antworten.
 - **Verbindungen** laufen ueber Einmal-Tickets (30 s). Das Passwort des Ziels tippst du pro Verbindung (hoechstens 30 s im Speicher, nie geloggt) oder es wird auf Wunsch AES-256-GCM-verschluesselt gespeichert, mit einem Schluessel nur in den Server-Einstellungen; es geht nie zurueck zum Browser.
 - PostgreSQL hat keinen veroeffentlichten Port. Offene Verbindungen enden mit ihrer Sitzung.
 - **mTLS** im Proxy (optionale Zusatzschicht): nur dein Handy mit Client-Zertifikat erreicht die Anmeldeseite. Erzeugen mit
@@ -98,7 +98,7 @@ Die App selbst braucht diesen Weg nicht mehr: die Stream-Engine sendet Bilder un
 - `tools/julos-agent.py` Linux-Agent (Fenster, Programme, Programm-Modus, ausgehende Verbindung zum Server), `tools/julos-clip.py` Foto-Helfer
 - `tools/install-linux-agent.sh`, `tools/julos-user.sh`, `tools/make-client-cert.sh`
 - `docs/AGENT_API.md` Agent-API, `docs/ARCHITECTURE.md` Stack und Sicherheitskonzept, `docs/MODULES.md` die optionalen Module Caddy und DDNS (nur lesen, standardmaessig aus), `caddy/Caddyfile.example`
-- `.github/workflows/docker.yml` baut das Image fuer `ghcr.io/<owner>/<repo>` (amd64 + arm64)
+- `.github/workflows/docker.yml` baut das Image fuer `ghcr.io/<owner>/<repo>` (amd64 + arm64; die SDK-Stufe laeuft nativ, ohne Emulation), `.github/workflows/tests.yml` fuehrt die Server-Tests (mit PostgreSQL), die Browser-Logik-Tests und eine NuGet-Schwachstellenmeldung aus
 
 ## Ausblick
 

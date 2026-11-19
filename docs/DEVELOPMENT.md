@@ -45,7 +45,9 @@ docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/.env exec -it ju
 docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/.env exec -it julos dotnet JulOS.dll user passwd NAME
 ```
 
-`add`, `passwd`, `totp` (new authenticator and recovery codes), `logout` and `remove` are available too.
+`add`, `passwd`, `totp` (new authenticator and recovery codes), `logout` and `remove` are available too. While signed in, the password and the authenticator can also be changed in the app (phone: Profil, desktop: Einstellungen), see [ARCHITECTURE.md](ARCHITECTURE.md).
+
+The QR code of the authenticator secret comes from `wwwroot/qr.js` (byte mode, error correction M, versions 1 to 10). It is checked by `tests/frontend/qr.test.mjs` (Reed-Solomon vector, structure, format bits) and was additionally decoded with OpenCV's QR reader for every version 1 to 10 and for a screenshot of the real dialog (a throwaway venv, not part of the repo).
 To start over: `docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/.env down -v`.
 
 ## The browser client
@@ -141,13 +143,26 @@ dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj    # 
 | `JULOS_UPLOAD_DIR` | shared folder for photo uploads, default `/uploads`; its disk is the one the system overview shows |
 | `JULOS_FILES_ROOT` | the one folder the read-only file browser shows, default `JULOS_UPLOAD_DIR`; `off` disables the file browser |
 | `JULOS_CADDY`, `JULOS_DDNS` | `off` (default) or `read`: the read-only Caddy and DDNS modules; their other settings (`JULOS_CADDYFILE`, `JULOS_CADDY_ADMIN_URL`, `JULOS_DDNS_HOSTS`, `JULOS_DDNS_FRITZBOX_URL`, `JULOS_DDNS_IP_URL`, `JULOS_DDNS_CACHE_SECONDS`) are in [MODULES.md](MODULES.md) |
+| `JULOS_NETTOOLS` | `off` switches the network tools (ping, DNS, port test) off; default on, see [ARCHITECTURE.md](ARCHITECTURE.md) |
 | `JULOS_SETUP_CODE` | optional fixed setup code (otherwise a random one is logged while no account exists) |
 | `JULOS_MAX_SESSIONS_PER_USER` | most remote sessions (RDP and SSH together) one user may have open at once, default `8` |
 | `JULOS_DRIVE_ROOT` | the one folder that connections may hand to the desktop as a drive ; empty or `off` (default) disables drive redirection; see DRIVES.md |
 | `JULOS_STREAM_KEEP_SECONDS` | how long a stream (RDP) session lives on without a browser after the connection dropped, default `300`, `0` = off, at most `3600`; see SESSIONS.md |
 | `JULOS_TRUSTED_PROXIES` | networks whose `X-Forwarded-*` headers are trusted (default: private networks) |
 
+## Container hardening and health
+
+The Compose files (`docker-compose.yml`, `docker-compose.image.yml`) run the server with `no-new-privileges` and `cap_drop: ALL`, and give it a health check: `dotnet JulOS.dll health` asks `/api/health` on the server's own port (the runtime image has no `curl`) and is healthy only when the database answers too (`ok: true`). `docker compose ps` shows `healthy` after the first 40 s. `/data` is a named volume (`julos-data`); the short-lived service `julos-data-init` hands it to `JULOS_UID`, and the server mounts it `nocopy` because Docker would otherwise give an empty volume the owner of the image folder (`app`) on every start and the server could not write `secret.key` there. Checked on a throwaway container: `secret.key` appears in the volume as user 1020, `healthy` within 15 s, `health` exits 1 against a wrong port. The root file system stays writable by default; `read_only: true` with a `tmpfs` for `/tmp` is in the Compose files as a commented option: start and health check were checked with it, a full run (RDP with a GPU, uploads, backup) was not. Image tags are not pinned to digests (needs a bump routine).
+
+The image is built for amd64 and arm64 by one workflow. The SDK stage is `--platform=$BUILDPLATFORM`: restore and publish run natively on the builder and only the small runtime stage is made for arm64 (the output is plain .NET, no native packages, so it is the same for both). Not verified here: an actual arm64 build (needs the builder, the first run of the workflow shows it).
+
+## Continuous integration
+
+`.github/workflows/tests.yml` runs on every push to `main` and every pull request: the server tests against a PostgreSQL service (throwaway password, set as `JULOS_TEST_DB`), the display engine tests, `node --test tests/frontend` and `py_compile` for the agent scripts. Tests that need a real target (SSH, RDP, GPU) are skipped there; they run with `deploy/dev/test.sh` and `deploy/dev/test-display.sh`. A second job runs `dotnet list package --vulnerable --include-transitive` and only reports (job summary and a warning), it never fails the build.
+
 ## Things learned from the test instance
+
+- **A new API request or response type must be listed in `Json/AppJson.cs`** (JSON runs without reflection in the server). `dotnet test` cannot tell you if one is missing: the test host runs with reflection on, so everything works there and the real server answers 500 ("JsonTypeInfo metadata ... was not provided"). It showed only on a real run (`dotnet run` or the image). Check every new endpoint once against a running server.
 
 - Connecting a second time to a disconnected xrdp session ("reconnected session") works, and a full picture (about 80 KB of image data) arrives about 1.3 s after connecting. The browser client hides its loading overlay as soon as the remote reports a picture size, not when the picture is "not black".
 - **Black picture on the real VM came from RDP's graphics pipeline (GFX).** The VM runs xrdp 0.10 (Debian 13), which the removed Guacamole engine drove through GFX; the picture then stayed black for seconds, sometimes until a resize, and Windows hosts behave alike. The old test target (xrdp 0.9) never used GFX and so never showed it. The test target is now Debian 13 with xrdp 0.10 like the VM, and the desktop connection ran without GFX: picture after about 0.25 s on a reconnect, no resize nudge needed (with GFX: about 3.5 s and a nudge). The own engine asks for the graphics pipeline only with `JULOS_RDP_GFX=on`, see [RDPGFX.md](RDPGFX.md).

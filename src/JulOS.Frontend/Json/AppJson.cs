@@ -7,6 +7,8 @@ using JulOS.Backend.Modules;
 using JulOS.Frontend.Files;
 using JulOS.Frontend.Hosts;
 using JulOS.Frontend.Modules;
+using JulOS.Frontend.Tools;
+using JulOS.Integrations.Reachability;
 using JulOS.Frontend.SystemInfo;
 
 namespace JulOS.Frontend;
@@ -23,6 +25,11 @@ namespace JulOS.Frontend;
 [JsonSerializable(typeof(SetupFinishRequest))]
 [JsonSerializable(typeof(LoginRequest))]
 [JsonSerializable(typeof(LoginResponse))]
+[JsonSerializable(typeof(PasswordChangeRequest))]
+[JsonSerializable(typeof(TotpBeginRequest))]
+[JsonSerializable(typeof(TotpBeginResponse))]
+[JsonSerializable(typeof(TotpFinishRequest))]
+[JsonSerializable(typeof(TotpFinishResponse))]
 [JsonSerializable(typeof(MeResponse))]
 [JsonSerializable(typeof(SessionsResponse))]
 [JsonSerializable(typeof(EndedResponse))]
@@ -47,6 +54,13 @@ namespace JulOS.Frontend;
 [JsonSerializable(typeof(OverviewResponse))]
 [JsonSerializable(typeof(FileListingDto))]
 [JsonSerializable(typeof(FileSearchDto))]
+[JsonSerializable(typeof(ToolTargetsResponse))]
+[JsonSerializable(typeof(PingRequest))]
+[JsonSerializable(typeof(DnsRequest))]
+[JsonSerializable(typeof(PortsRequest))]
+[JsonSerializable(typeof(PingOutcome))]
+[JsonSerializable(typeof(DnsOutcome))]
+[JsonSerializable(typeof(PortsResponse))]
 [JsonSerializable(typeof(ModulesResponse))]
 [JsonSerializable(typeof(CaddyListing))]
 [JsonSerializable(typeof(CaddyReachability))]

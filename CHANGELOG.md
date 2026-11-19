@@ -4,6 +4,11 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unreleased]
+
+### Neu
+- Module Caddy und DDNS, erste Stufe, nur lesend und standardmäßig aus (`JULOS_CADDY`, `JULOS_DDNS`, siehe [docs/MODULES.md](docs/MODULES.md)): Caddy zeigt „Domain → Ziel“ aus einem nur lesend eingebundenen Caddyfile und/oder der Admin-API (ein fester Abruf), mit einer Erreichbarkeitsprüfung nur der gelisteten Ziele; DDNS vergleicht die öffentliche Adresse (Router oder Lookup-Dienst) mit der Namensauflösung der eingestellten Namen („Synchron“ oder „Nicht synchron“, mit Zeit der Prüfung), ohne Token und ohne zu schreiben. Fenster im Desktop (Dock, Launcher, Menü) und Karten in der Handy-Shell erscheinen nur, wenn der Server das Modul eingeschaltet hat.
+
 ## [0.4.0] - 2026-11-19
 
 ### Neu

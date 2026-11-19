@@ -1,13 +1,18 @@
 // Module Caddy und DDNS (modules.js): was die Oberflaeche aus den Antworten des Servers macht.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadModules, routeParts, reachMap, reachText, reachClass, ddnsStateLabel, ddnsHeadline, ago, sourceLabel } from '../../src/JulOS.Frontend/wwwroot/modules.js';
+import { ddnsOutcomeText, ddnsOutcomeClass, historyRow, ddnsControlLine, certClass, certStateText, certDetail, certSummary, caddyHealthText, caddyHealthClass, logClass, TEMPLATES, templateById, fromTemplate, originOf, stateClass, stateText, errorText, msText, fmtMetric, fmtBytes, svcIcon, ICON_KEYS, loadModules, anyModule, routeParts, reachMap, reachText, reachClass, ddnsStateLabel, ddnsHeadline, ago, sourceLabel } from '../../src/JulOS.Frontend/wwwroot/modules.js';
 
 test('modules: only what the server switched on is shown, every error means off', async () => {
-  assert.deepEqual(await loadModules(async () => ({ caddy: 'read', ddns: 'off' })), { caddy: true, ddns: false });
-  assert.deepEqual(await loadModules(async () => ({ caddy: 'off', ddns: 'off' })), { caddy: false, ddns: false });
-  assert.deepEqual(await loadModules(async () => { throw Object.assign(new Error('Nicht angemeldet.'), { status: 401 }); }), { caddy: false, ddns: false });
-  assert.deepEqual(await loadModules(async () => null), { caddy: false, ddns: false });
+  const off = { caddy: false, ddns: false, services: false, modes: { caddy: 'off', ddns: 'off', services: 'off' } };
+  assert.deepEqual(await loadModules(async () => ({ caddy: 'read', ddns: 'off', services: 'control' })),
+    { caddy: true, ddns: false, services: true, modes: { caddy: 'read', ddns: 'off', services: 'control' } });
+  assert.deepEqual(await loadModules(async () => ({ caddy: 'off', ddns: 'off' })), off);          // ein Server ohne das Modul Dienste
+  assert.deepEqual(await loadModules(async () => ({ caddy: 'write', ddns: 5, services: 'off' })), off);   // unbekannte Werte gelten als aus
+  assert.deepEqual(await loadModules(async () => { throw Object.assign(new Error('Nicht angemeldet.'), { status: 401 }); }), off);
+  assert.deepEqual(await loadModules(async () => null), off);
+  assert.equal(anyModule(off), false);
+  assert.equal(anyModule({ ...off, services: true }), true);
 });
 
 test('routes: domain, path and target as text', () => {
@@ -47,4 +52,145 @@ test('time and source labels', () => {
   assert.equal(ago('2026-11-19T11:55:00Z', now), 'vor 5 min');
   assert.equal(ago('2026-11-19T09:00:00Z', now), 'vor 3 h');
   assert.equal(sourceLabel('caddyfile'), 'Caddyfile');
+});
+
+test('services: templates build the addresses from the origin of the service', () => {
+  assert.deepEqual(TEMPLATES.map((x) => x.id), ['jularr', 'jularr-library', 'caddyui', 'http']);
+  const j = fromTemplate(templateById('jularr'), 'http://192.0.2.10:8080/irgendwas?x=1');
+  assert.equal(j.openUrl, 'http://192.0.2.10:8080/');
+  assert.equal(j.healthUrl, 'http://192.0.2.10:8080/health/ready');
+  assert.equal(j.metricsUrl, 'http://192.0.2.10:8080/api/v1/admin/activity/summary');
+  assert.equal(j.headerName, 'Authorization');
+  assert.deepEqual(j.metrics.map((m) => [m.path, m.format]), [['activeCount', 'plain'], ['bytesPerSecond', 'rate'], ['importCount', 'plain'], ['errorCount', 'plain']]);
+  assert.equal(j.metrics[0].label, 'Aktive Downloads');
+  const g = fromTemplate(templateById('http'), 'https://nas.lan');
+  assert.equal(g.healthUrl, 'https://nas.lan/');
+  assert.equal(g.metricsUrl, '');
+  assert.equal(fromTemplate(templateById('http'), 'kein url').healthUrl, '');
+  assert.equal(originOf('ftp://x'), '');
+  assert.equal(templateById('gibt-es-nicht'), null);
+});
+
+test('services: state, error and response time texts', () => {
+  assert.deepEqual([stateClass({ state: 'up' }), stateClass({ state: 'down' }), stateClass({ state: 'unknown' }), stateClass(undefined)], ['ok', 'bad', 'idle', 'idle']);
+  assert.equal(stateText({ state: 'up' }), 'läuft');
+  assert.equal(stateText(undefined), 'unbekannt');
+  assert.equal(errorText({ error: 'status', httpStatus: 503 }), 'Fehlerstatus (503)');
+  assert.equal(errorText({ error: 'timeout' }), 'Zeitüberschreitung');
+  assert.equal(errorText({ error: 'etwas-neues' }), '');
+  assert.equal(errorText({}), '');
+  assert.equal(msText({ ms: 12 }), '12 ms');
+  assert.equal(msText({ ms: 0 }), '0 ms');
+  assert.equal(msText({}), '');
+});
+
+test('services: figures are shown by their format and a missing value is a dash', () => {
+  assert.equal(fmtMetric({ number: 3, format: 'plain', unit: '' }), '3');
+  assert.equal(fmtMetric({ number: 3, format: 'plain', unit: 'Stk' }), '3 Stk');
+  assert.equal(fmtMetric({ number: 1048576, format: 'rate' }), '1,0 MB/s');
+  assert.equal(fmtMetric({ number: 1536, format: 'bytes' }), '1,5 KB');
+  assert.equal(fmtMetric({ number: 42.5, format: 'percent' }), '42,5 %');
+  assert.equal(fmtMetric({ text: 'ok', unit: '' }), 'ok');
+  assert.equal(fmtMetric({ format: 'plain' }), '–');
+  assert.equal(fmtMetric(undefined), '–');
+  assert.equal(fmtBytes(512), '512 B');
+  assert.equal(fmtBytes(5 * 1024 ** 3), '5,0 GB');
+});
+
+test('services: every icon the server allows has a drawing, unknown names fall back to the globe', () => {
+  assert.equal(ICON_KEYS.length, 12);
+  for (const k of ICON_KEYS) assert.match(svcIcon(k), /<svg class="wd-i"[^>]*>.+<\/svg>/);
+  assert.equal(svcIcon('gibt-es-nicht'), svcIcon('globe'));
+});
+
+test('services: the icons of the interface are the ones the server accepts', async () => {
+  const fs = await import('node:fs');
+  const cs = fs.readFileSync(new URL('../../src/JulOS.Backend/Modules/ServiceRules.cs', import.meta.url), 'utf8');
+  const server = /Icons = \[(.*?)\]/.exec(cs)[1].split(',').map((x) => x.trim().replace(/"/g, ''));
+  assert.deepEqual([...ICON_KEYS].sort(), server.sort());
+});
+
+test('caddy: certificate states, details and the summary that feeds the warning', () => {
+  const day = (d) => String(d).slice(0, 10);
+  const ok = { state: 'ok', issuer: 'Let\'s Encrypt', notAfter: '2027-01-30T00:00:00Z', daysLeft: 72, trusted: true };
+  assert.equal(certStateText(ok), 'Gültig');
+  assert.equal(certClass(ok), 'ok');
+  assert.equal(certDetail(ok, day), 'Aussteller Let\'s Encrypt · läuft in 72 Tagen ab (2027-01-30)');
+  assert.equal(certDetail({ ...ok, daysLeft: 1, state: 'warn' }, day).includes('in 1 Tag ab'), true);
+  assert.equal(certClass({ state: 'warn' }), 'warn');
+  assert.equal(certDetail({ state: 'expired', notAfter: '2026-11-01T00:00:00Z', daysLeft: -18, issuer: 'CA', trusted: true }, day), 'Aussteller CA · abgelaufen am 2026-11-01');
+  assert.equal(certDetail({ state: 'error', error: 'timeout' }, day), 'Zeitüberschreitung');
+  assert.match(certDetail({ ...ok, trusted: false }, day), /Kette nicht vertrauenswürdig/);
+  assert.deepEqual(certSummary([ok, { state: 'warn' }, { state: 'expired' }, { state: 'error' }, { state: 'skipped' }]), { warn: 1, bad: 2, total: 4 });
+  assert.deepEqual(certSummary(undefined), { warn: 0, bad: 0, total: 0 });
+});
+
+test('caddy: health and log classes', () => {
+  assert.equal(caddyHealthText({ state: 'up', ms: 12 }), 'Caddy läuft (12 ms)');
+  assert.equal(caddyHealthText({ state: 'down' }), 'Caddy antwortet nicht');
+  assert.equal(caddyHealthText(undefined), 'Zustand unbekannt');
+  assert.deepEqual([{ state: 'up' }, { state: 'down' }, { state: 'unknown' }, undefined].map(caddyHealthClass), ['ok', 'bad', 'idle', 'idle']);
+  assert.deepEqual([200, 301, 404, 503].map(logClass), ['ok', 'ok', 'warn', 'bad']);
+});
+
+test('ddns: outcomes, history rows and the control line', () => {
+  assert.equal(ddnsOutcomeText({ outcome: 'updated' }), 'Aktualisiert.');
+  assert.match(ddnsOutcomeText({ outcome: 'tooSoon' }), /Zu früh/);
+  assert.equal(ddnsOutcomeText({ outcome: 'etwas-neues' }), 'Die Änderung ist fehlgeschlagen (siehe Verlauf).');
+  assert.deepEqual(['updated', 'current', 'failed', 'noIp'].map((o) => ddnsOutcomeClass({ outcome: o })), ['ok', 'ok', 'bad', 'idle']);
+  const when = () => 'jetzt';
+  assert.deepEqual(historyRow({ at: 'x', host: 'home.example.test', oldIp: '203.0.113.1', newIp: '203.0.113.9', trigger: 'auto', ok: true, message: 'ok' }, when),
+    { title: 'home.example.test', sub: '203.0.113.1 → 203.0.113.9', meta: 'automatisch', when: 'jetzt', cls: 'ok', state: 'geändert' });
+  const bad = historyRow({ at: 'x', host: 'h', newIp: '203.0.113.9', trigger: 'button', ok: false, message: 'missing' }, when);
+  assert.equal(bad.sub, '– → 203.0.113.9');
+  assert.equal(bad.meta, 'per Knopf · Eintrag fehlt');
+  assert.equal(bad.cls, 'bad');
+  assert.equal(ddnsControlLine({ canUpdate: false }), '');
+  assert.equal(ddnsControlLine(null), '');
+  assert.match(ddnsControlLine({ canUpdate: true, provider: 'Cloudflare', auto: true, autoSeconds: 900 }), /Cloudflare · automatisch: ein \(alle 15 min\)/);
+  assert.match(ddnsControlLine({ canUpdate: true, provider: 'DuckDNS', auto: false, autoSeconds: 300 }), /automatisch: aus/);
+});
+
+test('heimnetz: the traffic light is the worst of the modules that are switched on', async () => {
+  const { summarize, worst, loadHeimnetz } = await import('../../src/JulOS.Frontend/wwwroot/heimnetz.js');
+  assert.equal(worst([]), 'idle');
+  assert.equal(worst(['ok', 'warn', 'idle']), 'warn');
+  assert.equal(worst(['ok', 'bad', 'warn']), 'bad');
+  assert.deepEqual(summarize({}), { level: 'idle', items: [] });
+
+  const list = [{ id: 'a', name: 'Jularr' }, { id: 'b', name: 'NAS' }, { id: 'c', name: 'Wiki' }];
+  const allUp = summarize({ services: { list, statuses: list.map((s) => ({ id: s.id, state: 'up' })) } });
+  assert.deepEqual([allUp.level, allUp.items[0].text], ['ok', 'Alle 3 Dienste laufen.']);
+  const oneDown = summarize({ services: { list, statuses: [{ id: 'a', state: 'up' }, { id: 'b', state: 'down' }, { id: 'c', state: 'up' }] } });
+  assert.equal(oneDown.level, 'bad');
+  assert.match(oneDown.items[0].text, /2 von 3 laufen\. Antwortet nicht: NAS/);
+  assert.equal(summarize({ services: { list, statuses: [] } }).level, 'idle');
+  assert.equal(summarize({ services: { list: [], statuses: [] } }).items[0].text, 'Noch keine Dienste angelegt.');
+
+  const caddy = (health, certs, routes = [{ domain: 'a.test' }, { domain: 'a.test' }, { domain: 'b.test' }]) => summarize({ caddy: { health, certs: { certificates: certs }, routes } });
+  assert.deepEqual([caddy({ state: 'up' }, [{ state: 'ok' }]).level, caddy({ state: 'up' }, [{ state: 'ok' }]).items[0].text], ['ok', 'Caddy läuft · 2 Domains · 1 Zertifikat gültig']);
+  assert.equal(caddy({ state: 'up' }, [{ state: 'ok' }, { state: 'warn' }]).level, 'warn');
+  assert.equal(caddy({ state: 'up' }, [{ state: 'expired' }]).level, 'bad');
+  assert.equal(caddy({ state: 'down' }, []).level, 'bad');
+  assert.equal(caddy({ state: 'unknown' }, [], []).level, 'idle');
+  assert.equal(caddy(null, [{ state: 'skipped' }], []).level, 'idle');
+
+  assert.equal(summarize({ ddns: { state: 'synced', publicIp: '203.0.113.9', hosts: [] } }).level, 'ok');
+  assert.equal(summarize({ ddns: { state: 'notSynced', hosts: [{ state: 'notSynced' }, { state: 'synced' }] } }).items[0].text, '1 Name zeigt nicht auf die Adresse');
+  assert.equal(summarize({ ddns: { state: 'unknown', hosts: [] } }).level, 'idle');
+
+  // alles zusammen: das Schlechteste gewinnt, grau zaehlt nicht
+  assert.equal(summarize({ services: { list: [], statuses: [] }, ddns: { state: 'notSynced', hosts: [] } }).level, 'warn');
+
+  // geladen wird nur, was eingeschaltet ist, und ein Fehler macht nur das eine Modul stumm
+  const calls = [];
+  const api = async (p) => { calls.push(p); if (p.includes('certificates')) throw new Error('x'); return p.includes('status') && p.includes('ddns') ? { state: 'synced', hosts: [] } : { routes: [], services: [], statuses: [], state: 'up' }; };
+  const data = await loadHeimnetz(api, { services: false, caddy: true, ddns: true });
+  assert.ok(!calls.some((c) => c.includes('services')));
+  assert.equal(data.caddy.certs, null);
+  assert.equal(data.ddns.state, 'synced');
+  assert.equal(summarize(data).items.length, 2);
+  assert.equal((await loadHeimnetz(api, { services: false, caddy: false, ddns: false }))?.caddy, undefined);
+  const failing = await loadHeimnetz(async () => { throw new Error('x'); }, { services: false, caddy: false, ddns: true });
+  assert.equal(failing.ddns.state, 'unknown');
 });

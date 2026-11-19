@@ -53,7 +53,7 @@ Note on the dated measurement entries: the ones from 2026-11-18 and 2026-11-19 c
 
 ## Desktop modules without a backend yet: design notes (2026-11-19)
 
-**Status 2026-11-19:** the first, read-only stage of Caddy and DDNS is built (off by default, see [MODULES.md](MODULES.md)): Caddy from a read-only Caddyfile and/or the admin API (one fixed GET), DDNS without a token. Not built: Docker, every write step (`control`), Caddy logs, the history table, provider adapters. The questions below are still open; the built defaults are the safest answers.
+**Status 2026-11-19:** built (off by default, see [MODULES.md](MODULES.md)): service widgets with a Jularr template, Caddy read through the admin API (health, routes, certificates, configuration without secrets, access log), DDNS comparison plus an update stage with provider adapters and a history, and the "Heimnetz" card. Not built: Docker, Caddy writing (draft in MODULES.md). The questions below are still open; the built defaults are the safest answers.
 
 The mockup has windows for Docker, Caddy and DDNS. Each one touches something with more power than the rest of JulOS (the Docker socket, the Caddy
 admin API, a DNS token), so each gets the same shape. Apart from that, [SCOPE.md](SCOPE.md) still decides when any of this is started (milestone 3).

@@ -52,3 +52,12 @@ test('keyBytes: die Schnelltasten ergeben die Bytes, die Claude Code und Codex e
   assert.equal(keyBytes(by.slash), '/');
   assert.equal(keyBytes(by.at), '@');
 });
+
+test('findLastUrl: die letzte https-Adresse, auch ueber umbrochene Zeilen, ohne Satzzeichen am Ende', async () => {
+  const { findLastUrl } = await import('../../src/JulOS.Frontend/wwwroot/terminal-input.js');
+  const L = (text, wrapped = false) => ({ text, wrapped });
+  assert.equal(findLastUrl([]), null);
+  assert.equal(findLastUrl([L('kein Link hier'), L('http://unsicher.example/x')]), null);
+  assert.equal(findLastUrl([L('Browse to https://example.invalid/a'), L('später: https://example.invalid/b.')]), 'https://example.invalid/b');
+  assert.equal(findLastUrl([L('Open: https://example.invalid/oauth?client=1&redirect=abc'), L('def&state=xyz   ', true), L('Paste code here')]), 'https://example.invalid/oauth?client=1&redirect=abcdef&state=xyz');
+});

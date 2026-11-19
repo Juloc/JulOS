@@ -5,7 +5,7 @@ import path from 'node:path';
 import de from '../../src/JulOS.Frontend/wwwroot/i18n/de.js';
 import en from '../../src/JulOS.Frontend/wwwroot/i18n/en.js';
 import { t, tp, tk, setPref, getLang, locale, resolveLang, normalizePref, fmtNumber, applyDom, hasKey } from '../../src/JulOS.Frontend/wwwroot/i18n.js';
-import { SERVER_TEXTS, SERVER_PATTERNS, serverMsg } from '../../src/JulOS.Frontend/wwwroot/i18n-errors.js';
+import { SERVER_TEXTS, SERVER_PATTERNS, NEXT_STEP, serverMsg } from '../../src/JulOS.Frontend/wwwroot/i18n-errors.js';
 
 const WWW = new URL('../../src/JulOS.Frontend/wwwroot/', import.meta.url).pathname;
 const sources = fs.readdirSync(WWW).filter((f) => /\.(js|html)$/.test(f) && f !== 'i18n.js' && f !== 'sw.js').map((f) => [f, fs.readFileSync(path.join(WWW, f), 'utf8')]);
@@ -156,4 +156,17 @@ test('alle festen Fehlertexte des Servers sind einem Schluessel zugeordnet', () 
 test('der Service Worker haelt Modul und Woerterbuecher in der Huelle bereit', () => {
   const sw = fs.readFileSync(path.join(WWW, 'sw.js'), 'utf8');
   for (const f of ['/i18n.js', '/i18n-errors.js', '/i18n/de.js', '/i18n/en.js']) assert.ok(sw.includes(`'${f}'`), f);
+});
+
+test('Serverfehler mit naechstem Schritt: der Hinweis steht hinter dem Satz des Servers, in Deutsch und Englisch, die uebrigen bleiben unveraendert', () => {
+  for (const [key, hint] of Object.entries(NEXT_STEP)) {
+    assert.ok(Object.values(SERVER_TEXTS).includes(key), 'kein Servertext zu ' + key);
+    assert.ok(hasKey(hint), hint);
+  }
+  const text = Object.keys(SERVER_TEXTS).find((k) => SERVER_TEXTS[k] === 'err.connectFailed');
+  setPref('de', null);
+  assert.equal(serverMsg(text), text + ' ' + t('next.connect'));
+  setPref('en', null);
+  try { assert.ok(serverMsg(text).endsWith(t('next.connect')) && serverMsg(text).startsWith(t('err.connectFailed'))); } finally { setPref('de', null); }
+  assert.equal(serverMsg('Nicht gefunden.'), 'Nicht gefunden.');
 });

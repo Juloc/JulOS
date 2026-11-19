@@ -18,6 +18,11 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0
 # H.264 fuer den eigenen Bildschirm-Stream: libopenh264 2.4.1 (Ubuntu-Paket libopenh264-7, BSD, etwa 1 MB). Genau diese Version ist die, gegen die
 # der Kodierer geprueft ist; das Alpine-Paket ist eine andere (2.6.0) und wird deshalb nicht benutzt.
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libopenh264-7 && rm -rf /var/lib/apt/lists/*
+# Hardware-Kodierung auf einer Grafikkarte (VAAPI, siehe docs/ENCODERS.md): libva (MIT) und der Treiber fuer Intel-GPUs (intel-media-va-driver, MIT/BSD,
+# Ubuntu universe, etwa 13 MB). Ohne GPU im Container (kein /dev/dri) liegen sie nur da und der Server kodiert auf der CPU. Fuer eine andere GPU:
+# --build-arg VAAPI_PACKAGES="libva2 libva-drm2 mesa-va-drivers" (AMD) oder "... i965-va-driver" (aeltere Intel); leer lassen schaltet es ab.
+ARG VAAPI_PACKAGES="libva2 libva-drm2 intel-media-va-driver"
+RUN if [ -n "$VAAPI_PACKAGES" ]; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $VAAPI_PACKAGES && rm -rf /var/lib/apt/lists/*; fi
 WORKDIR /app
 COPY --from=build /app .
 ARG BUILD_DATE=

@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using System.Net.Sockets;
 using System.Net.WebSockets;
 using JulOS.Integrations.Display.Rdp;
+using JulOS.Integrations.Display.Video;
 using Microsoft.Extensions.Logging;
 
 namespace JulOS.Integrations.Display;
@@ -13,7 +14,7 @@ namespace JulOS.Integrations.Display;
 /// WebSocket offen: ein neuer loest den alten ab, der alten Seite wird das gesagt (sonst bliebe dort ein Standbild stehen). Andere Sitzungen
 /// bleiben unberuehrt; die Obergrenze pro Benutzer steckt in der <see cref="SessionRegistry"/>.
 /// </summary>
-public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, SessionRegistry? registry = null)
+public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, SessionRegistry? registry = null, EncoderSelector? encoders = null)
 {
     public static readonly TimeSpan SessionCheck = TimeSpan.FromSeconds(60);
 
@@ -26,7 +27,8 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
 
     /// <param name="sessionAlive">Wird regelmaessig gefragt; bei false endet die Sitzung (Abmeldung, abgelaufene Sitzung der App).</param>
     /// <param name="owner">Der Benutzer (fuer die Obergrenze offener Sitzungen und das Ablosen im selben Slot).</param>
-    public async Task RunAsync(WebSocket ws, ScreenTarget target, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan? sessionCheck = null, Guid? owner = null)
+    /// <param name="clientCodecs">Was der Browser dekodieren kann (aus der Adresse, siehe <see cref="ScreenProtocol.ParseCodecs"/>); ohne Angabe nur H.264.</param>
+    public async Task RunAsync(WebSocket ws, ScreenTarget target, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan? sessionCheck = null, Guid? owner = null, VideoCodecs clientCodecs = VideoCodecs.H264)
     {
         if (!await _slots.WaitAsync(0, ct).ConfigureAwait(false))
         {
@@ -36,7 +38,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
 
         try
         {
-            await RunCoreAsync(ws, target, sessionAlive, ct, sessionCheck ?? SessionCheck, owner).ConfigureAwait(false);
+            await RunCoreAsync(ws, target, sessionAlive, ct, sessionCheck ?? SessionCheck, owner, clientCodecs).ConfigureAwait(false);
         }
         finally
         {
@@ -44,7 +46,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         }
     }
 
-    private async Task RunCoreAsync(WebSocket ws, ScreenTarget target, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan sessionCheck, Guid? owner)
+    private async Task RunCoreAsync(WebSocket ws, ScreenTarget target, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan sessionCheck, Guid? owner, VideoCodecs clientCodecs)
     {
         if (!ScreenStream.IsAvailable)
         {
@@ -62,11 +64,11 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         }
 
         var started = Environment.TickCount64;
-        await using var stream = new ScreenStream(target.Options, target.MaxKilobitsPerSecond, log);
+        await using var stream = new ScreenStream(target.Options, target.MaxKilobitsPerSecond, log, encoders, clientCodecs);
         byte[]? last = null;
         try
         {
-            log.LogInformation("Bildschirm-Verbindung offen (RDP, H.264)");
+            log.LogInformation("Bildschirm-Verbindung offen (RDP; der Browser kann {Codecs})", clientCodecs);
             var run = stream.RunAsync(stop.Token);
             var send = PumpToBrowserAsync(ws, stream, ct);
             var receive = ReceiveFromBrowserAsync(ws, stream, ct);
@@ -133,7 +135,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                 {
                     case ScreenPicture picture:
                         buffer = pool.Rent(ScreenProtocol.PictureHeader + picture.Data.Length);
-                        length = ScreenProtocol.WritePicture(buffer, picture.Sequence, picture.IsKey, picture.Data);
+                        length = ScreenProtocol.WritePicture(buffer, picture.Sequence, picture.IsKey, picture.Data, picture.Codec);
                         break;
                     case ScreenCursor cursor:
                         buffer = pool.Rent(ScreenProtocol.CursorHeader + (cursor.Rgba?.Length ?? 0));
@@ -148,6 +150,9 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                         buffer = pool.Rent(5);
                         length = ScreenProtocol.WriteSize(buffer, size.Width, size.Height);
                         break;
+                    case ScreenEncoderInfo info:
+                        await SendOnceAsync(ws, ScreenProtocol.Encoder(info.Codec, info.Hardware, info.Name), ct).ConfigureAwait(false);
+                        continue;
                     case ScreenClipboardImage image:
                         await SendOnceAsync(ws, ScreenProtocol.Image(image.Format, image.Data), ct).ConfigureAwait(false);
                         continue;
@@ -288,6 +293,9 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                 break;
             case ScreenProtocol.FromBrowserPause when m.Length >= 2:
                 stream.SetPaused(m[1] != 0);
+                break;
+            case ScreenProtocol.FromBrowserCodecs when m.Length >= 2:
+                stream.SetClientCodecs((VideoCodecs)(m[1] & 3));
                 break;
         }
     }

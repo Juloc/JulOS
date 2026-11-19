@@ -5,20 +5,24 @@
  *
  * Nachrichten (alle binaer, Zahlen big endian), siehe ScreenProtocol auf dem Server:
  *   Server -> Browser: 1 Bild (flags, folge u32, H.264), 2 Zeiger, 3 Groesse, 4 Fehler, 5 uebernommen, 6 Zwischenablage (UTF-8-Text),
- *                      7 Bild aus der VM (format 1 PNG / 2 BMP), 8 Dateiliste der VM, 9 Dateistueck, 10 Ergebnis eines Sendens
+ *                      7 Bild aus der VM (format 1 PNG / 2 BMP), 8 Dateiliste der VM, 9 Dateistueck, 10 Ergebnis eines Sendens,
+ *                      30 Kodierer (codec, GPU ja/nein, Name: nur zum Anzeigen); ein Bild hat in flags Bit 1 gesetzt, wenn es H.265 ist
  *   Browser -> Server: 1 Bestaetigung (Folgenummer u32: alle Bilder bis dahin), 2 Maus bewegt, 3 Maustaste, 4 Mausrad, 5 Taste (Scancode), 6 Zeichen, 7 Fenstergroesse, 8 Schluesselbild,
  *                      9 Zwischenablage (UTF-8-Text, bis 1 MiB; der ferne Rechner holt ihn, wenn er einfuegt),
  *                      10 Senden Anfang (Bild als BMP oder Datei), 11 Stueck, 12 Ende, 13 Abbruch, 14 Datei der VM holen, 15 Holen Abbruch,
- *                      16 Pause (1 = die Ansicht ist nicht zu sehen: der Server kodiert nicht, 0 = weiter)
+ *                      16 Pause (1 = die Ansicht ist nicht zu sehen: der Server kodiert nicht, 0 = weiter),
+ *                      30 Codecs (Menge: 1 H.264, 2 H.265; beim Verbinden steht sie in der Adresse als codecs=, danach nur noch bei einem Wechsel zurueck auf H.264)
  *
  * Zwischenablage: Text wie bei Guacamole als Strom (onclipboard(stream, 'text/plain') mit onblob/onend, createClipboardStream() mit sendBlob/sendEnd),
  * damit Guacamole.StringReader und StringWriter in app.js unveraendert funktionieren. Bilder und Dateien haben eigene Rueckrufe
  * (onclipimage, onclipfiles) und Methoden (sendTransfer, fetchFile); das Format steht in docs/CLIPBOARD.md und ScreenProtocol.cs.
  * ===================================================================== */
 
-const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, image: 7, files: 8, fileChunk: 9, result: 10 };
+import { codecMask, probeCodecs, codecStringOf, decoderConfig, CODEC_H264, CODEC_HEVC } from './codecs.js';
+
+const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, image: 7, files: 8, fileChunk: 9, result: 10, encoder: 30 };
 const OUT = { ack: 1, move: 2, button: 3, wheel: 4, key: 5, unicode: 6, resize: 7, keyframe: 8, clipboard: 9,
-  sendBegin: 10, sendChunk: 11, sendEnd: 12, sendCancel: 13, fileRequest: 14, fileCancel: 15, pause: 16 };
+  sendBegin: 10, sendChunk: 11, sendEnd: 12, sendCancel: 13, fileRequest: 14, fileCancel: 15, pause: 16, codecs: 30 };
 const CHUNK = 128 * 1024;                 // so gross sind die Stuecke beim Senden (der Server nimmt bis 256 kB)
 const BUFFER_HIGH = 1024 * 1024;          // darueber wartet das Senden, bis der Socket leer laeuft (sonst steht die Maus hinter einer Datei)
 
@@ -105,21 +109,28 @@ class StreamDisplay {
 
 /* ---------- der Client ---------- */
 let supportCheck = null;
+let codecSupport = { h264: false, hevc: false };   // was isConfigSupported sagte; gilt, sobald supported() einmal fertig ist
 
 export class StreamClient {
-  /** Ob dieser Browser H.264 mit WebCodecs dekodieren kann (braucht eine sichere Seite: https oder localhost). */
+  /**
+   * Ob dieser Browser H.264 mit WebCodecs dekodieren kann (braucht eine sichere Seite: https oder localhost). Dabei wird auch gepraeft,
+   * ob er H.265 (hvc1, mit Hardware) kann; das geht beim Verbinden an den Server (siehe codecs()).
+   */
   static supported() {
     if (!supportCheck) {
       supportCheck = (async () => {
         try {
           if (typeof VideoDecoder === 'undefined' || typeof EncodedVideoChunk === 'undefined') return false;
-          const r = await VideoDecoder.isConfigSupported({ codec: 'avc1.42e01f', avc: { format: 'annexb' }, optimizeForLatency: true });
-          return !!r.supported;
+          codecSupport = await probeCodecs(VideoDecoder);
+          return codecSupport.h264;
         } catch { return false; }
       })();
     }
     return supportCheck;
   }
+
+  /** Was dieser Browser dekodieren kann: { h264, hevc } (erst nach supported() gueltig). */
+  static codecs() { return { ...codecSupport }; }
 
   constructor(url, layout = 'de') {
     this.url = url;
@@ -140,6 +151,9 @@ export class StreamClient {
     this.received = 0;                  // Folgenummer des zuletzt empfangenen Bildes (der Server zaehlt aufsteigend, ohne Luecken)
     this.paused = false;                // die Ansicht ist im Hintergrund: der Server kodiert dann keine Bilder
     this.drawn = false;                 // ob schon ein Bild gezeichnet wurde (davor darf app.js auf Guacamole ausweichen)
+    this.hevcOk = !!codecSupport.hevc;  // ob H.265 angeboten wird; nach einem Fehler des H.265-Dekodierers nicht mehr
+    this.hevc = false;                  // ob der Dekodierer gerade H.265 dekodiert
+    this.encoder = null;                // was der Server meldet: { codec, hardware, name }
   }
 
   getDisplay() { return this.display; }
@@ -163,7 +177,9 @@ export class StreamClient {
 
   connect(query) {
     this.setState(1);
-    const socket = new WebSocket(this.url + '?' + query);
+    // Welche Codecs der Browser dekodiert, sagt er dem Server gleich in der Adresse (der Kodierer wird danach gewaehlt)
+    this.hevcOk = !!codecSupport.hevc;
+    const socket = new WebSocket(this.url + '?' + query + '&codecs=' + codecMask({ hevc: this.hevcOk }));
     socket.binaryType = 'arraybuffer';
     this.socket = socket;
     this.watch = setInterval(() => this.watchDecoder(), 500);
@@ -192,7 +208,7 @@ export class StreamClient {
 
   closeDecoder() {
     this.submitted = this.output = 0;
-    const d = this.decoder; this.decoder = null; this.codec = '';
+    const d = this.decoder; this.decoder = null; this.codec = ''; this.hevc = false;
     if (d && d.state !== 'closed') { try { d.close(); } catch { /* egal */ } }
   }
 
@@ -225,6 +241,10 @@ export class StreamClient {
         this.closing = true;
         if (this.onerror) this.onerror({ code: 777, message: 'Sitzung übernommen.' });
         this.setState(5);
+        break;
+      case IN.encoder:
+        this.encoder = { codec: v.getUint8(1) === 2 ? 'H.265' : 'H.264', hardware: (v.getUint8(2) & 1) !== 0, name: new TextDecoder().decode(new Uint8Array(buffer, 3)) };
+        this.stats.encoder = `${this.encoder.name} (${this.encoder.codec}${this.encoder.hardware ? ', GPU' : ''})`;
         break;
       case IN.clipboard: this.incomingClipboard(new Uint8Array(buffer, 1)); break;
       case IN.image: if (this.onclipimage && buffer.byteLength > 2) this.onclipimage(v.getUint8(1), new Uint8Array(buffer, 2)); break;
@@ -327,16 +347,8 @@ export class StreamClient {
     } finally { this.transfers.delete(id); }
   }
 
-  // Codec-Zeichenfolge aus dem SPS des Schluesselbilds (Profil, Einschraenkungen, Stufe)
-  codecOf(bytes) {
-    for (let i = 0; i + 6 < Math.min(bytes.length, 64); i++) {
-      if (bytes[i] === 0 && bytes[i + 1] === 0 && (bytes[i + 2] === 1 || (bytes[i + 2] === 0 && bytes[i + 3] === 1))) {
-        const n = bytes[i + 2] === 1 ? i + 3 : i + 4;
-        if ((bytes[n] & 0x1f) === 7) return 'avc1.' + [bytes[n + 1], bytes[n + 2], bytes[n + 3]].map((b) => b.toString(16).padStart(2, '0')).join('');
-      }
-    }
-    return 'avc1.42e01f';
-  }
+  // Codec-Zeichenfolge aus dem SPS des Schluesselbilds (Profil, Einschraenkungen, Stufe; bei H.265 auch Kompatibilitaet und Stufe/Ebene), siehe codecs.js
+  codecOf(bytes, hevc = false) { return codecStringOf(bytes, hevc); }
 
   // Jede Bestaetigung gilt fuer das Bild mit dieser Folgenummer und alle davor. So steht jedes Bild, das nie gezeichnet wird (verworfen,
   // Dekodierer neu geoeffnet oder ausgestiegen), nicht dauerhaft im Fenster des Servers: ein spaeteres Bild oder diese Notbestaetigung
@@ -344,13 +356,18 @@ export class StreamClient {
   ack(sequence) { const b = new DataView(new ArrayBuffer(5)); b.setUint8(0, OUT.ack); b.setInt32(1, sequence); this.send(b.buffer); }
 
   picture(v, buffer) {
-    const isKey = (v.getUint8(1) & 1) !== 0;
+    const flags = v.getUint8(1);
+    const isKey = (flags & 1) !== 0, hevc = (flags & 2) !== 0;
     const sequence = v.getInt32(2);
     this.received = sequence;
     const data = new Uint8Array(buffer, 6);
+    // H.265 vom Server, obwohl der Dekodierer dafuer ausgestiegen ist (ein Bild war schon unterwegs): verwerfen; H.264 folgt mit einem Schluesselbild
+    if (hevc && !this.hevcOk) { this.stats.dropped++; this.ack(sequence); return; }
     if (isKey) {
-      const codec = this.codecOf(data);
-      if (!this.decoder || this.decoder.state === 'closed' || codec !== this.codec) this.openDecoder(codec, sequence - 1);
+      const codec = this.codecOf(data, hevc);
+      if (!this.decoder || this.decoder.state === 'closed' || codec !== this.codec) {
+        try { this.openDecoder(codec, sequence - 1); } catch { this.decoderFailed(); return; }
+      }
     }
     const d = this.decoder;
     if (!d || d.state !== 'configured') { this.stats.dropped++; this.ack(sequence); this.send1(OUT.keyframe); return; }   // ohne Schluesselbild nichts zu dekodieren: eins anfordern
@@ -367,8 +384,16 @@ export class StreamClient {
   // Der Dekodierer ist ausgestiegen: ein neues Schluesselbild anfordern. Klappt es vor dem ersten gezeichneten Bild mehrmals nicht, geht es
   // hier nicht (Browser ohne passenden H.264-Dekodierer): dann Fehler melden, damit app.js auf Guacamole ausweichen kann.
   decoderFailed() {
+    const wasHevc = this.hevc;
     this.stats.dropped++; this.closeDecoder();
     this.ack(this.received);                       // was im Dekodierer steckte, kommt nie heraus
+    if (wasHevc) {
+      // Der H.265-Dekodierer geht nicht (oder haelt Bilder zurueck): ab jetzt H.264. Der Server wechselt den Kodierer und sendet ein Schluesselbild.
+      this.hevcOk = false; this.stats.hevcFallback = (this.stats.hevcFallback || 0) + 1;
+      this.send(Uint8Array.of(OUT.codecs, CODEC_H264));
+      this.send1(OUT.keyframe);
+      return;
+    }
     if (!this.drawn && ++this.failures >= 3) {
       this.closing = true;
       const s = this.socket; this.socket = null;
@@ -398,8 +423,8 @@ export class StreamClient {
       },
       error: () => { if (this.decoder === d) this.decoderFailed(); },
     });
-    d.configure({ codec, avc: { format: 'annexb' }, optimizeForLatency: true });
-    this.decoder = d; this.codec = codec;
+    d.configure(decoderConfig(codec));
+    this.decoder = d; this.codec = codec; this.hevc = !codec.startsWith('avc');
   }
 
   /* ---- zum Server ---- */

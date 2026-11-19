@@ -110,7 +110,8 @@ internal static class RemoteEndpoints
             var target = tickets.Take(ctx.Request.Query["ticket"].ToString(), id.UserId);
             if (target is null) return Error(403, "Ticket ungültig oder abgelaufen.");
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
-            await relay.RunAsync(ws, target, ct => auth.IsSessionAliveAsync(id.Id, ct), ctx.RequestAborted, owner: id.UserId);
+            await relay.RunAsync(ws, target, ct => auth.IsSessionAliveAsync(id.Id, ct), ctx.RequestAborted, owner: id.UserId,
+                clientCodecs: ScreenProtocol.ParseCodecs(ctx.Request.Query["codecs"]));
             return Results.Empty;
         });
         // Terminal: dasselbe Ticket-Verfahren, binaeres Protokoll (siehe SshProtocol)

@@ -4,7 +4,7 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
-## [Unveröffentlicht]
+## [0.4.0] - 2026-11-19
 
 ### Neu
 - Stream-Engine: Vertrauen bei erster Nutzung für das RDP-Zertifikat statt „Zertifikat ignorieren“: der Fingerabdruck wird je Verbindung gemerkt; ändert er sich, kommt vor dem Senden des Passworts eine Warnung mit altem und neuem Fingerabdruck (Abbrechen oder bestätigen). Guacamole verhält sich wie bisher.
@@ -55,6 +55,7 @@ Erste Version unter eigener Zählung (davor gab es Vorabversionen `1.0.0-beta.1`
 - Der Bildstrom konnte nach einigen hundert Bildern stehen bleiben; Bestätigungen laufen jetzt über Folgenummern, dazu ein Wachhund.
 - Am PC wird das Bild 1:1 gezeichnet statt hochskaliert (schärfer).
 
+[0.4.0]: https://github.com/Juloc/JulOS/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Juloc/JulOS/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Juloc/JulOS/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Juloc/JulOS/releases/tag/v0.1.0

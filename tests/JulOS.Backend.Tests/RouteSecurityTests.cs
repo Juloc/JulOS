@@ -212,4 +212,20 @@ public sealed class RouteSecurityTests
         Assert.Equal("kein json", WindowList.Sanitize("kein json"));
         Assert.Equal("""{"windows":5}""", WindowList.Sanitize("""{"windows":5}"""));
     }
+
+    [Fact]
+    public void Open_desktop_and_terminal_connections_notice_a_logout_within_fifteen_seconds()
+    {
+        Assert.True(JulOS.Integrations.Ssh.SshRelay.SessionCheck <= TimeSpan.FromSeconds(15));
+        Assert.True(JulOS.Integrations.Display.ScreenRelay.SessionCheck <= TimeSpan.FromSeconds(15));
+    }
+
+    [Fact]
+    public async Task The_server_warns_at_start_while_every_private_network_is_trusted_as_a_proxy()
+    {
+        await using var db = await TestDb.CreateAsync();
+        var log = new List<string>();
+        await using (var app = new Server(db, log: log)) { app.Http(); }
+        lock (log) Assert.Contains(log, l => l.Contains("JULOS_TRUSTED_PROXIES ist nicht gesetzt"));
+    }
 }

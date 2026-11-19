@@ -60,7 +60,8 @@ Eine Terminal-Verbindung ist ein echtes Terminal im Browser (der Server haelt di
 Fuer den Rechner, auf dem der Server selbst laeuft, den Hostnamen `host.docker.internal` verwenden.
 
 `BIND_IP` in `.env` ist die Adresse, auf der der Server lauscht: `127.0.0.1` (Standard, hinter einem Reverse-Proxy) oder die LAN-Adresse.
-**Agent auf einem anderen Rechner als der Server:** die Desktop-Verbindung oeffnen, **Agent einrichten** waehlen und die angezeigten Befehle in der grafischen Sitzung des Ziels ausfuehren (sie laden die Agent-Dateien von deinem Server und richten ihn mit einem einmaligen Code ein). Der Agent meldet sich von dort aus per HTTPS beim Server, auf dem Ziel lauscht nichts; **Agent entfernen** widerruft ihn. Siehe [docs/AGENT_API.md](docs/AGENT_API.md).
+**Mehrere Rechner (Hosts):** ein Host ist ein Rechner oder Server mit eigenen Verbindungen und eigenem Agenten; Desktop-Oberflaeche und Handy-Shell listen sie mit gruenem oder grauem Statuspunkt (siehe [docs/HOSTS.md](docs/HOSTS.md)).
+**Agent auf einem anderen Rechner als der Server:** den Host oeffnen (Host-Dialog oder Ansicht Hosts), **Agent einrichten** waehlen und die angezeigten Befehle in der grafischen Sitzung des Ziels ausfuehren (sie laden die Agent-Dateien von deinem Server und richten ihn mit einem einmaligen Code ein). Der Agent meldet sich von dort aus per HTTPS beim Server, auf dem Ziel lauscht nichts; **Agent entfernen** widerruft ihn. Siehe [docs/AGENT_API.md](docs/AGENT_API.md).
 Auf demselben Rechner bleibt es bei `tools/install-linux-agent.sh` ohne Argumente: die Agent-Dateien liegen in `~/julos-uploads` des Zielbenutzers und der Server laeuft als dieser Benutzer (`JULOS_UID`/`JULOS_GID`). Passwort oder Authenticator verloren? `tools/julos-user.sh` setzt sie auf der Konsole zurueck.
 
 ## PWA installieren, HTTPS
@@ -78,7 +79,7 @@ Eine Fernsteuerung darf nicht allein durch das Desktop-Passwort geschuetzt sein.
 - PostgreSQL hat keinen veroeffentlichten Port. Offene Verbindungen enden mit ihrer Sitzung.
 - **mTLS** im Proxy (optionale Zusatzschicht): nur dein Handy mit Client-Zertifikat erreicht die Anmeldeseite. Erzeugen mit
   `tools/make-client-cert.sh <name>` (Passphrase tippst du selbst); das Caddy-Beispiel enthaelt den `client_auth`-Block.
-- Die Agent-API ist nur ueber den Server mit gueltiger Sitzung erreichbar. Agenten antworten entweder auf einem Unix-Socket (Rechte 0600, derselbe Rechner) oder melden sich mit einem Token je Verbindung aus (auf dem Server nur als Hash, widerrufbar, einmaliger Einrichtungscode).
+- Die Agent-API ist nur ueber den Server mit gueltiger Sitzung erreichbar. Agenten antworten entweder auf einem Unix-Socket (Rechte 0600, derselbe Rechner) oder melden sich mit einem Token je Host aus (auf dem Server nur als Hash, widerrufbar, einmaliger Einrichtungscode).
 - xrdp (3389) und den Server-Port nie ohne Proxy davor ins Internet stellen.
 
 Reihenfolge: Proxy-Konfiguration, Port 443 auf den Proxy, DNS; optional ein Client-Zertifikat obendrauf.

@@ -37,6 +37,17 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 - Stream-Engine: Sitzungserhalt. Bricht die Verbindung zum Browser ab (Handy wechselt das Netz, Tab im Hintergrund), bleibt die RDP-Sitzung auf dem Server `JULOS_STREAM_KEEP_SECONDS` Sekunden (Standard 300, 0 = aus) erhalten; der Browser nimmt sie mit einem Sitzungs-Token wieder auf, ohne neuen Login am Ziel und mit sofortigem Schlüsselbild, und zeigt „Verbindung wird wiederhergestellt …“ statt eines Abbruchs. Schließen in der App, Abmelden, Ablösen und Ablauf beenden die Sitzung wirklich.
 - Stream-Engine: Laufwerksumleitung (RDPDR). Ein Ordner des Servers (Einstellung `JULOS_DRIVE_ROOT`, aus, wenn leer) kann je Verbindung als Laufwerk in den Desktop gereicht werden; im Verbindungsdialog zwei Schalter, beide aus: „freigeben“ und „Schreiben erlauben“ (ohne den zweiten nur Lesen). Streng abgesichert: fester Wurzelpfad nur aus der Server-Einstellung, nur Windows-Pfade unterhalb der Wurzel, kein `..`, keine versteckten Namen, keine Symlinks, keine Unicode-Tricks, `openat2` mit `RESOLVE_BENEATH`. Siehe [docs/DRIVES.md](docs/DRIVES.md). Auf einem echten Windows-Ziel noch nicht erprobt.
 
+## [Unreleased]
+
+### Neu
+- Mehrere Hosts: ein Host ist ein Rechner oder Server mit eigenen Verbindungen und eigenem Agenten. Die Desktop-Oberfläche (Menü „Hosts“, Dock, Ansicht „Hosts“, Dienste nach Host gruppiert und filterbar) und die Handy-Shell (Server-Seite, Host-Auswahl bei den Diensten) zeigen sie mit Statuspunkt grün/grau je Host und Dienst. Online heißt: Agent verbunden oder ein Dienst antwortet am Port; Rechnername und Betriebssystem meldet der Agent. Siehe [docs/HOSTS.md](docs/HOSTS.md).
+- Im Verbindungsdialog gibt es ein Feld „Host“ (auch „Neuer Host …“); „Agent einrichten“ und „Agent entfernen“ stehen im neuen Host-Dialog.
+
+### Geändert
+- Der Agent gehört jetzt zum Host statt zu einer einzelnen Verbindung und bedient alle Verbindungen seines Hosts. Die Wege dafür sind `/api/hosts/{id}/agent/code` und `/api/hosts/{id}/agent`; `/api/agents` und `/api/connections/{id}/agent/*` entfallen. Aufrufe des Agenten nehmen weiter `?c=<Verbindung>` oder neu `?h=<Host>`.
+- Migration 008: bestehende Verbindungen kommen auf einen Standard-Host „Mein Rechner“ pro Benutzer, bestehende Agenten behalten ihr Token (hatte ein Benutzer mehrere, bekommt jeder weitere einen eigenen Host mit dem Namen seiner Verbindung). Offene Einrichtungscodes (10 Minuten) entfallen.
+- Der Agent meldet Rechnername und Betriebssystem (nur zur Anzeige); ältere Agenten funktionieren unverändert.
+
 ## [0.4.0] - 2026-11-19
 
 ### Neu

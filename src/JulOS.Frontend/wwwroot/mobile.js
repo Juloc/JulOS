@@ -1,5 +1,6 @@
 import { ico, setTheme } from './app.js';
 import { Sessions } from './sessions.js';
+import { connectionState, dotClass as hostDot, stateText, serviceState, hostDetail, agentSummary, servicesSummary } from './hosts.js';
 
 /* =====================================================================
  * Handy-Oberflaeche im Stil von Material 3 (Expressive): Home, Dienste, Server, Monitoring, Profil.
@@ -67,11 +68,12 @@ let ctx = null, root = null, ready = null;
 let current = 'home', shown = false;
 let user = '';
 let overview = null, overviewOk = null, overviewAt = 0, overviewTimer = 0;   // overviewOk: null = unbekannt, true/false
-const view = { q: '', kind: 'all', allActs: false };
+const view = { q: '', kind: 'all', host: '', allActs: false };
 let snackTimer = 0;
 
 const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const conns = () => (ctx ? ctx.state.connections : []);
+const hosts = () => (ctx ? ctx.state.hosts : []);
 const byId = (id) => conns().find((c) => c.id === id);
 const showPlaceholders = () => ls.get('planned', true);
 
@@ -143,7 +145,7 @@ function build() {
 }
 
 function renderNav() {
-  const items = DEST.filter((d) => showPlaceholders() || (d.id !== 'server' && d.id !== 'monitoring') || (d.id === 'server' && overviewOk));
+  const items = DEST.filter((d) => showPlaceholders() || (d.id !== 'server' && d.id !== 'monitoring') || (d.id === 'server' && (overviewOk || hosts().length)));
   $('#mNav').innerHTML = items.map((d) => `<button type="button" class="mb m3-state" data-go="${d.id}" ${d.id === current ? 'aria-current="page"' : ''}><span class="pill">${icon(d.ic)}</span><span>${d.label}</span></button>`).join('');
 }
 
@@ -173,6 +175,8 @@ export function userChanged(name, message) {
   renderAll();
 }
 export function connectionsChanged() { if (root) renderAll(); }
+/** Neue Zustaende der Hosts (alle 30 s): die Seite neu zeichnen, die sie zeigt */
+export function hostsChanged() { if (root) renderAll(); }
 
 /** Merkt sich (nur auf diesem Geraet), was gestartet wurde: Grundlage fuer Favoriten ("meist genutzt"), "Aktivitaeten" und "Zuletzt geoeffnet". */
 export function started(c) {
@@ -274,8 +278,8 @@ function favourites() {
   return [...fav, ...used].slice(0, 6);
 }
 const openCount = (c) => Sessions.find(c.id).length;
-const tileHtml = (c, pinned) => `<button type="button" class="mb tile m3-state ${c.kind}${openCount(c) ? ' live' : ''}" data-conn="${c.id}" data-act="start" aria-label="${esc(c.name)} (${esc(c.kind === 'terminal' ? 'Terminal' : 'Desktop')}), ${openCount(c) ? openCount(c) + ' Sitzung(en) offen, tippen zum Wechseln' : 'tippen zum Verbinden'}, gedrückt halten für mehr">
-  ${openCount(c) ? `<span class="liveb" title="Sitzung offen">${openCount(c)}</span>` : ''}${pinned ? `<span class="fav" title="Favorit">${icon('star')}</span>` : ''}${c.hasPassword ? `<span class="badge" title="Passwort gespeichert">${icon('key')}</span>` : ''}
+const tileHtml = (c, pinned) => `<button type="button" class="mb tile m3-state ${c.kind}${openCount(c) ? ' live' : ''}" data-conn="${c.id}" data-act="start" aria-label="${esc(c.name)} (${esc(c.kind === 'terminal' ? 'Terminal' : 'Desktop')}, ${stateText(connectionState(hosts(), c))}), ${openCount(c) ? openCount(c) + ' Sitzung(en) offen, tippen zum Wechseln' : 'tippen zum Verbinden'}, gedrückt halten für mehr">
+  <span class="hdot ${hostDot(connectionState(hosts(), c))}" title="${stateText(connectionState(hosts(), c))}"></span>${openCount(c) ? `<span class="liveb" title="Sitzung offen">${openCount(c)}</span>` : ''}${pinned ? `<span class="fav" title="Favorit">${icon('star')}</span>` : ''}${c.hasPassword ? `<span class="badge" title="Passwort gespeichert">${icon('key')}</span>` : ''}
   <span class="ti">${kindIcon(c.kind)}</span><span class="tn">${esc(c.name)}</span></button>`;
 
 function activityRows(limit) {
@@ -342,22 +346,29 @@ function buildServicesPage() {
     <div class="m3-h" data-head><h1>Dienste</h1><p>Deine Desktops und Terminals</p></div>
     <label class="m3-search"><span class="m3-ic" aria-hidden="true">${icon('search')}</span><input id="mSearch" type="search" placeholder="Dienste durchsuchen …" autocomplete="off" autocapitalize="none" spellcheck="false" enterkeyhint="search" aria-label="Dienste durchsuchen"></label>
     <div class="chips" role="group" aria-label="Filter" id="mChips"></div>
+    <div class="chips" role="group" aria-label="Host wählen" id="mHostChips" hidden></div>
     <div id="mGrid"></div>
     <div id="mMods"></div>
     <div class="m3-sec">${icon('bolt')}<span>Schnellaktionen</span></div>
     <div class="quick" id="mQuick"></div>`;
   $('#mSearch').addEventListener('input', (e) => { view.q = e.target.value; renderGrid(); });
   $('#mChips').addEventListener('click', (e) => { const b = e.target.closest('[data-kind]'); if (b) { view.kind = b.dataset.kind; renderServices(); } });
+  $('#mHostChips').addEventListener('click', (e) => { const b = e.target.closest('[data-host]'); if (b) { view.host = b.dataset.host; renderServices(); } });
 }
 function filtered() {
   const q = view.q.trim().toLowerCase();
-  return conns().filter((c) => (view.kind === 'all' || c.kind === view.kind) && (!q || `${c.name} ${c.host} ${c.username}`.toLowerCase().includes(q)));
+  return conns().filter((c) => (view.kind === 'all' || c.kind === view.kind) && (!view.host || c.hostId === view.host) && (!q || `${c.name} ${c.host} ${c.username}`.toLowerCase().includes(q)));
 }
 function renderServices() {
   if (!$('#mChips')) return;
   const cnt = (k) => conns().filter((c) => k === 'all' || c.kind === k).length;
   $('#mChips').innerHTML = [['all', 'Alle', 'apps'], ['desktop', 'Desktop', 'desktop'], ['terminal', 'Terminal', 'terminal']].map(([k, l, ic]) =>
     `<button type="button" class="mb m3-chip m3-state" data-kind="${k}" aria-pressed="${view.kind === k}">${view.kind === k ? icon('check') : icon(ic)}${l} <span style="opacity:.7">${cnt(k)}</span></button>`).join('');
+  // Die Auswahl des Hosts gibt es erst, wenn es mehr als einen gibt
+  if (view.host && !hosts().some((h) => h.id === view.host)) view.host = '';
+  const hc = $('#mHostChips');
+  hc.hidden = hosts().length < 2;
+  hc.innerHTML = hc.hidden ? '' : [{ id: '', name: 'Alle Hosts' }, ...hosts()].map((h) => `<button type="button" class="mb m3-chip m3-state" data-host="${esc(h.id)}" aria-pressed="${view.host === h.id}">${view.host === h.id ? icon('check') : h.id ? `<span class="m3-dot hdot ${hostDot(h.online)}"></span>` : icon('dns')}${esc(h.name)}</button>`).join('');
   renderGrid(); renderModules();
   const last = lastConnection();
   $('#mQuick').innerHTML = `
@@ -390,6 +401,15 @@ function soonHtml(ic, title, text) {
   return `<div class="m3-h" data-head><h1>${title}</h1></div>
     <div class="m3-card soon"><span class="big">${icon(ic)}</span><span class="m3-chip status"><span class="m3-dot"></span>bald verfügbar</span><p>${text}</p></div>`;
 }
+/** Die Hosts mit Zustand, Agent und Diensten (docs/HOSTS.md); der Agent wird je Host eingerichtet */
+function hostsHtml() {
+  const rows = hosts().map((h) => `<div class="m3-card host" data-host-card="${esc(h.id)}">
+      <div class="m3-li static"><span class="lead">${icon('dns')}</span><span class="txt"><span class="hl"><span class="m3-dot hdot ${hostDot(h.online)}"></span>${esc(h.name)} <small>${stateText(h.online)}</small></span><span class="sl">${esc([hostDetail(h), agentSummary(h), servicesSummary(h)].filter(Boolean).join(' · '))}</span></span></div>
+      <div class="svcs">${h.services.map((s) => { const c = byId(s.connection); return c ? `<button type="button" class="mb m3-chip m3-state" data-act="start" data-conn="${esc(c.id)}"><span class="m3-dot hdot ${hostDot(serviceState(h, c.id))}"></span>${esc(c.name)}</button>` : ''; }).join('')}</div>
+      <div class="acts-row"><button type="button" class="mb m3-btn tonal m3-state" data-act="hostagent" data-host="${esc(h.id)}">${icon('download')}${h.agent ? 'Agent verwalten' : 'Agent einrichten'}</button>
+        <button type="button" class="mb m3-btn text m3-state" data-act="hostedit" data-host="${esc(h.id)}">${icon('edit')}Bearbeiten</button></div></div>`).join('');
+  return `<div class="m3-sec">${icon('dns')}<span>Hosts</span><span class="sp"></span><button type="button" class="mb m3-btn text m3-state" data-act="addhost">${icon('add')}Host hinzufügen</button></div>${rows || '<p class="empty-hint">Noch kein Host. Er entsteht mit der ersten Verbindung.</p>'}`;
+}
 function renderServer() {
   const pg = $('#pg-server');
   if (overviewOk && overview) {
@@ -400,9 +420,9 @@ function renderServer() {
       <div class="m3-card acts" style="margin-top:12px">
         <div class="m3-li static"><span class="lead">${icon('mem')}</span><span class="txt"><span class="hl">Arbeitsspeicher</span><span class="sl">${o.memUsed !== null && o.memTotal !== null ? fmtBytes(o.memUsed) + ' von ' + fmtBytes(o.memTotal) : '–'}</span></span></div>
         <div class="m3-li static"><span class="lead">${icon('disk')}</span><span class="txt"><span class="hl">Speicher</span><span class="sl">${o.diskUsed !== null && o.diskTotal !== null ? fmtBytes(o.diskUsed) + ' von ' + fmtBytes(o.diskTotal) : '–'}</span></span></div>
-      </div>${net}`;
+      </div>${net}${hostsHtml()}`;
   } else {
-    pg.innerHTML = soonHtml('dns', 'Server', overviewOk === false ? 'Hier erscheinen CPU, Arbeitsspeicher und Speicher deines Servers, sobald der Server diese Daten liefert. Dieser Server tut das noch nicht.' : 'Auslastung wird geprüft …');
+    pg.innerHTML = soonHtml('dns', 'Server', overviewOk === false ? 'Hier erscheinen CPU, Arbeitsspeicher und Speicher deines Servers, sobald der Server diese Daten liefert. Dieser Server tut das noch nicht.' : 'Auslastung wird geprüft …') + hostsHtml();
   }
 }
 function renderMonitoring() {
@@ -476,6 +496,8 @@ function onClick(e) {
   if (act === 'sess') { Sessions.activate(a.dataset.sid, { reveal: true }); return; }
   if (act === 'start') { const c = byId(a.dataset.conn); if (c) ctx.connect(c); }
   else if (act === 'add') ctx.add();
+  else if (act === 'addhost') ctx.addHost();
+  else if (act === 'hostedit' || act === 'hostagent') { const h = hosts().find((x) => x.id === a.dataset.host); if (h) ctx.editHost(h); }
   else if (act === 'mod') import('./mobile-modules.js').then((m) => m.openSheet(a.dataset.mod, { icon, esc, api: ctx.api, wireSheet, app: $('#app') }));
   else if (act === 'allacts') { view.allActs = !view.allActs; renderHome(); }
   else if (act === 'last') { const c = lastConnection(); if (c) ctx.connect(c); }
@@ -532,7 +554,7 @@ function wireSheet(dlg) {
   dlg.addEventListener('pointerup', end); dlg.addEventListener('pointercancel', end);
 }
 function enhanceSheets() {
-  for (const id of ['connDlg', 'startDlg', 'devicesDlg']) { const d = $('#' + id); if (!d) continue; d.classList.add('m3sheet'); wireSheet(d); }
+  for (const id of ['connDlg', 'hostDlg', 'startDlg', 'devicesDlg']) { const d = $('#' + id); if (!d) continue; d.classList.add('m3sheet'); wireSheet(d); }
   // Art und Bildübertragung: segmentierte Tasten statt Auswahlliste; das select bleibt als Wertspeicher bestehen (shell.js liest und setzt es)
   const segFor = (sel) => {
     const label = sel.closest('label'), box = document.createElement('div');

@@ -1,5 +1,6 @@
 import { ico } from './app.js';
 import { Sessions } from './sessions.js';
+import { agentSummary, hostDetail } from './hosts.js';
 import './terminal-session.js';      // Sitzungsart 'terminal' (natives SSH-Terminal)
 
 /* =====================================================================
@@ -60,7 +61,7 @@ async function api(path, { method = 'GET', body } = {}) {
 const setMsg = (el, text, ok = false) => { el.textContent = text || ''; el.classList.toggle('ok', ok && !!text); };
 const busy = (form, on) => { for (const b of form.querySelectorAll('button[type=submit]')) b.disabled = on; };
 
-const state = { user: null, connections: [], canStore: false, driveAvailable: false, editing: null, starting: null };
+const state = { user: null, connections: [], hosts: [], canStore: false, driveAvailable: false, editing: null, editingHost: null, starting: null };
 
 /* ---------- Start: wo stehen wir? ---------- */
 async function boot() {
@@ -155,7 +156,19 @@ async function loadConnections() {
   renderConnections();
   if (D) D.connectionsChanged();
   if (M) M.connectionsChanged();
+  await loadHosts();
 }
+
+/** Die Hosts mit Zustand (online/offline, Agent, Dienste); fragt der Server nach, prueft er die Ports kurz (docs/HOSTS.md). Ein Fehler laesst die alte Liste stehen. */
+async function loadHosts() {
+  try { state.hosts = (await api('/api/hosts')).hosts; }
+  catch (e) { if (e.status === 401) return showLogin('Die Sitzung ist abgelaufen. Bitte neu anmelden.'); return; }
+  fillHostSelect();
+  if (D) D.hostsChanged();
+  if (M) M.hostsChanged();
+}
+// Der Zustand ist eine Momentaufnahme: bei sichtbarer Seite alle 30 s neu (der Server merkt sich die Antworten ohnehin 15 s)
+setInterval(() => { if (state.user && !document.hidden) loadHosts(); }, 30000);
 
 const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const KIND_LABEL = { desktop: 'Desktop', terminal: 'Terminal' };
@@ -189,7 +202,7 @@ $('#accountMenu').addEventListener('click', async (e) => {
 async function signOut() {
   closeAllSessions();
   try { await api('/api/auth/logout', { method: 'POST' }); } catch { /* Sitzung war schon weg */ }
-  state.user = null; state.connections = [];
+  state.user = null; state.connections = []; state.hosts = [];
   showLogin();
 }
 
@@ -222,6 +235,7 @@ function editDialog(c, kind) {
   $('#connPort').value = c ? String(c.port) : '';
   $('#connPort').placeholder = DEFAULT_PORT[$('#connKind').value];
   $('#connUser').value = c ? c.username : '';
+  fillHostSelect(c ? c.hostId : undefined);
   $('#connDelete').hidden = !c; $('#connDelete').textContent = 'Löschen';
   $('#connPw').value = ''; $('#connPw').disabled = !state.canStore;
   $('#connForget').checked = false; $('#connForgetRow').hidden = !(c && c.hasPassword);
@@ -231,14 +245,28 @@ function editDialog(c, kind) {
       ? 'Ein Passwort ist verschlüsselt gespeichert und wird nie angezeigt. Ein neues hier überschreibt es. Ändert sich Adresse, Port, Art oder Benutzer, wird es gelöscht.'
       : 'Auf Wunsch wird es verschlüsselt auf dem Server gespeichert, dann genügt ein Tipp zum Verbinden. Leer lassen: du tippst es jedes Mal.';
   setMsg($('#connMsg'), '');
-  showAgentBox(c);
   $('#connDlg').showModal();
 }
 
-/* ---------- Agent auf dem Ziel einrichten (docs/AGENT_API.md) ---------- */
-const agentWhen = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); };
+/* ---------- Hosts: Auswahl in der Verbindung, Anlegen, Umbenennen, Loeschen, Agent (docs/HOSTS.md) ---------- */
+const NEW_HOST = '__new';
+/** Die Auswahl der Verbindung: alle Hosts, am Ende "Neuer Host …". Behaelt die Wahl; ohne Wahl gilt der erste Host (so legt der Server neue Verbindungen ab). */
+function fillHostSelect(selected) {
+  const sel = $('#connHostSel');
+  const keep = selected ?? (sel.value && sel.value !== NEW_HOST ? sel.value : '');
+  sel.replaceChildren(...state.hosts.map((h) => new Option(h.name, h.id)), new Option('Neuer Host …', NEW_HOST));
+  if (keep && state.hosts.some((h) => h.id === keep)) sel.value = keep; else if (state.hosts.length) sel.value = state.hosts[0].id;
+  sel.dataset.prev = sel.value;
+  $('#connHostRow').hidden = state.hosts.length === 0;
+}
+$('#connHostSel').addEventListener('change', (e) => {
+  const sel = e.currentTarget;
+  if (sel.value !== NEW_HOST) { sel.dataset.prev = sel.value; return; }
+  sel.value = sel.dataset.prev;                      // bis der neue Host da ist, bleibt die bisherige Wahl
+  hostDialog(null, (h) => { fillHostSelect(h.id); });
+});
 
-/** Der Befehl fuer das Ziel: die Dateien kommen vom Server selbst (passend zu seiner Version), der Code gilt einmal. */
+/** Der Befehl fuer den Host: die Dateien kommen vom Server selbst (passend zu seiner Version), der Code gilt einmal. */
 function agentCommands(code) {
   const origin = location.origin;
   const http = origin.startsWith('http:') && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(origin);
@@ -249,49 +277,83 @@ function agentCommands(code) {
   ].join('\n');
 }
 
-async function showAgentBox(c) {
-  const box = $('#connAgent');
-  $('#connAgentCode').hidden = true; $('#connAgentCmd').textContent = ''; $('#connAgentCodeText').textContent = '';
-  box.hidden = !(c && c.kind === 'desktop');
-  if (box.hidden) return;
-  const stateEl = $('#connAgentState'), setup = $('#connAgentSetup'), remove = $('#connAgentRemove');
-  stateEl.textContent = 'Wird geladen …'; remove.hidden = true; setup.disabled = true;
-  let a = null;
-  try { a = ((await api('/api/agents')).agents || []).find((x) => x.connection === c.id) || null; }
-  catch (e) { stateEl.textContent = e.message; setup.disabled = false; return; }
-  if (state.editing !== c) return;                    // der Dialog zeigt inzwischen etwas anderes
-  setup.disabled = false;
-  if (!a) { stateEl.textContent = 'Nicht eingerichtet'; setup.textContent = 'Agent einrichten'; return; }
-  const what = [a.version && 'Agent ' + a.version, a.platform].filter(Boolean).join(', ');
-  stateEl.textContent = (a.online ? 'Verbunden' : 'Getrennt' + (a.lastSeen ? ' (zuletzt ' + agentWhen(a.lastSeen) + ')' : '')) + (what ? ' – ' + what : '') + (a.outdated ? ' – zu alt, bitte neu einrichten' : '');
-  setup.textContent = 'Neu einrichten'; remove.hidden = false;
+/** Host anlegen (h = null) oder bearbeiten. onCreated bekommt den neuen Host (zum Beispiel fuer die Auswahl in der Verbindung). */
+function hostDialog(h, onCreated) {
+  state.editingHost = h; state.hostCreated = onCreated || null;
+  $('#hostDlgTitle').textContent = h ? 'Host bearbeiten' : 'Neuer Host';
+  $('#hostName').value = h ? h.name : '';
+  const nOf = h ? state.connections.filter((c) => c.hostId === h.id).length : 0;
+  $('#hostDelete').hidden = !h; $('#hostDelete').textContent = 'Löschen';
+  const info = $('#hostInfo');
+  info.hidden = !h;
+  if (h) info.textContent = [hostDetail(h), nOf + (nOf === 1 ? ' Verbindung' : ' Verbindungen')].filter(Boolean).join(' · ');
+  setMsg($('#hostMsg'), '');
+  $('#hostAgent').hidden = !h;                       // ein Agent braucht einen gespeicherten Host
+  $('#hostAgentCode').hidden = true; $('#hostAgentCmd').textContent = ''; $('#hostAgentCodeText').textContent = '';
+  if (h) showAgentState(h);
+  $('#hostDlg').showModal();
+  setTimeout(() => $('#hostName').focus(), 100);
 }
 
-$('#connAgentSetup').addEventListener('click', async (e) => {
-  const c = state.editing; if (!c) return;
-  const b = e.currentTarget; b.disabled = true; setMsg($('#connMsg'), '');
+function showAgentState(h) {
+  $('#hostAgentState').textContent = agentSummary(h);
+  $('#hostAgentSetup').textContent = h.agent ? 'Neu einrichten' : 'Agent einrichten';
+  $('#hostAgentRemove').hidden = !h.agent;
+}
+
+$('#hostForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.currentTarget, msg = $('#hostMsg'), h = state.editingHost;
+  busy(form, true); setMsg(msg, '');
   try {
-    const r = await api(`/api/connections/${c.id}/agent/code`, { method: 'POST', body: {} });
-    $('#connAgentCodeText').textContent = r.code;
-    $('#connAgentCmd').textContent = agentCommands(r.code);
-    $('#connAgentCode').hidden = false;
-  } catch (err) { setMsg($('#connMsg'), err.message); }
+    const saved = await api(h ? `/api/hosts/${h.id}` : '/api/hosts', { method: h ? 'PUT' : 'POST', body: { name: $('#hostName').value } });
+    $('#hostDlg').close();
+    await loadHosts();
+    if (!h && state.hostCreated) state.hostCreated(saved);
+    if (M) M.snack(h ? 'Änderungen gespeichert' : 'Host hinzugefügt');
+  } catch (err) { setMsg(msg, err.message); }
+  finally { busy(form, false); }
+});
+
+// Loeschen braucht ein zweites Tippen; der Server lehnt einen Host mit Verbindungen ab
+$('#hostDelete').addEventListener('click', async (e) => {
+  const b = e.currentTarget;
+  if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = 'Wirklich löschen?'; setTimeout(() => { b.dataset.sure = ''; b.textContent = 'Löschen'; }, 3000); return; }
+  b.dataset.sure = '';
+  try { await api(`/api/hosts/${state.editingHost.id}`, { method: 'DELETE' }); $('#hostDlg').close(); await loadHosts(); if (M) M.snack('Host gelöscht'); }
+  catch (err) { setMsg($('#hostMsg'), err.message); }
+});
+
+$('#hostAgentSetup').addEventListener('click', async (e) => {
+  const h = state.editingHost; if (!h) return;
+  const b = e.currentTarget; b.disabled = true; setMsg($('#hostMsg'), '');
+  try {
+    const r = await api(`/api/hosts/${h.id}/agent/code`, { method: 'POST', body: {} });
+    $('#hostAgentCodeText').textContent = r.code;
+    $('#hostAgentCmd').textContent = agentCommands(r.code);
+    $('#hostAgentCode').hidden = false;
+  } catch (err) { setMsg($('#hostMsg'), err.message); }
   finally { b.disabled = false; }
 });
 
-$('#connAgentCopy').addEventListener('click', async () => {
-  const text = $('#connAgentCmd').textContent;
-  try { await navigator.clipboard.writeText(text); setMsg($('#connMsg'), 'Befehle kopiert.', true); }
-  catch { const r = document.createRange(); r.selectNodeContents($('#connAgentCmd')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); setMsg($('#connMsg'), 'Bitte markiert kopieren (Kopieren nicht erlaubt).'); }
+$('#hostAgentCopy').addEventListener('click', async () => {
+  const text = $('#hostAgentCmd').textContent;
+  try { await navigator.clipboard.writeText(text); setMsg($('#hostMsg'), 'Befehle kopiert.', true); }
+  catch { const r = document.createRange(); r.selectNodeContents($('#hostAgentCmd')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); setMsg($('#hostMsg'), 'Bitte markiert kopieren (Kopieren nicht erlaubt).'); }
 });
 
 // Entfernen braucht ein zweites Tippen (das Token gilt danach nicht mehr, der Agent trennt sich sofort)
-$('#connAgentRemove').addEventListener('click', async (e) => {
-  const b = e.currentTarget, c = state.editing; if (!c) return;
+$('#hostAgentRemove').addEventListener('click', async (e) => {
+  const b = e.currentTarget, h = state.editingHost; if (!h) return;
   if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = 'Wirklich entfernen?'; setTimeout(() => { b.dataset.sure = ''; b.textContent = 'Agent entfernen'; }, 3000); return; }
   b.dataset.sure = ''; b.textContent = 'Agent entfernen';
-  try { await api(`/api/connections/${c.id}/agent`, { method: 'DELETE' }); await showAgentBox(c); if (M) M.snack('Agent entfernt'); }
-  catch (err) { setMsg($('#connMsg'), err.message); }
+  try {
+    await api(`/api/hosts/${h.id}/agent`, { method: 'DELETE' });
+    await loadHosts();
+    state.editingHost = state.hosts.find((x) => x.id === h.id) || h;
+    showAgentState(state.editingHost); $('#hostAgentCode').hidden = true;
+    if (M) M.snack('Agent entfernt');
+  } catch (err) { setMsg($('#hostMsg'), err.message); }
 });
 
 $('#connForm').addEventListener('submit', async (e) => {
@@ -300,6 +362,7 @@ $('#connForm').addEventListener('submit', async (e) => {
   const portText = $('#connPort').value.trim();
   if (portText && !/^\d{1,5}$/.test(portText)) return setMsg(msg, 'Der Port muss eine Zahl sein.');
   const body = { name: $('#connName').value, kind: $('#connKind').value, host: $('#connHost').value, port: portText ? Number(portText) : null, username: $('#connUser').value };
+  const hostId = $('#connHostSel').value; if (hostId && hostId !== NEW_HOST) body.hostId = hostId;
   const drive = body.kind === 'desktop' && state.driveAvailable && $('#connDrive').checked;
   body.driveShare = drive; body.driveWrite = drive && $('#connDriveWrite').checked;
   const pw = $('#connPw').value;
@@ -404,8 +467,8 @@ Sessions.addEventListener('closed', (e) => {
 Sessions.addEventListener('home', () => { if (!D) goHome(); });
 Sessions.addEventListener('switcher', () => { if (M) M.openSwitcher(); else goHome(); });
 
-if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), signOut, home: goHome });
-if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), devices: openDevices, signOut });
+if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), signOut, home: goHome });
+if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), devices: openDevices, signOut });
 
 /* ---------- Geraete und Sitzungen ---------- */
 function describeAgent(ua) {

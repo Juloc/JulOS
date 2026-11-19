@@ -24,9 +24,9 @@ public static partial class ConnectionRules
         host = host?.Trim() ?? "";
         username = username?.Trim() ?? "";
         if (name.Length is < 1 or > 60 || name.Any(char.IsControl)) return (null, "Der Name muss 1 bis 60 Zeichen haben.");
-        if (kind is not ("desktop" or "terminal")) return (null, "Art muss Desktop oder Terminal sein.");
+        if (kind is not ("desktop" or "terminal" or "vnc")) return (null, "Art muss Desktop, VNC oder Terminal sein.");
         if (!HostPattern().IsMatch(host)) return (null, "Adresse ungültig (Name oder IP-Adresse, ohne Leerzeichen).");
-        var p = port ?? (kind == "terminal" ? 22 : 3389);
+        var p = port ?? (kind == "terminal" ? 22 : kind == "vnc" ? 5900 : 3389);
         if (p is < 1 or > 65535) return (null, "Port muss zwischen 1 und 65535 liegen.");
         if (username.Length > 64 || username.Any(char.IsControl)) return (null, "Benutzername ist zu lang.");
 

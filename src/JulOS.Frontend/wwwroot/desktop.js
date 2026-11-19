@@ -58,6 +58,7 @@ const P = {
   disk: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 14.5h6"/><circle cx="17" cy="14.5" r=".6"/>',
   network: '<path d="M7 4v16m0 0-3-3m3 3 3-3M17 20V4m0 0-3 3m3-3 3 3"/>',
   chev: '<path d="m6 9 6 6 6-6"/>',
+  refresh: '<path d="M20 11a8 8 0 0 0-14.5-4.5L4 8M4 4v4h4M4 13a8 8 0 0 0 14.5 4.5L20 16M20 20v-4h-4"/>',
   keyboard: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
   file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
   download: '<path d="M12 3v12m0 0-4-4m4 4 4-4M5 21h14"/>',
@@ -71,7 +72,7 @@ const DEFS = `<svg width="0" height="0" style="position:absolute" aria-hidden="t
 const LOGO = `<svg viewBox="0 0 32 32" aria-hidden="true">
   <path d="M8 5.5 25.5 16 8 26.5z" fill="url(#dkl)" stroke="url(#dkl)" stroke-width="3.6" stroke-linejoin="round"/><path d="M8 5.5 25.5 16 15 16z" fill="#fff" opacity=".28"/></svg>`;
 
-/* Programme: Farben, Symbole, Ziele. soon = gibt es noch keinen Server-Teil dafuer (siehe docs/IDEAS.md). */
+/* Programme: Farben, Symbole, Ziele. soon = gibt es noch keinen Server-Teil dafuer (siehe docs/IDEAS.md). mod = nur sichtbar, wenn der Server das Modul eingeschaltet hat (docs/MODULES.md). */
 const APPS = [
   { id: 'home', name: 'Start', ic: 'home', g: ['#8f8cf7', '#5f6cf0'] },
   { id: 'desktop', name: 'Desktop', sub: 'RDP', ic: 'monitor', g: ['#4fb4f0', '#3b6cf0'] },
@@ -79,11 +80,13 @@ const APPS = [
   { id: 'settings', name: 'Einstellungen', ic: 'sliders', g: ['#a2a8be', '#6f7590'] },
   { id: 'files', name: 'Dateien', ic: 'folder', g: ['#f7c76a', '#ee9b3a'] },
   { id: 'docker', name: 'Docker', ic: 'box', g: ['#55b9f5', '#2b7bd8'], soon: true },
-  { id: 'caddy', name: 'Caddy', ic: 'globe', g: ['#5fd49a', '#1fa971'], soon: true },
-  { id: 'ddns', name: 'DDNS', ic: 'cloud', g: ['#8fd0ff', '#5a9cf5'], soon: true },
+  { id: 'caddy', name: 'Caddy', sub: 'Domains', ic: 'globe', g: ['#5fd49a', '#1fa971'], mod: 'caddy' },
+  { id: 'ddns', name: 'DDNS', sub: 'Adresse', ic: 'cloud', g: ['#8fd0ff', '#5a9cf5'], mod: 'ddns' },
   { id: 'monitor', name: 'Monitor', ic: 'activity', g: ['#ee8fc8', '#a05cf0'] },
 ];
 const appById = (id) => APPS.find((a) => a.id === id);
+let modules = { caddy: false, ddns: false };   // vom Server (GET /api/modules), nach der Anmeldung geladen
+const shownApps = () => APPS.filter((a) => !a.mod || modules[a.mod]);
 const tile = (g, icon) => `<span class="dk-ti" style="--g1:${g[0]};--g2:${g[1]}">${ic(icon)}</span>`;
 
 /* ---------- kleine Helfer ---------- */
@@ -344,6 +347,7 @@ const MENUS = () => ({
     { label: 'Desktop verbinden …', icon: 'monitor', run: () => pickConnection('desktop', $('[data-menu="Apps"]', root)) },
     { label: 'Terminal verbinden …', icon: 'terminal', run: () => pickConnection('terminal', $('[data-menu="Apps"]', root)) },
     { sep: true },
+    ...shownApps().filter((a) => a.mod).map((a) => ({ label: a.name, icon: a.ic, run: () => runApp(a.id) })),
     ...APPS.filter((a) => a.soon).map((a) => ({ label: a.name, icon: a.ic, hint: 'bald verfügbar', disabled: true })),
   ],
   System: [
@@ -488,12 +492,26 @@ function buildDock() {
     el('div', 'dk-dsep'),
     item('desktop', 'Desktop (RDP)', appById('desktop')),
     item('terminal', 'Terminal (SSH)', appById('terminal')),
+    modDock(item),
     el('div', 'dk-dsep'),
     item('settings', 'Einstellungen', appById('settings')),
   );
   dock.addEventListener('contextmenu', (e) => { e.preventDefault(); dockMenu(dock); });
   dock.addEventListener('focusin', showDock);
   return dock;
+}
+/** Caddy und DDNS im Dock: erst sichtbar, wenn der Server das Modul eingeschaltet hat (applyModules) */
+function modDock(item) {
+  const g = el('div', 'dk-dmods'); g.hidden = true;
+  g.append(el('div', 'dk-dsep'), item('caddy', 'Caddy', appById('caddy')), item('ddns', 'DDNS', appById('ddns')));
+  for (const b of g.querySelectorAll('.dk-di')) b.hidden = true;
+  return g;
+}
+function applyModules() {
+  if (!root) return;
+  for (const id of ['caddy', 'ddns']) { const b = $(`.dk-di[data-dock="${id}"]`, root); if (b) b.hidden = !modules[id]; }
+  const g = $('.dk-dmods', root); if (g) g.hidden = !(modules.caddy || modules.ddns);
+  if (launcher) closeLauncher();
 }
 function dockClick(id, anchor) {
   if (id === 'launcher') return launcher ? closeLauncher() : openLauncher();
@@ -505,6 +523,7 @@ function renderDock() {
   const state = {};
   const home = wins.get('home'); if (home) state.home = home;
   const files = wins.get('files'); if (files) state.files = files;
+  for (const id of ['caddy', 'ddns']) { const w = wins.get(id); if (w) state[id] = w; }
   for (const w of sessWins.values()) { const k = w.session.kind; if (!state[k] || (state[k].minimized && !w.minimized)) state[k] = w; }
   for (const b of root.querySelectorAll('.dk-di[data-dock]')) {
     const w = state[b.dataset.dock];
@@ -578,6 +597,7 @@ function runApp(id, anchor) {
   if (id === 'settings') return openHome('einstellungen');
   if (id === 'monitor') return openHome('system');
   if (id === 'files') return openFiles();
+  if (a && a.mod) return modules[a.mod] ? openModule(id) : notify(`${a.name} ist auf diesem Server nicht eingeschaltet.`);
   if (id === 'desktop' || id === 'terminal') return pickConnection(id, anchor);
 }
 
@@ -614,7 +634,7 @@ function openLauncher() {
     res.replaceChildren();
     if (!q) {
       const g = el('div', 'dk-grid'); hits = [];
-      for (const a of APPS) {
+      for (const a of shownApps()) {
         const b = btn('dk-app', tile(a.g, a.ic) + '<span class="dk-n"></span>' + (a.soon ? '<span class="dk-tag">bald</span>' : '')); b.querySelector('.dk-n').textContent = a.name;
         if (a.soon) { b.setAttribute('aria-disabled', 'true'); b.title = 'Bald verfügbar'; }
         b.addEventListener('click', () => { closeLauncher(); runApp(a.id, b); });
@@ -623,7 +643,7 @@ function openLauncher() {
       res.appendChild(g); return;
     }
     hits = [
-      ...APPS.filter((a) => a.name.toLowerCase().includes(q) || (a.sub || '').toLowerCase().includes(q)).map((a) => ({ name: a.name, sub: a.soon ? 'bald verfügbar' : a.sub || 'Programm', g: a.g, ic: a.ic, soon: a.soon, run: (anchor) => runApp(a.id, anchor) })),
+      ...shownApps().filter((a) => a.name.toLowerCase().includes(q) || (a.sub || '').toLowerCase().includes(q)).map((a) => ({ name: a.name, sub: a.soon ? 'bald verfügbar' : a.sub || 'Programm', g: a.g, ic: a.ic, soon: a.soon, run: (anchor) => runApp(a.id, anchor) })),
       ...ctx.state.connections.filter((c) => (c.name + ' ' + c.host).toLowerCase().includes(q)).map((c) => ({ name: c.name, sub: c.kind === 'terminal' ? 'Terminal' : 'Desktop', g: appById(c.kind).g, ic: appById(c.kind).ic, run: () => ctx.connect(c) })),
     ];
     sel = clamp(sel, 0, Math.max(0, hits.length - 1));
@@ -798,7 +818,7 @@ function renderServices(m) {
     }).join('')}</div>`;
 }
 function renderAppsView(m) {
-  m.innerHTML = `<h3 style="margin-top:14px">Apps</h3><div class="dk-grid">${APPS.map((a) => `<button type="button" class="dk-b dk-app" data-app="${a.id}"${a.soon ? ' aria-disabled="true" title="Bald verfügbar"' : ''}>${tile(a.g, a.ic)}<span class="dk-n">${a.name}</span>${a.soon ? '<span class="dk-tag">bald</span>' : ''}</button>`).join('')}</div>
+  m.innerHTML = `<h3 style="margin-top:14px">Apps</h3><div class="dk-grid">${shownApps().map((a) => `<button type="button" class="dk-b dk-app" data-app="${a.id}"${a.soon ? ' aria-disabled="true" title="Bald verfügbar"' : ''}>${tile(a.g, a.ic)}<span class="dk-n">${a.name}</span>${a.soon ? '<span class="dk-tag">bald</span>' : ''}</button>`).join('')}</div>
     <p class="dk-lead">Ausgegraute Apps brauchen noch einen Server-Teil.</p>`;
 }
 function renderSettings(m) {
@@ -843,6 +863,24 @@ async function openFiles(path, focusSearch) {
     w.files = m.mount(w.body, { el, btn, ic, api: ctx.api });
     if (focusSearch) $('.dk-fsearch input', w.el)?.focus();
   } catch { w.body.innerHTML = '<div class="dk-fempty">Die Dateien konnten nicht geladen werden.</div>'; }
+  return w;
+}
+
+/* =====================================================================
+ *  Module Caddy und DDNS (nur lesen; der Inhalt steckt in desktop-modules.js)
+ * ===================================================================== */
+async function openModule(id) {
+  const old = wins.get(id);
+  if (old) { old.minimized ? restoreWin(old) : focusWin(old); old.mod?.reload(); return old; }
+  const a = appById(id);
+  const w = createWindow({ id, title: a.name, icon: `<span class="dk-ti" style="--g1:${a.g[0]};--g2:${a.g[1]};width:22px;height:22px;border-radius:7px">${ic(a.ic)}</span>`,
+    rect: defaultRect(id, 680, 480, 30, 20), minW: 460, minH: 300, cls: 'dk-modwin' });
+  w.body.innerHTML = '<div class="dk-fempty">Lädt …</div>';
+  try {
+    const m = await import('./desktop-modules.js');
+    if (!wins.has(id)) return w;   // schon wieder geschlossen
+    w.mod = id === 'caddy' ? m.mountCaddy(w.body, { el, btn, ic, api: ctx.api }) : m.mountDdns(w.body, { el, btn, ic, api: ctx.api });
+  } catch { w.body.innerHTML = `<div class="dk-fempty">${a.name} konnte nicht geladen werden.</div>`; }
   return w;
 }
 
@@ -962,6 +1000,7 @@ export async function init(context) {
 }
 /** Nach Anmeldung (oder wenn die Seite die Startansicht zeigt): Konto setzen, Home-Fenster oeffnen */
 export function userChanged(user, message) {
+  import('./modules.js').then((m) => m.loadModules(ctx.api)).then((m) => { modules = m; applyModules(); });
   const av = $('#dkUser .dk-avatar', root); if (av) av.textContent = (user || '?').slice(0, 1);
   if (!wins.has('home') && !wins.size) openHome();
   if (dockMode === 'auto' && !dockHinted) { dockHinted = true; showDock(); hideTimer = setTimeout(hideDock, 3500); }
@@ -974,5 +1013,6 @@ export function reset() {
   closeMenu(); closeLauncher();
   for (const w of [...wins.values()]) { w.opts.onClose = null; closeWin(w); }
   sessWins.clear();
+  modules = { caddy: false, ddns: false }; applyModules();
   nav.view = 'start'; nav.back = []; nav.fwd = [];
 }

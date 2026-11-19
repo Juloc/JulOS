@@ -163,7 +163,7 @@ export function setShown(on) {
     clearTimeout(overviewTimer);
   }
 }
-export function reset() { overview = null; overviewOk = null; user = ''; current = 'home'; view.q = ''; view.kind = 'all'; setShown(false); if (root) { root.hidden = true; root.removeAttribute('style'); } }
+export function reset() { mods = { caddy: false, ddns: false }; modsLoaded = false; overview = null; overviewOk = null; user = ''; current = 'home'; view.q = ''; view.kind = 'all'; setShown(false); if (root) { root.hidden = true; root.removeAttribute('style'); } }
 
 export function userChanged(name, message) {
   user = name;
@@ -344,6 +344,7 @@ function buildServicesPage() {
     <label class="m3-search"><span class="m3-ic" aria-hidden="true">${icon('search')}</span><input id="mSearch" type="search" placeholder="Dienste durchsuchen …" autocomplete="off" autocapitalize="none" spellcheck="false" enterkeyhint="search" aria-label="Dienste durchsuchen"></label>
     <div class="chips" role="group" aria-label="Filter" id="mChips"></div>
     <div id="mGrid"></div>
+    <div id="mMods"></div>
     <div class="m3-sec">${icon('bolt')}<span>Schnellaktionen</span></div>
     <div class="quick" id="mQuick"></div>`;
   $('#mSearch').addEventListener('input', (e) => { view.q = e.target.value; renderGrid(); });
@@ -358,12 +359,19 @@ function renderServices() {
   const cnt = (k) => conns().filter((c) => k === 'all' || c.kind === k).length;
   $('#mChips').innerHTML = [['all', 'Alle', 'apps'], ['desktop', 'Desktop', 'desktop'], ['terminal', 'Terminal', 'terminal']].map(([k, l, ic]) =>
     `<button type="button" class="mb m3-chip m3-state" data-kind="${k}" aria-pressed="${view.kind === k}">${view.kind === k ? icon('check') : icon(ic)}${l} <span style="opacity:.7">${cnt(k)}</span></button>`).join('');
-  renderGrid();
+  renderGrid(); renderModules();
   const last = lastConnection();
   $('#mQuick').innerHTML = `
     <button type="button" class="mb m3-btn filled m3-state" data-act="add">${icon('add')}Neue Verbindung</button>
     <button type="button" class="mb m3-btn tonal m3-state" data-act="last" ${last ? '' : 'disabled'} ${last ? `aria-label="Zuletzt geöffnet: ${esc(last.name)}"` : ''}>${icon('history')}${last ? 'Zuletzt: ' + esc(last.name.length > 14 ? last.name.slice(0, 13) + '…' : last.name) : 'Zuletzt geöffnet'}</button>
     <button type="button" class="mb m3-btn tonal m3-state" data-act="ssh">${icon('terminal')}SSH öffnen</button>`;
+}
+/* Module Caddy und DDNS (nur lesen): Karten nur, wenn der Server sie eingeschaltet hat (GET /api/modules); Details im Sheet, siehe mobile-modules.js */
+let mods = { caddy: false, ddns: false }, modsLoaded = false;
+async function renderModules() {
+  const box = $('#mMods'); if (!box) return;
+  if (!modsLoaded) { modsLoaded = true; mods = await import('./modules.js').then((m) => m.loadModules(ctx.api)); }
+  if (mods.caddy || mods.ddns) (await import('./mobile-modules.js')).renderCards(box, mods, { icon, esc, api: ctx.api }); else box.replaceChildren();
 }
 function renderGrid() {
   const list = filtered(), pinned = new Set(ls.get('fav', []));
@@ -475,6 +483,7 @@ function onClick(e) {
   if (act === 'sess') { Sessions.activate(a.dataset.sid, { reveal: true }); return; }
   if (act === 'start') { const c = byId(a.dataset.conn); if (c) ctx.connect(c); }
   else if (act === 'add') ctx.add();
+  else if (act === 'mod') import('./mobile-modules.js').then((m) => m.openSheet(a.dataset.mod, { icon, esc, api: ctx.api, wireSheet, app: $('#app') }));
   else if (act === 'allacts') { view.allActs = !view.allActs; renderHome(); }
   else if (act === 'last') { const c = lastConnection(); if (c) ctx.connect(c); }
   else if (act === 'ssh') {

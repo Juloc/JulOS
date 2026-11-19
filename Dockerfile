@@ -24,7 +24,12 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 # Ubuntu universe, etwa 13 MB). Ohne GPU im Container (kein /dev/dri) liegen sie nur da und der Server kodiert auf der CPU. Fuer eine andere GPU:
 # --build-arg VAAPI_PACKAGES="libva2 libva-drm2 mesa-va-drivers" (AMD) oder "... i965-va-driver" (aeltere Intel); leer lassen schaltet es ab.
 ARG VAAPI_PACKAGES="libva2 libva-drm2 intel-media-va-driver"
-RUN if [ -n "$VAAPI_PACKAGES" ]; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $VAAPI_PACKAGES && rm -rf /var/lib/apt/lists/*; fi
+# Die Intel-Treiber gibt es nur fuer amd64: auf arm64 (der Build erzeugt beide) bleibt nur libva.
+RUN if [ -n "$VAAPI_PACKAGES" ]; then \
+      pkgs="$VAAPI_PACKAGES"; \
+      if [ "$(dpkg --print-architecture)" != amd64 ]; then pkgs=$(printf '%s' "$pkgs" | sed 's/intel-media-va-driver//; s/i965-va-driver//'); fi; \
+      apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $pkgs && rm -rf /var/lib/apt/lists/*; \
+    fi
 WORKDIR /app
 COPY --from=build /app .
 ARG BUILD_DATE=

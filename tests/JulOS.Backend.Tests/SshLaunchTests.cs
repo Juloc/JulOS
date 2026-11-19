@@ -106,10 +106,10 @@ public sealed class SshLaunchTests
     [Theory]
     [InlineData("a\nb")]
     [InlineData("a\rb")]
-    [InlineData("a\x1b[2Jb")]
+    [InlineData("a\u001b[2Jb")]
     [InlineData("a\0b")]
     [InlineData("a\tb")]
-    [InlineData("a\x7fb")]
+    [InlineData("a\u007fb")]
     public void A_custom_command_is_one_line_without_control_characters(string command)
         => Assert.NotNull(SshLaunchRules.Validate("custom", null, null, command).Error);
 
@@ -154,7 +154,7 @@ public sealed class SshLaunchTests
     {
         Assert.Equal("julos-claude-mein-server-0a1b2c", SshLaunchRules.SessionName(Id, "Mein Server", "claude"));
         Assert.Equal("julos-codex-0a1b2c", SshLaunchRules.SessionName(Id, "!!!", "codex"));
-        Assert.Equal("julos-shell-muller-0a1b2c", SshLaunchRules.SessionName(Id, "Müller", "shell"));
+        Assert.Equal("julos-shell-mueller-0a1b2c", SshLaunchRules.SessionName(Id, "Müller", "shell"));
         Assert.Equal(SshLaunchRules.SessionName(Id, "Mein Server", "claude"), SshLaunchRules.SessionName(Id, "Mein Server", "claude"));              // stabil: so findet new-session -A sie wieder
         Assert.NotEqual(SshLaunchRules.SessionName(Id, "Mein Server", "claude"), SshLaunchRules.SessionName(Guid.NewGuid(), "Mein Server", "claude"));  // gleicher Name, andere Verbindung
         Assert.NotEqual(SshLaunchRules.SessionName(Id, "Mein Server", "claude"), SshLaunchRules.SessionName(Id, "Mein Server", "codex"));
@@ -193,11 +193,11 @@ public sealed class SshLaunchTests
     [Fact]
     public void Tmux_lines_attach_if_the_session_exists_and_set_mouse_and_status()
     {
-        Assert.Equal(" exec tmux new-session -A -s julos-claude-server-0a1b2c 'claude' \; set-option mouse on \; set-option status off\n",
+        Assert.Equal(" exec tmux new-session -A -s julos-claude-server-0a1b2c 'claude' \\; set-option mouse on \\; set-option status off\n",
             Line(new SshLaunch("claude", "", true, ""), true));
-        Assert.Equal(" cd \"$HOME\"'/w' && exec tmux new-session -A -s julos-shell-server-0a1b2c \; set-option mouse on \; set-option status off\n",
+        Assert.Equal(" cd \"$HOME\"'/w' && exec tmux new-session -A -s julos-shell-server-0a1b2c \\; set-option mouse on \\; set-option status off\n",
             Line(new SshLaunch("shell", "~/w", true, ""), true));
-        Assert.Equal(" exec tmux new-session -A -s julos-custom-server-0a1b2c 'a b; c' \; set-option mouse on \; set-option status off\n",
+        Assert.Equal(" exec tmux new-session -A -s julos-custom-server-0a1b2c 'a b; c' \\; set-option mouse on \\; set-option status off\n",
             Line(new SshLaunch("custom", "", true, "a b; c"), true));
     }
 
@@ -221,7 +221,7 @@ public sealed class SshLaunchTests
     public void A_connection_name_with_shell_characters_never_reaches_the_command_line(string name)
     {
         var line = Line(new SshLaunch("claude", "", true, ""), true, name);
-        Assert.Matches(@"^ exec tmux new-session -A -s julos-claude(-[a-z0-9-]+)?-0a1b2c 'claude' \; set-option mouse on \; set-option status off\n$", line);
+        Assert.Matches(@"^ exec tmux new-session -A -s julos-claude(-[a-z0-9-]+)?-0a1b2c 'claude' \\; set-option mouse on \\; set-option status off\n$", line);
     }
 
     // Die Zeilen werden von einer echten sh ausgefuehrt; "claude" und "tmux" sind Attrappen, die ihre Argumente zeilenweise ausgeben.
@@ -231,7 +231,7 @@ public sealed class SshLaunchTests
         File.WriteAllText(Path.Combine(dir, "claude"), "#!/bin/sh\necho \"cwd=$(pwd)\"\nfor a in \"$@\"; do echo \"arg=$a\"; done\necho claude-ran\n");
         File.WriteAllText(Path.Combine(dir, "tmux"), "#!/bin/sh\nfor a in \"$@\"; do echo \"tmux-arg=$a\"; done\n");
         Directory.CreateDirectory(Path.Combine(dir, "work", "sub"));
-        foreach (var f in new[] { "claude", "tmux" }) File.SetUnixFileMode(Path.Combine(dir, f), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        foreach (var f in new[] { "claude", "tmux" }) if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(Path.Combine(dir, f), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         return (dir, dir);
     }
 
@@ -286,7 +286,7 @@ public sealed class SshLaunchTests
             const string evil = "echo 'x'; $(touch PWNED) `touch PWNED2` \"y\" \\ end";
             var (o, _) = await RunShAsync(dir, Line(new SshLaunch("custom", "", true, evil), true));
             var args = o.Split('\n', StringSplitOptions.RemoveEmptyEntries).Where(l => l.StartsWith("tmux-arg=")).Select(l => l["tmux-arg=".Length..]).ToList();
-            Assert.Equal(evil, args[3]);                                                      // genau ein Argument, unveraendert
+            Assert.Equal(evil, args[4]);                                                      // genau ein Argument, unveraendert
             Assert.False(File.Exists(Path.Combine(dir, "PWNED")) || File.Exists(Path.Combine(dir, "PWNED2")));
 
             // ohne tmux fuehrt "sh -c" den Befehl des Besitzers aus (so ist es gewollt); die Zeile selbst wird davon nicht gespalten
@@ -308,9 +308,9 @@ public sealed class SshLaunchTests
             // alles da
             var l = new SshLaunch("claude", "~/work", true, "");
             Assert.Equal("julos-probe prog=1 dir=1 tmux=1", Out((await RunShAsync(dir, SshLaunchRules.ProbeCommand(l))).Out));
-            // Programm fehlt (PATH ohne die Attrappe), Verzeichnis fehlt, tmux fehlt
+            // Programm fehlt (PATH ohne die Attrappe), Verzeichnis fehlt; ob tmux fehlt, haengt vom Rechner ab (Login-Shells erweitern den PATH), darum nicht geprueft
             var bare = "/usr/bin:/bin";
-            Assert.Equal("julos-probe prog=0 dir=1 tmux=0", Out((await RunShAsync(dir, SshLaunchRules.ProbeCommand(l), bare)).Out));
+            Assert.StartsWith("julos-probe prog=0 dir=1 tmux=", Out((await RunShAsync(dir, SshLaunchRules.ProbeCommand(l), bare)).Out));
             Assert.Equal("julos-probe prog=1 dir=0 tmux=1", Out((await RunShAsync(dir, SshLaunchRules.ProbeCommand(l with { WorkDir = "~/gibt/es/nicht" }))).Out));
             // nur was gebraucht wird, wird geprueft: eine blanke Shell mit Verzeichnis fragt weder nach einem Programm noch nach tmux
             Assert.Equal("julos-probe prog=1 dir=1 tmux=1", Out((await RunShAsync(dir, SshLaunchRules.ProbeCommand(new SshLaunch("shell", "~/work", false, "")), bare)).Out));

@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -88,11 +87,14 @@ public static partial class SshLaunchRules
     public static string SessionName(Guid connectionId, string connectionName, string program)
     {
         var slug = new StringBuilder();
-        foreach (var c in connectionName.ToLowerInvariant().Normalize(NormalizationForm.FormKD))
+        foreach (var c in connectionName.ToLowerInvariant())
         {
-            if (CharUnicodeInfo.GetUnicodeCategory(c) == UnicodeCategory.NonSpacingMark) continue;      // Akzente fallen weg: "müller" wird "muller"
-            if (c is >= 'a' and <= 'z' or >= '0' and <= '9') slug.Append(c);
-            else if (slug.Length > 0 && slug[^1] != '-') slug.Append('-');
+            var folded = Fold(c);
+            foreach (var f in folded)
+            {
+                if (f is >= 'a' and <= 'z' or >= '0' and <= '9') slug.Append(f);
+                else if (slug.Length > 0 && slug[^1] != '-') slug.Append('-');
+            }
         }
         var name = slug.ToString().Trim('-');
         if (name.Length > 24) name = name[..24].TrimEnd('-');
@@ -100,6 +102,15 @@ public static partial class SshLaunchRules
         var prog = Programs.Contains(program) ? program : "shell";
         return name.Length == 0 ? $"julos-{prog}-{id}" : $"julos-{prog}-{name}-{id}";
     }
+
+    // Umlaute und gebraeuchliche Akzente als Buchstaben (ohne Unicode-Normalisierung: die fehlt im Image mit invarianter Kultur); alles andere wird zum Trenner
+    private static string Fold(char c) => c switch
+    {
+        'ä' => "ae", 'ö' => "oe", 'ü' => "ue", 'ß' => "ss",
+        'à' or 'á' or 'â' or 'ã' or 'å' => "a", 'ç' => "c", 'è' or 'é' or 'ê' or 'ë' => "e", 'ì' or 'í' or 'î' or 'ï' => "i", 'ñ' => "n",
+        'ò' or 'ó' or 'ô' or 'õ' => "o", 'ù' or 'ú' or 'û' => "u", 'ý' or 'ÿ' => "y",
+        _ => c.ToString(),
+    };
 
     /// <summary>
     /// Der Befehl fuer den kurzen Exec-Kanal (Frist 5 s): gibt eine Zeile "julos-probe prog=1 dir=1 tmux=1" aus. Die Programme werden erst so, dann in einer

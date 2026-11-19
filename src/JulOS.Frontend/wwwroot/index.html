@@ -277,6 +277,19 @@
             <button id="hostAgentSetup" type="button" class="ghost" data-i18n="app.agentSetup">Agent einrichten</button>
             <button id="hostAgentRemove" type="button" class="danger" hidden data-i18n="app.agentRemove">Agent entfernen</button>
           </div>
+          <div id="hostAgentSsh" class="agentbox">
+            <h3 data-i18n="app.hostSshTitle">Host-Agent (Server ohne Desktop)</h3>
+            <p class="hint" data-i18n="app.hostSshHint">Für einen Server oder eine VM ohne Bildschirm (zum Beispiel Docker-Host oder Proxmox): ein kleines Programm, das Systemwerte, Updates, Dienste und Container nur liest und meldet. Es läuft als eigener Benutzer ohne Anmeldung und meldet sich von dort aus beim Server.</p>
+            <p id="hostSshTarget" class="hint"></p>
+            <div class="row">
+              <button id="hostSshInstall" type="button" class="primary" data-i18n="app.hostSshInstall">Agent per SSH installieren</button>
+              <button id="hostSshCopy" type="button" class="ghost" data-i18n="app.hostSshCopy">Befehl kopieren</button>
+            </div>
+            <div id="hostSshCmdBox" hidden>
+              <p id="hostSshNote" class="hint"></p>
+              <pre id="hostSshCmd" class="agentcmd"></pre>
+            </div>
+          </div>
         </section>
         <p id="hostMsg" class="msg" role="alert"></p>
         <div class="row">
@@ -285,6 +298,18 @@
           <button class="ghost close" data-act="close" type="button" data-i18n="common.cancel">Abbrechen</button>
         </div>
       </form>
+    </dialog>
+
+    <!-- Host-Details: Systemwerte, Updates, Dienste, Container (docs/HOST-AGENT.md) -->
+    <dialog id="hostInfoDlg">
+      <h2 id="hostInfoTitle">Host</h2>
+      <p id="hostInfoSub" class="hint"></p>
+      <div id="hostInfoBody"></div>
+      <p id="hostInfoMsg" class="msg" role="alert"></p>
+      <div class="row">
+        <button id="hostInfoRefresh" type="button" class="primary" data-i18n="hostinfo.refresh">Neu lesen</button>
+        <button class="ghost close" data-act="close" type="button" data-i18n="common.close">Schließen</button>
+      </div>
     </dialog>
 
     <!-- Passwort fuer die Verbindung -->

@@ -31,6 +31,16 @@ export function sendPlan(raw) {
   return { text: text === '' ? null : text, enter: true };
 }
 
+/**
+ * Text in den Entwurf der Leiste legen, ohne ihn zu senden: die Leiste wird geoeffnet, der Entwurf ersetzt. Der Zustand gehoert der Sitzung, darum
+ * geht das auch, bevor die Leiste existiert (sie entsteht erst beim Verbinden und liest den Entwurf dann). Gibt den Zustand zurueck.
+ */
+export function prefillState(state, text) {
+  state.draft = String(text ?? '');
+  state.open = true;
+  return state;
+}
+
 /** Zeilen des Felds (1 bis max): nach Zeilenumbruechen, die Umbrueche der Breite faengt das Feld selbst durch seine Hoehe auf. */
 export const rowsFor = (text, max = MAX_ROWS) => Math.min(max, Math.max(1, String(text ?? '').split('\n').length));
 
@@ -183,6 +193,14 @@ export class TerminalBar {
     this.field.value = ''; this.state.draft = '';
     this.grow();
     this.field.focus();
+  }
+
+  /** Entwurf von aussen setzen (zum Beispiel der Installationsbefehl des Host-Agenten): steht im Feld, der Benutzer sendet ihn selbst mit Enter. */
+  setDraft(text) {
+    prefillState(this.state, text);
+    this.field.value = this.state.draft;
+    this.apply();
+    this.field.selectionStart = this.field.selectionEnd = this.field.value.length;
   }
 
   insert(text) {

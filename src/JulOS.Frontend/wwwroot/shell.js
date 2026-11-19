@@ -1,6 +1,8 @@
 import { ico, prefs, applyServerPrefs } from './app.js';
 import { Sessions } from './sessions.js';
 import { agentSummary, hostDetail } from './hosts.js';
+import { createHostInfoStore, agentDetail, installCommand, pickTerminal } from './hostinfo.js';
+import { initHostInfoDialog } from './hostinfo-dialog.js';
 import { loadOrganisation, takeOverLocal, mergePlacements, setFolder, touch, move, folderName } from './folders.js';
 import { initFolderDialog } from './folder-dialog.js';
 import { parseQuickTarget, quickConnection, DEFAULT_PORT as QUICK_PORT } from './quick.js';
@@ -129,6 +131,7 @@ $('#setupSecretForm').addEventListener('submit', async (e) => {
 /* ---------- Anmeldung ---------- */
 function showLogin(message = '') {
   closeAllSessions();
+  hostInfo.clear();
   if (D) D.reset();
   if (M) M.reset();
   show('login'); setMsg($('#loginMsg'), message);
@@ -339,6 +342,50 @@ function agentCommands(code) {
   ].join('\n');
 }
 
+/** Zeile unter "Host-Agent": in welchem Terminal der Befehl landet (oder dass es keins gibt und der Befehl nur angezeigt wird) */
+function showSshTarget(h) {
+  const conn = pickTerminal(state.connections, h.id);
+  $('#hostSshTarget').textContent = conn ? t('shell.sshTarget', { name: conn.name }) : t('shell.sshNoTerminal');
+  $('#hostSshInstall').hidden = !conn;
+}
+
+/** Frischer Code (10 Minuten, einmal) und der fertige Einzeiler fuer den Host */
+async function hostInstallCommand(h) {
+  const r = await api(`/api/hosts/${h.id}/agent/code`, { method: 'POST', body: {} });
+  return installCommand(location.origin, r.code);
+}
+
+/** Zeigt den Befehl im Dialog (zum Kopieren); note sagt, was der Benutzer damit tut */
+function showSshCommand(cmd, noteText) {
+  $('#hostSshCmd').textContent = cmd; $('#hostSshNote').textContent = noteText; $('#hostSshCmdBox').hidden = false;
+}
+
+/** "Agent per SSH installieren": Terminal dieses Hosts oeffnen und den Befehl in die Eingabeleiste legen, NICHT senden. Das sudo-Passwort tippt der Benutzer im Terminal; JulOS sieht es nie. */
+$('#hostSshInstall').addEventListener('click', async (e) => {
+  const h = state.editingHost; if (!h) return;
+  const conn = pickTerminal(state.connections, h.id); if (!conn) return;
+  const b = e.currentTarget; b.disabled = true; setMsg($('#hostMsg'), '');
+  try {
+    const cmd = await hostInstallCommand(h);
+    $('#hostDlg').close();
+    startDialog(conn, { prefill: cmd });
+    notice(t('shell.sshPrefilled', { name: conn.name }));
+  } catch (err) { setMsg($('#hostMsg'), err.message); }
+  finally { b.disabled = false; }
+});
+
+$('#hostSshCopy').addEventListener('click', async (e) => {
+  const h = state.editingHost; if (!h) return;
+  const b = e.currentTarget; b.disabled = true; setMsg($('#hostMsg'), '');
+  try {
+    const cmd = await hostInstallCommand(h);
+    showSshCommand(cmd, t('shell.sshCommandNote'));
+    try { await navigator.clipboard.writeText(cmd); setMsg($('#hostMsg'), t('shell.commandsCopied'), true); }
+    catch { const r = document.createRange(); r.selectNodeContents($('#hostSshCmd')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); setMsg($('#hostMsg'), t('shell.copySelected')); }
+  } catch (err) { setMsg($('#hostMsg'), err.message); }
+  finally { b.disabled = false; }
+});
+
 /** Host anlegen (h = null) oder bearbeiten. onCreated bekommt den neuen Host (zum Beispiel fuer die Auswahl in der Verbindung). */
 function hostDialog(h, onCreated) {
   state.editingHost = h; state.hostCreated = onCreated || null;
@@ -352,6 +399,7 @@ function hostDialog(h, onCreated) {
   setMsg($('#hostMsg'), '');
   $('#hostAgent').hidden = !h;                       // ein Agent braucht einen gespeicherten Host
   $('#hostAgentCode').hidden = true; $('#hostAgentCmd').textContent = ''; $('#hostAgentCodeText').textContent = '';
+  $('#hostSshCmdBox').hidden = true; $('#hostSshCmd').textContent = '';
   if (h) showAgentState(h);
   $('#hostDlg').showModal();
   setTimeout(() => $('#hostName').focus(), 100);
@@ -359,7 +407,8 @@ function hostDialog(h, onCreated) {
 
 function showAgentState(h) {
   const a = h.agent;
-  $('#hostAgentState').textContent = agentSummary(h);
+  $('#hostAgentState').textContent = [agentSummary(h), agentDetail(h)].filter(Boolean).join(' · ');
+  showSshTarget(h);
   $('#hostAgentSetup').textContent = a ? t('shell.agentRenew') : t('shell.agentSetup');
   $('#hostAgentRemove').hidden = !a;
   $('#hostAgentUpdate').hidden = !a;
@@ -539,13 +588,18 @@ async function launchProgram(program, choose) {
 /* ---------- Verbinden ---------- */
 const asConn = (c) => ({ id: c.id, name: c.name, kind: c.kind, stored: c.hasPassword ? true : undefined, target: `${c.host}:${c.port}/${c.username}`, domain: c.domain || undefined, program: programOf(c), workDir: c.workDir || undefined });
 
+/** Text in die Eingabeleiste einer Terminal-Sitzung legen, ohne ihn zu senden (der Benutzer sieht ihn und startet ihn selbst mit Enter). Andere Sitzungsarten ignorieren es. */
+function prefillSession(session, text) {
+  if (text && session && typeof session.prefill === 'function') session.prefill(text);
+}
+
 /** opts.extra: bewusst eine weitere Sitzung zum selben Ziel; sonst wird eine schon offene Sitzung nur nach vorn geholt. */
 function startDialog(c, opts = {}) {
-  if (!opts.extra && Sessions.find(c.id).length) { Sessions.open(asConn(c)); return; }   // laeuft schon: nach vorn, kein Passwort noetig
-  state.starting = { c, extra: !!opts.extra };
+  if (!opts.extra && Sessions.find(c.id).length) { prefillSession(Sessions.open(asConn(c)), opts.prefill); return; }   // laeuft schon: nach vorn, kein Passwort noetig
+  state.starting = { c, extra: !!opts.extra, prefill: opts.prefill };
   // Mit gespeichertem Passwort genuegt ein Tipp: der Server nimmt es aus dem verschluesselten Speicher
   // Ein VNC-Server kann ohne Anmeldung laufen: dann gleich verbinden; verlangt er ein Passwort, fragt die Sitzung danach
-  if (c.hasPassword || c.kind === 'vnc') { launch(c, '', !!opts.extra); return; }
+  if (c.hasPassword || c.kind === 'vnc') { launch(c, '', !!opts.extra, opts.prefill); return; }
   $('#startTitle').textContent = c.name;
   $('#startUser').value = c.username;
   $('#startPw').value = '';
@@ -554,9 +608,10 @@ function startDialog(c, opts = {}) {
 }
 
 /** Verbindung starten: der Verwalter legt die Sitzung an, die Huelle (Fenster am Desktop, Umschalter am Handy) zeigt sie. */
-function launch(c, password, extra = false) {
+function launch(c, password, extra = false, prefill = '') {
   const before = Sessions.count;
-  Sessions.open(asConn(c), { password, extra });
+  const session = Sessions.open(asConn(c), { password, extra });
+  prefillSession(session, prefill);
   if (Sessions.count > before) {
     c.useCount = (c.useCount || 0) + 1; c.lastUsedAt = new Date().toISOString();       // sofort sichtbar; der Server zaehlt es fuer alle Geraete
     touch(api, c).catch(() => {});
@@ -570,7 +625,7 @@ $('#startForm').addEventListener('submit', (e) => {
   if (!password) return;
   $('#startPw').value = '';
   $('#startDlg').close();
-  launch(state.starting.c, password, state.starting.extra);
+  launch(state.starting.c, password, state.starting.extra, state.starting.prefill);
 });
 
 /* ---------- Quick Connect: Sitzung ohne Speichern (nichts in der Datenbank, das Passwort gilt nur fuer diese Sitzung) ---------- */
@@ -645,10 +700,12 @@ Sessions.addEventListener('closed', (e) => {
 Sessions.addEventListener('home', () => { if (!D) goHome(); });
 Sessions.addEventListener('switcher', () => { if (M) M.openSwitcher(); else goHome(); });
 
+const hostInfo = createHostInfoStore({ api, onChange: () => { if (D && D.hostInfoChanged) D.hostInfoChanged(); if (M && M.hostInfoChanged) M.hostInfoChanged(); } });
+const openHostInfo = initHostInfoDialog({ state, api, esc, store: hostInfo });
 const openAccount = initAccount({ api, setMsg });
 const openNetTools = initNetTools({ api, setMsg, connections: () => state.connections });
-if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), signOut, home: goHome, account: openAccount, nettools: openNetTools });
-if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), devices: openDevices, account: openAccount, nettools: openNetTools, signOut });
+if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), hostInfo: openHostInfo, info: hostInfo, signOut, home: goHome, account: openAccount, nettools: openNetTools });
+if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), hostInfo: openHostInfo, info: hostInfo, devices: openDevices, account: openAccount, nettools: openNetTools, signOut });
 
 /* ---------- Geraete und Sitzungen ---------- */
 function describeAgent(ua) {

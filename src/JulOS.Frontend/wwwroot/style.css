@@ -302,3 +302,20 @@ label.check input { width: auto; }
 #remoteFiles li { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
 #remoteFiles .nm { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #remoteFiles .sz { color: var(--muted); font-size: .85rem; flex: 0 0 auto; }
+/* Host-Details (hostinfo.js, docs/HOST-AGENT.md): Abschnitte, Wertetabelle, Paket- und Containerlisten */
+#hostInfoDlg { width: min(94vw, 640px); }
+.hi-sec { border-top: 1px solid rgba(127,127,127,.3); margin-top: 10px; padding-top: 4px; }
+.hi-sec h3 { margin: 6px 0 4px; }
+.hi-sub { margin: 10px 0 2px; font-size: .95rem; }
+.hi-dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 4px 0 8px; font-size: .88rem; }
+.hi-dl dt { color: var(--muted); }
+.hi-dl dd { margin: 0; overflow-wrap: anywhere; }
+.hi-dl dd.hi-lines { white-space: pre-line; }
+.hi-sum { margin: 4px 0; font-weight: 600; }
+.hi-note { margin: 4px 0; color: var(--muted); font-size: .85rem; }
+.hi-list { list-style: none; margin: 4px 0 8px; padding: 0; max-height: 240px; overflow-y: auto; font-size: .85rem; }
+.hi-list li { padding: 3px 0; border-bottom: 1px solid rgba(127,127,127,.18); overflow-wrap: anywhere; }
+.hi-list li span { color: var(--muted); }
+.hi-list li.off b, .hi-list li.off span { opacity: .65; }
+.hi-badge { font-style: normal; font-size: .72rem; font-weight: 600; margin-left: 6px; padding: 1px 7px; border-radius: 99px; background: rgba(198,40,40,.16); color: light-dark(#c62828, #ffb4ab); }
+.hi-sec .warn, .hi-dl dd.warn, .hi-note.warn, .hi-sum.warn { color: light-dark(#c62828, #ffb4ab); }

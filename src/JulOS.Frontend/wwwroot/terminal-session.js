@@ -7,7 +7,7 @@
 import { RemoteSession, softKeyboard } from './app.js';
 import { Sessions } from './sessions.js';
 import { TerminalView } from './terminal.js';
-import { TerminalBar } from './terminal-input.js';
+import { TerminalBar, prefillState } from './terminal-input.js';
 import { programOf } from './terminal-programs.js';
 import { t } from './i18n.js';
 
@@ -22,6 +22,7 @@ export class TerminalSession extends RemoteSession {
     super(conn, opts);
     this.view = null; this.bar = null;
     this.barState = { draft: '', open: undefined };      // gehoert der Sitzung: ein Neuverbinden behaelt den Entwurf und ob die Leiste offen ist
+    this.wantBarFocus = false;                            // nach einem prefill: den Fokus in die Eingabeleiste, sobald verbunden (Enter sendet dann)
     this.keep = false;                                    // laeuft die Sitzung in tmux (Antwort des Servers)? Dann haengt sich ein Neuverbinden wieder an
     this.element.classList.add('sv-terminal');
     this.engine = 'ssh';
@@ -62,7 +63,8 @@ export class TerminalSession extends RemoteSession {
       this.resume.connected();
       this.el.overlay.hidden = true; this.el.spinner.hidden = true;
       this.setState('connected', t('term.connected'));
-      if (Sessions.active === this && HW_KB) view.focusInput();
+      if (this.wantBarFocus) { this.wantBarFocus = false; if (Sessions.active === this) this.bar?.focusInput(); }
+      else if (Sessions.active === this && HW_KB) view.focusInput();
       return;
     }
     this.connected = false;
@@ -119,6 +121,16 @@ export class TerminalSession extends RemoteSession {
   setVisible(on) { super.setVisible(on); this.view?.setActive(!!on); }
   focus() { if (HW_KB) this.view?.focusInput(); }
   blur() { this.view?.blur(); super.blur(); }
+
+  /**
+   * Text in die Eingabeleiste legen, ohne ihn zu senden (docs/HOST-AGENT.md: der Installationsbefehl mit frischem Einrichtungscode; der Benutzer sieht ihn,
+   * startet ihn mit Enter und tippt sein sudo-Passwort selbst im Terminal). Die Leiste entsteht erst beim Verbinden: der Entwurf liegt solange im Zustand der Sitzung.
+   */
+  prefill(text) {
+    prefillState(this.barState, text);
+    this.bar?.setDraft(text);
+    if (this.connected) this.bar?.focusInput(); else this.wantBarFocus = true;       // schon verbunden: gleich; sonst sobald die Verbindung steht
+  }
 
   /* ---------- Einfuegen: Text geht als Einfuegen ins Terminal (mit Klammer-Modus, wenn die Shell ihn kann) ---------- */
   pasteToRemote(text) { this.view?.paste(text); }

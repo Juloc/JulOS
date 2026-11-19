@@ -5,6 +5,7 @@ import { t, tp, tk, fmtNumber, fmtDate, fmtTime, fmtDay, getPref, LANG_CHOICES }
 import { looksLikeAddress } from './quick.js';
 import { tileKind, KIND_KEY, withProgram } from './terminal-programs.js';
 import { favouriteList, recentList, filterByFolder, groupByFolder, folderIconSvg, folderName, setFavorite } from './folders.js';
+import { cardLines, wantsInfo } from './hostinfo.js';
 import { connectionState, dotClass as hostDot, stateText, serviceState, hostDetail, agentSummary, servicesSummary } from './hosts.js';
 
 /* =====================================================================
@@ -190,6 +191,8 @@ export function userChanged(name, message) {
 export function connectionsChanged() { if (root) renderAll(); }
 /** Neue Zustaende der Hosts (alle 30 s): die Seite neu zeichnen, die sie zeigt */
 export function hostsChanged() { if (root) renderAll(); }
+/** Neue Systemwerte oder Updates eines Hosts (hostinfo.js): nur die Seite Server neu zeichnen, wenn sie gerade zu sehen ist */
+export function hostInfoChanged() { if (root && current === 'server') renderServer(); }
 
 /** Merkt sich (nur auf diesem Geraet), was gestartet wurde, fuer "Aktivitaeten"; Haeufigkeit und letzte Benutzung zaehlt der Server (shell.js). */
 export function started(c) {
@@ -468,10 +471,13 @@ function soonHtml(ic, title, text) {
 }
 /** Die Hosts mit Zustand, Agent und Diensten (docs/HOSTS.md); der Agent wird je Host eingerichtet */
 function hostsHtml() {
+  ctx.info.ensure(hosts());              // nur die Seite Server fragt nach Systemwerten und Updates (hoechstens alle 55 s), sonst niemand
+  // Zeilen zum Host-Agenten: Modus, Systemwerte, Updates; warn faerbt, was Aufmerksamkeit braucht
+  const lines = (h) => cardLines(h, ctx.info.get(h.id)).map((l) => `<span class="sl hi-line${l.warn ? ' warn' : ''}">${esc(l.text)}</span>`).join('');
   const rows = hosts().map((h) => `<div class="m3-card host" data-host-card="${esc(h.id)}">
-      <div class="m3-li static"><span class="lead">${icon('dns')}</span><span class="txt"><span class="hl"><span class="m3-dot hdot ${hostDot(h.online)}"></span>${esc(h.name)} <small>${stateText(h.online)}</small></span><span class="sl">${esc([hostDetail(h), agentSummary(h), servicesSummary(h)].filter(Boolean).join(' · '))}</span></span></div>
+      <div class="m3-li static"><span class="lead">${icon('dns')}</span><span class="txt"><span class="hl"><span class="m3-dot hdot ${hostDot(h.online)}"></span>${esc(h.name)} <small>${stateText(h.online)}</small></span><span class="sl">${esc([hostDetail(h), agentSummary(h), servicesSummary(h)].filter(Boolean).join(' · '))}</span>${lines(h)}</span></div>
       <div class="svcs">${h.services.map((s) => { const c = byId(s.connection); return c ? `<button type="button" class="mb m3-chip m3-state" data-act="start" data-conn="${esc(c.id)}"><span class="m3-dot hdot ${hostDot(serviceState(h, c.id))}"></span>${esc(c.name)}</button>` : ''; }).join('')}</div>
-      <div class="acts-row"><button type="button" class="mb m3-btn tonal m3-state" data-act="hostagent" data-host="${esc(h.id)}">${icon('download')}${h.agent ? t('mobile.agentManage') : t('shell.agentSetup')}</button>
+      <div class="acts-row">${wantsInfo(h) ? `<button type="button" class="mb m3-btn tonal m3-state" data-act="hostinfo" data-host="${esc(h.id)}">${icon('info')}${t('mobile.hostDetails')}</button>` : ''}<button type="button" class="mb m3-btn tonal m3-state" data-act="hostagent" data-host="${esc(h.id)}">${icon('download')}${h.agent ? t('mobile.agentManage') : t('shell.agentSetup')}</button>
         <button type="button" class="mb m3-btn text m3-state" data-act="hostedit" data-host="${esc(h.id)}">${icon('edit')}${t('common.edit')}</button></div></div>`).join('');
   return `<div class="m3-sec">${icon('dns')}<span>${t('mobile.hosts')}</span><span class="sp"></span><button type="button" class="mb m3-btn text m3-state" data-act="addhost">${icon('add')}${t('mobile.addHost')}</button></div>${rows || `<p class="empty-hint">${t('mobile.noHost')}</p>`}`;
 }
@@ -578,6 +584,7 @@ function onClick(e) {
   else if (act === 'quickq') ctx.quick(view.q);
   else if (act === 'addhost') ctx.addHost();
   else if (act === 'hostedit' || act === 'hostagent') { const h = hosts().find((x) => x.id === a.dataset.host); if (h) ctx.editHost(h); }
+  else if (act === 'hostinfo') { const h = hosts().find((x) => x.id === a.dataset.host); if (h) ctx.hostInfo(h); }
   else if (act === 'mod') openModSheet(a.dataset.mod);
   else if (act === 'allacts') { view.allActs = !view.allActs; renderHome(); }
   else if (act === 'last') { const c = lastConnection(); if (c) ctx.connect(c); }
@@ -643,7 +650,7 @@ function wireSheet(dlg) {
   dlg.addEventListener('pointerup', end); dlg.addEventListener('pointercancel', end);
 }
 function enhanceSheets() {
-  for (const id of ['connDlg', 'hostDlg', 'startDlg', 'quickDlg', 'folderDlg', 'devicesDlg', 'accountDlg', 'netDlg']) { const d = $('#' + id); if (!d) continue; d.classList.add('m3sheet'); wireSheet(d); }
+  for (const id of ['connDlg', 'hostDlg', 'hostInfoDlg', 'startDlg', 'quickDlg', 'folderDlg', 'devicesDlg', 'accountDlg', 'netDlg']) { const d = $('#' + id); if (!d) continue; d.classList.add('m3sheet'); wireSheet(d); }
   // Art und Bildübertragung: segmentierte Tasten statt Auswahlliste; das select bleibt als Wertspeicher bestehen (shell.js liest und setzt es)
   const segFor = (sel) => {
     const label = sel.closest('label'), box = document.createElement('div');

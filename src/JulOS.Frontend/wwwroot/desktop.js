@@ -8,6 +8,7 @@ import { serviceState, connectionState, dotClass, stateText, groupConnections, h
 import { t, tk, fmtNumber, fmtDate, fmtTime, fmtDay, getPref, LANG_CHOICES } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
 import { tileKind } from './terminal-programs.js';
+import { cardLines, wantsInfo } from './hostinfo.js';
 
 /* =====================================================================
  * Desktop-Oberflaeche (breite Bildschirme mit Maus): Menueleiste, Dock, Launcher, Home-Fenster und ein Fenster
@@ -18,7 +19,7 @@ import { tileKind } from './terminal-programs.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const BAR_H = 34;
-let ctx = null;            // von shell.js: { state, esc, api, connect, edit, add, quick, folders, editHost, addHost, devices, account, nettools, signOut }
+let ctx = null;            // von shell.js: { state, esc, api, connect, edit, add, quick, folders, editHost, addHost, hostInfo, info, devices, account, nettools, signOut }
 let root = null;
 const wins = new Map();    // id -> Fenster
 let zTop = 10;
@@ -915,13 +916,17 @@ function renderServices(m) {
 /** Hosts: Rechner und Server mit Zustand, Agent und Diensten; hier wird auch der Agent je Host eingerichtet */
 function renderHosts(m) {
   const hosts = ctx.state.hosts;
+  ctx.info.ensure(hosts);                // nur diese Ansicht fragt nach Systemwerten und Updates (hoechstens alle 55 s), sonst niemand
+  // Zeilen zum Host-Agenten: Modus, Systemwerte, Updates; warn faerbt, was Aufmerksamkeit braucht (voller Speicher, Sicherheitsupdates, Neustart)
+  const lines = (h) => cardLines(h, ctx.info.get(h.id)).map((l) => `<p class="dk-hm dk-hl${l.warn ? ' warn' : ''}">${ctx.esc(l.text)}</p>`).join('');
   m.innerHTML = `<h3 style="margin-top:14px">${t('desktop.hosts')} <button type="button" class="dk-b dk-btn pri" style="margin-left:auto" data-act="addhost">${ic('plus')}${t('desktop.addHost')}</button></h3>
     ${hosts.length ? '' : `<p class="dk-lead">${t('desktop.noHosts')}</p>`}
     <div class="dk-list">${hosts.map((h) => `<div class="dk-card dk-host">
       <div class="dk-hh"><span class="dk-sd ${dotClass(h.online)}" title="${stateText(h.online)}"></span><b>${ctx.esc(h.name)}</b><span class="dk-tag">${stateText(h.online)}</span>
-        <button type="button" class="dk-b dk-btn" style="margin-left:auto" data-hostagent="${ctx.esc(h.id)}">${ic('download')}${h.agent ? t('desktop.manageAgent') : t('desktop.setUpAgent')}</button>
+        ${wantsInfo(h) ? `<button type="button" class="dk-b dk-btn" style="margin-left:auto" data-hostinfo="${ctx.esc(h.id)}">${ic('info')}${t('desktop.hostDetails')}</button>` : ''}
+        <button type="button" class="dk-b dk-btn"${wantsInfo(h) ? '' : ' style="margin-left:auto"'} data-hostagent="${ctx.esc(h.id)}">${ic('download')}${h.agent ? t('desktop.manageAgent') : t('desktop.setUpAgent')}</button>
         <button type="button" class="dk-b dk-btn sq" data-hostedit="${ctx.esc(h.id)}" aria-label="${t('desktop.editHost')}" title="${t('desktop.editHost')}">${ic('edit')}</button></div>
-      <p class="dk-hm">${ctx.esc([hostDetail(h), agentSummary(h), servicesSummary(h)].filter(Boolean).join(' · '))}</p>
+      <p class="dk-hm">${ctx.esc([hostDetail(h), agentSummary(h), servicesSummary(h)].filter(Boolean).join(' · '))}</p>${lines(h)}
       <div class="dk-svc">${h.services.map((s) => { const c = ctx.state.connections.find((x) => x.id === s.connection); return c ? `<button type="button" class="dk-b dk-chip" data-conn="${ctx.esc(c.id)}" title="${ctx.esc(c.host)}:${c.port} – ${stateText(serviceState(h, c.id))}"><span class="dk-sd ${dotClass(serviceState(h, c.id))}"></span>${ctx.esc(c.name)}</button>` : ''; }).join('')}</div></div>`).join('')}</div>`;
 }
 function renderAppsView(m) {
@@ -941,7 +946,7 @@ function renderSettings(m) {
       <div class="dk-btns" role="group" aria-label="${t('lang.title')}">${LANG_CHOICES.map(([id, label]) => `<button type="button" class="dk-b dk-btn${id === getPref() ? ' pri' : ''}" data-lang="${id}" aria-pressed="${id === getPref()}">${id === 'system' ? t('lang.system') : label}</button>`).join('')}</div></div>`;
 }
 function onMainClick(e) {
-  const t = e.target.closest('[data-conn],[data-edit],[data-extra],[data-act],[data-go],[data-app],[data-dockmode],[data-scheme],[data-lang],[data-hostfilter],[data-folderfilter],[data-groupby],[data-fav],[data-hostedit],[data-hostagent]'); if (!t) return;
+  const t = e.target.closest('[data-conn],[data-edit],[data-extra],[data-act],[data-go],[data-app],[data-dockmode],[data-scheme],[data-lang],[data-hostfilter],[data-folderfilter],[data-groupby],[data-fav],[data-hostedit],[data-hostagent],[data-hostinfo]'); if (!t) return;
   const find = (id) => ctx.state.connections.find((c) => c.id === id);
   const host = (id) => ctx.state.hosts.find((h) => h.id === id);
   if (t.dataset.lang) { if (t.dataset.lang !== getPref()) setLanguage(t.dataset.lang); }
@@ -953,6 +958,7 @@ function onMainClick(e) {
   else if (t.dataset.fav) { const c = find(t.dataset.fav); c && setFavorite(ctx.api, c, !c.favorite).then(() => renderHome(), (err) => notify(serverMsg(err.message))); }
   else if (t.dataset.act === 'folders') ctx.folders();
   else if (t.dataset.hostedit || t.dataset.hostagent) { const h = host(t.dataset.hostedit || t.dataset.hostagent); h && ctx.editHost(h); }
+  else if (t.dataset.hostinfo) { const h = host(t.dataset.hostinfo); h && ctx.hostInfo(h); }
   else if (t.dataset.act === 'addhost') ctx.addHost();
   else if (t.dataset.conn) { const c = find(t.dataset.conn); c && ctx.connect(c); }
   else if (t.dataset.extra) { const c = find(t.dataset.extra); c && ctx.connect(c, { extra: true }); }
@@ -1152,6 +1158,11 @@ export function hostsChanged() {
   const w = wins.get('home');
   if (w && ['start', 'dienste', 'hosts'].includes(nav.view)) { const top = w.main.scrollTop; renderHome(); w.main.scrollTop = top; }
   if (menuEl && menuOwner?.dataset.menu === 'Hosts') { const o = menuOwner; closeMenu(); o.click(); }
+}
+/** Neue Systemwerte oder Updates eines Hosts (hostinfo.js): die Host-Ansicht neu zeichnen, ohne dass das Fenster nach oben springt */
+export function hostInfoChanged() {
+  const w = wins.get('home');
+  if (root && w && nav.view === 'hosts') { const top = w.main.scrollTop; renderHome(); w.main.scrollTop = top; }
 }
 /** Abgemeldet oder Anmeldung noetig: alle Fenster zu */
 export function reset() {

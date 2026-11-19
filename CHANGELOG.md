@@ -22,6 +22,9 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 ### Geändert
 - Dockerfile: die SDK-Stufe läuft mit `--platform=$BUILDPLATFORM`, der arm64-Bau braucht dafür keine Emulation mehr.
 
+### Behoben
+- Service Worker: Der Eintrag für die entfernte Guacamole-Bibliothek in der Dateiliste der App-Hülle (`sw.js`) ließ die Installation des Service Workers scheitern (404), sodass die Hülle nie zwischengespeichert wurde. Der Eintrag ist weg, die neuen Dateien (Konto, QR-Code, Netzwerkwerkzeuge) stehen in der Liste, die Cache-Version ist `pd-v40`.
+
 ## [0.5.0] - 2026-11-19
 
 ### Neu

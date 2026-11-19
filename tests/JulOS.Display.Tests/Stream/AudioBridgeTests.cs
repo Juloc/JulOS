@@ -190,6 +190,26 @@ public sealed class AudioBridgeTests
     }
 
     [Fact]
+    public async Task A_browser_that_takes_over_a_kept_session_is_told_what_the_desktop_offers_for_sound()
+    {
+        await using var stream = new ScreenStream(new Rdp.RdpOptions { Host = "unused", UserName = "u", Password = "p", Width = 800, Height = 600 });
+        stream.Audio.OutputOn = true;
+        stream.Park();
+        Assert.False(stream.Audio.OutputOn);                                       // the old browser is gone: no sound is sent to nobody
+
+        stream.Resume();
+
+        var events = new List<ScreenEvent>();
+        while (stream.Events.TryRead(out var evt))
+        {
+            events.Add(evt);
+        }
+
+        var status = Assert.Single(events.OfType<ScreenAudioStatus>());           // the bridge only reports changes, so the new browser must be told
+        Assert.Equal(stream.Audio.Status, status.Status);
+    }
+
+    [Fact]
     public void The_message_to_the_browser_has_the_kind_format_time_and_sound()
     {
         var buffer = new byte[64];

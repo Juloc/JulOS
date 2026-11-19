@@ -308,7 +308,7 @@ def command_check():
     return 3 if problems else 0
 
 
-def command_stop(wait=8):
+def command_stop(wait=8, hint=True):
     unit = unit_active()
     if unit:
         r = systemctl("stop", UNIT_NAME)
@@ -326,7 +326,7 @@ def command_stop(wait=8):
         print("Der Agent (PID %d) reagiert nicht auf das Beenden: kill -9 %d" % (pid, pid))
         return 1
     print("Agent beendet (PID %d)." % pid)
-    if os.path.exists(os.path.join(autostart_dir(), "julos-agent.desktop")):
+    if hint and os.path.exists(os.path.join(autostart_dir(), "julos-agent.desktop")):
         print("Er startet beim naechsten Anmelden wieder; dauerhaft entfernen: julos-agent.py uninstall")
     return 0
 
@@ -353,7 +353,7 @@ def uninstall_plan(keep_config):
     plan = []
     here = os.path.dirname(SCRIPT)
     if running_pid() or unit_active():
-        plan.append(("laufenden Agenten beenden", command_stop))
+        plan.append(("laufenden Agenten beenden", lambda: command_stop(hint=False)))
     if os.path.exists(unit_file()):
         def drop_unit():
             systemctl("disable", "--now", UNIT_NAME)

@@ -105,28 +105,13 @@ html.m3, html.m3 body { background: var(--m3-surface); }
 .soon .m3-chip.status { margin-top: 4px; }
 .soon p { margin: 0; color: var(--m3-on-surface-variant); max-width: 28em; }
 
-/* ---------- Profil ---------- */
-.me { display: flex; align-items: center; gap: 14px; padding: 14px 16px; }
-.me .avatar { width: 56px; height: 56px; border-radius: 50%; background: var(--m3-primary); color: var(--m3-on-primary); display: flex; align-items: center; justify-content: center; font: var(--m3-title-l); text-transform: uppercase; flex: 0 0 auto; }
-.me .t { font: var(--m3-title-m); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.me .t small { display: block; font: var(--m3-body-s); color: var(--m3-on-surface-variant); }
-.grp-t { margin: 18px 8px 6px; font: var(--m3-label-m); letter-spacing: .6px; text-transform: uppercase; color: var(--m3-primary); }
-.grp { overflow: hidden; }
-.setrow { padding: 10px 16px 12px; }
-.setrow + .setrow { box-shadow: inset 0 1px 0 var(--m3-outline-variant); }
-.setrow .lab { font: var(--m3-title-s); margin-bottom: 8px; }
-.setrow .lab small { display: block; font: var(--m3-body-s); color: var(--m3-on-surface-variant); margin-top: 2px; }
-.setrow.line { display: flex; align-items: center; gap: 12px; }
-.setrow.line .lab { flex: 1; margin: 0; }
-.swatches2 { display: flex; flex-wrap: wrap; gap: 8px; }
-.swatches2 .sw { width: 38px; height: 38px; border-radius: 50%; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; color: #fff; overflow: visible; }
-.swatches2 .sw svg { width: 20px; height: 20px; opacity: 0; fill: currentColor; }
+/* ---------- Profil (Einstellungen): Gruppen aus Abschnitt, Hilfe und Karte mit Zeilen (Bausteine in m3.css) ---------- */
+.swatches2 { display: flex; flex-wrap: wrap; gap: var(--m3-sp-1); justify-content: space-between; }
+.swatches2 .sw { position: relative; width: var(--m3-touch); height: var(--m3-touch); flex: 0 0 auto; display: grid; place-items: center; overflow: visible; color: #fff; }
+.swatches2 .sw::before { content: ""; position: absolute; width: 34px; height: 34px; border-radius: 50%; background: var(--c); }
+.swatches2 .sw svg { position: relative; width: 20px; height: 20px; opacity: 0; fill: currentColor; }
 .swatches2 .sw[aria-checked="true"] svg { opacity: 1; }
-.swatches2 .sw[aria-checked="true"] { box-shadow: 0 0 0 3px var(--m3-surface), 0 0 0 5px var(--m3-primary); }
-.sessions { display: flex; flex-direction: column; }
-.sessions .m3-li { min-height: 52px; }
-.sessions .m3-li .lead.cur { background: var(--m3-primary); color: var(--m3-on-primary); }
-.logout { margin-top: 18px; }
+.swatches2 .sw[aria-checked="true"]::before { box-shadow: 0 0 0 3px var(--m3-surface), 0 0 0 5px var(--m3-primary); }
 
 @media (min-width: 560px) { .m3-page { padding-left: calc(50% - 280px); padding-right: calc(50% - 280px); } .hero { margin: 0 -14px; } }
 @media (max-height: 520px) { .hero { min-height: 120px; } }

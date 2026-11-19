@@ -1,7 +1,8 @@
 import { ico, setTheme, setLanguage } from './app.js';
 import { Sessions } from './sessions.js';
 import { SCHEMES, normalizeScheme } from './scheme.js';
-import { t, tp, tk, fmtNumber, fmtDate, fmtTime, fmtDay, getPref, LANG_CHOICES } from './i18n.js';
+import { GROUPS, rowsFor, aboutValues } from './settings.js';
+import { t, tp, tk, fmtNumber, fmtTime, fmtDay, getPref, LANG_CHOICES } from './i18n.js';
 import { looksLikeAddress } from './quick.js';
 import { tileKind, KIND_KEY, withProgram } from './terminal-programs.js';
 import { favouriteList, recentList, filterByFolder, groupByFolder, folderIconSvg, folderName, setFavorite } from './folders.js';
@@ -88,7 +89,6 @@ const conns = () => (ctx ? ctx.state.connections : []);
 const folders = () => (ctx ? ctx.state.folders || [] : []);
 const hosts = () => (ctx ? ctx.state.hosts : []);
 const byId = (id) => conns().find((c) => c.id === id);
-const showPlaceholders = () => ls.get('planned', true);
 
 /* ---------- Start ---------- */
 export function init(c) {
@@ -158,7 +158,8 @@ function build() {
 }
 
 function renderNav() {
-  const items = DEST.filter((d) => showPlaceholders() || (d.id !== 'server' && d.id !== 'monitoring') || (d.id === 'server' && (overviewOk || hosts().length)));
+  // Seiten ohne Inhalt gibt es nicht: Monitoring fehlt, Server nur mit Auslastung oder Hosts
+  const items = DEST.filter((d) => d.id !== 'monitoring' && (d.id !== 'server' || overviewOk || hosts().length));
   $('#mNav').innerHTML = items.map((d) => `<button type="button" class="mb m3-state" data-go="${d.id}" ${d.id === current ? 'aria-current="page"' : ''}><span class="pill">${icon(d.ic)}</span><span>${esc(t(d.label))}</span></button>`).join('');
 }
 
@@ -224,7 +225,7 @@ export function go(id, { push = true, focusSearch = false } = {}) {
     $('#mBarName').hidden = id !== 'home'; $('#mBarTitle').textContent = d.title ? t(d.title) : ''; $('#mBarTitle').hidden = id === 'home';
     $('#mBar').classList.remove('titled', 'scrolled');
     if (id === 'server' || id === 'home') pollOverview();
-    if (id === 'profile') loadSessions();
+    if (id === 'profile') { about = null; loadAbout(); }
   }
   if (focusSearch) setTimeout(() => $('#mSearch').focus(), 330);
 }
@@ -495,71 +496,69 @@ function renderMonitoring() {
 }
 
 /* =====================================================================
- * Profil: Konto, Darstellung, Verbindungen, Geraete, Abmelden
+ * Profil: die Einstellungen als Gruppen (Aufbau und Texte in settings.js, dieselben Gruppen wie am Desktop)
  * ===================================================================== */
 const seg = (id, opts, val) => `<div class="m3-seg" role="radiogroup" id="${id}">${opts.map(([v, l]) => `<button type="button" class="mb m3-state" role="radio" aria-checked="${v === val}" data-v="${v}"><span class="m3-seg-check">${icon('check')}</span>${l}</button>`).join('')}</div>`;
 function curSeed() { const s = readStore('seed', DEFAULT_SEED); return /^#[0-9a-f]{6}$/i.test(s) ? s.toLowerCase() : DEFAULT_SEED; }
+let about = null;                                           // Antwort von /api/about (einmal je Besuch der Seite geladen)
+const toneDot = (tone) => (tone === 'ok' ? 'ok' : tone === 'error' ? 'bad' : '');
+
+/** Eine Zeile: Beschriftung, kurze Erklaerung und das eine Bedienelement rechts (Auswahl und Farben stehen darunter) */
+function settingRow(r, ab) {
+  const label = t(r.label); let help = t(r.help), ctl = '', stack = false;
+  switch (r.id) {
+    case 'user': ctl = `<span class="rv">${esc(user)}</span>`; break;
+    case 'scheme': stack = true; ctl = seg('mScheme', SCHEMES.map(([v]) => [v, t(SCHEME_LABEL[v])]), normalizeScheme(readStore('scheme', 'auto'))); break;
+    case 'lang': stack = true; ctl = seg('mLang', LANG_CHOICES.map(([v, l]) => [v, v === 'system' ? t('lang.system') : l]), getPref()); break;
+    case 'color': stack = true; ctl = `<div class="swatches2" role="radiogroup" aria-label="${esc(label)}" id="mSwatches">${SWATCHES.map(([h, n]) => `<button type="button" class="mb sw" role="radio" aria-checked="${h === curSeed()}" aria-label="${esc(t(n))}" data-seed="${h}" style="--c:${h}">${icon('check')}</button>`).join('')}</div>`; break;
+    case 'backup': case 'backupCopy': {
+      const info = r.id === 'backup' ? ab.backup : ab.copy;
+      if (!info) return '';
+      if (!info.next && !info.details) help = info.line;      // sonst steht der Satz in der Meldung unter der Gruppe
+      ctl = `<span class="m3-chip status"><span class="m3-dot ${toneDot(info.tone)}"></span>${esc(info.chip)}</span>`; break;
+    }
+    case 'version': case 'build': case 'transfer': {
+      const v = ab[r.id]; if (!v && r.optional) return '';
+      ctl = `<span class="rv">${esc(v || t('mobile.loading'))}</span>`; break;
+    }
+    case 'licenses': ctl = `<a class="mb m3-btn tonal sm m3-state" href="/licenses.txt" target="_blank" rel="noopener" aria-label="${esc(label + ': ' + t(r.action))}">${esc(t(r.action))}</a>`; break;
+    case 'source': if (!ab.repository) return ''; ctl = `<a class="mb m3-btn tonal sm m3-state" href="${esc(ab.repository)}" target="_blank" rel="noopener" aria-label="${esc(label + ': ' + t(r.action))}">${esc(t(r.action))}</a>`; break;
+    default:
+      if (r.ctl === 'button') ctl = `<button type="button" class="mb m3-btn ${r.danger ? 'danger' : 'tonal'} sm m3-state" data-set="${r.id}" aria-label="${esc(label + ': ' + t(r.action))}">${esc(t(r.action))}</button>`;
+  }
+  return `<div class="m3-row${stack ? ' stack' : ''}"><div class="rt">${esc(label)}<small>${esc(help)}</small></div>${ctl ? `<div class="rc">${ctl}</div>` : ''}</div>`;
+}
+/** Unter einer Backup-Gruppe: was zu tun ist, der Rohtext des Servers nur hinter "Details" */
+function backupNotes(ab) {
+  return [ab.backup, ab.copy].filter((i) => i && (i.next || i.details)).map((i) => `<div class="m3-msg ${i.tone === 'info' ? '' : i.tone}" role="${i.tone === 'error' ? 'alert' : 'status'}" style="margin-top:var(--m3-sp-2)"><span class="msg-i">${icon('info')}</span><div class="msg-t"><b>${esc(i.line)}</b>${i.next ? `<span>${esc(i.next)}</span>` : ''}${i.details ? `<details><summary>${t('set.details')}</summary><pre>${esc(i.details)}</pre></details>` : ''}</div></div>`).join('');
+}
 function renderProfile() {
-  const pg = $('#pg-profile'), top = pg.scrollTop, seed = curSeed(), scheme = normalizeScheme(readStore('scheme', 'auto'));
-  const planned = showPlaceholders();
-  pg.innerHTML = `
-    <div class="m3-h" data-head><h1>${t('mobile.profile')}</h1><p>${t('mobile.profileSub')}</p></div>
-    <div class="m3-card me"><span class="avatar">${esc((user || '?').trim().slice(0, 1))}</span><span class="t">${esc(user)}<small>${t('mobile.pwAuth')}</small></span></div>
-    <button type="button" class="mb m3-btn tonal block m3-state" id="mAccount">${icon('lock')}${t('mobile.pwAuthChange')}</button>
-
-    <div class="grp-t">${t('mobile.appearance')}</div>
-    <div class="m3-card grp">
-      <div class="setrow"><div class="lab">${t('mobile.brightness')}</div>${seg('mScheme', SCHEMES.map(([v]) => [v, t(SCHEME_LABEL[v])]), scheme)}</div>
-      <div class="setrow"><div class="lab">${t('lang.title')}</div>${seg('mLang', LANG_CHOICES.map(([v, l]) => [v, v === 'system' ? t('lang.system') : l]), getPref())}</div>
-      <div class="setrow"><div class="lab">${t('mobile.color')}</div><div class="swatches2" role="radiogroup" aria-label="${esc(t('mobile.color'))}" id="mSwatches">${SWATCHES.map(([h, n]) => `<button type="button" class="mb sw" role="radio" aria-checked="${h === seed}" aria-label="${esc(t(n))}" data-seed="${h}" style="background:${h}">${icon('check')}</button>`).join('')}</div></div>
-      <div class="setrow line"><div class="lab">${t('mobile.showPlanned')}<small>${t('mobile.showPlannedSub')}</small></div><button type="button" class="mb m3-switch m3-state" role="switch" aria-checked="${planned}" id="mPlanned" aria-label="${esc(t('mobile.showPlanned'))}"></button></div>
-    </div>
-
-    <div class="grp-t">${t('mobile.tools')}</div>
-    <button type="button" class="mb m3-btn tonal block m3-state" id="mNet">${icon('dns')}${t('mobile.netTools')}</button>
-
-    <div class="grp-t">${t('mobile.aboutJulos')}</div>
-    <div class="m3-card grp" id="mAbout"><div class="setrow"><div class="lab">${t('mobile.version')}<small>${t('mobile.loading')}</small></div></div></div>
-    <button type="button" class="mb m3-btn danger block big logout m3-state" id="mOut">${icon('logout')}${t('mobile.signOut')}</button>`;
+  const pg = $('#pg-profile'), top = pg.scrollTop, ab = aboutValues(about);
+  const groups = GROUPS.map((g) => {
+    const rows = rowsFor(g, 'phone').map((r) => settingRow(r, ab)).filter(Boolean);
+    if (!rows.length) return '';
+    return `<section class="${g.danger ? 'm3-danger' : ''}" aria-labelledby="set-${g.id}"><h2 class="m3-sec" id="set-${g.id}">${esc(t(g.title))}</h2><p class="m3-help">${esc(t(g.help))}</p><div class="m3-card m3-rows">${rows.join('')}</div>${g.id === 'backup' ? backupNotes(ab) : ''}</section>`;
+  }).join('');
+  pg.innerHTML = `<div class="m3-h" data-head><h1>${t('mobile.profile')}</h1><p>${t('mobile.profileSub')}</p></div>${groups}`;
   pg.scrollTop = top;
-  $('#mScheme').addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (!b) return; setTheme({ scheme: b.dataset.v }); applyShellTheme(); renderProfile(); });
-  $('#mLang').addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (b && b.dataset.v !== getPref()) setLanguage(b.dataset.v); });
-  $('#mSwatches').addEventListener('click', (e) => { const b = e.target.closest('[data-seed]'); if (!b) return; setTheme({ seed: b.dataset.seed }); applyShellTheme(); renderProfile(); });
-  $('#mPlanned').addEventListener('click', (e) => { const on = e.currentTarget.getAttribute('aria-checked') !== 'true'; ls.set('planned', on); e.currentTarget.setAttribute('aria-checked', on); renderNav(); });
-  $('#mAccount').addEventListener('click', () => ctx.account());
-  $('#mNet').addEventListener('click', () => ctx.nettools());
-  $('#mOut').addEventListener('click', () => ctx.signOut());
-  if (current === 'profile') { loadSessions(); loadAbout(); }
+  const on = (id, fn) => { const e = $(id); if (e) e.addEventListener('click', fn); };
+  on('#mScheme', (e) => { const b = e.target.closest('[data-v]'); if (!b) return; setTheme({ scheme: b.dataset.v }); applyShellTheme(); renderProfile(); });
+  on('#mLang', (e) => { const b = e.target.closest('[data-v]'); if (b && b.dataset.v !== getPref()) setLanguage(b.dataset.v); });
+  on('#mSwatches', (e) => { const b = e.target.closest('[data-seed]'); if (!b) return; setTheme({ seed: b.dataset.seed }); applyShellTheme(); renderProfile(); });
+  pg.querySelectorAll('[data-set]').forEach((b) => b.addEventListener('click', () => settingAction(b.dataset.set)));
+  if (current === 'profile' && !about) loadAbout();
 }
-const backupText = (b) => !b ? '' : b.state === 'ok' ? `${fmtDate(b.lastAt)}, ${b.bytes < 1048576 ? Math.max(1, Math.round(b.bytes / 1024)) + ' KB' : fmtNumber(b.bytes / 1048576, 1) + ' MB'}`
-  : b.state === 'off' ? t('mobile.backupOff') : b.state === 'pending' ? t('mobile.backupPending', { time: b.time }) : b.state === 'failed' ? t('mobile.backupFailed', { message: b.message || '' }) : t('mobile.backupNotSetUp', { message: b.message || '' });
-const copyText = (b) => { const c = b && b.copy; if (!c || c.state === 'off') return '';
-  const at = c.lastAt ? fmtDate(c.lastAt) : '';
-  return c.state === 'ok' ? t('mobile.copyOk', { at }) : c.state === 'failed' ? t('mobile.copyFailed', { message: c.message || '' }) + (at ? t('mobile.copyLastOk', { at }) : '') : t('mobile.copyNone'); };
+const SETTING_ACTIONS = { password: () => ctx.account(), devices: () => ctx.devices(), folders: () => ctx.folders(), nettools: () => ctx.nettools(), signout: () => ctx.signOut(),
+  claude: () => launchProgram('claude'), codex: () => launchProgram('codex') };
+function settingAction(id) { const f = SETTING_ACTIONS[id]; if (f) f(); }
+/** Claude oder Codex starten (wie der Schnellstart auf der Verbindungen-Seite) */
+function launchProgram(program) {
+  ctx.program(program, (list) => { view.kind = 'terminal'; view.q = ''; view.folder = 'all'; view.host = ''; go('services'); snack(t('prog.pickTile', { program: t(program === 'codex' ? 'prog.codex' : 'prog.claude') })); return list; });
+}
 async function loadAbout() {
-  const box = $('#mAbout'); if (!box || !ctx) return;
-  try {
-    const a = await ctx.api('/api/about');
-    const built = a.built ? fmtDate(a.built) : '';
-    const row = (k, v, extra = '') => `<div class="setrow line"><div class="lab">${k}<small>${esc(v)}</small></div>${extra}</div>`;
-    box.innerHTML = row(t('mobile.version'), `JulOS ${a.version}`) + (a.commit || built ? row(t('mobile.build'), [a.commit, built].filter(Boolean).join(' · ')) : '')
-      + row(t('mobile.imageTransfer'), a.engines.stream ? t('mobile.streamEngine', { encoder: a.engines.encoder || 'H.264' }) : t('mobile.notAvailable'))
-      + row(t('mobile.lastBackup'), backupText(a.backup))
-      + (copyText(a.backup) ? row(t('mobile.aboutBackupCopy'), copyText(a.backup)) : '')
-      + `<div style="padding:4px 12px 10px;display:flex;gap:8px"><a class="mb m3-btn tonal block m3-state" href="/licenses.txt" target="_blank" rel="noopener">${t('mobile.licenses')}</a><a class="mb m3-btn tonal block m3-state" href="${esc(a.repository)}" target="_blank" rel="noopener">${t('mobile.sourceCode')}</a></div>`;
-  } catch (e) { box.innerHTML = `<p class="empty-hint">${esc(e.message)}</p>`; }
-}
-async function loadSessions() {
-  const box = $('#mSessions'); if (!box || !ctx) return;
-  try {
-    const { sessions } = await ctx.api('/api/auth/sessions');
-    box.innerHTML = sessions.map((s) => `<div class="m3-li static"><span class="lead ${s.current ? 'cur' : ''}">${icon('phone')}</span><span class="txt"><span class="hl">${esc(ctx.describeAgent(s.userAgent))}${s.current ? ' · ' + esc(t('shell.thisDevice')) : ''}</span><span class="sl">${esc(s.ip || '')} · ${esc(t('shell.lastSeen', { when: ctx.ago(s.lastSeen) }))}</span></span></div>`).join('')
-      + (sessions.length > 1 ? `<div style="padding:4px 12px 10px"><button type="button" class="mb m3-btn tonal block m3-state" id="mOthers">${t('mobile.signOutOthers')}</button></div>` : '');
-    const o = $('#mOthers');
-    if (o) o.addEventListener('click', async () => {
-      try { const r = await ctx.api('/api/auth/logout-others', { method: 'POST' }); snack(t('shell.sessionsEnded', { n: r.ended })); loadSessions(); } catch (e) { snack(e.message); }
-    });
-  } catch (e) { box.innerHTML = `<p class="empty-hint">${esc(e.message)}</p>`; }
+  if (!ctx) return;
+  try { about = await ctx.api('/api/about'); if (current === 'profile') renderProfile(); }
+  catch (e) { snack(e.message); }
 }
 
 /* =====================================================================

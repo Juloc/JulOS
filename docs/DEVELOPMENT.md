@@ -69,7 +69,7 @@ so the remote view's own colours follow. `?classic` shows the old plain list ins
 the shell, leaving shows it again. Real data: user name, saved connections, devices and sessions, and the server card only if `GET /api/system/overview`
 answers (an adapter in `mobile.js` reads `cpuPercent`, `memoryUsed/Total`, `diskUsed/Total`, ...; a 404 hides the card for five minutes). Kept on the device only
 (localStorage `pd.m.*`): favourites, how often and when a connection was started (for "Meine Favoriten" and "Aktivitäten"), the default engine for new desktops.
-Server (without the API) and Monitoring are marked "bald verfügbar"; a switch in Profil hides them. Test it at 375x812 and 412x915, light and dark.
+Pages without content are not shown (no Monitoring; Server only with load data or hosts). Profil is the settings page: groups from `settings.js` (title, one line of help, rows with label, explanation and one control; the same groups in the desktop settings window, see [MOBILE-UX.md](MOBILE-UX.md)). The building blocks of every page are in `m3.css` and shown on the living page `docs/ui-kit.html` (open it through `python3 -m http.server 8123 --bind 127.0.0.1` in the repo root). Test it at 375x812 and 412x915, light and dark.
 (useful in a browser whose pointer is not reported as "fine"). Docker has no backend yet and is only
 shown as "bald verfügbar" (see `IDEAS.md`); Caddy and DDNS see the line above.
 On a wide screen with a mouse the remote picture is requested 1:1 in device pixels (zoom 1, shown at exactly 1 / `devicePixelRatio`); the phone keeps 0.8. A browser that does not report a fine pointer (some test panes) gets 0.8: set `localStorage` `pd.k` to `1` to see the PC rendering.

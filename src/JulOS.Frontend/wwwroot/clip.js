@@ -63,21 +63,6 @@ export function filesFromTransfer(dt) {
   return { files, skipped };
 }
 
-/* Upload mit Fortschritt und Abbruch (fetch kennt beides beim Senden nicht): Antwort { status, body } mit dem JSON des Servers */
-export function xhrUpload(url, headers, blob, progress, signal) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', url);
-    for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
-    xhr.upload.onprogress = (e) => { if (progress && e.lengthComputable) progress(e.loaded, e.total); };
-    xhr.onload = () => { let body = {}; try { body = JSON.parse(xhr.responseText); } catch { /* keine JSON-Antwort */ } resolve({ status: xhr.status, body }); };
-    xhr.onerror = () => reject(new Error('Keine Verbindung zum Server.'));
-    xhr.onabort = () => reject(new Error('Abgebrochen.'));
-    if (signal) signal.addEventListener('abort', () => xhr.abort(), { once: true });
-    xhr.send(blob);
-  });
-}
-
 /* Datei speichern: ein Link mit download, so geht es auch am Handy */
 export function saveBlob(blob, name) {
   const url = URL.createObjectURL(blob);

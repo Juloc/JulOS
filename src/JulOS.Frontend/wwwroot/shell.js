@@ -195,10 +195,9 @@ async function signOut() {
 
 /* ---------- Verbindung anlegen und aendern ---------- */
 const DEFAULT_PORT = { desktop: '3389', terminal: '22' };
-const showEngineChoice = () => { const desktop = $('#connKind').value === 'desktop'; $('#connEngineRow').hidden = !desktop; $('#connEngineHint').hidden = !desktop || $('#connEngine').value !== 'stream'; };
-// Laufwerk (nur Desktop mit Stream): Freigabe und Schreiben, beide standardmaessig aus; ohne Ordner am Server (JULOS_DRIVE_ROOT) nur der Hinweis
+// Laufwerk (nur Desktop): Freigabe und Schreiben, beide standardmaessig aus; ohne Ordner am Server (JULOS_DRIVE_ROOT) nur der Hinweis
 const showDriveChoice = () => {
-  const on = $('#connKind').value === 'desktop' && $('#connEngine').value === 'stream';
+  const on = $('#connKind').value === 'desktop';
   const share = $('#connDrive').checked && state.driveAvailable;
   $('#connDriveRow').hidden = !on;
   $('#connDrive').disabled = !state.driveAvailable;
@@ -208,8 +207,7 @@ const showDriveChoice = () => {
   $('#connDriveWriteHint').hidden = !on || !share || !$('#connDriveWrite').checked;
   $('#connDriveOff').hidden = !on || state.driveAvailable;
 };
-$('#connKind').addEventListener('change', () => { $('#connPort').placeholder = DEFAULT_PORT[$('#connKind').value]; showEngineChoice(); showDriveChoice(); });
-$('#connEngine').addEventListener('change', () => { showEngineChoice(); showDriveChoice(); });
+$('#connKind').addEventListener('change', () => { $('#connPort').placeholder = DEFAULT_PORT[$('#connKind').value]; showDriveChoice(); });
 $('#connDrive').addEventListener('change', showDriveChoice);
 $('#connDriveWrite').addEventListener('change', showDriveChoice);
 $('#addConn').addEventListener('click', () => editDialog(null));
@@ -219,7 +217,6 @@ function editDialog(c, kind) {
   $('#connDlgTitle').textContent = c ? 'Verbindung ändern' : 'Neue Verbindung';
   $('#connName').value = c ? c.name : '';
   $('#connKind').value = c ? c.kind : kind || 'desktop';
-  $('#connEngine').value = c && c.engine ? c.engine : M ? M.defaultEngine() : 'guac'; showEngineChoice();
   $('#connDrive').checked = !!(c && c.driveShare); $('#connDriveWrite').checked = !!(c && c.driveWrite); showDriveChoice();
   $('#connHost').value = c ? c.host : '';
   $('#connPort').value = c ? String(c.port) : '';
@@ -302,8 +299,8 @@ $('#connForm').addEventListener('submit', async (e) => {
   const form = e.currentTarget, msg = $('#connMsg');
   const portText = $('#connPort').value.trim();
   if (portText && !/^\d{1,5}$/.test(portText)) return setMsg(msg, 'Der Port muss eine Zahl sein.');
-  const body = { name: $('#connName').value, kind: $('#connKind').value, host: $('#connHost').value, port: portText ? Number(portText) : null, username: $('#connUser').value, engine: $('#connKind').value === 'desktop' ? $('#connEngine').value : 'guac' };
-  const drive = body.kind === 'desktop' && body.engine === 'stream' && state.driveAvailable && $('#connDrive').checked;
+  const body = { name: $('#connName').value, kind: $('#connKind').value, host: $('#connHost').value, port: portText ? Number(portText) : null, username: $('#connUser').value };
+  const drive = body.kind === 'desktop' && state.driveAvailable && $('#connDrive').checked;
   body.driveShare = drive; body.driveWrite = drive && $('#connDriveWrite').checked;
   const pw = $('#connPw').value;
   if (pw) body.password = pw;
@@ -330,7 +327,7 @@ $('#connDelete').addEventListener('click', async (e) => {
 });
 
 /* ---------- Verbinden ---------- */
-const asConn = (c) => ({ id: c.id, name: c.name, kind: c.kind, engine: c.engine, stored: c.hasPassword ? true : undefined, target: `${c.host}:${c.port}/${c.username}` });
+const asConn = (c) => ({ id: c.id, name: c.name, kind: c.kind, stored: c.hasPassword ? true : undefined, target: `${c.host}:${c.port}/${c.username}` });
 
 /** opts.extra: bewusst eine weitere Sitzung zum selben Ziel; sonst wird eine schon offene Sitzung nur nach vorn geholt. */
 function startDialog(c, opts = {}) {

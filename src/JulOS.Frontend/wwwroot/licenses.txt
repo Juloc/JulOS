@@ -59,9 +59,6 @@ SOFTWARE.
 
 3. Weitere Bausteine
 --------------------
-Guacamole-JavaScript-Client (guacamole-common-js), Apache License 2.0
-  Datei: wwwroot/lib (Lizenztext: /lib/LICENSE-guacamole-common-js.txt), Apache Software Foundation.
-guacd (Guacamole-Server, getrennter Container), Apache License 2.0, Apache Software Foundation.
 OpenH264 (libopenh264, Ubuntu-Paket libopenh264-7), BSD 2-Clause License, Cisco Systems.
 libva (VA-API, Ubuntu-Pakete libva2 und libva-drm2, zur Laufzeit geladen, fuer die Hardware-Kodierung auf einer Grafikkarte), MIT License, Intel Corporation und Mitwirkende.
 Intel Media Driver (Ubuntu-Paket intel-media-va-driver, Treiber fuer Intel-Grafikkarten), MIT License und BSD 3-Clause License, Intel Corporation.

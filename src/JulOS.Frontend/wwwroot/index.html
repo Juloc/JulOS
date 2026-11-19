@@ -169,10 +169,6 @@
         <label>Art
           <select id="connKind"><option value="desktop">Desktop (RDP)</option><option value="terminal">Terminal (SSH)</option></select>
         </label>
-        <label id="connEngineRow">Bildübertragung
-          <select id="connEngine"><option value="guac">Standard (Guacamole)</option><option value="stream">Stream (H.264, neu)</option></select>
-        </label>
-        <p id="connEngineHint" class="hint" hidden>Der Stream ist flüssiger bei Bewegung, braucht aber einen Browser mit H.264-Dekodierer und HTTPS. Geht er nicht, verbindet die App automatisch mit Guacamole.</p>
         <div id="connDriveRow" hidden>
           <label class="check"><input id="connDrive" type="checkbox"> Ordner des Servers als Laufwerk freigeben</label>
           <label id="connDriveWriteRow" class="check" hidden><input id="connDriveWrite" type="checkbox"> Schreiben erlauben</label>
@@ -250,7 +246,6 @@
       <p class="hint">Bild oder Datei kommt in die Zwischenablage der VM (dort Strg+V). Auch per Ablegen auf das Bild und Strg+V.</p>
       <div class="row">
         <button id="sendFileBtn" type="button">Datei senden</button>
-        <button id="pullImgBtn" type="button" class="ghost" hidden>Bild aus der VM holen</button>
       </div>
       <h3>Von der VM kopiert</h3>
       <textarea id="remoteClip" rows="4" readonly></textarea>

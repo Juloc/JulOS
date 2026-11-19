@@ -3,7 +3,7 @@
  *  Echter Text im Browser (xterm.js, lokal in lib/xterm): Auswahl, Kopieren, Einfuegen, Scrollback, scharfe Schrift.
  *  Der Server haelt die SSH-Verbindung (/api/remote/ssh, Protokoll siehe SshProtocol.cs); hier geht nur Text und Groesse hin und her.
  *  Eine TerminalView ist die Ansicht fuer eine Verbindung vom Typ "terminal" und kennt app.js nicht: sie bekommt einen Container
- *  und meldet ihren Zustand ueber Rueckrufe. Die Sondertasten-Leiste ruft sendKeyEvent(gedrueckt, X11-Keysym) wie bei Guacamole.
+ *  und meldet ihren Zustand ueber Rueckrufe. Die Sondertasten-Leiste ruft sendKeyEvent(gedrueckt, X11-Keysym) wie beim Desktop-Client.
  * ===================================================================== */
 
 const LIB = '/lib/xterm/';
@@ -282,7 +282,7 @@ export class TerminalView {
     this._sendRaw(TO.resize, new Uint8Array([cols >> 8, cols & 255, rows >> 8, rows & 255]));
   }
 
-  /** Eingaben der Sondertasten-Leiste: X11-Keysym, wie die Guacamole- und Stream-Clients. */
+  /** Eingaben der Sondertasten-Leiste: X11-Keysym, wie beim Stream-Client. */
   sendKeyEvent(pressed, sym) {
     const mod = MODKEY[sym];
     if (mod) { if (mod !== 'meta') this.held[mod] = !!pressed; return; }

@@ -45,8 +45,11 @@ export function loadPref(storage = browserStore(), navLangs = nav()) {
   try { v = storage && storage.getItem(STORE_KEY); } catch { /* egal */ }
   // Adresszusatz ?lang=de|en|system waehlt die Sprache schon vor der Anmeldung (und merkt sie lokal)
   try {
-    const q = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('lang');
-    if (isPref(q)) { v = q; if (storage) storage.setItem(STORE_KEY, q); }
+    const u = typeof location === 'undefined' ? null : new URL(location.href), q = u && u.searchParams.get('lang');
+    if (isPref(q)) {
+      v = q; if (storage) storage.setItem(STORE_KEY, q);
+      u.searchParams.delete('lang'); history.replaceState(history.state, '', u.pathname + u.search + u.hash);   // damit ein spaeterer Wechsel in den Einstellungen nicht davon uebersteuert wird
+    }
   } catch { /* egal */ }
   pref = normalizePref(v);
   lang = resolveLang(pref, navLangs);

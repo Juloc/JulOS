@@ -98,11 +98,16 @@ Bei Programmen ist unten im Terminal die **Eingabeleiste** offen (bei der blanke
   **Umschalt+Enter** (oder der Knopf „Neue Zeile“) macht eine neue Zeile. Der Text geht als Einfügen (mit Klammer-Modus, wenn das Programm ihn
   kann, sonst zeilenweise), kurz danach folgt Enter. Ein leeres Feld sendet nur Enter (zum Bestätigen einer Rückfrage). Während einer Eingabemethode
   (Diktat, Kompositionstext) sendet Enter nicht, sondern bestätigt die Zeichen. Ist die Verbindung weg, bleibt der Text im Feld.
-- **Schnelltasten** (wischbare Zeile): Esc, ⇧Tab, Tab, Strg+C, Strg+D, Pfeile, Enter, Bild auf/ab und je nach Programm Strg+O, `/` und `@`.
-  Die Voreinstellungen stehen in `terminal-programs.js`; Claude Code bekommt ⇧Tab (Betriebsart) und Strg+O, beide Programme `/` (Befehle) und `@`
-  (Dateien). Die allgemeine Tastenleiste der Sitzung (Handy) bleibt daneben, mit Strg+D für Terminals in den Voreinstellungen
-  (je Taste „Gilt für“ Terminal, siehe [FOLDERS.md](FOLDERS.md)).
-- **Kopieren und Einfügen:** „Auswahl kopieren“ nimmt die Auswahl im Terminal (lange tippen wählt ein Wort, ziehen erweitert; am PC Maus) in die
+- **Schnelltasten:** eine Zeile mit höchstens sechs Tasten und kurzer Beschriftung (Claude: Esc, ⇧Tab, Tab, Strg+C, ↑, ↓; Codex: Esc, Tab, Strg+C, ↑, ↓, Enter; Shell: Esc, Tab, Strg+C, Strg+D, ↑, ↓)
+  und daneben **Mehr**. „Mehr“ öffnet das Blatt **Mehr Tasten** mit allen Tasten und ihrem Namen (auch Strg+D, Pfeile links/rechts, Bild auf/ab, bei Claude
+  Strg+O, bei beiden `/` und `@`), dazu beschriftete Tasten für Kopieren, Einfügen, Schrift kleiner/größer, Adresse öffnen, Hilfe zur Anmeldung und Einklappen.
+  Die Voreinstellungen stehen in `terminal-programs.js` (`primaryKeys` für die Zeile, `quickKeys` für das Blatt). In Terminal-Sitzungen zeigt die allgemeine Leiste
+  der Sitzung (Handy) nur noch ihre Symbol-Tasten (alle mit Namen für Vorlesen und Tooltip), Esc, Strg und Tab stehen dort nicht mehr doppelt.
+- **Ersthinweis zur Anmeldung:** bei Claude und Codex erscheint oben im Terminal einmal (bis „Verstanden“, gemerkt in `localStorage` `pd.termTip.<programm>`)
+  eine Karte mit den drei Schritten: „Adresse öffnen“ tippen (die Seite öffnet sich im Browser), anmelden und den Code kopieren, zurück „Einfügen“ und „Senden“.
+  „Adresse öffnen“ sucht die letzte https-Adresse im Terminal (auch über umbrochene Zeilen, `findLastUrl`) und öffnet sie nur auf diesen Tipp, nie von selbst;
+  die Karte lässt sich im Blatt „Mehr Tasten“ als „Hilfe zur Anmeldung“ wieder holen.
+- **Kopieren und Einfügen:** „Kopieren“ (im Blatt „Mehr Tasten“) nimmt die Auswahl im Terminal (lange tippen wählt ein Wort, ziehen erweitert; am PC Maus) in die
   Zwischenablage. „Einfügen“ liest die Zwischenablage und legt den Text ins Textfeld, zum Durchsehen vor dem Senden. Beides braucht die
   **Berechtigung des Browsers** für die Zwischenablage (auf dem Handy fragt er beim ersten Mal; nur auf sicheren Seiten, also HTTPS oder
   localhost). Ohne sie bleibt Kopieren über den alten Weg (verstecktes Feld) möglich, und beim Einfügen steht der Hinweis, wie es sonst geht

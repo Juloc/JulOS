@@ -4,9 +4,9 @@
  * und Schriftgroesse. Die Leiste kennt app.js nicht: sie bekommt die TerminalView und sendet ueber deren Funktionen (sendText, paste, copy, zoom).
  * Der reine Teil (Tastenentscheidung, Sendeplan, Hoehe des Felds, Tastenbytes) ist ohne DOM getestet (tests/frontend/terminal-input.test.mjs).
  * ===================================================================== */
-import { t } from './i18n.js';
+import { t, tk } from './i18n.js';
 import { keysymBytes } from './terminal.js';
-import { quickKeys, programOf } from './terminal-programs.js';
+import { quickKeys, primaryKeys, programOf, isAssistant } from './terminal-programs.js';
 
 export const MAX_ROWS = 6;                 // so viele Zeilen waechst das Feld, danach scrollt es
 export const ENTER_DELAY_MS = 120;         // zwischen eingefuegtem Text und Enter: manche Programme erkennen ein Einfuegen erst am Ende und nehmen ein sofortiges Enter als Teil davon
@@ -33,6 +33,20 @@ export function sendPlan(raw) {
 
 /** Zeilen des Felds (1 bis max): nach Zeilenumbruechen, die Umbrueche der Breite faengt das Feld selbst durch seine Hoehe auf. */
 export const rowsFor = (text, max = MAX_ROWS) => Math.min(max, Math.max(1, String(text ?? '').split('\n').length));
+
+/**
+ * Die letzte Adresse (https) im Terminal, zum Beispiel die Anmeldeseite, die Claude oder Codex ausgeben. lines: die Zeilen von oben nach unten als { text, wrapped };
+ * eine umbrochene Zeile gehoert zur vorigen (lange Adressen laufen ueber mehrere Zeilen). Gibt null, wenn es keine gibt.
+ */
+export function findLastUrl(lines) {
+  const paras = [];
+  for (const l of lines) { if (l.wrapped && paras.length) paras[paras.length - 1] += l.text; else paras.push(l.text); }
+  for (let i = paras.length - 1; i >= 0; i--) {
+    const m = paras[i].trimEnd().match(/https:\/\/[^\s"'<>`)\]]+/g);
+    if (m) return m[m.length - 1].replace(/[.,;:]+$/, '');
+  }
+  return null;
+}
 
 /** Bytes (als Text) einer Schnelltaste; Pfeile im Anwendungsmodus bekommen ihr ESC O. */
 export function keyBytes(spec, appCursor = false) {
@@ -72,13 +86,15 @@ export class TerminalBar {
     this.root.setAttribute('role', 'region');
     this.root.setAttribute('aria-label', t('term.barLabel'));
 
-    // Schnelltasten
+    // Zeile 1: wenige Schnelltasten mit kurzer Beschriftung, dazu "Mehr" (alle Tasten, Kopieren, Schrift, Hilfe)
     this.keys = el('div', 'term-keys');
     this.keys.setAttribute('role', 'toolbar');
     this.keys.setAttribute('aria-label', t('term.quickKeys'));
     this.renderKeys();
+    this.moreBtn = this.button('term-more-btn', `<span>${t('term.more')}</span>${ICON.up}`, t('term.moreKeys'));
+    this.moreBtn.setAttribute('aria-haspopup', 'dialog');
 
-    // Eingabezeile
+    // Zeile 2: Eingabe, Einfuegen (mit Beschriftung), neue Zeile, Senden
     const row = el('div', 'term-compose');
     this.field = el('textarea', 'term-input');
     this.field.rows = 1;
@@ -88,30 +104,21 @@ export class TerminalBar {
     this.field.setAttribute('autocapitalize', 'sentences');
     this.field.setAttribute('spellcheck', 'true');
     this.field.value = this.state.draft || '';
+    this.pasteBtn = this.button('term-paste', `${ICON.paste}<span>${t('term.paste')}</span>`, t('term.pasteToInput'));
     this.newline = this.button('term-nl', ICON.newline, t('term.newline'));
-    this.send = this.button('term-send', ICON.send, t('term.send'));
+    this.send = this.button('term-send', `${ICON.send}<span>${t('term.send')}</span>`, t('term.send'));
     this.send.classList.add('primary');
-    row.append(this.field, this.newline, this.send);
+    row.append(this.field, this.pasteBtn, this.newline, this.send);
 
-    // Werkzeuge: Kopieren, Einfuegen, Schrift, Einklappen
-    const tools = el('div', 'term-tools');
-    this.copyBtn = this.button('term-tool', ICON.copy, t('term.copySelection'));
-    this.pasteBtn = this.button('term-tool', ICON.paste, t('term.pasteToInput'));
-    this.smaller = this.button('term-tool txt', 'A−', t('term.fontSmaller'), true);
-    this.larger = this.button('term-tool txt', 'A+', t('term.fontLarger'), true);
-    this.hide = this.button('term-tool', ICON.down, t('term.barHide'));
-    tools.append(this.copyBtn, this.pasteBtn, this.smaller, this.larger);
-
-    this.tools = tools;
-    this.keys.appendChild(tools);
     this.top = el('div', 'term-top');
-    this.top.append(this.hide, this.keys);
+    this.top.append(this.keys, this.moreBtn);
     this.root.append(this.top, row);
 
     // Eingeklappt: nur ein kleiner Griff
     this.handle = this.button('term-handle', ICON.up, t('term.barShow'));
 
     this.container.append(this.root, this.handle);
+    this.buildTip();
 
     this.field.addEventListener('keydown', (e) => {
       if (inputKeyAction(e) === 'send') { e.preventDefault(); this.submit(); }
@@ -119,11 +126,8 @@ export class TerminalBar {
     this.field.addEventListener('input', () => { this.state.draft = this.field.value; this.grow(); });
     this.newline.addEventListener('click', () => this.insert('\n'));
     this.send.addEventListener('click', () => this.submit());
-    this.copyBtn.addEventListener('click', () => this.copySelection());
     this.pasteBtn.addEventListener('click', () => this.pasteFromClipboard());
-    this.smaller.addEventListener('click', () => this.view.zoom(-1));
-    this.larger.addEventListener('click', () => this.view.zoom(1));
-    this.hide.addEventListener('click', () => this.setOpen(false));
+    this.moreBtn.addEventListener('click', () => (this.more ? this.closeMore() : this.openMore()));
     this.handle.addEventListener('click', () => { this.setOpen(true); this.field.focus(); });
 
     // Die Hoehe der Leiste (Tastatur, Zeilen im Feld) bestimmt die Hoehe des Terminals darueber
@@ -147,13 +151,87 @@ export class TerminalBar {
 
   renderKeys() {
     this.keys.replaceChildren();
+    for (const spec of primaryKeys(this.program)) this.keys.appendChild(this.keyButton(spec, 'term-key'));
+    if (this.more) this.closeMore();
+  }
+  keyButton(spec, cls) {
+    const b = this.button(cls, spec.label, t(spec.aria), true);
+    b.dataset.key = spec.id;
+    b.addEventListener('click', () => this.pressKey(spec));
+    return b;
+  }
+
+  /** Das Blatt "Mehr Tasten": alle Tasten mit Namen, Kopieren, Einfuegen, Schrift, Adresse oeffnen, Hilfe und Einklappen; jede Taste hat eine Beschriftung */
+  openMore() {
+    const panel = el('div', 'term-more');
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', t('term.moreKeys'));
+    const head = el('div', 'term-more-h');
+    head.append(el('b', '', t('term.moreKeys')));
+    const done = this.button('term-more-done', t('common.done'), t('common.done'), true);
+    done.addEventListener('click', () => this.closeMore());
+    head.append(done);
+    const grid = el('div', 'term-more-keys');
     for (const spec of quickKeys(this.program)) {
-      const b = this.button('term-key', spec.label, t(spec.aria), true);
-      b.dataset.key = spec.id;
-      b.addEventListener('click', () => this.pressKey(spec));
-      this.keys.appendChild(b);
+      const b = this.keyButton(spec, 'term-key big');
+      b.replaceChildren(el('b', '', spec.label), el('small', '', t(spec.aria)));
+      grid.append(b);
     }
-    if (this.tools) this.keys.appendChild(this.tools);      // Kopieren, Einfuegen und Schrift stehen am Ende desselben Streifens (am Handy bleibt so die ganze Breite fuer Tasten)
+    const acts = el('div', 'term-more-acts');
+    const act = (label, fn) => { const b = this.button('term-act', label, label, true); b.addEventListener('click', fn); acts.append(b); return b; };
+    act(t('term.copy'), () => this.copySelection());
+    act(t('term.paste'), () => { this.closeMore(); this.pasteFromClipboard(); });
+    act(t('term.fontSmaller'), () => this.view.zoom(-1));
+    act(t('term.fontLarger'), () => this.view.zoom(1));
+    if (isAssistant({ kind: 'terminal', program: this.program })) {
+      act(t('term.openUrl'), () => this.openUrl());
+      act(t('term.tipShow'), () => { this.closeMore(); this.showTip(true); });
+    }
+    act(t('term.barHide'), () => { this.closeMore(); this.setOpen(false); });
+    panel.append(head, grid, acts);
+    this.container.append(panel);
+    this.more = panel;
+    this.moreBtn.setAttribute('aria-expanded', 'true');
+  }
+  closeMore() {
+    if (this.more) { this.more.remove(); this.more = null; }
+    this.moreBtn.removeAttribute('aria-expanded');
+  }
+
+  /** Ersthinweis fuer Claude und Codex: so klappt die Anmeldung. Er erscheint einmal je Programm, bis er mit "Verstanden" geschlossen wird. */
+  buildTip() {
+    this.tip = null;
+    if (!isAssistant({ kind: 'terminal', program: this.program })) return;
+    let seen = false; try { seen = localStorage.getItem('pd.termTip.' + this.program) === '1'; } catch { /* egal */ }
+    if (!seen) this.showTip(false);
+  }
+  showTip(force) {
+    if (this.tip) return;
+    const name = this.program === 'codex' ? 'Codex' : 'Claude';
+    const tip = el('div', 'term-tip');
+    tip.setAttribute('role', 'region');
+    tip.setAttribute('aria-label', t('term.tipTitle', { name }));
+    tip.append(el('b', '', t('term.tipTitle', { name })));
+    const steps = el('ol', ''); for (const k of [tk('term.tipStep1'), tk('term.tipStep2'), tk('term.tipStep3')]) steps.append(el('li', '', t(k)));
+    tip.append(steps);
+    const row = el('div', 'term-tip-act');
+    const open = this.button('term-act', t('term.openUrl'), t('term.openUrl'), true); open.addEventListener('click', () => this.openUrl());
+    const ok = this.button('term-act primary', t('term.tipOk'), t('term.tipOk'), true);
+    ok.addEventListener('click', () => { try { localStorage.setItem('pd.termTip.' + this.program, '1'); } catch { /* egal */ } tip.remove(); this.tip = null; });
+    row.append(open, ok); tip.append(row);
+    this.container.append(tip);
+    this.tip = tip;
+  }
+  /** Die letzte Adresse im Terminal oeffnen (nur https, nur auf Tipp): die Anmeldeseite von Claude oder Codex */
+  openUrl() {
+    const buf = this.view.term && this.view.term.buffer && this.view.term.buffer.active;
+    const lines = [];
+    if (buf) for (let i = Math.max(0, buf.length - 400); i < buf.length; i++) { const ln = buf.getLine(i); if (ln) lines.push({ text: ln.translateToString(false), wrapped: ln.isWrapped }); }
+    const url = findLastUrl(lines);
+    if (!url) { this.view.notify(t('term.noUrl')); return; }
+    let host = ''; try { host = new URL(url).host; } catch { this.view.notify(t('term.noUrl')); return; }
+    this.view.notify(t('term.openingUrl', { host }));
+    window.open(url, '_blank', 'noopener,noreferrer');
   }
 
   /** Programm geaendert (der Server hat zum Beispiel auf die Shell zurueckgegriffen): andere Schnelltasten. */
@@ -236,7 +314,7 @@ export class TerminalBar {
   destroy() {
     this.destroyed = true;
     this.ro?.disconnect();
-    this.root.remove(); this.handle.remove();
+    this.root.remove(); this.handle.remove(); if (this.tip) this.tip.remove(); if (this.more) this.more.remove();
     this.container.style.removeProperty('--term-bar-h');
     this.container.classList.remove('has-term-bar');
   }

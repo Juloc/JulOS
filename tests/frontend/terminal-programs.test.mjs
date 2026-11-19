@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { programOf, isAssistant, tileKind, withProgram, launchTarget, validWorkDir, validCustom, quickKeys, noticeTexts, PROGRAMS } from '../../src/JulOS.Frontend/wwwroot/terminal-programs.js';
+import { programOf, isAssistant, tileKind, withProgram, launchTarget, validWorkDir, validCustom, quickKeys, primaryKeys, noticeTexts, PROGRAMS } from '../../src/JulOS.Frontend/wwwroot/terminal-programs.js';
 import { setPref, t } from '../../src/JulOS.Frontend/wwwroot/i18n.js';
 
 const term = (id, program, extra = {}) => ({ id, name: id, kind: 'terminal', program, ...extra });
@@ -82,4 +82,14 @@ test('noticeTexts: verstaendliche Hinweise, Programm und Verzeichnis eingesetzt,
   setPref('en', null);
   assert.match(noticeTexts('program-missing', conn, t)[0], /^claude is not installed on this machine or not in the PATH/);
   setPref('de', null);
+});
+
+test('primaryKeys: hoechstens sechs Tasten in der Zeile der Leiste, alle auch im Blatt "Mehr Tasten", Esc und Strg+C immer dabei', () => {
+  for (const p of ['claude', 'codex', 'shell', 'custom', 'unbekannt']) {
+    const prim = primaryKeys(p).map((k) => k.id), all = quickKeys(p).map((k) => k.id);
+    assert.ok(prim.length <= 6, p);
+    for (const id of prim) assert.ok(all.includes(id), `${p}: ${id}`);
+    assert.ok(prim.includes('esc') && prim.includes('ctrlC'), p);
+  }
+  assert.ok(primaryKeys('claude').some((k) => k.id === 'shiftTab'));
 });

@@ -369,7 +369,15 @@ test('10 Programm-Sitzungen: Claude startet im Arbeitsverzeichnis, die Eingabele
   await expect(rows).toContainText('fake-claude-start cwd=/tmp', { timeout: 30_000 });
   await expect(rows).toContainText('claude>');
   await expect(page.locator('.term-bar')).toBeVisible();                                // bei Programmen ist die Eingabeleiste offen
-  for (const key of ['esc', 'shiftTab', 'tab', 'ctrlC', 'ctrlD', 'up', 'down', 'left', 'right', 'pgUp', 'pgDn']) await expect(page.locator(`.term-key[data-key="${key}"]`), key).toBeVisible();
+  // Ersthinweis zur Anmeldung (einmal, bis "Verstanden"), dann wenige Tasten in der Zeile und der Rest im Blatt "Mehr Tasten"
+  await expect(page.locator('.term-tip')).toContainText('meldest du dich');
+  await page.locator('.term-tip .term-act.primary').click();
+  await expect(page.locator('.term-tip')).toHaveCount(0);
+  for (const key of ['esc', 'shiftTab', 'tab', 'ctrlC', 'up', 'down']) await expect(page.locator(`.term-bar .term-key[data-key="${key}"]`), key).toBeVisible();
+  await page.locator('.term-more-btn').click();
+  for (const key of ['esc', 'shiftTab', 'tab', 'ctrlC', 'ctrlD', 'up', 'down', 'left', 'right', 'pgUp', 'pgDn']) await expect(page.locator(`.term-more .term-key[data-key="${key}"]`), key).toBeVisible();
+  await page.locator('.term-more .term-more-done').click();
+  await expect(page.locator('.term-more')).toHaveCount(0);
 
   // Eingabeleiste: Enter sendet, Umschalt+Enter ist eine neue Zeile, der Knopf sendet mehrzeilig, das Feld ist danach leer
   const input = page.locator('.term-input');
@@ -388,7 +396,8 @@ test('10 Programm-Sitzungen: Claude startet im Arbeitsverzeichnis, die Eingabele
   await expect(input).toHaveValue('');
 
   // Schnelltaste: Strg+D beendet das Programm, die Sitzung meldet das Ende (und es gibt kein stilles Neuverbinden)
-  await page.locator('.term-key[data-key="ctrlD"]').click();
+  await page.locator('.term-more-btn').click();
+  await page.locator('.term-more .term-key[data-key="ctrlD"]').click();
   await expect(rows).toContainText('fake-claude-ende');
   await expect(page.locator('.sv-overlay')).toBeVisible();
 

@@ -8,6 +8,7 @@ using JulOS.Frontend.Files;
 using JulOS.Frontend.Folders;
 using JulOS.Frontend.Hosts;
 using JulOS.Frontend.Modules;
+using JulOS.Frontend.Settings;
 using JulOS.Frontend.SystemInfo;
 
 namespace JulOS.Frontend;
@@ -54,6 +55,8 @@ namespace JulOS.Frontend;
 [JsonSerializable(typeof(FavoriteRequest))]
 [JsonSerializable(typeof(MoveRequest))]
 [JsonSerializable(typeof(LocalImportRequest))]
+[JsonSerializable(typeof(SettingsResponse))]
+[JsonSerializable(typeof(SettingRequest))]
 [JsonSerializable(typeof(CaddyListing))]
 [JsonSerializable(typeof(CaddyReachability))]
 [JsonSerializable(typeof(DdnsStatus))]

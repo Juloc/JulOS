@@ -38,7 +38,7 @@ public sealed class FolderTests
     // ---------------------------------------------------------------- Migration
 
     /// <summary>Eine Datenbank im Stand vor den Ordnern: alle Migrationen bis 009 (die der Ordner ist die 010).</summary>
-    private static async Task<TestDb> CreateBeforeFoldersAsync()
+    internal static async Task<TestDb> CreateBeforeFoldersAsync()
     {
         var db = await TestDb.CreateAsync(migrate: false);
         var asm = typeof(Migrator).Assembly;

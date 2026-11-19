@@ -17,3 +17,12 @@ alter table connections add column favorite boolean not null default false;
 alter table connections add column last_used_at timestamptz;
 alter table connections add column use_count integer not null default 0;
 create index connections_folder_idx on connections (folder_id);
+
+-- Einstellungen je Benutzer (Tastenleiste, Themenfarbe): ein JSON-Wert je Schluessel, vom Server geprueft (siehe SettingsRules).
+create table user_settings (
+  user_id     uuid not null references users (id) on delete cascade,
+  key         text not null,
+  value       jsonb not null,
+  updated_at  timestamptz not null default now(),
+  primary key (user_id, key)
+);

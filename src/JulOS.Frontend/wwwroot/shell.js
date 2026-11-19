@@ -1,4 +1,4 @@
-import { ico } from './app.js';
+import { ico, prefs, applyServerPrefs } from './app.js';
 import { Sessions } from './sessions.js';
 import { agentSummary, hostDetail } from './hosts.js';
 import { loadOrganisation, takeOverLocal, mergePlacements, setFolder, touch, move, folderName } from './folders.js';
@@ -149,9 +149,20 @@ async function showHome(user, message = '') {
   setMsg($('#homeMsg'), message);
   show('home');
   if (M) M.userChanged(user, message);
+  syncPrefs();
   await loadConnections();
   if (D) D.userChanged(user, message);
 }
+
+/** Tastenleiste und Themenfarbe vom Server holen (er hat Vorrang; hat er nichts, geht das Lokale hinaus). Ohne Server bleibt die lokale Kopie. */
+let prefsAt = 0;
+async function syncPrefs() {
+  prefsAt = Date.now();
+  const got = await prefs.sync();
+  if (got.keybar || got.theme) { applyServerPrefs(got); if (M) M.applyShellTheme(); }
+}
+// Ein anderes Geraet hat etwas geaendert: beim Zurueckkehren zur Seite (hoechstens einmal je Minute) neu abgleichen
+document.addEventListener('visibilitychange', () => { if (!document.hidden && state.user && Date.now() - prefsAt > 60000) syncPrefs(); });
 
 async function loadConnections() {
   try { const r = await api('/api/connections'); state.connections = r.connections; state.canStore = !!r.canStorePasswords; state.driveAvailable = !!r.driveAvailable; }

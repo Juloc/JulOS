@@ -80,7 +80,7 @@ connection. **If it changes, nothing is transferred**: the log (as an error) and
 ### Access rights
 
 Make the target **yours alone**: the dump holds password hashes and authenticator secrets, and `secret.key` opens the stored target passwords. The folder should belong to the user
-JulOS writes as and have mode **0700**; JulOS creates the files with **0600** (on a share that does not know Unix modes, set the same restriction on the share: only your account may read it).
+JulOS writes as and have mode **0700**; JulOS creates the files with **0600** (over SFTP it asks the server for 0600 after the upload; a server that refuses keeps its default, so rely on the folder mode; on a share that does not know Unix modes, set the same restriction on the share: only your account may read it).
 For SFTP use an account of its own that can reach only this folder (a chroot or a plain user with a home folder nobody else can read) and a key that is used for nothing else.
 The same advice as for the local folder applies: if the second target is a place others can read, use `JULOS_BACKUP_KEY=off` and keep `secret.key` separately.
 

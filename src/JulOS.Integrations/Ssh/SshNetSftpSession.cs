@@ -64,6 +64,8 @@ public sealed class SshNetSftpSession : ISftpSession
         try
         {
             Client.UploadFile(data, tempPath, canOverride: true);
+            try { Client.ChangePermissions(tempPath, 600); }                        // 600 = Oktalziffern fuer 0600: sonst gilt die umask des Ziels (oft 0644); ein Ziel ohne Unix-Rechte darf das ablehnen
+            catch (Exception) { /* beste Muehe, die Rechte des Zielordners (0700) bleiben die Absicherung */ }
             try { Client.RenameFile(tempPath, finalPath, isPosix: true); }                 // ersetzt atomar (OpenSSH); sonst unten
             catch (Exception) when (Client.Exists(finalPath))                     // Ziel ohne ersetzendes Umbenennen: erst die alte Datei weg
             {

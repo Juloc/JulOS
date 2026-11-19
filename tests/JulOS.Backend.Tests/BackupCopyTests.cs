@@ -295,6 +295,7 @@ public sealed class BackupCopyTests : IDisposable
             Assert.Equal(["julos-db-20260302T030000Z.sql.gz", "julos-db-20260303T030000Z.sql.gz", "julos-db-20260304T030000Z.sql.gz", "secret.key"], names);
             Assert.Equal(Names(local, "julos-db-*"), names.Where(n => n.StartsWith("julos-db-")));   // lokal gleiche Aufbewahrung
             Assert.Equal("S1\n", System.Text.Encoding.ASCII.GetString(check.ReadAllBytes(remoteDir + "/secret.key")));
+            Assert.All(check.ListDirectory(remoteDir).Where(f => f.IsRegularFile), f => Assert.False(f.OwnerCanExecute || f.GroupCanRead || f.OthersCanRead, f.Name + " ist nicht 0600"));
             Assert.Equal(new FileInfo(Path.Combine(local, "julos-db-20260304T030000Z.sql.gz")).Length, check.GetAttributes(remoteDir + "/julos-db-20260304T030000Z.sql.gz").Size);
 
             // anderer gemerkter Schluessel: Abbruch, es kommt nichts Neues an

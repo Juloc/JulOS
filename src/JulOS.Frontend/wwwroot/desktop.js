@@ -1,4 +1,5 @@
 import { remoteApi, getScheme, setTheme } from './app.js';
+import { SCHEMES } from './scheme.js';
 import { Sessions } from './sessions.js';
 import { looksLikeAddress } from './quick.js';
 import { filterByFolder, groupByFolder, recentList, folderIconSvg, folderName, setFavorite } from './folders.js';
@@ -890,7 +891,6 @@ function renderSettings(m) {
     <div class="dk-card"><h4>Darstellung</h4><p>Hell, Dunkel oder wie das System (folgt der Einstellung deines Geräts). Die Wahl gilt auf jedem Gerät, auch am Handy.</p>
       <div class="dk-btns" role="group" aria-label="Darstellung">${SCHEMES.map(([id, label]) => `<button type="button" class="dk-b dk-btn${id === getScheme() ? ' pri' : ''}" data-scheme="${id}" aria-pressed="${id === getScheme()}">${label}</button>`).join('')}</div></div>`;
 }
-const SCHEMES = [['light', 'Hell'], ['dark', 'Dunkel'], ['auto', 'System']];
 function onMainClick(e) {
   const t = e.target.closest('[data-conn],[data-edit],[data-extra],[data-act],[data-go],[data-app],[data-dockmode],[data-scheme],[data-hostfilter],[data-folderfilter],[data-groupby],[data-fav],[data-hostedit],[data-hostagent]'); if (!t) return;
   const find = (id) => ctx.state.connections.find((c) => c.id === id);

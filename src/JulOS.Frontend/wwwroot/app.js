@@ -9,6 +9,7 @@ import { SizeGate, LayoutLog } from './layoutlog.js';
 import { KB_SETTLE_MS, StageBase, effectiveStage, panOffset, panDrag, normalizeKbMode, nextKbMode, kbModeLabel } from './kbpan.js';
 import { Session, Sessions } from './sessions.js';
 import { createPrefs } from './prefs.js';
+import { isScheme, normalizeScheme, isDark } from './scheme.js';
 import { LIMITS, fmtSize, bmpFromImage, pngFromBytes, filesFromTransfer, saveBlob } from './clip.js';
 
 /* =====================================================================
@@ -43,7 +44,7 @@ export const prefs = createPrefs({
 /** Farbe und Hell/Dunkel lokal merken und (wenn gueltig) zum Server schicken. */
 function saveTheme() {
   store.set('seed', S.seed); store.set('scheme', S.scheme);
-  if (validSeed(S.seed) && ['auto', 'light', 'dark'].includes(S.scheme)) prefs.push('theme', { seed: S.seed, scheme: S.scheme });
+  if (validSeed(S.seed) && isScheme(S.scheme)) prefs.push('theme', { seed: S.seed, scheme: S.scheme });
 }
 
 /* ---------- Material-Icons (inline SVG, 24 px) ---------- */
@@ -111,7 +112,7 @@ const S = {
   perf: store.get('perf', false),             // Statusleiste (Leistungsanzeige) bei allen Stream-Sitzungen
   autoPaste: store.get('autoPaste', true),   // Foto nach dem Hochladen sofort mit Strg+V einfuegen
   seed: store.get('seed', '#9a67ea'),         // Grundfarbe fuer das Material-You-Design ('system' oder #rrggbb), Standard Violett wie die Handy-Oberflaeche
-  scheme: store.get('scheme', 'auto'),       // 'auto' | 'light' | 'dark'
+  scheme: normalizeScheme(store.get('scheme', 'auto')),       // 'auto' (System) | 'light' | 'dark', siehe scheme.js
 };
 // Am PC (grosser Schirm, Maus) steht die VM 1:1 auf dem Schirm: ein Bild, das auf 80 % verkleinert angefordert und dann hochgezogen wird, ist
 // ueberall weich, besonders der Text. Auf dem Handy bleibt es bei 0,8 (Inhalt etwas groesser).
@@ -1831,7 +1832,7 @@ function systemAccent() { // Akzentfarbe des Browsers/Systems, falls verfuegbar 
 }
 const hsl = (h, s, l) => `hsl(${Math.round(h)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%)`;
 function applyTheme() {
-  const dark = (S.scheme === 'auto' ? matchMedia('(prefers-color-scheme: dark)').matches : S.scheme === 'dark');
+  const dark = isDark(S.scheme, matchMedia('(prefers-color-scheme: dark)').matches);
   const sys = S.seed === 'system' ? systemAccent() : null;
   const c = hexToHsl(S.seed === 'system' ? (sys || '#4f86f7') : S.seed) || hexToHsl('#4f86f7');
   const h = c.h, sp = clamp(c.s, 0.45, 0.85), st = document.documentElement.style, set = (k, v) => st.setProperty(k, v);
@@ -1910,7 +1911,7 @@ export function setTheme({ seed, scheme }) { if (seed) S.seed = seed; if (scheme
 export function applyServerPrefs({ keybar, theme } = {}) {
   const r = keybar && normalizeRows(keybar.rows);
   if (r) { rows = r; store.set('rows4', rows); renderAllRows(); }
-  if (theme && validSeed(theme.seed) && ['auto', 'light', 'dark'].includes(theme.scheme)) { S.seed = theme.seed; S.scheme = theme.scheme; store.set('seed', S.seed); store.set('scheme', S.scheme); applyTheme(); }
+  if (theme && validSeed(theme.seed) && isScheme(theme.scheme)) { S.seed = theme.seed; S.scheme = theme.scheme; store.set('seed', S.seed); store.set('scheme', S.scheme); applyTheme(); }
 }
 /* =====================================================================
  *  Foto einfuegen: hochladen, Helfer legt es in die Zwischenablage der VM-Sitzung, dann Strg+V

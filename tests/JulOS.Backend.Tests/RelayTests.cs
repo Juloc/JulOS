@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Text;
+using JulOS.Integrations;
 using JulOS.Integrations.Guacamole;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -9,7 +10,7 @@ namespace JulOS.Backend.Tests;
 
 public sealed class TicketTests
 {
-    private static readonly GuacSpec Spec = GuacSpec.Terminal("h", 22, "u", "p", 800, 600, 96);
+    private static readonly GuacSpec Spec = TestSpec.Ssh("h", 22, "u", "p", 800, 600, 96);
 
     [Fact]
     public void A_ticket_works_once_and_only_for_its_user()
@@ -93,7 +94,7 @@ public sealed class RelayTests
     {
         await using var guacd = new FakeGuacd { Greeting = GuacProtocol.Encode("sync", "1") };
         var (browser, server) = await SocketPairAsync();
-        var spec = GuacSpec.Terminal("ziel", 2222, "tester", "geheim", 856, 1448, 96);
+        var spec = TestSpec.Ssh("ziel", 2222, "tester", "geheim", 856, 1448, 96);
         var run = NewRelay(guacd).RunAsync(server, spec, Alive, CancellationToken.None);
 
         Assert.Equal("0.,18.fake-connection-id;", await ReceiveTextAsync(browser));       // interne Kennung zuerst
@@ -116,7 +117,7 @@ public sealed class RelayTests
     {
         await using var guacd = new FakeGuacd();
         var (browser, server) = await SocketPairAsync();
-        var run = NewRelay(guacd).RunAsync(server, GuacSpec.Terminal("h", 22, "u", "p", 800, 600, 96), Alive, CancellationToken.None);
+        var run = NewRelay(guacd).RunAsync(server, TestSpec.Ssh("h", 22, "u", "p", 800, 600, 96), Alive, CancellationToken.None);
         await ReceiveTextAsync(browser);
 
         await SendTextAsync(browser, GuacProtocol.Encode("", "ping", "123"));            // darf nicht bei guacd ankommen
@@ -138,7 +139,7 @@ public sealed class RelayTests
     {
         await using var guacd = new FakeGuacd();
         var (browser, server) = await SocketPairAsync();
-        var run = NewRelay(guacd).RunAsync(server, GuacSpec.Terminal("h", 22, "u", "p", 800, 600, 96), Alive, CancellationToken.None);
+        var run = NewRelay(guacd).RunAsync(server, TestSpec.Ssh("h", 22, "u", "p", 800, 600, 96), Alive, CancellationToken.None);
         await ReceiveTextAsync(browser);
 
         await SendTextAsync(browser, Encoding.UTF8.GetBytes("6.select,3.rd"));            // abgeschnitten
@@ -155,7 +156,7 @@ public sealed class RelayTests
         for (var i = 0; i < 2000; i++) burst.AddRange(GuacProtocol.Encode("blob", i.ToString(), new string('x', 200 + i % 50) + ";漢"));
         await using var guacd = new FakeGuacd { Greeting = [.. burst] };
         var (browser, server) = await SocketPairAsync();
-        var run = NewRelay(guacd).RunAsync(server, GuacSpec.Terminal("h", 22, "u", "p", 800, 600, 96), Alive, CancellationToken.None);
+        var run = NewRelay(guacd).RunAsync(server, TestSpec.Ssh("h", 22, "u", "p", 800, 600, 96), Alive, CancellationToken.None);
         await ReceiveTextAsync(browser);
 
         var seen = 0;
@@ -190,7 +191,7 @@ public sealed class RelayTests
         var port = ((IPEndPoint)l.LocalEndpoint).Port; l.Stop();                          // Port, auf dem niemand lauscht
         var (browser, server) = await SocketPairAsync();
         var run = new GuacRelay(new GuacdOptions("127.0.0.1", port), NullLogger<GuacRelay>.Instance)
-            .RunAsync(server, GuacSpec.Terminal("h", 22, "u", "p", 800, 600, 96), Alive, CancellationToken.None);
+            .RunAsync(server, TestSpec.Ssh("h", 22, "u", "p", 800, 600, 96), Alive, CancellationToken.None);
         await ReceiveTextAsync(browser);
         var error = await ReceiveTextAsync(browser);
         Assert.StartsWith("5.error,", error);
@@ -205,7 +206,7 @@ public sealed class RelayTests
         var (browser, server) = await SocketPairAsync();
         var alive = true;
         var relay = new GuacRelay(new GuacdOptions("127.0.0.1", guacd.Port), NullLogger<GuacRelay>.Instance);
-        var run = relay.RunAsync(server, GuacSpec.Terminal("h", 22, "u", "p", 800, 600, 96), _ => Task.FromResult(alive), CancellationToken.None, sessionCheck: TimeSpan.FromMilliseconds(100));
+        var run = relay.RunAsync(server, TestSpec.Ssh("h", 22, "u", "p", 800, 600, 96), _ => Task.FromResult(alive), CancellationToken.None, sessionCheck: TimeSpan.FromMilliseconds(100));
         await ReceiveTextAsync(browser);
         alive = false;
         await run.WaitAsync(Wait);
@@ -218,11 +219,11 @@ public sealed class RelayTests
         await using var first = new FakeGuacd();
         var relay = new GuacRelay(new GuacdOptions("127.0.0.1", first.Port, MaxConnections: 1), NullLogger<GuacRelay>.Instance);
         var (b1, s1) = await SocketPairAsync();
-        var run1 = relay.RunAsync(s1, GuacSpec.Terminal("h", 22, "u", "p", 800, 600, 96), Alive, CancellationToken.None);
+        var run1 = relay.RunAsync(s1, TestSpec.Ssh("h", 22, "u", "p", 800, 600, 96), Alive, CancellationToken.None);
         await ReceiveTextAsync(b1);
 
         var (b2, s2) = await SocketPairAsync();
-        await relay.RunAsync(s2, GuacSpec.Terminal("h", 22, "u", "p", 800, 600, 96), Alive, CancellationToken.None);
+        await relay.RunAsync(s2, TestSpec.Ssh("h", 22, "u", "p", 800, 600, 96), Alive, CancellationToken.None);
         await ReceiveTextAsync(b2);
         Assert.EndsWith(",3.513;", await ReceiveTextAsync(b2));
 
@@ -241,7 +242,7 @@ public sealed class RelayTests
     {
         await using var guacd = new FakeGuacd { AcceptMany = true };
         var relay = NewRelay(guacd);
-        var spec = GuacSpec.Terminal("h", 22, "u", "p", 800, 600, 96) with { Slot = "jul:pc" };
+        var spec = TestSpec.Ssh("h", 22, "u", "p", 800, 600, 96) with { Slot = "jul:pc" };
 
         var (browser1, server1) = await SocketPairAsync();
         var first = relay.RunAsync(server1, spec, Alive, CancellationToken.None);
@@ -277,7 +278,7 @@ public sealed class RelayTests
         // Frueher riss das Abbrechen genau dieses Sendens das WebSocket ein: keine Meldung, nur ein Standbild am Handy.
         await using var guacd = new FakeGuacd { AcceptMany = true, FloodMegabytes = 24 };
         var relay = NewRelay(guacd);
-        var spec = GuacSpec.Terminal("h", 22, "u", "p", 800, 600, 96) with { Slot = "jul:handy" };
+        var spec = TestSpec.Ssh("h", 22, "u", "p", 800, 600, 96) with { Slot = "jul:handy" };
 
         var (slow, server1) = await SocketPairAsync();
         var first = relay.RunAsync(server1, spec, Alive, CancellationToken.None);
@@ -301,5 +302,48 @@ public sealed class RelayTests
 
         fast.Abort();                                              // die zweite Verbindung wird hier ebenfalls geflutet und liest nicht: hart beenden
         await second.WaitAsync(Wait);
+    }
+
+    [Fact]
+    public async Task Sessions_of_one_user_to_the_same_target_do_not_replace_each_other_and_the_limit_is_friendly()
+    {
+        await using var guacd = new FakeGuacd { AcceptMany = true };
+        var registry = new SessionRegistry(2);
+        var relay = new GuacRelay(new GuacdOptions("127.0.0.1", guacd.Port), NullLogger<GuacRelay>.Instance, registry);
+        var me = Guid.NewGuid();
+        var conn = Guid.NewGuid();
+        GuacSpec Spec(string sid) => TestSpec.Ssh("h", 22, "u", "p", 800, 600, 96) with { Slot = SessionRegistry.SlotOf(me, conn, sid) };
+
+        var (b1, s1) = await SocketPairAsync();
+        var first = relay.RunAsync(s1, Spec("sitzung-eins"), Alive, CancellationToken.None, owner: me);
+        Assert.StartsWith("0.,", await ReceiveTextAsync(b1));
+        var (b2, s2) = await SocketPairAsync();
+        var second = relay.RunAsync(s2, Spec("sitzung-zwei"), Alive, CancellationToken.None, owner: me);
+        Assert.StartsWith("0.,", await ReceiveTextAsync(b2));
+        Assert.False(first.IsCompleted);                          // die zweite hat die erste nicht abgeloest
+
+        // dritte Sitzung: Obergrenze, mit Meldung im Klartext (Code 797), guacd wird gar nicht erst gefragt
+        var (b3, s3) = await SocketPairAsync();
+        await relay.RunAsync(s3, Spec("sitzung-drei"), Alive, CancellationToken.None, owner: me);
+        await ReceiveTextAsync(b3);
+        var refused = await ReceiveTextAsync(b3);
+        Assert.Contains("Es sind schon 2 Sitzungen offen", refused);
+        Assert.EndsWith(",3.797;", refused);
+
+        // ein Neuladen der ersten (gleiche Kennung) loest nur die erste ab, auch an der Obergrenze
+        var (b1b, s1b) = await SocketPairAsync();
+        var firstAgain = relay.RunAsync(s1b, Spec("sitzung-eins"), Alive, CancellationToken.None, owner: me);
+        Assert.StartsWith("0.,", await ReceiveTextAsync(b1b));
+        Assert.Contains("3.777", await ReceiveTextAsync(b1));
+        await first.WaitAsync(Wait);
+        Assert.False(second.IsCompleted);
+
+        // eine Sitzung weg: wieder Platz
+        await b2.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+        await second.WaitAsync(Wait);
+        Assert.Equal(1, registry.CountOf(me));
+        await b1b.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+        await firstAgain.WaitAsync(Wait);
+        Assert.Equal(0, registry.CountOf(me));
     }
 }

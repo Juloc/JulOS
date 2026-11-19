@@ -72,6 +72,11 @@ internal static class ConnectionEndpoints
                 await store.SetSecretAsync(id.UserId, connection, null, ctx.RequestAborted);
                 c = c with { HasPassword = false };
             }
+            // Ein anderes Ziel hat einen anderen Host-Schluessel: der gemerkte gehoert zum alten Ziel
+            if (before.HostKey is not null && (before.Kind != v.Kind || before.Host != v.Host || before.Port != v.Port))
+            {
+                await store.SetHostKeyAsync(id.UserId, connection, null, ctx.RequestAborted);
+            }
             return Results.Json(ToDto(c), AppJson.Default.ConnectionDto);
         });
 

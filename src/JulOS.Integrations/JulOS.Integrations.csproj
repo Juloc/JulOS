@@ -9,5 +9,7 @@
   <ItemGroup>
     <!-- Nur fuer Logging-Schnittstellen; die Bibliothek kennt weder Datenbank noch Konten -->
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <!-- SSH-Client fuers Terminal (MIT); steckt hinter ISshSession -->
+    <PackageReference Include="SSH.NET" />
   </ItemGroup>
 </Project>

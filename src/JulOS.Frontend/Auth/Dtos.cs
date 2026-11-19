@@ -19,5 +19,5 @@ internal sealed record UploadResponse(bool Ok);
 internal sealed record ConnectionDto(Guid Id, string Name, string Kind, string Host, int Port, string Username, bool HasPassword, string Engine);
 internal sealed record ConnectionsResponse(ConnectionDto[] Connections, bool CanStorePasswords);
 internal sealed record ConnectionRequest(string? Name, string? Kind, string? Host, int? Port, string? Username, string? Password = null, bool? ForgetPassword = null, string? Engine = null);
-internal sealed record TicketRequest(Guid? Connection, string? Password, int? Width, int? Height, int? Dpi, string? Engine = null);
+internal sealed record TicketRequest(Guid? Connection, string? Password, int? Width, int? Height, int? Dpi, string? Engine = null, string? Sid = null, int? Cols = null, int? Rows = null, string? AcceptHostKey = null);
 internal sealed record TicketResponse(string Ticket, string Kind, int Width, int Height, string Engine = "guac");

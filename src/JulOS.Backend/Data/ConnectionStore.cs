@@ -2,14 +2,14 @@ using Npgsql;
 
 namespace JulOS.Backend.Data;
 
-public sealed record ConnectionRecord(Guid Id, string Name, string Kind, string Host, int Port, string Username, bool HasPassword, string Engine);
+public sealed record ConnectionRecord(Guid Id, string Name, string Kind, string Host, int Port, string Username, bool HasPassword, string Engine, string? HostKey = null);
 
 /// <summary>Gespeicherte Verbindungen eines Benutzers. Ein Passwort gibt es nur auf Wunsch und nur verschluesselt (siehe SecretBox); die Listen liefern nie das Passwort, nur ob eins da ist.</summary>
 public sealed class ConnectionStore(NpgsqlDataSource db)
 {
-    private const string Columns = "id, name, kind, host, port, username, secret is not null, engine";
+    private const string Columns = "id, name, kind, host, port, username, secret is not null, engine, host_key";
 
-    private static ConnectionRecord Read(NpgsqlDataReader r) => new(r.GetGuid(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetInt32(4), r.GetString(5), r.GetBoolean(6), r.GetString(7));
+    private static ConnectionRecord Read(NpgsqlDataReader r) => new(r.GetGuid(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetInt32(4), r.GetString(5), r.GetBoolean(6), r.GetString(7), r.IsDBNull(8) ? null : r.GetString(8));
 
     public async Task<ConnectionRecord> CreateAsync(Guid userId, string name, string kind, string host, int port, string username, string engine = "guac", CancellationToken ct = default)
     {
@@ -68,5 +68,12 @@ public sealed class ConnectionStore(NpgsqlDataSource db)
     {
         await using var cmd = db.Cmd("select secret from connections where user_id = $1 and id = $2", userId, id);
         return await cmd.ExecuteScalarAsync(ct) as byte[];
+    }
+
+    /// <summary>Merkt den Host-Schluessel des Ziels (Fingerabdruck), oder vergisst ihn (null).</summary>
+    public async Task SetHostKeyAsync(Guid userId, Guid id, string? hostKey, CancellationToken ct = default)
+    {
+        await using var cmd = db.Cmd("update connections set host_key = $3 where user_id = $1 and id = $2", userId, id, hostKey is null ? DBNull.Value : hostKey);
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 }

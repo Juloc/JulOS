@@ -1,4 +1,5 @@
-import { disconnectRemote, remoteApi } from './app.js';
+import { remoteApi } from './app.js';
+import { Sessions } from './sessions.js';
 import { remoteMenuNames, remoteMenuItems, sessionMenu } from './desktop-remote.js';
 
 /* =====================================================================
@@ -11,10 +12,13 @@ import { remoteMenuNames, remoteMenuItems, sessionMenu } from './desktop-remote.
 const $ = (s, r = document) => r.querySelector(s);
 const BAR_H = 34;
 let ctx = null;            // von shell.js: { state, esc, api, connect, edit, add, devices, signOut }
-let root = null, remoteEl = null;
+let root = null;
 const wins = new Map();    // id -> Fenster
 let zTop = 10;
-let sessionConn = null;    // Verbindung, die im Sitzungsfenster laeuft (app.js kennt nur eine Sitzung gleichzeitig)
+const sessWins = new Map(); // Sitzungskennung -> Fenster (jede Sitzung ein Fenster)
+/** Das Fenster der aktiven Sitzung (die Tasten und die Menues der oberen Leiste gehoeren ihm) und ihre Verbindung */
+const activeW = () => { const a = Sessions.active; return a ? sessWins.get(a.id) || null : null; };
+const activeConn = () => (Sessions.active ? Sessions.active.conn : null);
 
 const ls = {
   get(k, d) { try { const v = localStorage.getItem('pd.dk.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
@@ -224,8 +228,9 @@ function createWindow(opts) {
   e.append(head, body);
   for (const d of ['n', 's', 'w', 'e', 'nw', 'ne', 'sw', 'se']) { const z = el('div', 'dk-rz ' + d); z.dataset.dir = d; e.appendChild(z); }
   w.el = e; w.body = body; w.head = head; w.bMax = bMax;
-  const saved = ls.get('rect.' + opts.id, null);
+  const saved = ls.get('rect.' + (opts.rectKey || opts.id), null);
   const rect = fitRect(saved || opts.rect, opts.minW || 320, opts.minH || 220);
+  if (opts.cascade) { rect.x += opts.cascade; rect.y += opts.cascade; Object.assign(rect, fitRect(rect, opts.minW || 320, opts.minH || 220)); }
   Object.assign(e.style, { left: rect.x + 'px', top: rect.y + 'px', width: rect.w + 'px', height: rect.h + 'px' });
   root.appendChild(e); wins.set(opts.id, w);
   // Rahmen des neuen Fensters zeigt die Animation nur einmal; danach darf keine Animation die Transform-Matrix halten (Maus-Koordinaten)
@@ -246,10 +251,18 @@ function focusWin(w) {
   if (w.minimized) return;
   w.el.style.zIndex = ++zTop;
   for (const o of wins.values()) o.el.classList.toggle('active', o === w);
+  if (w.opts.onFocus) w.opts.onFocus(w);       // Sitzungsfenster: die Sitzung wird die aktive (Tasten gehen an sie)
   renderBar();
 }
-function minimizeWin(w) { w.minimized = true; w.el.classList.add('min'); w.el.classList.remove('active'); renderDock(); renderBar(); }
-function restoreWin(w) { w.minimized = false; w.el.classList.remove('min'); focusWin(w); renderDock(); }
+function minimizeWin(w) {
+  w.minimized = true; w.el.classList.add('min'); w.el.classList.remove('active');
+  if (w.opts.onVisible) w.opts.onVisible(false);          // Sitzung im Hintergrund: pausiert
+  // eine andere sichtbare Sitzung bekommt die Tasten
+  const next = [...sessWins.values()].filter((o) => !o.minimized).sort((a, b) => b.el.style.zIndex - a.el.style.zIndex)[0];
+  if (w.session && Sessions.active === w.session && next) focusWin(next);
+  renderDock(); renderBar();
+}
+function restoreWin(w) { w.minimized = false; w.el.classList.remove('min'); if (w.opts.onVisible) w.opts.onVisible(true); focusWin(w); renderDock(); }
 function toggleMax(w) {
   w.maximized = !w.maximized; w.el.classList.toggle('max', w.maximized);
   w.bMax.innerHTML = ic(w.maximized ? 'restore' : 'square'); w.bMax.setAttribute('aria-label', w.maximized ? 'Wiederherstellen' : 'Maximieren');
@@ -316,6 +329,8 @@ const MENUS = () => ({
     { label: 'Start öffnen', icon: 'home', run: () => openHome() },
     { label: 'Alle Fenster minimieren', icon: 'minus', run: () => wins.forEach(minimizeWin) },
     { label: 'Alle Fenster anzeigen', icon: 'restore', run: () => wins.forEach((w) => w.minimized && restoreWin(w)) },
+    { label: 'Sitzungen nebeneinander', icon: 'grid', run: () => tileSessions(), disabled: sessWins.size < 2 },
+    { label: 'Sitzungen überlappend', icon: 'restore', run: () => cascadeSessions(), disabled: sessWins.size < 2 },
     { sep: true },
     { label: 'Neue Verbindung …', icon: 'plus', run: () => ctx.add() },
   ],
@@ -353,7 +368,7 @@ function buildBar() {
   const menus = el('div', 'dk-menus'); menus.id = 'dkMenus';
   bar.appendChild(menus);
   bar.appendChild(el('div', 'dk-sp'));
-  const sess = btn('dk-ic dk-sess', '<span></span>'); sess.hidden = true; sess.id = 'dkSess'; sess.addEventListener('click', () => { const w = wins.get('session'); if (w) w.minimized ? restoreWin(w) : focusWin(w); });
+  const sess = btn('dk-ic dk-sess', '<span></span>'); sess.hidden = true; sess.id = 'dkSess'; sess.addEventListener('click', () => sessionMenu2(sess));
   const search = btn('dk-ic', ic('search'), 'Suchen'); search.dataset.launcher = '1'; search.addEventListener('click', () => (launcher ? closeLauncher() : openLauncher()));
   const clock = el('div', 'dk-clock'); clock.id = 'dkClock';
   const user = btn('dk-ic', '<span class="dk-avatar"></span>', 'Konto'); user.id = 'dkUser';
@@ -384,28 +399,28 @@ function syncKeys() {
 function markKeys() {
   if (!root) return;
   const has = remoteApi.hasKeys() && keysToRemote();
-  const w = wins.get('session');
+  const w = activeW();
   for (const o of wins.values()) o.el.classList.toggle('keys', o === w && has);
   const k = $('#dkKeys', root); if (!k) return;
   k.hidden = !w; k.classList.toggle('on', has);
-  k.querySelector('span').textContent = has ? 'Tastatur → ' + ((sessionConn && sessionConn.name) || 'Sitzung') : 'Tastatur → keins';
+  k.querySelector('span').textContent = has ? 'Tastatur → ' + ((Sessions.active && Sessions.active.title) || 'Sitzung') : 'Tastatur → keins';
   k.title = has ? 'Alle Tasten gehen an das Fernfenster.' : 'Die Tasten gehen an kein Fernfenster. Klicke das Fernfenster an (oder wähle es im Dock).';
 }
 
 /** Das Fernfenster ist vorn und sichtbar: dann zeigt die Leiste seine Menues statt der normalen (wie das Programm-Menue am Mac) */
 function remoteActive() {
-  const w = wins.get('session');
-  return !!(w && sessionConn && !w.minimized && w.el.classList.contains('active'));
+  const w = activeW();
+  return !!(w && !w.minimized && w.el.classList.contains('active'));
 }
 const remoteDeps = {
-  win: () => wins.get('session'),
-  toggleMax: () => { const w = wins.get('session'); if (w) toggleMax(w); },
+  win: () => activeW(),
+  toggleMax: () => { const w = activeW(); if (w) toggleMax(w); },
   fullscreen: () => {
-    const w = wins.get('session'); if (!w) return;
+    const w = activeW(); if (!w) return;
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     else w.el.requestFullscreen({ navigationUI: 'hide' }).catch(() => notify('Vollbild geht hier nicht.'));
   },
-  end: () => { const w = wins.get('session'); if (w) closeWin(w); },
+  end: () => { const w = activeW(); if (w) closeWin(w); },
 };
 /** Fernmenues laufen, danach bekommt das Fernbild die Tastatur zurueck */
 const afterRemote = (items) => items && (items.then ? items.then(afterRemote) : items.map((it) => (it.run ? { ...it, run: () => { it.run(); setTimeout(() => remoteApi.focus(), 80); } } : it.sub ? { ...it, sub: afterRemote(it.sub) } : it)));
@@ -413,7 +428,8 @@ let barKey = '';
 function renderMenus() {
   const box = $('#dkMenus', root); if (!box) return;
   const remote = remoteActive();
-  const key = remote ? 'r:' + sessionConn.id + ':' + sessionConn.kind + ':' + sessionConn.name : 'n';
+  const sc = remote ? activeConn() : null;
+  const key = remote ? 'r:' + Sessions.active.id + ':' + sc.kind + ':' + Sessions.active.title : 'n';
   if (key === barKey) return;
   barKey = key; closeMenu(); box.replaceChildren();
   const add = (name, cls, items) => {
@@ -424,16 +440,26 @@ function renderMenus() {
     box.appendChild(b);
   };
   if (!remote) { const menus = MENUS(); for (const name of Object.keys(menus)) add(name, '', () => MENUS()[name]); return; }
-  add(sessionConn.name, 'dk-appname', () => afterRemote(sessionMenu(remoteDeps)));
-  for (const name of remoteMenuNames(sessionConn.kind)) add(name, '', () => afterRemote(remoteMenuItems(name, remoteDeps)));
+  add(Sessions.active.title, 'dk-appname', () => afterRemote(sessionMenu(remoteDeps)));
+  for (const name of remoteMenuNames(sc.kind)) add(name, '', () => afterRemote(remoteMenuItems(name, remoteDeps)));
 }
 function renderBar() {
   renderMenus();
   syncKeys();
   const s = $('#dkSess', root); if (!s) return;
-  const w = wins.get('session');
-  s.hidden = !w;
-  if (w) s.querySelector('span').textContent = (sessionConn && sessionConn.name) || 'Sitzung';
+  const n = sessWins.size, a = Sessions.active;
+  s.hidden = !n;
+  if (n) s.querySelector('span').textContent = n === 1 ? (a ? a.title : 'Sitzung') : `${n} Sitzungen`;
+}
+/** Menue der offenen Sitzungen (Menueleiste): wechseln, anordnen */
+function sessionMenu2(anchor) {
+  const items = [{ cap: 'Offene Sitzungen' }];
+  for (const w of sessWins.values()) {
+    const s = w.session;
+    items.push({ label: s.title, icon: s.kind === 'terminal' ? 'terminal' : 'monitor', hint: s.stateText, run: () => { w.minimized ? restoreWin(w) : focusWin(w); } });
+  }
+  items.push({ sep: true }, { label: 'Nebeneinander anordnen', icon: 'grid', run: () => tileSessions(), disabled: sessWins.size < 2 }, { label: 'Überlappend anordnen', icon: 'restore', run: () => cascadeSessions(), disabled: sessWins.size < 2 });
+  showMenu(anchor, items);
 }
 const fmtClock = () => new Date().toLocaleString('de-DE', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 function tickClock() {
@@ -479,7 +505,7 @@ function renderDock() {
   const state = {};
   const home = wins.get('home'); if (home) state.home = home;
   const files = wins.get('files'); if (files) state.files = files;
-  const sess = wins.get('session'); if (sess && sessionConn) state[sessionConn.kind] = sess;
+  for (const w of sessWins.values()) { const k = w.session.kind; if (!state[k] || (state[k].minimized && !w.minimized)) state[k] = w; }
   for (const b of root.querySelectorAll('.dk-di[data-dock]')) {
     const w = state[b.dataset.dock];
     b.classList.toggle('run', !!w); b.classList.toggle('hid', !!w && w.minimized);
@@ -559,11 +585,13 @@ function runApp(id, anchor) {
 function pickConnection(kind, anchor) {
   const label = kind === 'desktop' ? 'Desktop' : 'Terminal';
   const list = ctx.state.connections.filter((c) => c.kind === kind);
-  const run = wins.get('session');
-  if (run && sessionConn && sessionConn.kind === kind && list.length <= 1) { run.minimized ? restoreWin(run) : focusWin(run); return; }
+  const running = [...sessWins.values()].filter((w) => w.session.kind === kind);
+  if (running.length && list.length <= 1) { const w = running.find((x) => x.session === Sessions.active) || running[0]; w.minimized ? restoreWin(w) : focusWin(w); return; }
   if (!list.length) { notify(`Noch keine ${label}-Verbindung. Lege zuerst eine an.`); return ctx.add(); }
   if (list.length === 1) return ctx.connect(list[0]);
-  showMenu(anchor, [{ cap: label + ' verbinden mit' }, ...list.map((c) => ({ label: c.name, icon: kind === 'terminal' ? 'terminal' : 'monitor', hint: c.host, run: () => ctx.connect(c) }))], anchor.classList.contains('dk-di') ? 'above' : 'below');
+  showMenu(anchor, [{ cap: label + ' verbinden mit' }, ...list.map((c) => ({ label: c.name, icon: kind === 'terminal' ? 'terminal' : 'monitor', hint: Sessions.find(c.id).length ? `${Sessions.find(c.id).length} offen` : c.host, run: () => ctx.connect(c) })),
+    ...(list.some((c) => Sessions.find(c.id).length) ? [{ sep: true }, { cap: 'Weitere Sitzung zu' }, ...list.filter((c) => Sessions.find(c.id).length).map((c) => ({ label: c.name, icon: 'plus', run: () => ctx.connect(c, { extra: true }) }))] : [])],
+    anchor.classList.contains('dk-di') ? 'above' : 'below');
 }
 
 /* =====================================================================
@@ -683,9 +711,9 @@ function renderHome() {
 }
 
 const connTile = (c) => {
-  const open = sessionConn && sessionConn.id === c.id && wins.has('session');
+  const n = Sessions.find(c.id).length, open = n > 0;
   const a = appById(c.kind);
-  return `<button type="button" class="dk-b dk-tile" data-conn="${ctx.esc(c.id)}">${tile(a.g, a.ic)}<span class="dk-tt"><b>${ctx.esc(c.name)}</b><i class="${open ? 'on' : ''}">${open ? 'Sitzung offen' : (c.kind === 'terminal' ? 'Terminal' : 'Desktop') + ' · ' + ctx.esc(c.host)}</i></span></button>`;
+  return `<button type="button" class="dk-b dk-tile" data-conn="${ctx.esc(c.id)}">${tile(a.g, a.ic)}<span class="dk-tt"><b>${ctx.esc(c.name)}</b><i class="${open ? 'on' : ''}">${open ? (n > 1 ? n + ' Sitzungen offen' : 'Sitzung offen') : (c.kind === 'terminal' ? 'Terminal' : 'Desktop') + ' · ' + ctx.esc(c.host)}</i></span></button>`;
 };
 function renderStart(m) {
   const conns = ctx.state.connections;
@@ -762,9 +790,10 @@ function renderServices(m) {
   m.innerHTML = `<h3 style="margin-top:14px">Dienste <button type="button" class="dk-b dk-btn pri" style="margin-left:auto" data-act="add">${ic('plus')}Verbindung hinzufügen</button></h3>
     ${conns.length ? '' : '<p class="dk-lead">Noch keine Verbindung. Lege den Computer an, den du steuern willst.</p>'}
     <div class="dk-list">${conns.map((c) => {
-      const a = appById(c.kind), open = sessionConn && sessionConn.id === c.id && wins.has('session');
-      return `<div class="dk-row">${tile(a.g, a.ic)}<span class="dk-tt"><b>${ctx.esc(c.name)}${open ? ' <span class="dk-tag">Sitzung offen</span>' : ''}</b><i>${c.kind === 'terminal' ? 'Terminal (SSH)' : 'Desktop (RDP)'} · ${ctx.esc(c.username ? c.username + '@' : '')}${ctx.esc(c.host)}:${c.port}${c.hasPassword ? ' · Passwort gespeichert' : ''}</i></span>
+      const a = appById(c.kind), n = Sessions.find(c.id).length, open = n > 0;
+      return `<div class="dk-row">${tile(a.g, a.ic)}<span class="dk-tt"><b>${ctx.esc(c.name)}${open ? ` <span class="dk-tag">${n > 1 ? n + ' Sitzungen' : 'Sitzung offen'}</span>` : ''}</b><i>${c.kind === 'terminal' ? 'Terminal (SSH)' : 'Desktop (RDP)'} · ${ctx.esc(c.username ? c.username + '@' : '')}${ctx.esc(c.host)}:${c.port}${c.hasPassword ? ' · Passwort gespeichert' : ''}</i></span>
         <button type="button" class="dk-b dk-btn pri" data-conn="${ctx.esc(c.id)}">${ic('play')}${open ? 'Öffnen' : 'Verbinden'}</button>
+        ${open ? `<button type="button" class="dk-b dk-btn sq" data-extra="${ctx.esc(c.id)}" aria-label="Weitere Sitzung" title="Weitere Sitzung zu diesem Ziel">${ic('plus')}</button>` : ''}
         <button type="button" class="dk-b dk-btn sq" data-edit="${ctx.esc(c.id)}" aria-label="Bearbeiten" title="Bearbeiten">${ic('edit')}</button></div>`;
     }).join('')}</div>`;
 }
@@ -782,10 +811,11 @@ function renderSettings(m) {
     <div class="dk-card"><h4>Darstellung</h4><p>Die Desktop-Oberfläche ist zurzeit immer hell. Ein dunkles Design folgt später.</p></div>`;
 }
 function onMainClick(e) {
-  const t = e.target.closest('[data-conn],[data-edit],[data-act],[data-go],[data-app],[data-dockmode]'); if (!t) return;
+  const t = e.target.closest('[data-conn],[data-edit],[data-extra],[data-act],[data-go],[data-app],[data-dockmode]'); if (!t) return;
   const find = (id) => ctx.state.connections.find((c) => c.id === id);
   if (t.dataset.dockmode) setDockMode(t.dataset.dockmode);
   else if (t.dataset.conn) { const c = find(t.dataset.conn); c && ctx.connect(c); }
+  else if (t.dataset.extra) { const c = find(t.dataset.extra); c && ctx.connect(c, { extra: true }); }
   else if (t.dataset.edit) { const c = find(t.dataset.edit); c && ctx.edit(c); }
   else if (t.dataset.go) goto(t.dataset.go);
   else if (t.dataset.app) runApp(t.dataset.app, t);
@@ -834,38 +864,81 @@ async function openAbout() {
 }
 
 /* =====================================================================
- *  Sitzungsfenster: die Fernsteuerung aus app.js (#remote) wird in ein Fenster gesetzt
+ *  Sitzungsfenster: jede Sitzung (app.js, sessions.js) haengt in einem eigenen Fenster
  * ===================================================================== */
-/** Wird vor dem Verbinden gerufen. Gibt false zurueck, wenn die Sitzung schon laeuft (dann nur nach vorn holen). */
-export function beforeConnect(c) {
-  const run = wins.get('session');
-  if (run && sessionConn && sessionConn.id === c.id) { run.minimized ? restoreWin(run) : focusWin(run); return false; }
-  if (run) { notify('Die offene Sitzung wurde beendet: es läuft immer nur eine Sitzung.'); disconnectRemote(); closeSession(); }
-  sessionConn = c;
-  const a = appById(c.kind === 'terminal' ? 'terminal' : 'desktop');
-  const w = createWindow({ id: 'session', title: c.name, cls: 'dk-session', icon: `<span class="dk-ti" style="--g1:${a.g[0]};--g2:${a.g[1]};width:22px;height:22px;border-radius:7px">${ic(a.ic)}</span>`,
-    rect: defaultRect('session', 1120, 720, 20, 0), minW: 560, minH: 380,
-    onClose: () => { closeSessionBody(); disconnectRemote(); } });
-  w.body.appendChild(remoteEl);
+const SESSION_RECT = { w: 1000, h: 680 };
+const sessionIcon = (c) => { const a = appById(c.kind === 'terminal' ? 'terminal' : 'desktop'); return `<span class="dk-ti" style="--g1:${a.g[0]};--g2:${a.g[1]};width:22px;height:22px;border-radius:7px">${ic(a.ic)}</span>`; };
+const stateClass = (st) => (st === 'connected' ? 'ok' : st === 'connecting' || st === 'reconnecting' ? 'busy' : 'bad');
+/** Wird bei jeder neuen Sitzung gerufen (vom Verwalter, vor dem Verbinden): Fenster anlegen, Sitzung einhaengen. n = wie viele Sitzungen es jetzt gibt. */
+export function sessionOpened(session, n) {
+  const c = session.conn;
+  const w = createWindow({ id: 's:' + session.id, rectKey: 'session.' + c.id, title: session.title, cls: 'dk-session', icon: sessionIcon(c),
+    rect: defaultRect('session', SESSION_RECT.w, SESSION_RECT.h, 20, 0), cascade: Math.max(0, sessWins.size) * 36, minW: 520, minH: 360,
+    onFocus: () => Sessions.activate(session.id),
+    onVisible: (on) => session.setVisible(on),
+    onClose: () => { Sessions.close(session.id); } });
+  w.session = session; sessWins.set(session.id, w);
+  const dot = el('span', 'dk-sdot busy'); dot.title = session.stateText; w.head.querySelector('.dk-wt').prepend(dot);
+  w.dot = dot;
+  session.addEventListener('titlechange', (e) => { w.head.querySelector('.dk-wt span:last-child').textContent = e.detail.title; w.el.setAttribute('aria-label', e.detail.title); renderBar(); });
+  session.addEventListener('statechange', (e) => { dot.className = 'dk-sdot ' + stateClass(e.detail.state); dot.title = e.detail.text; });
+  session.mount(w.body);
   renderBar(); renderDock(); renderHome_ifOpen();
-  return true;
 }
+/** Die aktive Sitzung hat sich geaendert (Klick auf ein Fenster, neue Sitzung, anderes Fenster nach dem Schliessen). reveal = soll gezeigt werden. */
+export function sessionActivated(session, reveal) {
+  const w = sessWins.get(session.id); if (!w) return;
+  if (reveal && w.minimized) restoreWin(w);
+  else if (!w.minimized && !w.el.classList.contains('active')) focusWin(w);
+  else if (reveal) focusWin(w);
+  for (const o of sessWins.values()) o.dot && (o.el.classList.toggle('dk-sfocus', o === w));
+  session.focus();
+  renderBar();
+}
+/** Eine Sitzung ist zu Ende (Fenster geschlossen, Fehler, "Sitzung beenden"): ihr Fenster schliessen und die Meldung zeigen */
+export function sessionClosed(session, message) {
+  const w = sessWins.get(session.id);
+  sessWins.delete(session.id);
+  if (w) { w.opts.onClose = null; closeWin(w); }
+  renderBar(); renderDock(); renderHome_ifOpen();
+  const a = Sessions.active; const aw = a && sessWins.get(a.id);
+  if (aw && !aw.minimized) { focusWin(aw); a.focus(); }
+  notify(message);
+}
+export function sessionsChanged() { renderBar(); renderHome_ifOpen(); }
 const renderHome_ifOpen = () => { if (wins.has('home')) renderHome(); };
-function closeSessionBody() {
-  if (remoteEl.parentElement !== $('#app')) $('#app').appendChild(remoteEl);   // zurueck an den alten Platz (versteckt), damit es nicht mit dem Fenster verschwindet
-  sessionConn = null;
+
+/* Anordnen: nebeneinander (Kacheln) oder ueberlappend (versetzt). Betrifft nur die Sitzungsfenster, die nicht minimiert sind. */
+function placeWindows(list, rects) {
+  list.forEach((w, i) => {
+    if (w.maximized) toggleMax(w);
+    Object.assign(w.el.style, { left: rects[i].x + 'px', top: rects[i].y + 'px', width: rects[i].w + 'px', height: rects[i].h + 'px' });
+    saveRect(w);
+  });
 }
-function closeSession() { const w = wins.get('session'); if (w) { w.opts.onClose = null; closeWin(w); } closeSessionBody(); renderBar(); renderDock(); renderHome_ifOpen(); }
-/** Die Sitzung ist zu Ende (Fehler, Abbruch, Menue "Verbindung beenden"): Fenster schliessen, Meldung zeigen */
-export function remoteLeft(message) { closeSession(); notify(message); }
-export function isRunning(c) { const w = wins.get('session'); if (w && sessionConn && sessionConn.id === c.id) { w.minimized ? restoreWin(w) : focusWin(w); return true; } return false; }
+function tileSessions() {
+  const list = [...sessWins.values()].filter((w) => !w.minimized);
+  if (!list.length) return;
+  const v = viewport(), gap = 8, top = BAR_H + gap, bottom = v.h - 110, width = v.w - gap * 2;
+  const cols = list.length <= 3 ? list.length : Math.ceil(Math.sqrt(list.length)), rowsN = Math.ceil(list.length / cols);
+  const cw = Math.floor((width - gap * (cols - 1)) / cols), ch = Math.floor((bottom - top - gap * (rowsN - 1)) / rowsN);
+  placeWindows(list, list.map((_, i) => ({ x: gap + (i % cols) * (cw + gap), y: top + Math.floor(i / cols) * (ch + gap), w: cw, h: ch })));
+}
+function cascadeSessions() {
+  const list = [...sessWins.values()].filter((w) => !w.minimized);
+  const r0 = defaultRect('session', SESSION_RECT.w, SESSION_RECT.h, -80, -20);
+  placeWindows(list, list.map((_, i) => fitRect({ x: r0.x + i * 36, y: r0.y + i * 36, w: r0.w, h: r0.h }, 520, 360)));
+  list.forEach((w) => focusWin(w));
+}
+/** Sitzungsfenster anordnen ('tile' nebeneinander, 'cascade' ueberlappend); auch fuer Tests. */
+export function arrange(mode) { if (mode === 'tile') tileSessions(); else cascadeSessions(); }
+export function isRunning(c) { return Sessions.find(c.id).length > 0; }
 
 /* =====================================================================
  *  Schnittstelle zu shell.js
  * ===================================================================== */
 export async function init(context) {
   ctx = context;
-  remoteEl = $('#remote');
   await new Promise((done) => {
     const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'desktop.css'; l.onload = l.onerror = done; document.head.appendChild(l);
   });
@@ -883,7 +956,6 @@ export async function init(context) {
   document.addEventListener('close', () => syncKeys(), true);      // ein Dialog (zum Beispiel Text senden, Kombination bearbeiten) wurde geschlossen
   // Ein Klick auf einen Knopf, die Leiste, den Dock oder eine Titelleiste darf den Fokus nicht vom Tastaturfeld wegnehmen
   root.addEventListener('mousedown', (e) => { if (e.target.closest && e.target.closest('button, .dk-bar, .dk-dock, .dk-wh, .dk-menu') && !e.target.closest('input, textarea, select, [contenteditable="true"]')) e.preventDefault(); });
-  const hint = $('#toLoginBtn'); if (hint) hint.textContent = 'Fenster schließen';
   setInterval(tickClock, 15000); tickClock();
   // Beim Wegklicken auf den Hintergrund: Menues zu (Fenster nehmen den Fokus selbst)
   wp.addEventListener('pointerdown', () => { for (const w of wins.values()) w.el.classList.remove('active'); renderBar(); });
@@ -899,7 +971,8 @@ export function connectionsChanged() { if (root) renderHome_ifOpen(); }
 /** Abgemeldet oder Anmeldung noetig: alle Fenster zu */
 export function reset() {
   if (!root) return;
-  closeMenu(); closeLauncher(); closeSession();
+  closeMenu(); closeLauncher();
   for (const w of [...wins.values()]) { w.opts.onClose = null; closeWin(w); }
+  sessWins.clear();
   nav.view = 'start'; nav.back = []; nav.fwd = [];
 }

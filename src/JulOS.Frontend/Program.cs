@@ -12,9 +12,11 @@ using JulOS.Frontend.Connections;
 using JulOS.Frontend.Files;
 using JulOS.Frontend.Remote;
 using JulOS.Frontend.SystemInfo;
+using JulOS.Integrations;
 using JulOS.Integrations.Agent;
 using JulOS.Integrations.Display;
 using JulOS.Integrations.Guacamole;
+using JulOS.Integrations.Ssh;
 using JulOS.Workers;
 using Microsoft.AspNetCore.HttpOverrides;
 using Npgsql;
@@ -47,12 +49,16 @@ builder.Services.AddSingleton<AuthService>();
 builder.Services.AddHostedService<SessionPurgeWorker>();
 builder.Services.AddSingleton<GuacTickets>();
 builder.Services.AddSingleton<ScreenTickets>();
+builder.Services.AddSingleton<SshTickets>();
 builder.Services.AddHostedService<TicketSweepWorker>();
 // guacd (Container im selben Netz), erreichbar nur fuer den Server
 var guacd = (builder.Configuration["JULOS_GUACD"] ?? "guacd:4822").Split(':');
 builder.Services.AddSingleton(new GuacdOptions(guacd[0], guacd.Length > 1 ? int.Parse(guacd[1]) : 4822));
+// Obergrenze offener Fernsteuer-Sitzungen pro Benutzer (alle Arten zusammen), siehe docs/SESSIONS.md
+builder.Services.AddSingleton(new SessionRegistry(int.TryParse(builder.Configuration["JULOS_MAX_SESSIONS_PER_USER"], out var maxSessions) ? maxSessions : SessionRegistry.DefaultMaxPerUser));
 builder.Services.AddSingleton<GuacRelay>();
 builder.Services.AddSingleton<ScreenRelay>();
+builder.Services.AddSingleton<SshRelay>(sp => new SshRelay(sp.GetRequiredService<ILogger<SshRelay>>(), registry: sp.GetRequiredService<SessionRegistry>()));
 // Agent in der Sitzung der Ziel-Maschine (Unix-Socket) und der gemeinsame Ordner fuer Foto-Uploads, beide vom Host eingebunden
 builder.Services.AddSingleton(new AgentOptions(builder.Configuration["JULOS_AGENT_SOCKET"] ?? "/uploads/.agent/agent.sock"));
 builder.Services.AddSingleton<AgentClient>();

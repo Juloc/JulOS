@@ -8,7 +8,8 @@
  *                      7 Bild aus der VM (format 1 PNG / 2 BMP), 8 Dateiliste der VM, 9 Dateistueck, 10 Ergebnis eines Sendens
  *   Browser -> Server: 1 Bestaetigung (Folgenummer u32: alle Bilder bis dahin), 2 Maus bewegt, 3 Maustaste, 4 Mausrad, 5 Taste (Scancode), 6 Zeichen, 7 Fenstergroesse, 8 Schluesselbild,
  *                      9 Zwischenablage (UTF-8-Text, bis 1 MiB; der ferne Rechner holt ihn, wenn er einfuegt),
- *                      10 Senden Anfang (Bild als BMP oder Datei), 11 Stueck, 12 Ende, 13 Abbruch, 14 Datei der VM holen, 15 Holen Abbruch
+ *                      10 Senden Anfang (Bild als BMP oder Datei), 11 Stueck, 12 Ende, 13 Abbruch, 14 Datei der VM holen, 15 Holen Abbruch,
+ *                      16 Pause (1 = die Ansicht ist nicht zu sehen: der Server kodiert nicht, 0 = weiter)
  *
  * Ton (20 und 21 in beide Richtungen: Ton vom fernen Rechner, Zustand, "Ton an", Mikrofon): siehe stream-audio.js, erreichbar als client.audio.
  *
@@ -21,7 +22,7 @@ import { StreamAudio } from './stream-audio.js';
 
 const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, image: 7, files: 8, fileChunk: 9, result: 10, audio: 20, audioStatus: 21 };
 const OUT = { ack: 1, move: 2, button: 3, wheel: 4, key: 5, unicode: 6, resize: 7, keyframe: 8, clipboard: 9,
-  sendBegin: 10, sendChunk: 11, sendEnd: 12, sendCancel: 13, fileRequest: 14, fileCancel: 15 };
+  sendBegin: 10, sendChunk: 11, sendEnd: 12, sendCancel: 13, fileRequest: 14, fileCancel: 15, pause: 16 };
 const CHUNK = 128 * 1024;                 // so gross sind die Stuecke beim Senden (der Server nimmt bis 256 kB)
 const BUFFER_HIGH = 1024 * 1024;          // darueber wartet das Senden, bis der Socket leer laeuft (sonst steht die Maus hinter einer Datei)
 
@@ -142,10 +143,20 @@ export class StreamClient {
     this.audio = new StreamAudio((bytes) => this.send(bytes));
     this.submitted = 0; this.output = 0; this.activityAt = 0;   // Folgenummern: dem Dekodierer gegeben, von ihm geliefert; Zeit des letzten Wechsels
     this.received = 0;                  // Folgenummer des zuletzt empfangenen Bildes (der Server zaehlt aufsteigend, ohne Luecken)
+    this.paused = false;                // die Ansicht ist im Hintergrund: der Server kodiert dann keine Bilder
     this.drawn = false;                 // ob schon ein Bild gezeichnet wurde (davor darf app.js auf Guacamole ausweichen)
   }
 
   getDisplay() { return this.display; }
+
+  // Ansicht im Hintergrund (andere Sitzung vorn, Fenster minimiert, Seite versteckt): der Server hoert auf zu kodieren, der Browser dekodiert nichts.
+  // Beim Zurueckkommen schickt der Server alles, was sich inzwischen geaendert hat, als naechstes Bild (der Kodierer hat keines uebersprungen).
+  setPaused(on) {
+    on = !!on;
+    if (this.paused === on) return;
+    this.paused = on;
+    if (this.connected) this.send(Uint8Array.of(OUT.pause, on ? 1 : 0));
+  }
 
   // Ein Dekodierer, der Bilder angenommen hat und sie nicht mehr herausgibt (manche halten Bilder zurueck, weil sie auf spaetere warten):
   // nach einer Sekunde neu oeffnen und ein Schluesselbild holen, statt dass der Server auf die Bestaetigung wartet.
@@ -208,7 +219,7 @@ export class StreamClient {
       }
       case IN.size:
         this.display.resize(v.getUint16(1), v.getUint16(3));
-        if (!this.connected) { this.connected = true; this.setState(3); }
+        if (!this.connected) { this.connected = true; this.setState(3); if (this.paused) this.send(Uint8Array.of(OUT.pause, 1)); }
         break;
       case IN.error: {
         const code = v.getUint16(1), message = new TextDecoder().decode(new Uint8Array(buffer, 3));

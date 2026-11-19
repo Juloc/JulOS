@@ -26,7 +26,7 @@ public static partial class ConnectionRules
         var p = port ?? (kind == "terminal" ? 22 : 3389);
         if (p is < 1 or > 65535) return (null, "Port muss zwischen 1 und 65535 liegen.");
         if (username.Length > 64 || username.Any(char.IsControl)) return (null, "Benutzername ist zu lang.");
-        // Ohne Angabe bleibt die bisherige Engine (neue Verbindung: Guacamole); nur Desktops koennen den Stream waehlen, ein Terminal geht immer ueber Guacamole
+        // Ohne Angabe bleibt die bisherige Engine (neue Verbindung: Guacamole); nur Desktops koennen den Stream waehlen; ein Terminal nutzt den eigenen SSH-Client, die Engine hat dort keine Bedeutung
         engine ??= currentEngine ?? EngineGuac;
         if (engine is not (EngineGuac or EngineStream)) return (null, "Die Engine muss „guac“ oder „stream“ sein.");
         if (kind != "desktop") engine = EngineGuac;

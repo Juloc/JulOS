@@ -1,8 +1,10 @@
-import { openRemote, setLeaveHandler, disconnectRemote, ico } from './app.js';
+import { ico } from './app.js';
+import { Sessions } from './sessions.js';
+import './terminal-session.js';      // Sitzungsart 'terminal' (natives SSH-Terminal)
 
 /* =====================================================================
  * Startseite und Konto: Ersteinrichtung, Anmeldung, gespeicherte Verbindungen, Geraete.
- * Die Fernsteuerung selbst steckt in app.js; hier wird nur gewaehlt, was verbunden wird.
+ * Die Fernsteuerung selbst steckt in app.js (eine RemoteSession je Sitzung, Verwalter: sessions.js); hier wird nur gewaehlt, was verbunden wird.
  * Kein Passwort wird gespeichert: das Passwort fuer ein Ziel wird bei jeder Verbindung getippt.
  * ===================================================================== */
 
@@ -115,6 +117,7 @@ $('#setupSecretForm').addEventListener('submit', async (e) => {
 
 /* ---------- Anmeldung ---------- */
 function showLogin(message = '') {
+  closeAllSessions();
   if (D) D.reset();
   if (M) M.reset();
   show('login'); setMsg($('#loginMsg'), message);
@@ -184,7 +187,7 @@ $('#accountMenu').addEventListener('click', async (e) => {
 });
 
 async function signOut() {
-  disconnectRemote();
+  closeAllSessions();
   try { await api('/api/auth/logout', { method: 'POST' }); } catch { /* Sitzung war schon weg */ }
   state.user = null; state.connections = [];
   showLogin();
@@ -250,11 +253,14 @@ $('#connDelete').addEventListener('click', async (e) => {
 });
 
 /* ---------- Verbinden ---------- */
-function startDialog(c) {
-  if (D && D.isRunning(c)) return;   // Desktop: die Sitzung laeuft schon, ihr Fenster kommt nach vorn
-  state.starting = c;
+const asConn = (c) => ({ id: c.id, name: c.name, kind: c.kind, engine: c.engine, stored: c.hasPassword ? true : undefined, target: `${c.host}:${c.port}/${c.username}` });
+
+/** opts.extra: bewusst eine weitere Sitzung zum selben Ziel; sonst wird eine schon offene Sitzung nur nach vorn geholt. */
+function startDialog(c, opts = {}) {
+  if (!opts.extra && Sessions.find(c.id).length) { Sessions.open(asConn(c)); return; }   // laeuft schon: nach vorn, kein Passwort noetig
+  state.starting = { c, extra: !!opts.extra };
   // Mit gespeichertem Passwort genuegt ein Tipp: der Server nimmt es aus dem verschluesselten Speicher
-  if (c.hasPassword) { launch(c, ''); return; }
+  if (c.hasPassword) { launch(c, '', !!opts.extra); return; }
   $('#startTitle').textContent = c.name;
   $('#startUser').value = c.username;
   $('#startPw').value = '';
@@ -262,12 +268,11 @@ function startDialog(c) {
   setTimeout(() => $('#startPw').focus(), 150);
 }
 
-/** Verbindung starten. Desktop: erst das Sitzungsfenster anlegen, dann verbindet app.js in dessen Anzeige. */
-function launch(c, password) {
-  if (D && !D.beforeConnect(c)) return;
-  if (M) M.started(c);
-  show('remote');
-  openRemote({ id: c.id, name: c.name, kind: c.kind, engine: c.engine, stored: c.hasPassword ? true : undefined }, password);
+/** Verbindung starten: der Verwalter legt die Sitzung an, die Huelle (Fenster am Desktop, Umschalter am Handy) zeigt sie. */
+function launch(c, password, extra = false) {
+  const before = Sessions.count;
+  Sessions.open(asConn(c), { password, extra });
+  if (M && Sessions.count > before) M.started(c);
 }
 
 $('#startForm').addEventListener('submit', (e) => {
@@ -276,18 +281,56 @@ $('#startForm').addEventListener('submit', (e) => {
   if (!password) return;
   $('#startPw').value = '';
   $('#startDlg').close();
-  launch(state.starting, password);
+  launch(state.starting.c, password, state.starting.extra);
 });
 
-// Verbindung zu Ende (Fehler, Abbruch, "Zur Startseite"): zurueck zur Liste, mit Hinweis
-setLeaveHandler((message, reason) => {
+/* ---------- Sitzungen: die Huelle zeigt, was der Verwalter meldet ---------- */
+// Handy und einfache Ansicht: alle Sitzungen haengen in #remote, genau eine ist sichtbar; die anderen laufen im Hintergrund (pausiert).
+// Desktop: jede Sitzung ist ein Fenster (desktop.js).
+let remoteShown = false, closingAll = false;
+/** Alle Sitzungen schliessen (Abmelden, Sitzung der App abgelaufen), ohne dass die Huelle dabei zwischendurch die Startseite zeigt. */
+function closeAllSessions() { closingAll = true; try { Sessions.closeAll(); } finally { closingAll = false; remoteShown = false; } }
+function phoneVisibility() { for (const s of Sessions.list()) s.setVisible(remoteShown && s === Sessions.active); }
+function showRemote() {
+  if (!remoteShown) { remoteShown = true; if (M && history.state?.m3 !== 'remote') history.pushState({ ...(history.state || {}), m3: 'remote' }, ''); }
+  show('remote'); phoneVisibility(); if (M) M.sessionsChanged();
+}
+function showHomeView() {
+  remoteShown = false;
+  if (document.fullscreenElement && !Sessions.count) document.exitFullscreen().catch(() => {});
+  show('home'); phoneVisibility(); if (M) M.sessionsChanged();
+}
+function goHome() { if (M && history.state?.m3 === 'remote') history.back(); else showHomeView(); }
+window.addEventListener('popstate', (e) => { if (!D && remoteShown && !(e.state && e.state.m3 === 'remote')) showHomeView(); });
+
+Sessions.addEventListener('opened', (e) => {
+  const session = e.detail.session;
+  if (D) D.sessionOpened(session, Sessions.count); else { session.mount($('#remote')); session.setVisible(false); }
+});
+Sessions.addEventListener('activated', (e) => {
+  const { session, reveal } = e.detail;
+  if (D) D.sessionActivated(session, reveal);
+  else if (reveal) showRemote();
+  else { phoneVisibility(); if (M) M.sessionsChanged(); }
+});
+Sessions.addEventListener('statechange', () => { if (D) D.sessionsChanged(); else if (M) M.sessionsChanged(); });
+Sessions.addEventListener('closed', (e) => {
+  const { session, message, reason } = e.detail;
+  if (D) D.sessionClosed(session, closingAll ? '' : message);
+  if (closingAll) return;
   if (reason === 'auth') return showLogin(message);
-  if (D) return D.remoteLeft(message);   // Desktop: nur das Sitzungsfenster schliessen, die Startseite bleibt
+  if (D) return;
   if (M) M.ended(message, reason);
-  showHome(state.user, message);
+  if (!Sessions.count) { if (remoteShown) goHome(); else if (M) M.sessionsChanged(); if (message) { M ? M.snack(message) : setMsg($('#homeMsg'), message); } return; }
+  // noch andere offen: bei der Ansicht bleiben (der Verwalter hat die naechste aktiviert), die Meldung zeigen
+  phoneVisibility();
+  if (message) { M ? M.snack(message) : setMsg($('#homeMsg'), message); }
+  if (M) M.sessionsChanged();
 });
+Sessions.addEventListener('home', () => { if (!D) goHome(); });
+Sessions.addEventListener('switcher', () => { if (M) M.openSwitcher(); else goHome(); });
 
-if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), signOut });
+if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), signOut, home: goHome });
 if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), devices: openDevices, signOut });
 
 /* ---------- Geraete und Sitzungen ---------- */

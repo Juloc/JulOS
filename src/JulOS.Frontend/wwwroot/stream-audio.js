@@ -14,15 +14,30 @@
 const TO_SERVER = { audio: 20, microphone: 21 };
 const WORKLET = '/stream-audio-worklet.js';
 
+// Das Mikrofon gehoert hoechstens einer Sitzung zur Zeit (der Browser hat eines, und der ferne Rechner bekaeme sonst zwei Ströme).
+let micOwner = null;
+const micWatchers = new Set();
+const notifyMic = () => { for (const fn of micWatchers) { try { fn(micOwner); } catch { /* egal */ } } };
+
 export class StreamAudio {
+  /** Meldet jede Aenderung, wer das Mikrofon hat (die Sitzung oder null); gibt eine Funktion zum Abmelden zurueck. */
+  static watchMic(fn) { micWatchers.add(fn); return () => micWatchers.delete(fn); }
+  /** Wer gerade das Mikrofon benutzt (ein StreamAudio) oder null. */
+  static get micOwner() { return micOwner; }
+  /** Beendet das Mikrofon, egal in welcher Sitzung. */
+  static stopMic() { if (micOwner) micOwner.stopMic(); }
+
   /** @param {(bytes: Uint8Array) => void} send schickt eine Nachricht an den Server */
   constructor(send) {
     this.send = send;
     this.ctx = null; this.player = null; this.gain = null;
+    this.label = '';                    // Name der Sitzung (fuer Meldungen: "Das Mikrofon laeuft schon in ...")
+    this.active = true;                 // nur die sichtbare, aktive Sitzung spielt Ton (setActive)
     this.wanted = false;                // der Benutzer will Ton hoeren
     this.volume = 1;
     this.remote = { output: false, microphone: false, recording: false, micRate: 16000 };
     this.stats = { bufferedMs: 0, targetMs: 0, underruns: 0, dropped: 0, peak: 0, received: 0, blocks: 0, ignored: 0 };
+    this.micStarting = false;
     this.mic = null;                    // { stream, source, node, ctx } solange das Mikrofon an ist
     this.micLevel = 0; this.micChunks = 0;
     this.onchange = null; this.onmicwait = null;
@@ -36,7 +51,7 @@ export class StreamAudio {
   get supported() { return typeof AudioContext !== 'undefined' && typeof AudioWorkletNode !== 'undefined'; }
   get micSupported() { return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) && window.isSecureContext !== false; }
   get state() { return this.ctx ? this.ctx.state : 'none'; }
-  get playing() { return this.wanted && this.state === 'running'; }
+  get playing() { return this.wanted && this.active && this.state === 'running'; }
   get micOn() { return !!this.mic; }
 
   changed() { if (this.onchange) this.onchange(); }
@@ -45,7 +60,7 @@ export class StreamAudio {
   frame(buffer) {
     // 20: kanaele(1) rate(4) zeit(4) PCM ...
     this.stats.blocks++;
-    if (!this.player || !this.wanted || !this.ctx || this.ctx.state !== 'running' || buffer.byteLength <= 10) { this.stats.ignored++; return; }
+    if (!this.player || !this.wanted || !this.active || !this.ctx || this.ctx.state !== 'running' || buffer.byteLength <= 10) { this.stats.ignored++; return; }
     const v = new DataView(buffer);
     const channels = v.getUint8(1), rate = v.getInt32(2);
     const length = (buffer.byteLength - 10) >> 1;
@@ -93,6 +108,16 @@ export class StreamAudio {
     this.changed();
   }
 
+  /** Nur die sichtbare, aktive Sitzung spielt Ton: sonst schickt der Server nichts (und es wird nichts gepuffert). */
+  setActive(on) {
+    on = !!on;
+    if (this.active === on) return;
+    this.active = on;
+    if (on) this.tryResume();
+    this.syncServer();
+    this.changed();
+  }
+
   setVolume(volume) {
     this.volume = Math.max(0, Math.min(1, volume));
     if (this.gain) this.gain.gain.setTargetAtTime(this.volume, this.ctx.currentTime, 0.02);
@@ -106,7 +131,7 @@ export class StreamAudio {
 
   // Der Server schickt nur Ton, solange wir ihn wirklich abspielen koennen (nicht bei gesperrtem oder angehaltenem AudioContext)
   syncServer() {
-    const on = this.wanted && !!this.ctx && this.ctx.state === 'running' && !this.closed;
+    const on = this.wanted && this.active && !!this.ctx && this.ctx.state === 'running' && !this.closed;
     if (on === this.lastOn) return;
     this.lastOn = on;
     this.send(Uint8Array.of(TO_SERVER.audio, on ? 1 : 0));
@@ -123,13 +148,17 @@ export class StreamAudio {
   }
 
   async startMic() {
-    if (this.mic) return;
+    if (this.mic || this.micStarting) return;
+    if (micOwner && micOwner !== this) throw new Error('Das Mikrofon läuft schon in der Sitzung „' + (micOwner.label || 'andere Sitzung') + '“. Dort ausschalten, dann hier einschalten.');
     const problem = this.micProblem();
     if (problem) throw new Error(problem);
+    this.micStarting = true;
+    micOwner = this;                    // gleich beanspruchen: zwei Antippen kurz hintereinander duerfen nicht zwei Aufnahmen starten
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
     } catch (e) {
+      this.micStarting = false; micOwner = null; notifyMic();
       const name = e && e.name;
       if (name === 'NotAllowedError' || name === 'SecurityError') throw new Error('Der Browser hat das Mikrofon nicht freigegeben. In den Einstellungen der Seite erlauben und noch einmal versuchen.');
       if (name === 'NotFoundError' || name === 'OverconstrainedError') throw new Error('Kein Mikrofon gefunden.');
@@ -150,8 +179,10 @@ export class StreamAudio {
       // Der ferne Rechner verlangt Ton erst, wenn dort ein Programm aufnimmt (xrdp: dann erst oeffnet er den Kanal). Kommt nichts, den Benutzer das wissen lassen.
       setTimeout(() => { if (this.mic && !this.remote.recording && this.onmicwait) this.onmicwait(this.remote.microphone); }, 6000);
       for (const track of stream.getAudioTracks()) track.onended = () => this.stopMic();    // vom Browser oder System beendet (Anzeige "Mikrofon" am Handy)
-      this.changed();
+      this.micStarting = false;
+      this.changed(); notifyMic();
     } catch (e) {
+      this.micStarting = false; micOwner = null; notifyMic();
       for (const track of stream.getAudioTracks()) track.stop();
       throw new Error('Das Mikrofon lässt sich nicht starten: ' + (e && e.message ? e.message : e));
     }
@@ -170,11 +201,11 @@ export class StreamAudio {
 
   stopMic() {
     const mic = this.mic; if (!mic) return;
-    this.mic = null; this.micLevel = 0;
+    this.mic = null; this.micLevel = 0; if (micOwner === this) micOwner = null;
     for (const track of mic.stream.getTracks()) track.stop();
     try { mic.node.disconnect(); mic.source.disconnect(); } catch { /* egal */ }
     mic.ctx.close().catch(() => {});
-    this.changed();
+    this.changed(); notifyMic();
   }
 
   /** Die Verbindung endet. */

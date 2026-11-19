@@ -5,9 +5,11 @@ using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
 using JulOS.Backend.Services;
 using JulOS.Frontend.Auth;
+using JulOS.Integrations;
 using JulOS.Integrations.Display;
 using JulOS.Integrations.Display.Rdp;
 using JulOS.Integrations.Guacamole;
+using JulOS.Integrations.Ssh;
 
 namespace JulOS.Frontend.Remote;
 
@@ -15,6 +17,7 @@ internal static class RemoteEndpoints
 {
     public const string WebSocketPath = "/api/remote/ws";
     public const string ScreenWebSocketPath = "/api/remote/screen";
+    public const string SshWebSocketPath = "/api/remote/ssh";
 
     private static IResult Error(int status, string message) =>
         Results.Text(JsonSerializer.Serialize(new ErrorBody(message), AppJson.Default.ErrorBody), "application/json", Encoding.UTF8, status);
@@ -22,7 +25,7 @@ internal static class RemoteEndpoints
     public static void MapRemote(this IEndpointRouteBuilder app)
     {
         // Schritt 1: Verbindung waehlen und das Passwort tippen -> Einmal-Ticket (30 s, nur im Speicher)
-        app.MapPost("/api/remote/ticket", async (TicketRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, GuacTickets tickets, ScreenTickets screenTickets, SecretBox box) =>
+        app.MapPost("/api/remote/ticket", async (TicketRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, GuacTickets tickets, ScreenTickets screenTickets, SshTickets sshTickets, SecretBox box) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (body.Connection is not { } connectionId) return Error(400, "Verbindung fehlt.");
@@ -41,6 +44,17 @@ internal static class RemoteEndpoints
             }
             if (string.IsNullOrEmpty(password)) return Error(400, "Passwort fehlt.");
 
+            // Terminal: eigener SSH-Client im Server, der Browser zeichnet den Text selbst (xterm.js). Spalten und Zeilen kommen vom Browser.
+            if (c.Kind == "terminal")
+            {
+                var options = new SshConnectOptions(c.Host, c.Port, c.Username, password,
+                    SshProtocol.Clamp(body.Cols ?? 80, SshProtocol.MinCols, SshProtocol.MaxCols), SshProtocol.Clamp(body.Rows ?? 24, SshProtocol.MinRows, SshProtocol.MaxRows));
+                var (owner, connection) = (id.UserId, c.Id);
+                var sshTicket = sshTickets.Create(id.UserId, new SshTarget(owner, options, c.HostKey, body.AcceptHostKey,
+                    (key, ct) => connections.SetHostKeyAsync(owner, connection, key, ct), SessionRegistry.SlotOf(owner, connection, body.Sid)));
+                return sshTicket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(sshTicket, c.Kind, options.Cols, options.Rows, "ssh"), AppJson.Default.TicketResponse);
+            }
+
             // Remote-Aufloesung: Breite Vielfaches von 4, Hoehe von 2, sinnvolle Grenzen
             var w = Math.Clamp(body.Width ?? 900, 400, 4096) & ~3;
             var h = Math.Clamp(body.Height ?? 1600, 300, 4096) & ~1;
@@ -56,18 +70,17 @@ internal static class RemoteEndpoints
                     Host = c.Host, Port = c.Port, UserName = c.Username, Password = password, Width = w & ~1, Height = h & ~1,
                     KeyboardLayout = 0x407,
                 };
-                var screenTicket = screenTickets.Create(id.UserId, new ScreenTarget(options, $"{id.UserId}:{c.Id}"));
+                var screenTicket = screenTickets.Create(id.UserId, new ScreenTarget(options, SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid)));
                 return screenTicket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(screenTicket, c.Kind, w & ~1, h & ~1, "stream"), AppJson.Default.TicketResponse);
             }
 
             GuacSpec? spec = c.Kind switch
             {
                 "desktop" => GuacSpec.Desktop(c.Host, c.Port, c.Username, password, w, h, dpi),
-                "terminal" => GuacSpec.Terminal(c.Host, c.Port, c.Username, password, w, h, dpi),
                 _ => null,
             };
             if (spec is null) return Error(400, "Diese Art von Verbindung wird noch nicht unterstützt.");
-            spec = spec with { Slot = $"{id.UserId}:{c.Id}" };
+            spec = spec with { Slot = SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid) };
             var ticket = tickets.Create(id.UserId, spec);
             return ticket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(ticket, c.Kind, w, h), AppJson.Default.TicketResponse);
         });
@@ -85,11 +98,23 @@ internal static class RemoteEndpoints
             // Der Guacamole-Tunnel im Browser fragt das Unterprotokoll "guacamole" an und bricht ab, wenn der Server keins waehlt
             var accept = new WebSocketAcceptContext { SubProtocol = ctx.WebSockets.WebSocketRequestedProtocols.Contains("guacamole") ? "guacamole" : null };
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync(accept);
-            await relay.RunAsync(ws, spec, ct => auth.IsSessionAliveAsync(id.Id, ct), ctx.RequestAborted);
+            await relay.RunAsync(ws, spec, ct => auth.IsSessionAliveAsync(id.Id, ct), ctx.RequestAborted, owner: id.UserId);
             return Results.Empty;
         });
         // Bildschirm-Stream: dasselbe Ticket-Verfahren, aber ohne Unterprotokoll, nur binaere Nachrichten (siehe ScreenProtocol)
         app.Map(ScreenWebSocketPath, async (HttpContext ctx, ScreenTickets tickets, ScreenRelay relay, AuthService auth) =>
+        {
+            if (!ctx.WebSockets.IsWebSocketRequest) return Error(400, "WebSocket erwartet.");
+            if (!ApiGuard.SameOrigin(ctx.Request)) return Error(403, "Anfrage abgelehnt.");
+            var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
+            var target = tickets.Take(ctx.Request.Query["ticket"].ToString(), id.UserId);
+            if (target is null) return Error(403, "Ticket ungültig oder abgelaufen.");
+            using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
+            await relay.RunAsync(ws, target, ct => auth.IsSessionAliveAsync(id.Id, ct), ctx.RequestAborted, owner: id.UserId);
+            return Results.Empty;
+        });
+        // Terminal: dasselbe Ticket-Verfahren, binaeres Protokoll (siehe SshProtocol)
+        app.Map(SshWebSocketPath, async (HttpContext ctx, SshTickets tickets, SshRelay relay, AuthService auth) =>
         {
             if (!ctx.WebSockets.IsWebSocketRequest) return Error(400, "WebSocket erwartet.");
             if (!ApiGuard.SameOrigin(ctx.Request)) return Error(403, "Anfrage abgelehnt.");

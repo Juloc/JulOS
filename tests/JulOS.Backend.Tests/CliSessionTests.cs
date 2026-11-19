@@ -325,7 +325,8 @@ public sealed class CliSessionRealSshTests
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(30);
 
-    private static async Task<(string Ready, string Output)> RunAsync(SshLaunch launch, string typed, Func<string, bool> until)
+    /// <param name="after">erst tippen, wenn diese Ausgabe da ist (nach einem exec geht Eingabe verloren, die eine Shell schon vorgelesen hat)</param>
+    private static async Task<(string Ready, string Output)> RunAsync(SshLaunch launch, string typed, Func<string, bool> until, string? after = null)
     {
         var (host, port, password) = RealSshTests.Target();
         var session = new SshNetSession();
@@ -336,8 +337,13 @@ public sealed class CliSessionRealSshTests
         var buf = new byte[70000];
         var r = await browser.ReceiveAsync(buf, cts.Token);
         var ready = Encoding.UTF8.GetString(buf, 1, r.Count - 1);
-        await SshRelayTests.SendAsync(browser, [SshProtocol.ToShellData, .. Encoding.UTF8.GetBytes(typed)]);
         var all = new StringBuilder();
+        while (after is not null && !all.ToString().Contains(after, StringComparison.Ordinal))
+        {
+            r = await browser.ReceiveAsync(buf, cts.Token);
+            all.Append(Encoding.UTF8.GetString(buf, 1, r.Count - 1));
+        }
+        await SshRelayTests.SendAsync(browser, [SshProtocol.ToShellData, .. Encoding.UTF8.GetBytes(typed)]);
         while (!until(all.ToString()))
         {
             r = await browser.ReceiveAsync(buf, cts.Token);
@@ -378,7 +384,7 @@ public sealed class CliSessionRealSshTests
     [Fact]
     public async Task A_custom_command_runs_instead_of_the_shell_in_the_working_directory()
     {
-        var (ready, output) = await RunAsync(new SshLaunch("custom", "/tmp", false, "echo start-$((6*7)); pwd; cat"), "hallo-eingabe\n", o => o.Split("hallo-eingabe").Length >= 3);
+        var (ready, output) = await RunAsync(new SshLaunch("custom", "/tmp", false, "echo start-$((6*7)); pwd; cat"), "hallo-eingabe\n", o => o.Split("hallo-eingabe").Length >= 3, after: "start-42");
         Assert.Contains("\"program\":\"custom\"", ready);
         Assert.Contains("start-42", output);
         Assert.Contains("/tmp", output);

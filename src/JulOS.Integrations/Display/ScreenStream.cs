@@ -737,7 +737,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
     // ---- was der RDP-Client meldet (auf seiner Leseschleife: schnell zurueckkehren) ----
 
-    void IRdpHandler.Updated(int x, int y, int width, int height)
+    void IScreenHandler.Updated(int x, int y, int width, int height)
     {
         var tick = Environment.TickCount64;
         Volatile.Write(ref _lastUpdateAt, tick);
@@ -766,7 +766,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         Wake();
     }
 
-    void IRdpHandler.Resized(int width, int height)
+    void IScreenHandler.Resized(int width, int height)
     {
         lock (_gate)
         {
@@ -778,12 +778,12 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         SetPendingSize(width, height);
     }
 
-    void IRdpHandler.Cursor(int hotX, int hotY, int width, int height, ReadOnlySpan<byte> rgba) =>
+    void IScreenHandler.Cursor(int hotX, int hotY, int width, int height, ReadOnlySpan<byte> rgba) =>
         PublishCursor(new ScreenCursor(CursorKind.Shape, hotX, hotY, width, height, rgba.ToArray()));
 
-    void IRdpHandler.CursorHidden() => PublishCursor(new ScreenCursor(CursorKind.Hidden, 0, 0, 0, 0, null));
+    void IScreenHandler.CursorHidden() => PublishCursor(new ScreenCursor(CursorKind.Hidden, 0, 0, 0, 0, null));
 
-    void IRdpHandler.CursorDefault() => PublishCursor(new ScreenCursor(CursorKind.Default, 0, 0, 0, 0, null));
+    void IScreenHandler.CursorDefault() => PublishCursor(new ScreenCursor(CursorKind.Default, 0, 0, 0, 0, null));
 
     // Die letzte Form wird gemerkt: ein Browser, der sich wieder anhaengt (Resume), hat sie nicht gesehen.
     private volatile ScreenCursor? _lastCursor;

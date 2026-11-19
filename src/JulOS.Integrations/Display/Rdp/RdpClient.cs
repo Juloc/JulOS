@@ -14,7 +14,7 @@ namespace JulOS.Integrations.Display.Rdp;
 //
 // One read loop (RunAsync) handles everything the server sends; whatever goes to the server - input, channel
 // data, answers - is queued and written by one task, so nobody who calls in ever waits for the network.
-public sealed partial class RdpClient : IAsyncDisposable
+public sealed partial class RdpClient : IScreenSource
 {
     private readonly RdpOptions _options;
     private readonly IRdpHandler _handler;

@@ -38,20 +38,7 @@ public sealed class RdpOptions
     public bool Sound { get; init; }
 }
 
-// What the session tells whoever shows it. All of these are called on the session's read loop: they must
-// return quickly and must not call back into the client in a way that waits for the server.
-public interface IRdpHandler
+// What the session tells whoever shows it: the callbacks of IScreenHandler (the same ones the VNC client uses).
+public interface IRdpHandler : IScreenHandler
 {
-    // A rectangle of the framebuffer changed (it is already in RdpClient.Framebuffer).
-    void Updated(int x, int y, int width, int height);
-
-    // The desktop has a new size; RdpClient.Framebuffer was replaced.
-    void Resized(int width, int height);
-
-    // The pointer's shape: RGBA, R first, straight alpha, top-down.
-    void Cursor(int hotX, int hotY, int width, int height, ReadOnlySpan<byte> rgba);
-
-    void CursorHidden();
-
-    void CursorDefault();
 }

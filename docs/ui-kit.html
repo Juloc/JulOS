@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="de" class="m3">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JulOS: Komponentenblatt der Handy-Oberfläche</title>
+<!-- Lebende Seite: benutzt dieselben Stylesheets wie die App (kein eigenes CSS für die Bausteine). Nur lokal öffnen, zum Beispiel:
+     python3 -m http.server 8123 --bind 127.0.0.1   (im Hauptordner des Repos), dann http://127.0.0.1:8123/docs/ui-kit.html
+     oder die Datei direkt per file:// öffnen. Hell/Dunkel und Grundfarbe oben wählen. Beschreibung: docs/MOBILE-UX.md. -->
+<link rel="stylesheet" href="../src/JulOS.Frontend/wwwroot/style.css">
+<link rel="stylesheet" href="../src/JulOS.Frontend/wwwroot/m3.css">
+<link rel="stylesheet" href="../src/JulOS.Frontend/wwwroot/mobile.css">
+<style>
+  /* nur das Blatt selbst (Rahmen, Erklärungen), nie die Bausteine */
+  html, body { height: auto; }
+  body { position: static; overflow: auto; background: var(--m3-surface); color: var(--m3-on-surface); font: var(--m3-body-m); }
+  .kit { max-width: 440px; margin: 0 auto; padding: 0 var(--m3-pad) 64px; }
+  .kit > h1 { font: var(--m3-headline-m); margin: var(--m3-sp-4) 0 var(--m3-sp-1); }
+  .kit .doc { font: var(--m3-body-s); color: var(--m3-on-surface-variant); margin: 0 0 var(--m3-sp-2); }
+  .kit .ctl { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; gap: var(--m3-sp-2); align-items: center; padding: var(--m3-sp-2) 0; background: var(--m3-surface); }
+  .kit .name { font: var(--m3-label-m); color: var(--m3-primary); letter-spacing: .6px; text-transform: uppercase; margin: var(--m3-sp-5) var(--m3-sp-1) var(--m3-sp-2); border-top: 1px solid var(--m3-outline-variant); padding-top: var(--m3-sp-3); }
+  .kit .wrap { display: flex; flex-wrap: wrap; gap: var(--m3-sp-2); align-items: center; }
+  .kit .sw { width: 56px; text-align: center; font: var(--m3-label-s); }
+  .kit .sw i { display: block; height: 32px; border-radius: var(--m3-shape-sm); box-shadow: inset 0 0 0 1px var(--m3-outline-variant); margin-bottom: 2px; }
+  .kit .scale p { margin: 0 0 var(--m3-sp-1); }
+  .kit svg { fill: currentColor; }
+  .kit .shell { position: relative; border-radius: var(--m3-shape-lg); overflow: hidden; box-shadow: 0 0 0 1px var(--m3-outline-variant); }
+  .kit .shell .m3-nav { position: static; }
+</style>
+</head>
+<body>
+<main class="kit" id="kit">
+  <h1>Komponentenblatt</h1>
+  <p class="doc">Jede Seite der Handy-Oberfläche besteht nur aus diesen Bausteinen (Stylesheets <code>m3.css</code> und <code>mobile.css</code>). Abstände, Schriften, Radien und Farben kommen aus den Variablen (<code>--m3-*</code>); die Hell/Dunkel-Auswahl unten prüft beide Sätze.</p>
+  <div class="ctl" role="group" aria-label="Darstellung">
+    <div class="m3-seg" id="kScheme" role="radiogroup" aria-label="Helligkeit" style="flex:1 1 200px">
+      <button type="button" class="mb m3-state" role="radio" aria-checked="false" data-v="light">Hell</button>
+      <button type="button" class="mb m3-state" role="radio" aria-checked="false" data-v="dark">Dunkel</button>
+      <button type="button" class="mb m3-state" role="radio" aria-checked="true" data-v="auto">System</button>
+    </div>
+    <div class="wrap" id="kSeed" role="radiogroup" aria-label="Grundfarbe"></div>
+  </div>
+
+  <div class="name">Farben (Rollen aus der Grundfarbe)</div>
+  <div class="wrap" id="kColors"></div>
+
+  <div class="name">Schriften</div>
+  <div class="scale">
+    <p style="font:var(--m3-headline-m)">Seitentitel (headline-m)</p>
+    <p style="font:var(--m3-title-l)">Fenstertitel (title-l)</p>
+    <p style="font:var(--m3-title-m)">Abschnitt (title-m)</p>
+    <p style="font:var(--m3-title-s)">Zeilenbeschriftung (title-s)</p>
+    <p style="font:var(--m3-body-m)">Fließtext (body-m)</p>
+    <p style="font:var(--m3-body-s);color:var(--m3-on-surface-variant)">Hilfetext (body-s)</p>
+    <p style="font:var(--m3-label-l)">Taste (label-l)</p>
+  </div>
+
+  <div class="name">Seitenkopf, Abschnitt, Hilfe</div>
+  <div class="m3-h"><h1>Verbindungen</h1><p>Deine Desktops und Terminals.</p></div>
+  <div class="m3-sec"><span>Abschnitt</span><span class="sp"></span><button type="button" class="mb m3-btn text m3-state">Alle<svg data-i="chevron_right"></svg></button></div>
+  <p class="m3-help">Eine Zeile Hilfe unter dem Abschnittstitel, höchstens zwei Sätze.</p>
+
+  <div class="name">Karte mit Zeilen (Einstellungen)</div>
+  <div class="m3-card m3-rows">
+    <div class="m3-row"><div class="rt">Passwort und Authenticator<small>Ändert, womit du dich anmeldest.</small></div><div class="rc"><button type="button" class="mb m3-btn tonal sm m3-state">Ändern</button></div></div>
+    <button type="button" class="mb m3-row tap m3-state" role="switch" aria-checked="true"><span class="rt">Ton einschalten<small>Der Ton der Sitzung wird auf diesem Gerät abgespielt.</small></span><span class="rc"><span class="m3-sw"></span></span></button>
+    <div class="m3-row stack"><div class="rt">Helligkeit<small>Hell, Dunkel oder wie dein Gerät.</small></div><div class="rc"><div class="m3-seg" role="radiogroup" aria-label="Helligkeit"><button type="button" class="mb m3-state" role="radio" aria-checked="false">Hell</button><button type="button" class="mb m3-state" role="radio" aria-checked="true"><span class="m3-seg-check"><svg data-i="check"></svg></span>Dunkel</button><button type="button" class="mb m3-state" role="radio" aria-checked="false">System</button></div></div></div>
+    <div class="m3-row"><div class="rt">Version<small>So heißt dein Stand.</small></div><div class="rc"><span class="rv">JulOS 0.10.3</span></div></div>
+    <div class="m3-row"><div class="rt">Letztes Backup<small>Gestern, 02:00 Uhr</small></div><div class="rc"><span class="m3-chip status"><span class="m3-dot ok"></span>In Ordnung</span></div></div>
+  </div>
+
+  <div class="name">Listenzeilen</div>
+  <div class="m3-card m3-list">
+    <button type="button" class="mb m3-li m3-state"><span class="lead"><svg data-i="desktop"></svg></span><span class="txt"><span class="hl">Linux-Desktop</span><span class="sl">Mein Rechner · Desktop</span></span><span class="tr">Heute, 09:41</span></button>
+    <button type="button" class="mb m3-li m3-state"><span class="lead"><svg data-i="terminal"></svg></span><span class="txt"><span class="hl">Test-Shell</span><span class="sl">Mein Rechner · Terminal</span></span><svg data-i="chevron_right"></svg></button>
+  </div>
+
+  <div class="name">Kacheln (zwei Spalten: Symbol, Name, Host, Statuspunkt)</div>
+  <div class="grid2">
+    <button type="button" class="mb tile m3-state desktop"><span class="ti"><svg data-i="desktop"></svg></span><span class="tx"><span class="tn">Linux-Desktop</span><span class="th"><span class="hdot ok" title="Erreichbar"></span><span>Mein Rechner</span></span></span></button>
+    <button type="button" class="mb tile m3-state terminal"><span class="ti"><svg data-i="terminal"></svg></span><span class="tx"><span class="tn">Test-Shell mit einem langen Namen für zwei Zeilen</span><span class="th"><span class="hdot" title="Nicht erreichbar"></span><span>dev-desktop</span></span></span></button>
+  </div>
+
+  <div class="name">Tasten</div>
+  <div class="wrap">
+    <button type="button" class="mb m3-btn filled m3-state"><svg data-i="add"></svg>Haupt</button>
+    <button type="button" class="mb m3-btn tonal m3-state">Tonal</button>
+    <button type="button" class="mb m3-btn text m3-state">Text</button>
+    <button type="button" class="mb m3-btn outlined m3-state">Umrandet</button>
+    <button type="button" class="mb m3-btn danger m3-state">Gefährlich</button>
+    <button type="button" class="mb m3-btn filled m3-state" disabled>Gesperrt</button>
+  </div>
+  <div class="wrap" style="margin-top:var(--m3-sp-2)"><button type="button" class="mb m3-btn tonal sm m3-state">Klein</button><button type="button" class="mb m3-iconbtn tonal m3-state" aria-label="Suchen"><svg data-i="search"></svg></button></div>
+  <button type="button" class="mb m3-btn filled block big m3-state" style="margin-top:var(--m3-sp-3)">Breite Taste (Hauptaktion)</button>
+
+  <div class="name">Chips, Suchfeld, Segmentwahl</div>
+  <label class="m3-search"><span class="m3-ic" aria-hidden="true"><svg data-i="search"></svg></span><input type="search" placeholder="Suchen …" aria-label="Suchen"></label>
+  <div class="wrap" style="margin-top:var(--m3-sp-3)">
+    <button type="button" class="mb m3-chip m3-state" aria-pressed="false">Terminal</button>
+    <button type="button" class="mb m3-chip m3-state" aria-pressed="true"><svg data-i="check"></svg>Desktop</button>
+    <span class="m3-chip status"><span class="m3-dot ok"></span>Erreichbar</span>
+  </div>
+
+  <div class="name">Leerzustand</div>
+  <div class="m3-card"><div class="m3-empty"><span class="ei"><svg data-i="desktop"></svg></span><span class="et">Noch keine Verbindung</span><p>Lege deine erste Verbindung an, dann erscheint sie hier.</p><button type="button" class="mb m3-btn filled m3-state"><svg data-i="add"></svg>Neue Verbindung</button></div></div>
+
+  <div class="name">Meldungen (Satz, nächster Schritt, Details)</div>
+  <div style="display:flex;flex-direction:column;gap:var(--m3-sp-2)">
+    <div class="m3-msg"><span class="mi"><svg data-i="info"></svg></span><div class="mt"><b>Hinweis</b><span>Eine neutrale Information in einem Satz.</span></div></div>
+    <div class="m3-msg ok" role="status"><span class="mi"><svg data-i="check_circle"></svg></span><div class="mt"><b>Gespeichert</b><span>Die Änderung gilt sofort.</span></div></div>
+    <div class="m3-msg warn" role="status"><span class="mi"><svg data-i="info"></svg></span><div class="mt"><b>Auf dem Host fehlt tmux</b><span>Die Sitzung läuft trotzdem, bricht aber bei einem Verbindungsabbruch ab.</span></div></div>
+    <div class="m3-msg error" role="alert"><span class="mi"><svg data-i="info"></svg></span><div class="mt"><b>Das Backup konnte nicht geschrieben werden</b><span>Der Backup-Ordner gehört nicht dem Server-Benutzer. Bitte die Rechte des Ordners prüfen.</span><details><summary>Details</summary><pre>Zugriff verweigert: /backup/julos.dump</pre></details></div></div>
+  </div>
+
+  <div class="name">Sheet (Dialog von unten)</div>
+  <button type="button" class="mb m3-btn tonal m3-state" id="kOpenSheet">Sheet öffnen</button>
+  <dialog class="m3sheet" id="kSheet">
+    <h2>Neue Verbindung</h2>
+    <p class="hint">Eine Zeile, was hier passiert.</p>
+    <form method="dialog">
+      <label><span>Name</span><input type="text" value="Mein Rechner"></label>
+      <label><span>Adresse</span><input type="text" placeholder="Name oder IP-Adresse"></label>
+      <label class="check"><input type="checkbox" checked>Passwort merken</label>
+      <p class="msg"></p>
+      <div class="row"><button type="submit" class="ghost">Abbrechen</button><button type="submit" class="primary">Speichern</button></div>
+    </form>
+  </dialog>
+
+  <div class="name">Navigationsleiste</div>
+  <div class="shell"><nav class="m3-nav" aria-label="Beispiel">
+    <button type="button" class="mb m3-state" aria-current="page"><span class="pill"><svg data-i="home"></svg></span><span>Start</span></button>
+    <button type="button" class="mb m3-state"><span class="pill"><svg data-i="apps"></svg></span><span>Verbindungen</span></button>
+    <button type="button" class="mb m3-state"><span class="pill"><svg data-i="dns"></svg></span><span>Hosts</span></button>
+    <button type="button" class="mb m3-state"><span class="pill"><svg data-i="person"></svg></span><span>Profil</span></button>
+  </nav></div>
+
+  <div class="name">Gefahrenbereich</div>
+  <div class="m3-card m3-rows"><div class="m3-row"><div class="rt">Auf diesem Gerät abmelden<small>Danach ist die Anmeldung nötig.</small></div><div class="rc"><button type="button" class="mb m3-btn danger sm m3-state">Abmelden</button></div></div></div>
+</main>
+<script>
+  const P = {
+    chevron_right: 'M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z', check: 'M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z', add: 'M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z',
+    desktop: 'M21 2H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h7v2H8v2h8v-2h-2v-2h7c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H3V4h18v12z',
+    terminal: 'M20 4H4c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v10zm-2-1h-6v-2h6v2zM7.5 17l-1.41-1.41L8.67 13l-2.59-2.59L7.5 9l4 4-4 4z',
+    search: 'M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z',
+    info: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z',
+    check_circle: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z',
+    home: 'M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z', apps: 'M4 8h4V4H4v4zm6 12h4v-4h-4v4zm-6 0h4v-4H4v4zm0-6h4v-4H4v4zm6 0h4v-4h-4v4zm6-10v4h4V4h-4zm-6 4h4V4h-4v4zm6 6h4v-4h-4v4zm0 6h4v-4h-4v4z',
+    dns: 'M20 13H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 19c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM20 3H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1V4c0-.55-.45-1-1-1zM7 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z',
+    person: 'M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z',
+  };
+  for (const s of document.querySelectorAll('svg[data-i]')) { s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('aria-hidden', 'true'); s.innerHTML = `<path d="${P[s.dataset.i] || ''}"/>`; }
+  const root = document.documentElement, $ = (q) => document.querySelector(q);
+  const SEEDS = ['#9a67ea', '#4f86f7', '#00a67e', '#0aa5b8', '#e5599a', '#e5484d', '#f5a524'];
+  $('#kSeed').innerHTML = SEEDS.map((h) => `<button type="button" class="mb" role="radio" aria-checked="${h === '#9a67ea'}" aria-label="Grundfarbe ${h}" data-seed="${h}" style="width:32px;height:32px;border-radius:50%;background:${h}"></button>`).join('');
+  $('#kSeed').addEventListener('click', (e) => { const b = e.target.closest('[data-seed]'); if (!b) return; root.style.setProperty('--m3-seed', b.dataset.seed); for (const x of $('#kSeed').children) x.setAttribute('aria-checked', x === b); colors(); });
+  $('#kScheme').addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (!b) return; root.style.colorScheme = b.dataset.v === 'auto' ? 'light dark' : b.dataset.v; for (const x of $('#kScheme').children) x.setAttribute('aria-checked', x === b); colors(); });
+  const ROLES = ['surface', 'surface-container', 'surface-highest', 'primary', 'on-primary', 'primary-container', 'secondary-container', 'tertiary-container', 'error', 'error-container', 'on-surface', 'outline', 'ok'];
+  function colors() { $('#kColors').innerHTML = ROLES.map((r) => `<div class="sw"><i style="background:var(--m3-${r})"></i>${r}</div>`).join(''); }
+  colors();
+  $('#kOpenSheet').addEventListener('click', () => $('#kSheet').showModal());
+  $('#kSheet').addEventListener('click', (e) => { if (e.target === $('#kSheet')) $('#kSheet').close(); });
+</script>
+</body>
+</html>

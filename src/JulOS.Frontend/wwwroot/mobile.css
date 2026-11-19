@@ -29,15 +29,6 @@ html.m3, html.m3 body { background: var(--m3-surface); }
 .m3-page::-webkit-scrollbar { display: none; }
 .m3-page.out { animation: m3-fade-out 90ms linear forwards; pointer-events: none; }
 .m3-page.in { animation: m3-fade-through 210ms var(--m3-ease-decel) both; }
-.m3-h { margin: 6px 4px 12px; }
-.m3-h h1 { margin: 0; font: var(--m3-headline-m); letter-spacing: -.2px; }
-.m3-h p { margin: 2px 0 0; font: var(--m3-body-m); color: var(--m3-on-surface-variant); }
-.m3-sec { display: flex; align-items: center; gap: 8px; margin: 18px 4px 8px; font: var(--m3-title-m); }
-.m3-sec svg { width: 20px; height: 20px; fill: currentColor; color: var(--m3-primary); }
-.m3-sec .sp { flex: 1; }
-.m3-sec .m3-btn.text { height: 32px; padding: 0 6px 0 12px; font: var(--m3-label-m); background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
-.m3-sec .m3-btn.text svg { width: 16px; height: 16px; color: inherit; }
-.m3-sec .m3-btn.text::after { content: ""; position: absolute; inset: -6px -2px; }
 
 /* ---------- Home ---------- */
 .hero { position: relative; margin: 0 -14px; padding: 4px 18px 0; min-height: 150px; }
@@ -80,6 +71,14 @@ html.m3, html.m3 body { background: var(--m3-surface); }
 .tile .fav { position: absolute; top: 6px; left: 8px; color: var(--m3-primary); }
 .tile .fav svg { width: 13px; height: 13px; fill: currentColor; }
 .grid3 .tile { min-height: 72px; justify-content: center; }
+/* Kachel im Komponentenblatt: zwei Spalten, Symbol links, Name (zwei Zeilen) und Host-Zeile mit Statuspunkt rechts davon */
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--m3-sp-2); }
+.grid2 .tile { flex-direction: row; align-items: center; justify-content: flex-start; text-align: left; gap: var(--m3-sp-3); min-height: 72px; padding: var(--m3-sp-3); }
+.grid2 .tile .ti { flex: 0 0 auto; }
+.tile .tx { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.tile .th { display: flex; align-items: center; gap: 6px; font: var(--m3-body-s); color: var(--m3-on-surface-variant); min-width: 0; }
+.tile .th > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile .th .hdot { position: static; flex: 0 0 auto; }
 
 .acts { padding: 4px 0; overflow: hidden; }
 .acts .m3-li { min-height: 52px; padding: 6px 14px; }

@@ -105,7 +105,7 @@ The app itself no longer needs this path: the stream engine sends images and fil
 - `tests/` (`frontend/` runs with node), `database/` (SQL migrations), `deploy/dev/` the test instance with throwaway SSH and RDP targets (see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md); testing on a real phone: [docs/PHONE-TEST.md](docs/PHONE-TEST.md))
 - `tools/julos-agent.py` Linux agent (windows, apps, app mode, outbound link to the server), `tools/julos-clip.py` photo clipboard helper
 - `tools/install-linux-agent.sh`, `tools/julos-user.sh`, `tools/make-client-cert.sh`
-- `CHANGELOG.md` and `docs/RELEASING.md` the versions and how to release one, `docs/AGENT_API.md` the agent API, `docs/HOSTS.md` hosts, `docs/ARCHITECTURE.md` the stack and security design, `docs/MODULES.md` the optional modules Services (widgets), Caddy, DDNS and the Home network card (off by default), `caddy/Caddyfile.example`
+- `CHANGELOG.md` and `docs/RELEASING.md` the versions and how to release one, `docs/AGENT_API.md` the agent API, `docs/HOSTS.md` hosts, `docs/HOST-AGENT.md` the host agent for machines without a desktop (status, updates, disk health, install over SSH), `docs/ARCHITECTURE.md` the stack and security design, `docs/MODULES.md` the optional modules Services (widgets), Caddy, DDNS and the Home network card (off by default), `caddy/Caddyfile.example`
 - `.github/workflows/docker.yml` builds the image for `ghcr.io/<owner>/<repo>` (amd64 + arm64; the SDK stage runs natively, no emulation), `.github/workflows/tests.yml` runs the server tests (with PostgreSQL), the browser-logic tests and a NuGet vulnerability report
 
 ## Roadmap

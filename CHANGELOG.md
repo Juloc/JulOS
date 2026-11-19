@@ -4,6 +4,17 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Neu
+- Handy: Bei geöffneter Bildschirmtastatur wird die Verbindung nicht mehr neu ausgehandelt. Neue Einstellung im Sitzungsmenü, Zeile „Bei Tastatur“ (auf diesem Gerät gemerkt): „Bild verschieben“ (Standard) lässt die Auflösung gleich, das Bild behält seine Größe und wird nur so verschoben, dass die zuletzt angetippte Stelle (Textfeld) sichtbar bleibt, mit zwei Fingern verschiebbar; „Auflösung folgt“ ist das bisherige Verhalten. Siehe [docs/PHONE-TEST.md](docs/PHONE-TEST.md).
+
+### Geändert
+- Neue Auflösungen (Tastatur auf/zu, Adressleiste, Drehen, Zoom) gehen erst an den Server, wenn sich die gewünschte Größe 0,4 s nicht mehr geändert hat und nur bei echtem Unterschied; der Server stellt sie per DisplayControl um, ohne neuen RDP-Login.
+
+### Behoben
+- Stream-Engine: Beim Wechsel der Auflösung wurde das Bild kurz schwarz (das Canvas wurde geleert). Das alte Bild bleibt jetzt stehen, bis das erste Bild in der neuen Größe da ist.
+
 ## [0.5.0] - 2026-11-19
 
 ### Neu

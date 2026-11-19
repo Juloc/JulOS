@@ -41,6 +41,10 @@ Passwort und Authenticator-Code gibst du selbst ein. Eine Verbindung anlegen, di
    Zähler „10 s: …“). Ein **roter Balken** bedeutet: mehr als 12 Größenwechsel in 10 s.
 3. Handy 30 Sekunden ruhig halten und beobachten. Die Zahl hinter „10 s:“ muss danach 0 bis 3 sein und das Bild darf nicht flackern.
 4. **Tastatur:** drei Mal die Tastatur öffnen und schließen (Tastaturtaste in der Leiste unten). Jeweils danach 3 Sekunden warten.
+   Im Standard („Bild verschieben“) bleibt die Auflösung gleich: das Bild behält seine Größe, wird nur so verschoben, dass die zuletzt angetippte Stelle
+   sichtbar bleibt, und lässt sich mit zwei Fingern verschieben; im Messfeld darf dabei **keine** neue Größe und in `kbvisible` nur das Auf und Zu
+   erscheinen. Danach im Menü (⋮) bei **„Bei Tastatur“** auf „Auflösung folgt“ umschalten und wiederholen: jetzt ändert sich die Größe nach der
+   Entprellung (0,4 s) ein Mal, ohne neuen Login und ohne Schwarzbild (das alte Bild bleibt stehen, bis das neue da ist).
 5. **Drehen:** quer, 5 Sekunden warten, wieder hoch.
 6. **Zoom:** Lupe plus und Lupe minus je ein Mal tippen.
 7. **Adressleiste:** im normalen Chrome-Tab (nicht als App) zum Tab-Wechsler und zurück gehen oder Chrome kurz in den Hintergrund legen; falls sich die Adressleiste dabei ein- oder ausblendet, 3 Sekunden warten und das Messfeld ansehen.
@@ -87,10 +91,22 @@ docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/.env logs julos 
 | `size-storm` | die Notbremse hat eine Größe zurückgehalten |
 
 Was der Client dagegen tut (damit die Messwerte richtig gelesen werden): Größen unter 8 × 16 Geräte-Pixel Unterschied werden nicht gesendet,
-höchstens eine Änderung pro Sekunde, nichts, während die Tastatur ein- oder ausfährt (rund 0,6 s Ruhe), höchstens 6 Änderungen in 20 s,
+höchstens eine Änderung pro Sekunde, erst nachdem die gewünschte Größe 0,4 s lang gleich geblieben ist (Entprellung, auch beim Ein- und Ausfahren der Tastatur),
+höchstens 6 Änderungen in 20 s,
 und ein Programm-Wechsel in der Fensterleiste ändert die Anzeigegröße erst nach zwei gleichen Abfragen (4 s) und höchstens alle 8 s.
 
 Aufräumen: `adb reverse --remove tcp:18080` und Kabel abziehen.
+
+## Tastatur und Bildgröße: der Schalter „Bei Tastatur“
+
+Menü (⋮) in der Sitzung, Zeile **„Bei Tastatur“**, gilt für alle Sitzungen auf diesem Gerät (`localStorage`, Schlüssel `pd.kbResize`):
+
+| Wert | Verhalten |
+| --- | --- |
+| `pan` „Bild verschieben“ (Standard) | Die Auflösung der VM bleibt die ohne Tastatur. Die Tastatur verkleinert nur die sichtbare Fläche; das Bild wird so nach oben geschoben, dass die Stelle des letzten Tippens (dort, wo das Textfeld angetippt wurde) sichtbar bleibt. Zwei Finger schieben das Bild; was am Rand nicht mehr geht, scrollt wie sonst die VM. Beim Schließen der Tastatur ist alles wie vorher. |
+| `follow` „Auflösung folgt“ | Die Auflösung folgt der Fläche (die VM bekommt per DisplayControl eine neue Größe, ohne neuen RDP-Login), aber erst wenn sich die Größe 0,4 s nicht mehr geändert hat und nur bei echtem Unterschied. Das alte Bild bleibt in der Zwischenzeit gestreckt stehen. |
+
+Ohne Handy zu prüfen (Browser-Fenster 375 × 812, `?phone`, `?hwkb` nur für die Tastatureingabe) siehe [DEVELOPMENT.md](DEVELOPMENT.md); auf dem echten Handy: Schritt 4 oben.
 
 ## Ton und Mikrofon (Stream-Engine)
 

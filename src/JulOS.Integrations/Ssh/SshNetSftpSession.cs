@@ -15,6 +15,9 @@ public sealed class SshNetSftpSession : ISftpSession
 
     private SftpClient Client => _client ?? throw new InvalidOperationException("Nicht verbunden.");
 
+    /// <summary>Der verbundene Client, fuer <see cref="JulOS.Integrations.Files.SshNetFileSession"/> (gleiche Anmeldung und Host-Schluesselpruefung, andere Operationen).</summary>
+    internal SftpClient? RawClient => _client;
+
     public async Task ConnectAsync(SftpConnectOptions o, Func<SshHostKey, bool> trustHostKey, CancellationToken ct)
     {
         var methods = new List<AuthenticationMethod>();
@@ -91,7 +94,7 @@ public sealed class SshNetSftpSession : ISftpSession
         catch (Exception e) when (e is not OperationCanceledException) { throw Translate(e, ct); }
     }, ct);
 
-    private SshException Translate(Exception e, CancellationToken ct)
+    internal SshException Translate(Exception e, CancellationToken ct)
     {
         if (e is SshException ours) return ours;
         if (e is OperationCanceledException && ct.IsCancellationRequested) throw e;

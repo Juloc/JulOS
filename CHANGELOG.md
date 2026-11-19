@@ -4,6 +4,16 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Neu
+- Dunkle Desktop-Oberfläche. In den Desktop-Einstellungen (Start → Einstellungen → Darstellung) wählst du „Hell“, „Dunkel“ oder „System“ (folgt der Einstellung des Geräts und wechselt live mit ihr). Menüleiste, Dock, Fenster, Menüs, Dialoge, Hosts- und Dateien-Ansicht, Hintergrundbild und Logo haben dazu einen eigenen dunklen Farbsatz. Das Bild der Sitzung (Canvas/Video) und ihre Statusleiste bleiben unverändert.
+- Die Wahl wird mit der vorhandenen Server-Einstellung „theme“ (Feld „scheme“) gespeichert und gilt damit auf jedem Gerät. Die Handy-Shell nutzt dieselbe Einstellung (Profil → Darstellung → Helligkeit); dort heißt „Automatisch“ jetzt „System“. Ohne Server bleibt die lokale Kopie, ein unbekannter Wert wird zu „System“.
+
+### Geändert
+- Alle festen Farben der Desktop-Oberfläche (CSS, Hintergrundbild, Logo) sind Variablen (`--dk-*`, `--wp-*`); keine festen Farben mehr in SVG-Symbolen. Texte erreichen WCAG AA (4,5:1), Feldränder und Zustandspunkte 3:1, in beiden Schemata. Dafür sind einige Hell-Werte etwas dunkler und die Kacheln der Programme kräftiger (weißes Symbol mindestens 3:1). Der Hauptknopf ist dunkler (weißer Text 5:1). Doku: [docs/THEME.md](docs/THEME.md).
+- Neue Prüfung `tests/frontend/theme-css.test.mjs`: beide Farbsätze vollständig, keine festen Farben in den Regeln, Kontrast gegen die ungünstigsten Stellen des Hintergrundbilds.
+
 ## [0.6.1] - 2026-11-19
 
 ### Neu

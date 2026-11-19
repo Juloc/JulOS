@@ -101,6 +101,9 @@
     <span class="m3-chip status"><span class="m3-dot ok"></span>Erreichbar</span>
   </div>
 
+  <div class="name">Hauptzeile (die eine grosse Aktion einer Seite)</div>
+  <button type="button" class="mb m3-main m3-state"><span class="ti"><svg data-i="desktop"></svg></span><span class="tx"><span class="cl">Weiter</span><span class="cn">Linux-Desktop</span><span class="th"><span class="hdot ok"></span><span>Mein Rechner · Heute, 09:41</span></span></span><span class="go"><svg data-i="play"></svg></span></button>
+
   <div class="name">Leerzustand</div>
   <div class="m3-card"><div class="m3-empty"><span class="ei"><svg data-i="desktop"></svg></span><span class="et">Noch keine Verbindung</span><p>Lege deine erste Verbindung an, dann erscheint sie hier.</p><button type="button" class="mb m3-btn filled m3-state"><svg data-i="add"></svg>Neue Verbindung</button></div></div>
 
@@ -147,6 +150,7 @@
     check_circle: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z',
     home: 'M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z', apps: 'M4 8h4V4H4v4zm6 12h4v-4h-4v4zm-6 0h4v-4H4v4zm0-6h4v-4H4v4zm6 0h4v-4h-4v4zm6-10v4h4V4h-4zm-6 4h4V4h-4v4zm6 6h4v-4h-4v4zm0 6h4v-4h-4v4z',
     dns: 'M20 13H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 19c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM20 3H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1V4c0-.55-.45-1-1-1zM7 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z',
+    play: 'M8 5v14l11-7z',
     person: 'M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z',
   };
   for (const s of document.querySelectorAll('svg[data-i]')) { s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('aria-hidden', 'true'); s.innerHTML = `<path d="${P[s.dataset.i] || ''}"/>`; }

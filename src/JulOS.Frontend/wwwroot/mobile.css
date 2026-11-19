@@ -29,15 +29,7 @@ html.m3, html.m3 body { background: var(--m3-surface); }
 .m3-page.out { animation: m3-fade-out 90ms linear forwards; pointer-events: none; }
 .m3-page.in { animation: m3-fade-through 210ms var(--m3-ease-decel) both; }
 
-/* ---------- Home ---------- */
-.hero { position: relative; margin: 0 -14px; padding: 4px 18px 0; min-height: 150px; }
-.hero .art { position: absolute; left: 0; right: 0; bottom: -2px; width: 100%; height: 100px; z-index: 0; pointer-events: none; -webkit-mask-image: linear-gradient(#000 60%, transparent); mask-image: linear-gradient(#000 60%, transparent); }
-.hero > :not(.art) { position: relative; z-index: 1; }
-.hero .greet { font: var(--m3-body-m); color: var(--m3-on-surface-variant); }
-.hero h1 { margin: 2px 0 10px; font: var(--m3-headline-m); font-size: 1.5rem; line-height: 1.9rem; letter-spacing: -.3px; max-width: 14em; }
-.hero .m3-chip.status { max-width: 100%; margin-bottom: 14px; }
-.hero .m3-chip.status span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hero .m3-chip.status svg { width: 16px; height: 16px; opacity: .7; }
+/* ---------- Start ---------- */
 
 .srv { display: block; width: 100%; padding: 12px 14px 14px; text-align: left; margin-top: 10px; color: var(--m3-on-surface); }
 .srv .top { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
@@ -76,9 +68,6 @@ html.m3, html.m3 body { background: var(--m3-surface); }
 .acts .m3-li .lead { width: 36px; height: 36px; }
 .acts .m3-li .lead.ok { background: color-mix(in oklab, var(--m3-ok) 18%, transparent); color: var(--m3-ok); }
 .acts .m3-li .lead.warn { background: var(--m3-error-container); color: var(--m3-on-error-container); }
-.note { font: var(--m3-body-s); color: var(--m3-on-surface-variant); margin: 6px 6px 0; }
-.empty-card { padding: 18px 16px; display: flex; gap: 14px; align-items: center; color: var(--m3-on-surface-variant); font: var(--m3-body-m); }
-.empty-card .lead { width: 44px; height: 44px; border-radius: 16px; background: var(--m3-primary-container); color: var(--m3-on-primary-container); display: flex; align-items: center; justify-content: center; flex: 0 0 auto; }
 
 /* ---------- Verbindungen ---------- */
 .empty-hint { text-align: center; padding: 28px 20px; color: var(--m3-on-surface-variant); font: var(--m3-body-m); }
@@ -99,8 +88,7 @@ html.m3, html.m3 body { background: var(--m3-surface); }
 .swatches2 .sw[aria-checked="true"] svg { opacity: 1; }
 .swatches2 .sw[aria-checked="true"]::before { box-shadow: 0 0 0 3px var(--m3-surface), 0 0 0 5px var(--m3-primary); }
 
-@media (min-width: 560px) { .m3-page { padding-left: calc(50% - 280px); padding-right: calc(50% - 280px); } .hero { margin: 0 -14px; } }
-@media (max-height: 520px) { .hero { min-height: 120px; } }
+@media (min-width: 560px) { .m3-page { padding-left: calc(50% - 280px); padding-right: calc(50% - 280px); } }
 
 /* ===== Mehrere Sitzungen: Leiste oben in der Fernsteuerung (ab zwei Sitzungen), Karten, Zustandspunkte ===== */
 .m3-sstrip { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: var(--m3-surface-container); color: var(--m3-on-surface); z-index: 12; }

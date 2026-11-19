@@ -5,6 +5,8 @@ All are **off by default**, have **one switch each** (`off | read | control`), n
 and are tested against fakes. The design and the reasoning are in [IDEAS.md](IDEAS.md) ("Desktop modules without a backend yet").
 Caddy, the DDNS updater and similar services stay **separate containers**: JulOS does not replace or embed them, it talks to them through their APIs.
 
+The plan for the next modules (Docker, Proxmox, Home Assistant, Synology), a shared integration layer built on the pieces described here, and the Heimnetz card 2.0 is in [INTEGRATIONS.md](INTEGRATIONS.md).
+
 ## Switches (server environment)
 
 | Variable | Meaning |

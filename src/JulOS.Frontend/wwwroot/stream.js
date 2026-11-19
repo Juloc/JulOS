@@ -23,7 +23,8 @@
  *
  * Ton (20 und 21 in beide Richtungen: Ton vom fernen Rechner, Zustand, "Ton an", Mikrofon): siehe stream-audio.js, erreichbar als client.audio.
  *
- * Zwischenablage: Text kommt als onclipboard(text) und geht mit sendClipboardText(text) hinaus. Bilder und Dateien haben eigene Rueckrufe
+ * Zwischenablage: Text kommt als onclipboard(text) und geht mit sendClipboardText(text) hinaus (Rueckgabe: 'sent', 'empty', 'tooLong' oder 'offline', nie still verloren).
+ * Nachricht 15 (Ereignis der Text-Zwischenablage: Stand des Kanals der VM, Art, Zahl; nie Inhalt) kommt als onclipnote({ ready, files, note, count }). Bilder und Dateien haben eigene Rueckrufe
  * (onclipimage, onclipfiles, onfilestate) und Methoden (sendTransfer, requestDownload); das Format steht in docs/CLIPBOARD.md und ScreenProtocol.cs.
  * ===================================================================== */
 
@@ -33,9 +34,10 @@ import { codecMask, probeCodecs, codecStringOf, decoderConfig, CODEC_H264, CODEC
 import { t } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
 
-const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, image: 7, files: 8, fileState: 9, result: 10, session: 11, resumeFailed: 12, limits: 14, audio: 20, audioStatus: 21, encoder: 30, refine: 40, refineClear: 41 };
+const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, image: 7, files: 8, fileState: 9, result: 10, session: 11, resumeFailed: 12, limits: 14, clipNote: 15, audio: 20, audioStatus: 21, encoder: 30, refine: 40, refineClear: 41 };
 const OUT = { ack: 1, move: 2, button: 3, wheel: 4, key: 5, unicode: 6, resize: 7, keyframe: 8, clipboard: 9,
   sendBegin: 10, sendChunk: 11, sendEnd: 12, sendCancel: 13, fileRequest: 14, fileCancel: 15, pause: 16, end: 17, keysym: 18, codecs: 30, quality: 31 };
+export const CLIP_TEXT_MAX = 1024 * 1024;   // so lang darf Text auf dem Weg zwischen Browser und Server sein (ClipboardBridge.MaxTextBytes)
 const CHUNK = 128 * 1024;                 // so gross sind die Stuecke beim Senden (der Server nimmt bis 256 kB)
 const BUFFER_HIGH = 1024 * 1024;          // darueber wartet das Senden, bis der Socket leer laeuft (sonst steht die Maus hinter einer Datei)
 
@@ -189,7 +191,7 @@ export class StreamClient {
     this.display = new StreamDisplay();
     this.onstatechange = null; this.onerror = null; this.onclipboard = null;
     this.onsession = null; this.onresumefailed = null;                            // Sitzungserhalt: Token des Servers, Token abgelehnt (siehe resume.js)
-    this.onclipimage = null; this.onclipfiles = null; this.onclipresult = null;   // Bilder, Dateien und Meldungen der VM (siehe docs/CLIPBOARD.md)
+    this.onclipimage = null; this.onclipfiles = null; this.onclipresult = null; this.onclipnote = null;   // Bilder, Dateien und Meldungen der VM (siehe docs/CLIPBOARD.md)
     this.nextTransfer = 1; this.transfers = new Map();
     this.onfilestate = null;                       // Stand eines Downloads aus der VM: { batch, state: 'ready' | 'running' | 'done' | 'failed', done, total, text }
     this.limits = { fileBytes: 2 * 1024 ** 3, files: 200, entries: 255 };   // bis der Server die echten nennt (Nachricht 14)
@@ -339,6 +341,7 @@ export class StreamClient {
       case IN.image: if (this.onclipimage && buffer.byteLength > 2) this.onclipimage(v.getUint8(1), new Uint8Array(buffer, 2)); break;
       case IN.files: this.incomingFiles(v, buffer); break;
       case IN.fileState: this.incomingFileState(v, buffer); break;
+      case IN.clipNote: if (this.onclipnote && buffer.byteLength >= 7) this.onclipnote({ ready: (v.getUint8(1) & 1) !== 0, files: (v.getUint8(1) & 2) !== 0, note: v.getUint8(2), count: v.getInt32(3) }); break;
       case IN.limits: if (buffer.byteLength >= 13) this.limits = { fileBytes: Number(v.getBigInt64(1)), files: v.getUint16(9), entries: v.getUint16(11) }; break;
       case IN.result: {
         const id = v.getUint32(1), code = v.getUint8(5), text = serverMsg(new TextDecoder().decode(new Uint8Array(buffer, 6)));
@@ -602,10 +605,15 @@ export class StreamClient {
   }
 
   // Text fuer die Zwischenablage des fernen Rechners (UTF-8): eine Nachricht, der ferne Rechner holt ihn, wenn er einfuegt
+  // Rueckgabe: 'sent', 'empty' (nichts zu senden), 'tooLong' (mehr als 1 MiB UTF-8, der Server nimmt es nicht) oder 'offline' (keine offene Verbindung)
   sendClipboardText(text) {
     const bytes = new TextEncoder().encode(text);
-    if (!bytes.length) return;
+    if (!bytes.length) return 'empty';
+    if (bytes.length > CLIP_TEXT_MAX) return 'tooLong';
+    const s = this.socket;
+    if (!s || s.readyState !== WebSocket.OPEN) return 'offline';
     const message = new Uint8Array(1 + bytes.length); message[0] = OUT.clipboard; message.set(bytes, 1);
-    this.send(message);
+    s.send(message);
+    return 'sent';
   }
 }

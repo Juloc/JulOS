@@ -172,7 +172,7 @@ export function setShown(on) {
     clearTimeout(overviewTimer);
   }
 }
-export function reset() { mods = { caddy: false, ddns: false }; modsLoaded = false; overview = null; overviewOk = null; user = ''; current = 'home'; view.q = ''; view.kind = 'all'; setShown(false); if (root) { root.hidden = true; root.removeAttribute('style'); } }
+export function reset() { mods = { caddy: false, ddns: false, services: false }; modsPromise = null; srvActs = []; srvActsAt = 0; import('./heimnetz.js').then((h) => h.resetHeimnetz()); overview = null; overviewOk = null; user = ''; current = 'home'; view.q = ''; view.kind = 'all'; setShown(false); if (root) { root.hidden = true; root.removeAttribute('style'); } }
 
 export function userChanged(name, message) {
   user = name;
@@ -282,9 +282,22 @@ const tileHtml = (c, pinned) => `<button type="button" class="mb tile m3-state $
   <span class="hdot ${hostDot(connectionState(hosts(), c))}" title="${stateText(connectionState(hosts(), c))}"></span>${openCount(c) ? `<span class="liveb" title="${esc(t('mobile.sessionOpen'))}">${openCount(c)}</span>` : ''}${pinned ? `<span class="fav" title="${esc(t('mobile.favourite'))}">${icon('star')}</span>` : ''}${c.hasPassword ? `<span class="badge" title="${esc(t('shell.passwordSaved'))}">${icon('key')}</span>` : ''}
   <span class="ti">${kindIcon(c.kind)}</span><span class="tn">${esc(c.name)}</span></button>`;
 
+/* Vom Server: die letzten DNS-Aenderungen des Moduls DDNS erscheinen in den Aktivitaeten (nur wenn das Modul an ist, hoechstens einmal je Minute abgefragt) */
+let srvActs = [], srvActsAt = 0;
+async function loadSrvActs() {
+  if (!mods.ddns || Date.now() - srvActsAt < 60000) return;
+  srvActsAt = Date.now();
+  try {
+    const r = await ctx.api('/api/modules/ddns/history');
+    srvActs = (r.entries || []).slice(0, 6).map((e) => ({ t: Date.parse(e.at), type: 'ddns', name: e.host, msg: `${e.oldIp || '–'} → ${e.newIp}`, ok: e.ok }));
+    renderHome();
+  } catch { /* die Aktivitaeten bleiben, wie sie sind */ }
+}
+const allActs = () => [...ls.get('log', []).filter((l) => l.type !== 'start' || byId(l.id)), ...srvActs].sort((a, b) => b.t - a.t);
 function activityRows(limit) {
-  const log = ls.get('log', []).filter((l) => l.type !== 'start' || byId(l.id)).slice(0, limit);
+  const log = allActs().slice(0, limit);
   return log.map((l) => {
+    if (l.type === 'ddns') return `<div class="m3-li static"><span class="lead ${l.ok ? 'ok' : 'warn'}">${icon(l.ok ? 'check_circle' : 'info')}</span><span class="txt"><span class="hl">${esc(t('mobile.ddnsAct', { host: l.name }))}</span><span class="sl">${esc(l.msg)}</span></span><span class="tr">${esc(whenLabel(l.t))}</span></div>`;
     const c = byId(l.id);
     const lead = l.type === 'end' ? `<span class="lead warn">${icon('info')}</span>` : `<span class="lead ok">${icon('check_circle')}</span>`;
     const sub = l.type === 'end' ? esc(l.msg) : esc(t('mobile.started', { kind: kindText(l.kind) }));
@@ -319,7 +332,8 @@ function renderHome() {
   const favHtml = favs.length
     ? `<div class="grid3">${favs.map((c) => tileHtml(c, c.favorite)).join('')}</div>`
     : `<div class="m3-card empty-card"><span class="lead">${icon('star_o')}</span><span>${list.length ? t('mobile.favHintSome') : t('mobile.favHintNone')}</span></div>`;
-  const actsAll = ls.get('log', []).filter((l) => l.type !== 'start' || byId(l.id));
+  ensureMods().then(loadSrvActs);
+  const actsAll = allActs();
   const acts = actsAll.length
     ? `<div class="m3-card acts">${activityRows(view.allActs ? 15 : 4)}</div><p class="note">${t('mobile.actsNote')}</p>`
     : '<div class="m3-card empty-card"><span class="lead">' + icon('history') + '</span><span>' + t('mobile.actsEmpty') + '</span></div>';
@@ -331,12 +345,26 @@ function renderHome() {
     </div>
     ${sessionsSection()}
     ${server}
+    <div id="mHeimSec" hidden><div class="m3-sec">${icon('dns')}<span>${t('heimnetz.title')}</span></div><div id="mHeim"></div></div>
     <div class="m3-sec">${icon('star_o')}<span>${t('mobile.myFavourites')}</span><span class="sp"></span><button type="button" class="mb m3-btn text m3-state" data-go="services">${t('mobile.allServices')}${icon('chevron_right')}</button></div>
     ${favHtml}
     <div class="m3-sec">${icon('history')}<span>${t('mobile.activities')}</span><span class="sp"></span>${actsAll.length > 4 ? `<button type="button" class="mb m3-btn text m3-state" data-act="allacts">${view.allActs ? t('mobile.showLess') : t('mobile.showAll')}${icon('chevron_right')}</button>` : ''}</div>
     ${acts}`;
   pg.scrollTop = top;
+  mountHeim();
 }
+
+/* Karte "Heimnetz" (heimnetz.js): nur, wenn der Server mindestens ein Modul eingeschaltet hat */
+function mountHeim() {
+  const box = $('#mHeim'); if (!box) return;
+  ensureMods().then(async (m) => {
+    if (!(m.caddy || m.ddns || m.services) || !box.isConnected) return;
+    $('#mHeimSec').hidden = false;
+    const h = await import('./heimnetz.js');
+    if (box.isConnected) h.mountHeimnetz(box, { api: ctx.api, mods: m, esc, open: (k) => (k === 'services' ? go('services') : openModSheet(k)) });
+  });
+}
+const openModSheet = (kind) => import('./mobile-modules.js').then((m) => m.openSheet(kind, { icon, esc, api: ctx.api, wireSheet, app: $('#app') }));
 
 /* =====================================================================
  * Dienste
@@ -349,6 +377,7 @@ function buildServicesPage() {
     <div class="chips" role="group" aria-label="${esc(t('mobile.folders'))}" id="mFolderChips" hidden></div>
     <div class="chips" role="group" aria-label="${esc(t('mobile.chooseHost'))}" id="mHostChips" hidden></div>
     <div id="mGrid"></div>
+    <div id="mWidgets"></div>
     <div id="mMods"></div>
     <div class="m3-sec">${icon('bolt')}<span>${t('mobile.quickActions')}</span></div>
     <div class="quick" id="mQuick"></div>`;
@@ -390,11 +419,19 @@ function renderServices() {
     <button type="button" class="mb m3-btn tonal m3-state" data-act="folders">${folderIconSvg('folder')}${t('mobile.folders')}</button>`;
 }
 /* Module Caddy und DDNS (nur lesen): Karten nur, wenn der Server sie eingeschaltet hat (GET /api/modules); Details im Sheet, siehe mobile-modules.js */
-let mods = { caddy: false, ddns: false }, modsLoaded = false;
+let mods = { caddy: false, ddns: false, services: false }, modsPromise = null;
+/** Welche Module der Server eingeschaltet hat: einmal je Anmeldung geladen (Startseite und Dienste-Seite brauchen es). */
+const ensureMods = () => modsPromise || (modsPromise = import('./modules.js').then((m) => m.loadModules(ctx.api)).then((m) => { mods = m; return m; }));
 async function renderModules() {
   const box = $('#mMods'); if (!box) return;
-  if (!modsLoaded) { modsLoaded = true; mods = await import('./modules.js').then((m) => m.loadModules(ctx.api)); }
-  if (mods.caddy || mods.ddns) (await import('./mobile-modules.js')).renderCards(box, mods, { icon, esc, api: ctx.api }); else box.replaceChildren();
+  await ensureMods();
+  const mm = (mods.caddy || mods.ddns || mods.services) ? await import('./mobile-modules.js') : null;
+  if (mods.caddy || mods.ddns) mm.renderCards(box, mods, { icon, esc, api: ctx.api }); else box.replaceChildren();
+  loadSrvActs();
+  // Dienste-Widgets: einmal einhaengen (sie halten sich selbst aktuell), nicht bei jedem Neuzeichnen der Seite
+  const wbox = $('#mWidgets');
+  if (wbox && mods.services && !wbox.querySelector('.wd-grid')) mm.mountServices(wbox, { api: ctx.api, wireSheet, icon, esc });
+  else if (wbox && !mods.services) wbox.replaceChildren();
 }
 function renderGrid() {
   const list = filtered();
@@ -533,7 +570,7 @@ function onClick(e) {
   else if (act === 'quickq') ctx.quick(view.q);
   else if (act === 'addhost') ctx.addHost();
   else if (act === 'hostedit' || act === 'hostagent') { const h = hosts().find((x) => x.id === a.dataset.host); if (h) ctx.editHost(h); }
-  else if (act === 'mod') import('./mobile-modules.js').then((m) => m.openSheet(a.dataset.mod, { icon, esc, api: ctx.api, wireSheet, app: $('#app') }));
+  else if (act === 'mod') openModSheet(a.dataset.mod);
   else if (act === 'allacts') { view.allActs = !view.allActs; renderHome(); }
   else if (act === 'last') { const c = lastConnection(); if (c) ctx.connect(c); }
   else if (act === 'ssh') {

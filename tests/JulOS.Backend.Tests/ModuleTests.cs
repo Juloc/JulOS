@@ -181,12 +181,29 @@ public sealed class ModuleTests : IDisposable
     }
 
     [Fact]
-    public void Control_is_not_built_yet_and_counts_as_read()
+    public void Control_exists_only_where_it_is_built_and_elsewhere_counts_as_read()
     {
-        var s = Settings(("JULOS_CADDY", "control"), ("JULOS_DDNS", "READ"));
-        Assert.Equal(ModuleMode.Read, s.Caddy.Mode);
+        var s = Settings(("JULOS_CADDY", "control"), ("JULOS_DDNS", "READ"), ("JULOS_SERVICES", "control"));
+        Assert.Equal(ModuleMode.Read, s.Caddy.Mode);      // Caddy schreibt nicht (nur als Entwurf dokumentiert)
         Assert.Equal(ModuleMode.Read, s.Ddns.Mode);
-        Assert.Contains("Schreiben gibt es in dieser Version nicht", Assert.Single(s.Warnings));
+        Assert.Equal(ModuleMode.Control, Settings(("JULOS_DDNS", "control")).Ddns.Mode);
+        Assert.Equal(ModuleMode.Control, s.Services.Mode);
+        Assert.Contains("Schreiben gibt es hier nicht", Assert.Single(s.Warnings));
+        Assert.Equal(ModuleMode.Off, Settings().Services.Mode);
+    }
+
+    [Fact]
+    public void Caddy_reads_credentials_tls_target_and_log_from_the_settings()
+    {
+        var s = Settings(("JULOS_CADDY", "read"), ("JULOS_CADDY_ADMIN_URL", "http://caddy:2019"), ("JULOS_CADDY_ADMIN_AUTH_FILE", " /run/secrets/caddy-admin "), ("JULOS_CADDY_TLS_CONNECT", "caddy:443"), ("JULOS_CADDY_LOG_FILE", "/var/log/caddy/access.log"));
+        Assert.Equal("/run/secrets/caddy-admin", s.Caddy.AdminAuthFile);
+        Assert.Equal(("caddy", 443), (s.Caddy.TlsConnect!.Host, s.Caddy.TlsConnect.Port));
+        Assert.Equal("/var/log/caddy/access.log", s.Caddy.LogFile);
+        Assert.Empty(s.Warnings);
+        var bad = Settings(("JULOS_CADDY", "read"), ("JULOS_CADDY_TLS_CONNECT", "kein host port"));
+        Assert.Null(bad.Caddy.TlsConnect);
+        Assert.Single(bad.Warnings);
+        Assert.Empty(Settings(("JULOS_CADDY_TLS_CONNECT", "kein host port")).Warnings);   // aus: keine Meldung
     }
 
     [Fact]

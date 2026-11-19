@@ -101,6 +101,14 @@ public sealed class ScreenProtocolTests
     }
 
     [Fact]
+    public void The_clipboard_diagnosis_message_carries_state_kind_and_a_count_and_never_text()
+    {
+        var note = ScreenProtocol.ClipboardNote(3, ClipNote.TextFetchedByVm, 70000);
+        Assert.Equal([15, 3, (byte)ClipNote.TextFetchedByVm, 0, 1, 17, 112], note);
+        Assert.Equal(ScreenProtocol.ClipNoteLength, note.Length);
+    }
+
+    [Fact]
     public void Only_the_text_the_file_path_and_the_file_pieces_may_be_longer_than_an_input()
     {
         foreach (var type in new[] { ScreenProtocol.FromBrowserClipboard, ScreenProtocol.FromBrowserSendBegin, ScreenProtocol.FromBrowserSendChunk, ScreenProtocol.FromBrowserFileRequest })

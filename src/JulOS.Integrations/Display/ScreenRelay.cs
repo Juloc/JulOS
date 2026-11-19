@@ -568,6 +568,9 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                         buffer[0] = ScreenProtocol.ToBrowserClipboard;
                         length = 1 + System.Text.Encoding.UTF8.GetBytes(clip.Text, buffer.AsSpan(1));
                         break;
+                    case ScreenClipboardNote note:
+                        await SendOnceAsync(ws, ScreenProtocol.ClipboardNote(note.Flags, note.Note, note.Count), ct).ConfigureAwait(false);
+                        continue;
                     case ScreenAudioStatus audio:
                         buffer = pool.Rent(ScreenProtocol.AudioStatusLength);
                         length = ScreenProtocol.WriteAudioStatus(buffer, audio.Status);

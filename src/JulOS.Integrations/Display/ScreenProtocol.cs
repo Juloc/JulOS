@@ -22,6 +22,7 @@ namespace JulOS.Integrations.Display;
 ///   8 Eintraege     stapel(4) anzahl(2) dann je Eintrag flags(1: Bit0 Ordner) groesse(8, -1 unbekannt) namenlaenge(2) Pfad (UTF-8, Trenner /, relativ)   (anzahl 0: Auswahl weg; ein Ordner steht vor seinem Inhalt)
 ///   9 Dateistand     stapel(4) zustand(1: 0 bereit, 1 laeuft, 2 fertig, 3 gescheitert) fertig(8) gesamt(8, -1 unbekannt) Text ...   (bereit: der Text ist das Token fuer GET /api/remote/clip/<Token>, der Download laeuft dann als HTTP-Strom; gescheitert: der Grund)
 ///  14 Grenzen        maxDatei(8) maxDateien(2) maxEintraege(2)   (einmal nach dem Verbinden: so viel darf der Browser an die Zwischenablage der VM senden)
+///  15 Zwischenablage-Ereignis  flags(1: Bit0 Kanal der VM bereit, Bit1 Dateien moeglich) art(1: siehe ClipNote) zahl(4, Zeichen oder Bytes; nie Inhalt)   (Diagnose der Text-Zwischenablage; kommt auch ohne Text, wenn sich der Kanal meldet)
 ///  10 Ergebnis       nummer(4) code(1: 0 ok, 1 zu gross, 2 nicht erlaubt, 3 keine Zwischenablage in der VM, 4 sonst) Text ...
 ///  11 Sitzung       sekunden(2) Token (ASCII)   (gleich nach dem Verbinden, wenn der Server Sitzungen erhaelt: so lange wartet die Sitzung ohne Browser; mit dem Token kommt der Browser zurueck, Adresse resume=)
 ///  12 Nicht wieder  (das Token ist unbekannt, abgelaufen oder fremd: der Browser baut neu auf)
@@ -59,7 +60,7 @@ namespace JulOS.Integrations.Display;
 public static class ScreenProtocol
 {
     public const byte ToBrowserPicture = 1, ToBrowserCursor = 2, ToBrowserSize = 3, ToBrowserError = 4, ToBrowserTaken = 5, ToBrowserClipboard = 6,
-        ToBrowserImage = 7, ToBrowserFiles = 8, ToBrowserFileState = 9, ToBrowserResult = 10, ToBrowserLimits = 14, ToBrowserSession = 11, ToBrowserResumeFailed = 12, ToBrowserEncoder = 30,
+        ToBrowserImage = 7, ToBrowserFiles = 8, ToBrowserClipNote = 15, ToBrowserFileState = 9, ToBrowserResult = 10, ToBrowserLimits = 14, ToBrowserSession = 11, ToBrowserResumeFailed = 12, ToBrowserEncoder = 30,
         ToBrowserRefine = 40, ToBrowserRefineClear = 41;
     public const byte FromBrowserAck = 1, FromBrowserMove = 2, FromBrowserButton = 3, FromBrowserWheel = 4, FromBrowserKey = 5,
         FromBrowserUnicode = 6, FromBrowserResize = 7, FromBrowserKeyFrame = 8, FromBrowserClipboard = 9,
@@ -222,6 +223,18 @@ public static class ScreenProtocol
             at += 11 + names[i].Length;
         }
 
+        return result;
+    }
+
+    public const int ClipNoteLength = 7;
+
+    public static byte[] ClipboardNote(byte flags, ClipNote note, int count)
+    {
+        var result = new byte[ClipNoteLength];
+        result[0] = ToBrowserClipNote;
+        result[1] = flags;
+        result[2] = (byte)note;
+        BinaryPrimitives.WriteInt32BigEndian(result.AsSpan(3), count);
         return result;
     }
 

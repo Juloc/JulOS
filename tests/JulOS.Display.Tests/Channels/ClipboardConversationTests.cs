@@ -315,6 +315,41 @@ public class ClipboardConversationTests
     }
 
     [Fact]
+    public void A_request_the_server_never_answers_counts_as_refused_after_a_while_and_the_next_one_goes_out()
+    {
+        var channel = new ClipboardChannel { RequestTimeout = TimeSpan.FromMilliseconds(150) };
+        var wire = new Wire(channel);
+        var data = new List<byte[]?>();
+        channel.DataReceived += data.Add;
+        channel.Receive(ClipServer.Capabilities(AllFlags));
+        channel.Receive(ClipServer.MonitorReady());
+        channel.Receive(ClipServer.FormatListResponse(true));
+        channel.Receive(ClipServer.LongFormatList((Text, null), (Dib, null)));
+        wire.Take();
+
+        channel.RequestData(Text);                                              // wird nie beantwortet
+        channel.RequestData(Dib);                                               // wartet dahinter
+        Assert.Equal(Text, U32(ClipServer.Parse(wire.One()).Body, 0));
+        Assert.Empty(data);
+
+        SpinWait.SpinUntil(() => wire.Sent.Count > 0, TimeSpan.FromSeconds(5));
+        Assert.Equal([null], data);                                             // der erste gilt als verweigert
+        Assert.Equal(Dib, U32(ClipServer.Parse(wire.One()).Body, 0));           // der zweite ging hinaus
+
+        channel.Receive(ClipServer.DataResponse([7]));                          // und seine Antwort kommt an
+        Assert.Equal(2, data.Count);
+        Assert.Equal([7], data[1]);
+
+        // eine Anfrage, die rechtzeitig beantwortet wird, loest nichts aus
+        channel.RequestData(Text);
+        wire.Take();
+        channel.Receive(ClipServer.DataResponse([8]));
+        Thread.Sleep(400);
+        Assert.Equal(3, data.Count);
+        wire.Nothing();
+    }
+
+    [Fact]
     public void Requests_for_what_the_server_no_longer_offers_are_answered_without_asking()
     {
         var client = ClipClient.Started();

@@ -53,7 +53,7 @@ In JulOS: add a connection, kind "Desktop (VNC)", the address, the port (default
 - `Display/Vnc/VncClient*.cs`: handshake and security, the read loop (one thread, blocking reads), input, clipboard; `VncDecoders.cs` the encodings; `VncDes.cs` the DES of the password sign-in (own implementation, .NET's DES is a legacy provider on OpenSSL 3); `VncKeys.cs` keysyms.
 - `Display/IScreenSource.cs`: what `ScreenStream` needs from RDP or VNC; `ScreenStream` has a second constructor for VNC and `ScreenTarget.ForVnc`.
 - `ScreenProtocol` message 18 (browser to server): `keysym(4) down(1)`, only on VNC sessions; message 14 (limits) is sent as zeros for VNC.
-- Database migration `012_connection_vnc.sql` (the kind check of `connections`).
+- Database migration `015_connection_vnc.sql` (the kind check of `connections`).
 
 ## Tests
 

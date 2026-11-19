@@ -2,8 +2,9 @@
  * Karten und Detail-Sheets fuer Caddy und DDNS in der Handy-Shell (nur lesen). Wird von mobile.js erst geladen, wenn der Server
  * mindestens ein Modul eingeschaltet hat. deps: { icon, esc, api, wireSheet, app }
  * ===================================================================== */
-import { t, tk, tp } from './i18n.js';
-import { routeParts, sourceLabel, reachMap, reachText, reachClass, ddnsStateLabel, ddnsStateClass, ddnsHeadline, ago } from './modules.js';
+import { t, tk, tp, fmtDay, fmtDate } from './i18n.js';
+import { mountWidgets } from './widgets.js';
+import { routeParts, sourceLabel, reachMap, reachText, reachClass, ddnsStateLabel, ddnsStateClass, ddnsHeadline, ago, certClass, certStateText, certDetail, certSummary, caddyHealthText, ddnsOutcomeText, historyRow, ddnsControlLine } from './modules.js';
 
 const META = {
   caddy: { title: 'Caddy', sub: tk('mobile.modCaddySub'), ic: 'lock' },
@@ -40,22 +41,34 @@ const row = (esc, main, sub, chip, cls) => `<div class="m3-li static"><span clas
 async function caddyBody({ esc, api }, check) {
   const l = await api('/api/modules/caddy/routes');
   const reach = check ? reachMap(await api('/api/modules/caddy/reachability')) : new Map();
+  const [health, certs] = await Promise.all([api('/api/modules/caddy/health').catch(() => null), api('/api/modules/caddy/certificates').catch(() => null)]);
   const rows = l.routes.map((r) => {
     const p = routeParts(r);
     const states = r.kind === 'proxy' ? (r.targets || []).map((tg) => reach.get(tg)).filter(Boolean) : [];
     const worst = states.find((s) => s.state === 'down') || states.find((s) => s.state === 'skipped') || states[0];
     return row(esc, p.domain + (p.path ? ' ' + p.path : ''), p.kind + ' → ' + p.target, worst ? reachText(worst) : '', reachClass(worst));
   });
-  return `<p class="hint">${esc(t('mobile.modSource', { source: sourceLabel(l.source) }))}${l.warnings.length ? ' ' + esc(l.warnings.join(' ')) : ''}</p>
+  const certRows = certs ? certs.certificates.map((c) => row(esc, c.domain, certDetail(c, (d) => fmtDay(d)), certStateText(c), certClass(c))) : [];
+  const sum = certs ? certSummary(certs.certificates) : null;
+  return `<p class="hint">${health ? `<b>${esc(caddyHealthText(health))}</b> · ` : ''}${esc(t('mobile.modSource', { source: sourceLabel(l.source) }))}${l.warnings.length ? ' ' + esc(l.warnings.join(' ')) : ''}</p>
     <div class="m3-card acts" style="margin:0">${rows.join('') || `<p class="empty-hint">${esc(t('mobile.modNoEntries'))}</p>`}</div>
+    ${certs ? `<h3 class="m3-sec" style="margin-top:14px"><span>${esc(t('mobile.modCerts'))}</span></h3>${sum && (sum.warn || sum.bad) ? `<p class="hint">${esc(tp('desktop.certsAttention', sum.warn + sum.bad))}</p>` : ''}
+    <div class="m3-card acts" style="margin:0">${certRows.join('') || `<p class="empty-hint">${esc(t('desktop.noCerts'))}</p>`}</div>` : ''}
     <p class="hint" style="margin-top:12px">${esc(t('mobile.modCaddyNote'))}</p>`;
 }
 
+let canUpdate = false;
 async function ddnsBody({ esc, api }) {
   const s = await api('/api/modules/ddns/status');
+  const info = await api('/api/modules/ddns/control').catch(() => null);
+  const hist = info ? ((await api('/api/modules/ddns/history').catch(() => null)) || { entries: [] }).entries : [];
+  canUpdate = !!(info && info.canUpdate);
   const rows = s.hosts.map((h) => row(esc, h.host, h.addresses.length ? t('mobile.modResolves', { addrs: h.addresses.join(', ') }) : t('mobile.modNoResolve'), ddnsStateLabel(h.state), ddnsStateClass(h.state)));
+  const histRows = hist.map((e) => { const h = historyRow(e, (d) => fmtDate(d)); return row(esc, `${h.title}  ${h.sub}`, h.when + (h.meta ? ' · ' + h.meta : ''), h.state, h.cls); });
   return `<p class="hint"><b>${esc(ddnsStateLabel(s.state))}</b> · ${esc(t('mobile.modChecked', { when: ago(s.checkedAt) }))}<br>${esc(ddnsHeadline(s))}<br>${s.publicIp ? esc(t('mobile.modPublicIp', { ip: s.publicIp })) + (s.source ? ' ' + esc(t('mobile.modIpSource', { source: s.source })) : '') : esc(t('mobile.modPublicIpUnknown'))}</p>
     <div class="m3-card acts" style="margin:0">${rows.join('') || `<p class="empty-hint">${esc(t('mobile.modNoNames'))}</p>`}</div>
+    ${canUpdate ? `<p class="hint" style="margin-top:12px">${esc(ddnsControlLine(info))}</p>` : ''}
+    ${canUpdate || hist.length ? `<h3 class="m3-sec" style="margin-top:14px"><span>${esc(t('desktop.ddnsHistory'))}</span></h3><div class="m3-card acts" style="margin:0">${histRows.join('') || `<p class="empty-hint">${esc(t('desktop.ddnsNoHistory'))}</p>`}</div>` : ''}
     <p class="hint" style="margin-top:12px">${esc(t('mobile.modDdnsNote'))}</p>`;
 }
 
@@ -70,9 +83,19 @@ export async function openSheet(kind, deps) {
     try { body = kind === 'caddy' ? await caddyBody(deps, check) : await ddnsBody(deps); }
     catch (e) { body = `<p class="hint">${esc(e.message || t('mobile.modNotLoaded'))}</p>`; }
     dlg.innerHTML = `<h2>${m.title}</h2>${body}
-      <div class="row" style="margin-top:14px">${kind === 'caddy' ? `<button type="button" class="mb m3-btn tonal m3-state" data-a="check">${icon('check')}${esc(t('mobile.modCheckReach'))}</button>` : ''}<button type="button" class="mb m3-btn filled m3-state" data-a="reload">${icon('history')}${esc(t('common.reload'))}</button></div>`;
+      <div class="row" style="margin-top:14px">${kind === 'caddy' ? `<button type="button" class="mb m3-btn tonal m3-state" data-a="check">${icon('check')}${esc(t('mobile.modCheckReach'))}</button>` : ''}${kind === 'ddns' && canUpdate ? `<button type="button" class="mb m3-btn tonal m3-state" data-a="update">${icon('history')}${esc(t('desktop.ddnsUpdate'))}</button>` : ''}<button type="button" class="mb m3-btn filled m3-state" data-a="reload">${icon('history')}${esc(t('common.reload'))}</button></div>`;
   };
-  dlg.onclick = (e) => { const b = e.target.closest('[data-a]'); if (!b) return; draw(b.dataset.a === 'check'); };
+  dlg.onclick = async (e) => {
+    const b = e.target.closest('[data-a]'); if (!b) return;
+    if (b.dataset.a === 'update') { b.disabled = true; let msg = ''; try { msg = ddnsOutcomeText(await deps.api('/api/modules/ddns/update', { method: 'POST', body: {} })); } catch (err) { msg = err.message; } await draw(false); dlg.querySelector('.hint')?.insertAdjacentHTML('afterbegin', `<b>${esc(msg)}</b><br>`); return; }
+    draw(b.dataset.a === 'check');
+  };
   if (!dlg.open) dlg.showModal();
   await draw(false);
+}
+
+/** Dienste-Widgets auf der Dienste-Seite: Ueberschrift und das Raster aus widgets.js. */
+export function mountServices(box, { api, wireSheet, icon, esc }) {
+  box.innerHTML = `<div class="m3-sec">${icon('apps')}<span>${esc(t('mobile.widgets'))}</span></div><div class="wd-host"></div>`;
+  return mountWidgets(box.querySelector('.wd-host'), { api, mobile: true, wireSheet });
 }

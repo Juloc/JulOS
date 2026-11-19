@@ -213,10 +213,10 @@ public sealed class LogicTests
     [Fact]
     public void Network_tool_targets_are_the_saved_hosts_inside_the_allow_list()
     {
-        string[] saved = ["b.example", "A.example", "a.example", "10.0.0.5", "fremd.example"];
-        Assert.Equal(["10.0.0.5", "A.example", "b.example", "fremd.example"], NetToolRules.Targets(saved, new HostPolicy(null)));
-        var policy = new HostPolicy("a.example, 10.0.0.5");
-        Assert.Equal(["10.0.0.5", "A.example"], NetToolRules.Targets(saved, policy));
+        string[] saved = ["b.example", "A.example", "a.example", "192.0.2.5", "fremd.example"];
+        Assert.Equal(["192.0.2.5", "A.example", "b.example", "fremd.example"], NetToolRules.Targets(saved, new HostPolicy(null)));
+        var policy = new HostPolicy("a.example, 192.0.2.5");
+        Assert.Equal(["192.0.2.5", "A.example"], NetToolRules.Targets(saved, policy));
         Assert.Equal("A.example", NetToolRules.Resolve(" a.EXAMPLE ", saved, policy));         // any spelling, the saved one comes back
         Assert.Null(NetToolRules.Resolve("b.example", saved, policy));                          // saved but not allowed
         Assert.Null(NetToolRules.Resolve("169.254.169.254", saved, new HostPolicy(null)));      // not saved

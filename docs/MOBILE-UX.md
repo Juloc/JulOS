@@ -43,10 +43,14 @@ Screenshots before and after each step are in [mobile-ux-screens/](mobile-ux-scr
 ## Decisions and open items
 
 - **Zwischenablage und Ton** has no real settings (the checks live in the session dialogs), so the group has two explanatory rows without a control instead of invented switches.
-- **Left alone on purpose** (another change works there): the host card and host dialog, "Agent" wording and the updates display, and [HOSTS.md](HOSTS.md) which still says "Server" for the phone page. "Agent" is still not explained for readers.
+- **Hosts and host details** were redesigned afterwards (phone and desktop, one set of parts in `hostui.css`, shown in [ui-kit.html](ui-kit.html) "Hosts"): the host card, key-figure bars, section cards and the tab navigation of the dialog; see [HOSTS.md](HOSTS.md) and [HOST-AGENT.md](HOST-AGENT.md) "Where you see it". The "Agent" wording is still not explained for readers (the empty card says what the agent brings).
 - Server texts stay German and unchanged (the test compares them with the source); the next step is added in the browser. "Host-Schlüssel nicht vertraut." therefore still shows the old word in German.
 - Desktop windows other than Einstellungen and the connections list (Dateien, System, module windows) were only checked, not redesigned. The desktop has no component sheet of its own: its parts (`dk-card`, `dk-row`, `dk-btn`, `dk-srow`) follow the same structure with the `--dk-*` variables.
-- Not done: Hosts page redesign (see INTEGRATIONS.md, M6), icons that hint at "rights" beyond the key, a font-size setting for the whole interface.
+- Not done: icons that hint at "rights" beyond the key, a font-size setting for the whole interface.
+
+## Desktop interface: windows, size and the shared parts
+
+The Start window (`Start`, `Hosts`, `Einstellungen`, ...) opens at about 82 % of the screen: at least 960 x 640, at most 1280 x 860 (`homeSize` in `desktop.js`); a size you drag it to is remembered. Dialogs stay modal: **Host-Details** is a large dialog (up to 1120 x 820, 96 % of the screen at most) with a side list of sections; on the phone the same dialog is a sheet with the sections as tabs at the top. The two share `hostui.css`, which takes its colours from the surface it sits on (`--m3-*` on the phone, the contrast-checked `--dk-*` on the desktop), so light and dark follow the scheme without its own colour choices; body text is never smaller than 13 px. Before and after pictures: `docs/host-ui-screens/`.
 
 ## Not verified (no real device)
 

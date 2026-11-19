@@ -17,6 +17,24 @@ What you get per host, at a glance (host card on the desktop and on the phone, p
 Reading is the default and needs nothing. **Actions** (install updates, reboot, control services and containers, read logs, pull images) exist since agent 0.6.0, but they are **off until you switch them on per host**
 and every single one is **confirmed by you in the app, every time**: see [Actions](#actions-stage-3). Nothing is ever started by a schedule or by the agent itself.
 
+### Where you see it
+
+The **host card** (list of hosts, phone and desktop; see [HOSTS.md](HOSTS.md)) shows state, kind of agent, load, memory, the main disk, and notes only when there is something. **Details** opens the dialog **Host-Details**: a large window with a side list on the desktop, a sheet with tabs on the phone. Every section is a few cards:
+
+| Section | Cards |
+| --- | --- |
+| Überblick | what needs attention (each with "Ansehen" to the right section), the three key figures, the machine (system, kernel, name, virtualisation, uptime, reboot) |
+| Auslastung | load for 1, 5 and 15 minutes per core, memory (without cache) and swap, each with a bar |
+| Datenträger | one bar per mount point with percent, size and file system; **health** with one plain statement ("Platten in Ordnung", "Problem bei den Platten" with the reason, or "nicht lesbar" and why), then SMART per disk, RAID and ZFS |
+| Netzwerk | the real interfaces first (IPv4 prominent, IPv6, link-local `fe80` addresses only as a count, traffic since boot, the rate from two readings); Docker and bridge interfaces (`docker0`, `br-…`, `veth…`, `virbr…`, …) folded into one group |
+| Updates | security updates first, then the others, kept-back and held packages, the age of the lists; the buttons below |
+| Dienste, Docker | failed services and the containers, with their buttons |
+| Logs, Aktionen, Verlauf | only for a host agent from 0.6.0: [Logs](#logs-from-a-list), the level, the pause switch and the local permission, restart and power off, the history |
+
+The numbers in the navigation (updates, failed services, restarting containers, `!` for a disk problem) show where to look. Everything the agent sends (host names, packages, addresses, output) is escaped; the markup is built in one place (`hostview.js`).
+
+The hint "Die Listen aktualisiert nur root, auf dem Host: sudo apt update." appears only when the button **Paketlisten aktualisieren** is not available (level off, the word `updates` missing on the host, pause); with the button there only the age of the lists is shown.
+
 ## Modes
 
 | | Desktop mode | Host mode |
@@ -163,6 +181,14 @@ Actions are the first thing in JulOS that changes a machine, so they are built t
 | `docker.pull` | `docker` | fetches the image of that container again (`POST /images/create`) and says whether it changed; the container keeps running the old image until it is recreated | a container of the list; not for images that are only an id or a pinned digest |
 | `logs.unit`, `logs.container` | `logs` | last 10 to 200 lines (default 100, each at most 400 characters) of `journalctl --unit=<unit>` (root helper) or of the Docker logs | a service or container of the lists |
 
+#### Logs from a list
+
+The section **Logs** of the dialog offers the services of the agent's own list (`GET /api/hosts/{id}/units`, the list `GET /v1/host/units` above) and a number of lines from 10 to 200; the button opens the usual two-step confirmation, nothing is read before it. There is **no free input** of a name: the list is the only source, and the server checks the target against the same list (`unknown_target` otherwise). Logs of **containers** and of the **failed services** keep their button at the entry.
+
+Limit, without loosening the keys: the list needs the local word `services` on the host **and** the level "alles" on the server (`GET /units` is a service query). With only `logs` (level "Updates und Logs", or no word `services`) there is no list, and the dialog says so; the logs of failed services and containers stay available from their lists. Reading logs does not give services control.
+
+**Output with line breaks.** The output of a program (for example `apt`) keeps its line breaks end to end (the agent sends them, the server keeps them: control characters are dropped, a tab becomes a space, at most one blank line in a row, at most 4000 characters) and the dialog shows it as text with `white-space: pre-wrap`, never as HTML.
+
 Paths are fixed: `POST /v1/host/updates/refresh|install`, `/reboot`, `/poweroff`, `/service/start|stop|restart`, `/docker/start|stop|restart|pull`, `/logs/unit|container`. Body: `{"job": "<32 hex>", ...target}`. Answers: `200 {ok, job, action, ...}`, `400 invalid_request`,
 `403 not_permitted`, `404 unknown_target`, `409 busy|duplicate_job|protected_unit|no_registry_image`, `500 <short code>` (`apt_locked`, `apt_failed`, `systemctl_failed`, `docker_failed`, ...), `501 not_implemented`, `503 helper_unavailable|docker_unavailable`.
 
@@ -256,7 +282,7 @@ The user's decisions for the host agent (answers collected before the build) are
 
 ### Stage 1 and 2 (this version): read and show, install over SSH
 
-Done in this version: the host mode, the four read capabilities, disk health, the endpoints with cache, the cards and the dialog, the SSH install, the permission file and the `control` level (unused).
+Done in this version: the host mode, the four read capabilities, disk health, the endpoints with cache, the host cards and the dialog with its sections, the SSH install, the permission file and the `control` level (unused).
 
 ### Stage 3: actions (write), every one confirmed, never silent: built, see [Actions](#actions-stage-3)
 

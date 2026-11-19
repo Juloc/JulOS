@@ -4,6 +4,21 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Neu
+- **Hosts und Host-Details neu gestaltet, am Handy und am Desktop gleich** ([docs/HOSTS.md](docs/HOSTS.md), [docs/HOST-AGENT.md](docs/HOST-AGENT.md), Bausteine in [docs/ui-kit.html](docs/ui-kit.html)): jeder Host ist eine **Karte** statt einer Textzeile (Name und Zustand, Art des Agenten, drei Kennzahlen mit Balken für Last, RAM und Platte, Hinweise nur wenn es etwas gibt: Updates mit Sicherheit rot, Neustart nötig, fehlgeschlagene Dienste, Plattenproblem; die Verbindungen als Chips; eine ruhige Hauptaktion „Details“, Agent verwalten und Bearbeiten im Menü; ein Host ohne Agent zeigt, was der Agent bringt, und eine Taste „Agent einrichten“). Der Dialog **Host-Details** hat Abschnitte als Karten mit Navigation: **Überblick** (was Aufmerksamkeit braucht, drei Kennzahlen, Rechner), **Auslastung**, **Datenträger** (je Einhängepunkt ein Balken, Gesundheit mit klarer Aussage), **Netzwerk** (echte Schnittstellen zuerst, Docker- und Bridge-Schnittstellen eingeklappt, lokale IPv6 zusammengefasst), **Updates** (Sicherheit zuerst), **Dienste**, **Docker**, **Logs**, **Aktionen**, **Verlauf**; am Desktop ein großes Fenster mit Seitenleiste, am Handy ein Sheet mit Reitern. Zähler an der Navigation (Updates, fehlgeschlagene Dienste, Plattenproblem) zeigen, wohin man sehen sollte. Das Start-Fenster des Desktops passt sich dem Bildschirm an (etwa 82 % in Breite und Höhe, 960 x 640 bis 1280 x 860). Fließtext ist nirgends kleiner als 13 px, Tastatur: Pfeile, Pos1 und Ende wechseln den Abschnitt, das Menü der Karte folgt dem Menü-Muster.
+- **Logs eines Dienstes aus einer Auswahl**: der Abschnitt „Logs“ listet die vom Agenten gemeldeten Dienste (`GET /api/hosts/{id}/units`), dazu die Zeilenzahl (10 bis 200); danach läuft der bestehende bestätigte Ablauf. Es gibt keine freie Namenseingabe. Grenze: die Liste liest der Agent nur mit dem Wort `services` und der Server nur bei Stufe „alles“; sonst steht das im Dialog, und die Logs der fehlgeschlagenen Dienste und der Container bleiben über deren Listen erreichbar.
+- Tests: `tests/frontend/hostview.test.mjs` (Karte, Abschnitte, Gruppierung der Schnittstellen, Escaping, Logs-Auswahl, Hinweis auf apt update), angepasste `hostinfo`-, `hostactions`- und `hostdialogs`-Tests, `HostActionTests` (Zeilenumbrüche der Ausgabe).
+
+### Behoben
+- Die **Ausgabe einer Host-Aktion** (zum Beispiel apt) kam ohne Zeilenumbrüche an: der Server hat sie wie jede Anzeigezeile des Agenten auf eine Zeile gekürzt. Jetzt bleiben die Zeilenumbrüche erhalten (Steuerzeichen fallen weiter weg, höchstens eine Leerzeile hintereinander), der Dialog zeigt sie als Text mit Umbruch (`white-space: pre-wrap`), nie als HTML.
+- Im Abschnitt Updates stand „Die Listen aktualisiert nur root, auf dem Host: sudo apt update.“ auch dann, wenn es die Taste „Paketlisten aktualisieren“ gab. Der Hinweis erscheint nur noch, wenn die Aktion nicht verfügbar ist (Stufe aus, Wort fehlt, Pause); sonst steht nur das Alter der Listen da.
+- Logs waren kaum erreichbar (Tasten nur an angezeigten Diensten und Containern): siehe „Logs eines Dienstes aus einer Auswahl“.
+
+### Grenzen
+- Nicht geprüft: ein echter Host mit echtem Agenten (nur Test-Agent auf der Entwicklungsmaschine, dazu Testdaten im Browser für Docker, Logs-Auswahl und die Aktionen), ein echtes Handy, Windows Brave.
+
 ## [0.13.1] - 2026-11-19
 
 ### Geändert

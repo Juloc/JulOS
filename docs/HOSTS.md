@@ -61,11 +61,25 @@ All need the session, the `X-JulOS` header for changes, and only ever show the s
 
 ## In the app
 
-- **Desktop interface:** menu **Hosts** (list with state, manage, new), dock icon **Hosts**, the Start window's view **Hosts** (cards with state, agent, services
-  and "Agent einrichten"), and in **Dienste** a host selection plus services grouped by host once there is more than one host.
-- **Phone:** page **Server** shows the hosts (state, services, "Agent einrichten", edit, add) below the server's load; **Dienste** gets a host selection when
-  there is more than one host, and every tile has its status dot.
+- **Desktop interface:** menu **Hosts** (list with state, manage, new), dock icon **Hosts**, and the Start window's view **Hosts**: one **host card** per host (below). In **Dienste** a host selection plus services grouped by host once there is more than one host. The Start window opens at about 82 % of the screen (at least 960 x 640, at most 1280 x 860); a size you chose yourself is remembered.
+- **Phone:** page **Hosts** shows the same host cards below the server's load; **Dienste** gets a host selection when there is more than one host, and every tile has its status dot.
 - **Connection dialog:** a **Host** field (with "Neuer Host …"); the **host dialog** holds the name, delete and **Agent einrichten / entfernen** for that host.
+
+### The host card
+
+One card for phone and desktop (`hostview.js`, styles `hostui.css`, building blocks in [ui-kit.html](ui-kit.html) "Hosts"):
+
+| Part | Shows |
+| --- | --- |
+| Header | name, host name and system, state pill (online or offline) |
+| Kind | "Host-Agent", "Desktop-Agent" or "Kein Agent", with the agent version; a disconnected agent says when it was last seen |
+| Key figures | CPU load (per core), RAM, the main disk ("/" or the fullest) with a bar each; yellow from 80 %, red from 90 %; only for a connected host agent that reports system values |
+| Notes | only when there is something: updates (security ones red), reboot needed, failed services, a disk problem, an outdated agent; plus the uptime |
+| Connections | the host's connections as chips with a status dot; a tap connects |
+| Actions | the one calm main action **Details** (or **Agent verwalten** without readable data); in the menu **Agent verwalten** and **Bearbeiten** |
+| Empty | a host without an agent explains what the agent brings and offers **Agent einrichten**; a desktop agent says that the host agent reads system values; a disconnected agent says that values return when it reports in |
+
+The numbers come from the cards' own memory (at most one read per host every 55 seconds, only while a card is drawn); nothing here polls the server more than before.
 
 ## Host agent
 

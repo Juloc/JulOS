@@ -26,10 +26,16 @@ internal static partial class AgentEndpoints
 
     private static IResult Reply(AgentReply r) => Results.Text(r.Json, "application/json", Encoding.UTF8, r.Status);
 
-    private static async Task<IResult> ViaAgent(AgentClient agent, HttpMethod method, string path, string? body, CancellationToken ct)
+    private static IResult AgentGone() => Error(502, "Agent nicht erreichbar.");
+
+    /// <summary>Schickt eine feste Anfrage an den Agenten der gemeinten Verbindung (Link oder lokaler Socket).</summary>
+    private static async Task<IResult> ViaAgent(HttpContext ctx, AgentRouter router, HttpMethod method, string path, string? body)
     {
-        try { return Reply(await agent.SendAsync(method, path, body, ct)); }
-        catch (AgentUnavailableException) { return Error(502, "Agent nicht erreichbar."); }
+        var target = await router.ResolveAsync(ctx);
+        if (target.Rejection is { } rejected) return rejected;
+        if (target.Route == AgentRoute.Offline) return Error(502, "Der Agent ist gerade nicht verbunden.");
+        try { return Reply(await target.SendAsync(method, path, body, ctx.RequestAborted)); }
+        catch (AgentUnavailableException) { return AgentGone(); }
     }
 
     /// <summary>Uebernimmt nur Schluessel aus Buchstaben/Ziffern/_- (bis 16 Zeichen) mit Zahl, Wahrheitswert oder Text bis 24 Zeichen.</summary>
@@ -55,12 +61,15 @@ internal static partial class AgentEndpoints
 
     public static void MapAgent(this IEndpointRouteBuilder app)
     {
-        // Ob es einen Agenten gibt; der Client blendet sonst die Fensterleiste aus
-        app.MapGet("/api/agent/health", async (AgentClient agent, CancellationToken ct) =>
+        // Ob es einen Agenten gibt; der Client blendet sonst die Fensterleiste aus. Der Browser sagt mit ?c=<Verbindung>, welche er meint.
+        app.MapGet("/api/agent/health", async (HttpContext ctx, AgentRouter router) =>
         {
+            var target = await router.ResolveAsync(ctx);
+            if (target.Rejection is { } rejected) return rejected;
+            if (target.Route == AgentRoute.Offline) return Results.Text("""{"available":false,"enrolled":true}""", "application/json", Encoding.UTF8);
             try
             {
-                var r = await agent.SendAsync(HttpMethod.Get, "/v1/health", null, ct);
+                var r = await target.SendAsync(HttpMethod.Get, "/v1/health", null, ctx.RequestAborted);
                 using var doc = JsonDocument.Parse(r.Json);
                 using var ms = new MemoryStream();
                 await using (var w = new Utf8JsonWriter(ms))
@@ -76,34 +85,37 @@ internal static partial class AgentEndpoints
             catch (AgentUnavailableException) { return Results.Text("""{"available":false}""", "application/json", Encoding.UTF8); }
         });
 
-        app.MapGet("/api/agent/windows", (AgentClient agent, CancellationToken ct) => ViaAgent(agent, HttpMethod.Get, "/v1/windows", null, ct));
-        app.MapGet("/api/agent/apps", (AgentClient agent, CancellationToken ct) => ViaAgent(agent, HttpMethod.Get, "/v1/apps", null, ct));
+        app.MapGet("/api/agent/windows", (HttpContext ctx, AgentRouter router) => ViaAgent(ctx, router, HttpMethod.Get, "/v1/windows", null));
+        app.MapGet("/api/agent/apps", (HttpContext ctx, AgentRouter router) => ViaAgent(ctx, router, HttpMethod.Get, "/v1/apps", null));
 
-        app.MapPost("/api/agent/windows/{id}/{action}", (string id, string action, ActivateRequest? body, AgentClient agent, CancellationToken ct) =>
+        app.MapPost("/api/agent/windows/{id}/{action}", (string id, string action, ActivateRequest? body, HttpContext ctx, AgentRouter router) =>
         {
             // Fenster-IDs sind Zahlen; nur diese drei Aktionen gibt es
             if (id.Length is < 1 or > 12 || !id.All(char.IsAsciiDigit) || action is not ("activate" or "minimize" or "close")) return Task.FromResult(Error(400, "Ungültige Anfrage."));
             var json = action == "activate" ? JsonSerializer.Serialize(new ActivateRequest(body?.Maximize == true ? true : null), AppJson.Default.ActivateRequest) : "{}";
-            return ViaAgent(agent, HttpMethod.Post, $"/v1/windows/{id}/{action}", json, ct);
+            return ViaAgent(ctx, router, HttpMethod.Post, $"/v1/windows/{id}/{action}", json);
         });
 
-        app.MapPost("/api/agent/apps/launch", (LaunchRequest body, AgentClient agent, CancellationToken ct) =>
+        app.MapPost("/api/agent/apps/launch", (LaunchRequest body, HttpContext ctx, AgentRouter router) =>
             string.IsNullOrEmpty(body.Id) || body.Id.Length > 200
                 ? Task.FromResult(Error(400, "Programm fehlt."))
-                : ViaAgent(agent, HttpMethod.Post, "/v1/apps/launch", JsonSerializer.Serialize(body, AppJson.Default.LaunchRequest), ct));
+                : ViaAgent(ctx, router, HttpMethod.Post, "/v1/apps/launch", JsonSerializer.Serialize(body, AppJson.Default.LaunchRequest)));
 
-        app.MapPost("/api/agent/mode", (ModeRequest body, AgentClient agent, CancellationToken ct) =>
+        app.MapPost("/api/agent/mode", (ModeRequest body, HttpContext ctx, AgentRouter router) =>
             body.Mode is "apps" or "desktop"
-                ? ViaAgent(agent, HttpMethod.Post, "/v1/mode", JsonSerializer.Serialize(body, AppJson.Default.ModeRequest), ct)
+                ? ViaAgent(ctx, router, HttpMethod.Post, "/v1/mode", JsonSerializer.Serialize(body, AppJson.Default.ModeRequest))
                 : Task.FromResult(Error(400, "Ungültiger Modus.")));
 
         // Foto in die Zwischenablage der Ziel-Maschine: Bild im Body (png, jpg, webp, gif), hoechstens 14 MB, 20 pro Minute und Benutzer
-        app.MapPost("/api/upload", async (HttpContext ctx, ClipboardUploader uploader, HitCounter hits) =>
+        app.MapPost("/api/upload", async (HttpContext ctx, ClipboardUploader uploader, AgentRouter router, HitCounter hits) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (!hits.Allow("upload:" + id.UserId, 20, Minute)) return Error(429, "Zu viele Uploads, bitte kurz warten.");
             if (!UploadGate.Wait(0)) return Error(429, "Es laufen schon mehrere Uploads, bitte kurz warten.");
             try {
+            var target = await router.ResolveAsync(ctx);
+            if (target.Rejection is { } rejected) return rejected;
+            if (target.Route == AgentRoute.Offline) return Error(502, "Der Agent ist gerade nicht verbunden.");
             if (ctx.Request.ContentLength is > ClipboardUploader.MaxBytes) return Error(413, "Bild zu groß.");
             if (ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit) limit.MaxRequestBodySize = ClipboardUploader.MaxBytes;
 
@@ -116,7 +128,9 @@ internal static partial class AgentEndpoints
             }
             catch (Microsoft.AspNetCore.Http.BadHttpRequestException) { return Error(413, "Bild zu groß."); }
 
-            var r = await uploader.SaveAsync(data, ctx.RequestAborted);
+            UploadResult r;
+            try { r = target.Link is { } link ? await LinkTransfers.SaveImageAsync(link, data, ctx.RequestAborted) : await uploader.SaveAsync(data, ctx.RequestAborted); }
+            catch (AgentUnavailableException) { return AgentGone(); }
             return r.Outcome switch
             {
                 UploadOutcome.Ok => Results.Json(new UploadResponse(true), AppJson.Default.UploadResponse),
@@ -130,12 +144,15 @@ internal static partial class AgentEndpoints
 
         // Datei in die Zwischenablage der Ziel-Maschine (Engine ohne eigenen Dateikanal): Datei im Body, Name URL-kodiert im Kopf X-File-Name,
         // hoechstens 64 MB, 20 pro Minute und Benutzer. Der Name wird bereinigt, ausfuehrbare Endungen werden abgelehnt.
-        app.MapPost("/api/upload-file", async (HttpContext ctx, ClipboardFileUploader uploader, HitCounter hits) =>
+        app.MapPost("/api/upload-file", async (HttpContext ctx, ClipboardFileUploader uploader, AgentRouter router, HitCounter hits) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (!hits.Allow("upload-file:" + id.UserId, 20, Minute)) return Error(429, "Zu viele Uploads, bitte kurz warten.");
             if (!UploadGate.Wait(0)) return Error(429, "Es laufen schon mehrere Uploads, bitte kurz warten.");
             try {
+            var target = await router.ResolveAsync(ctx);
+            if (target.Rejection is { } rejected) return rejected;
+            if (target.Route == AgentRoute.Offline) return Error(502, "Der Agent ist gerade nicht verbunden.");
             if (ctx.Request.ContentLength is > ClipboardFileUploader.MaxBytes) return Error(413, "Datei zu groß (höchstens 64 MB).");
             if (ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit) limit.MaxRequestBodySize = ClipboardFileUploader.MaxBytes;
             string name;
@@ -152,7 +169,9 @@ internal static partial class AgentEndpoints
             }
             catch (Microsoft.AspNetCore.Http.BadHttpRequestException) { return Error(413, "Datei zu groß (höchstens 64 MB)."); }
 
-            var r = await uploader.SaveAsync(name, data, ctx.RequestAborted);
+            FileResult r;
+            try { r = target.Link is { } link ? await LinkTransfers.SaveFileAsync(link, name, data, ctx.RequestAborted) : await uploader.SaveAsync(name, data, ctx.RequestAborted); }
+            catch (AgentUnavailableException) { return AgentGone(); }
             return r.Outcome switch
             {
                 FileOutcome.Ok => Results.Json(new UploadResponse(true), AppJson.Default.UploadResponse),
@@ -169,11 +188,16 @@ internal static partial class AgentEndpoints
         });
 
         // Bild aus der Zwischenablage der Ziel-Maschine holen (Engine, die Bilder nicht selbst meldet): PNG im Answer, 204 wenn dort kein Bild liegt
-        app.MapPost("/api/clipboard/pull", async (HttpContext ctx, ClipboardPuller puller, HitCounter hits) =>
+        app.MapPost("/api/clipboard/pull", async (HttpContext ctx, ClipboardPuller puller, AgentRouter router, HitCounter hits) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (!hits.Allow("pull:" + id.UserId, 30, Minute)) return Error(429, "Zu viele Anfragen, bitte kurz warten.");
-            var r = await puller.PullAsync(ctx.RequestAborted);
+            var target = await router.ResolveAsync(ctx);
+            if (target.Rejection is { } rejected) return rejected;
+            if (target.Route == AgentRoute.Offline) return Error(502, "Der Agent ist gerade nicht verbunden.");
+            PullResult r;
+            try { r = target.Link is { } link ? await LinkTransfers.PullAsync(link, ctx.RequestAborted) : await puller.PullAsync(ctx.RequestAborted); }
+            catch (AgentUnavailableException) { return AgentGone(); }
             return r.Outcome switch
             {
                 PullOutcome.Image => Results.Bytes(r.Png!, "image/png"),

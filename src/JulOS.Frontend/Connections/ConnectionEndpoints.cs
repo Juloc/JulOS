@@ -3,6 +3,7 @@ using System.Text.Json;
 using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
 using JulOS.Frontend.Auth;
+using JulOS.Integrations.Agent;
 
 namespace JulOS.Frontend.Connections;
 
@@ -80,10 +81,12 @@ internal static class ConnectionEndpoints
             return Results.Json(ToDto(c), AppJson.Default.ConnectionDto);
         });
 
-        app.MapDelete("/api/connections/{connection:guid}", async (Guid connection, HttpContext ctx, ConnectionStore store) =>
+        app.MapDelete("/api/connections/{connection:guid}", async (Guid connection, HttpContext ctx, ConnectionStore store, AgentLinks links) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
-            return await store.DeleteAsync(id.UserId, connection, ctx.RequestAborted) ? Results.NoContent() : Error(404, "Verbindung nicht gefunden.");
+            if (!await store.DeleteAsync(id.UserId, connection, ctx.RequestAborted)) return Error(404, "Verbindung nicht gefunden.");
+            links.Disconnect(connection);               // sein Agent (die Zeile ist mit der Verbindung geloescht) darf nicht weiterlaufen
+            return Results.NoContent();
         });
     }
 }

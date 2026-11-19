@@ -356,7 +356,7 @@ let appsTarget = null;
 async function openApps(session) {
   appsTarget = session;
   $('#appsDlg').showModal(); $('#appsSearch').value = '';
-  if (!session.W.apps) { try { session.W.apps = (await agent('/apps')).apps || []; } catch (e) { session.toast('Programme: ' + e.message); session.W.apps = []; } }
+  if (!session.W.apps) { try { session.W.apps = (await agent(session.conn.id, '/apps')).apps || []; } catch (e) { session.toast('Programme: ' + e.message); session.W.apps = []; } }
   renderApps('');
 }
 /** Symbol vom Agenten (Base64 eines PNG) als Bild. Nie in HTML-Text einsetzen: der Wert kommt aus der Sitzung der Ziel-Maschine. */
@@ -375,7 +375,7 @@ function renderApps(q) {
     d.append(iconImg(a.icon) || Object.assign(document.createElement('span'), { style: 'width:32px' }), name);
     d.addEventListener('click', async () => {
       $('#appsDlg').close();
-      try { await agent('/apps/launch', 'POST', { id: a.id }); s.toast('Starte ' + a.name + ' …', 2200); setTimeout(() => s.pollWindows(), 1500); } catch (e) { s.toast('Start: ' + e.message); }
+      try { await agent(s.conn.id, '/apps/launch', 'POST', { id: a.id }); s.toast('Starte ' + a.name + ' …', 2200); setTimeout(() => s.pollWindows(), 1500); } catch (e) { s.toast('Start: ' + e.message); }
     });
     list.appendChild(d);
   }
@@ -417,8 +417,9 @@ const ERROR_TEXT = {
   797: null,        // zu viele Sitzungen: der Server schickt den Text selbst ("Es sind schon 8 Sitzungen offen ...")
 };
 
-async function agent(path, method = 'GET', body = null) {
-  const r = await fetch('/api/agent' + path, { method, headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, body: body ? JSON.stringify(body) : undefined });
+/** Anfrage an den Agenten der Verbindung `connId` (die Verbindung ist bei jedem Aufruf dabei: ein Agent gehoert zu genau einer Verbindung, docs/AGENT_API.md). */
+async function agent(connId, path, method = 'GET', body = null) {
+  const r = await fetch('/api/agent' + path + '?c=' + encodeURIComponent(connId), { method, headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, body: body ? JSON.stringify(body) : undefined });
   if (!r.ok) throw new Error('Agent ' + r.status);
   return r.json();
 }
@@ -876,7 +877,7 @@ export class RemoteSession extends Session {
     const gen = this.gen, W = this.W;
     W.available = false;
     // Der Agent gehoert zur Maschine, neben der der Server laeuft: nur fuer Desktop-Verbindungen anbieten
-    if (this.conn.kind === 'desktop') { try { const h = await (await fetch('/api/agent/health')).json(); W.available = !!h.available; } catch { W.available = false; } }
+    if (this.conn.kind === 'desktop') { try { const h = await (await fetch('/api/agent/health?c=' + encodeURIComponent(this.conn.id))).json(); W.available = !!h.available; } catch { W.available = false; } }
     if (gen !== this.gen || this.disposed) return;
     this.dbg('agent', { available: W.available });
     if (this.conn.kind === 'desktop') store.set('winbar.' + this.conn.id, W.available);
@@ -890,7 +891,7 @@ export class RemoteSession extends Session {
     if (!this.connected || !W.available || document.hidden || !this.visible) return;     // im Hintergrund wird nicht abgefragt
     const gen = this.gen;
     try {
-      const d = await agent('/windows');
+      const d = await agent(this.conn.id, '/windows');
       if (gen !== this.gen) return;
       W.list = d.windows || []; W.mode = d.mode || 'desktop';
       this.renderWindows(); this.applyProfile();
@@ -945,11 +946,11 @@ export class RemoteSession extends Session {
     row.scrollLeft = keepScroll;
   }
   async activateWindow(id, maximize) {
-    try { await agent(`/windows/${id}/activate`, 'POST', { maximize }); setTimeout(() => this.pollWindows(), 350); } catch (e) { this.toast('Fenster: ' + e.message); }
+    try { await agent(this.conn.id, `/windows/${id}/activate`, 'POST', { maximize }); setTimeout(() => this.pollWindows(), 350); } catch (e) { this.toast('Fenster: ' + e.message); }
   }
   async toggleMode() {
     const W = this.W;
-    try { const d = await agent('/mode', 'POST', { mode: W.mode === 'apps' ? 'desktop' : 'apps' }); W.mode = d.mode; W.lastCls = null; this.renderWindows(); this.toast(W.mode === 'apps' ? 'Programm-Modus: Taskleiste der VM ausgeblendet' : 'Desktop-Modus', 2200); setTimeout(() => this.pollWindows(), 500); }
+    try { const d = await agent(this.conn.id, '/mode', 'POST', { mode: W.mode === 'apps' ? 'desktop' : 'apps' }); W.mode = d.mode; W.lastCls = null; this.renderWindows(); this.toast(W.mode === 'apps' ? 'Programm-Modus: Taskleiste der VM ausgeblendet' : 'Desktop-Modus', 2200); setTimeout(() => this.pollWindows(), 500); }
     catch (e) { this.toast('Modus: ' + e.message); }
   }
   openWinSheet(w) {
@@ -957,8 +958,8 @@ export class RemoteSession extends Session {
     const item = (ic, text, fn) => { const d = document.createElement('div'); d.className = 'mi'; d.setAttribute('role', 'menuitem'); d.innerHTML = `<span class="mic">${ico(ic)}</span><span class="mt">${text}</span>`; d.addEventListener('click', () => { this.closeWinSheet(); fn(); }); sh.appendChild(d); };
     item('window', 'Nach vorn und maximieren', () => this.activateWindow(w.id, true));
     item('window', 'Nach vorn (Größe lassen)', () => this.activateWindow(w.id, false));
-    item('minimize', 'Minimieren', async () => { try { await agent(`/windows/${w.id}/minimize`, 'POST', {}); setTimeout(() => this.pollWindows(), 300); } catch (e) { this.toast(e.message); } });
-    item('close', 'Schließen', async () => { try { await agent(`/windows/${w.id}/close`, 'POST', {}); setTimeout(() => this.pollWindows(), 500); } catch (e) { this.toast(e.message); } });
+    item('minimize', 'Minimieren', async () => { try { await agent(this.conn.id, `/windows/${w.id}/minimize`, 'POST', {}); setTimeout(() => this.pollWindows(), 300); } catch (e) { this.toast(e.message); } });
+    item('close', 'Schließen', async () => { try { await agent(this.conn.id, `/windows/${w.id}/close`, 'POST', {}); setTimeout(() => this.pollWindows(), 500); } catch (e) { this.toast(e.message); } });
     item('palette', 'Anzeigegröße für dieses Programm merken', () => { profiles[w.class] = this.k; store.set('profiles', profiles); this.toast('Gemerkt: ' + this.zoomPercent() + ' % für ' + (w.app || w.class)); });
     sh.hidden = false; this.el.scrim.hidden = false;
   }
@@ -1210,7 +1211,7 @@ export class RemoteSession extends Session {
         let r;
         if (this.nativeClip()) r = await this.client.sendTransfer(2, f, f.name, i, files.length, progress, ctl.signal);
         else {
-          const x = await xhrUpload('/api/upload-file', { 'X-JulOS': '1', 'X-File-Name': encodeURIComponent(f.name), 'Content-Type': 'application/octet-stream' }, f, progress, ctl.signal);
+          const x = await xhrUpload('/api/upload-file?c=' + encodeURIComponent(this.conn.id), { 'X-JulOS': '1', 'X-File-Name': encodeURIComponent(f.name), 'Content-Type': 'application/octet-stream' }, f, progress, ctl.signal);
           r = { code: x.status === 200 ? 0 : 4, text: (x.body && x.body.error) || 'Fehler ' + x.status };
         }
         if (ctl.signal.aborted) return false;
@@ -1635,7 +1636,7 @@ $('#pullImgBtn').addEventListener('click', async () => {
   const s = cur(); if (!s) return;
   s.showXfer('Hole das Bild aus der VM …', null);
   try {
-    const r = await fetch('/api/clipboard/pull', { method: 'POST', headers: { 'X-JulOS': '1' } });
+    const r = await fetch('/api/clipboard/pull?c=' + encodeURIComponent(s.conn.id), { method: 'POST', headers: { 'X-JulOS': '1' } });
     if (r.status === 204) { toast('In der Zwischenablage der VM liegt kein Bild', 3200); return; }
     if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'Fehler ' + r.status); }
     await s.showRemoteImage(await r.blob(), 'pull');
@@ -1818,7 +1819,7 @@ async function uploadPhoto(file) {
     if (!blob) throw new Error('Bild konnte nicht umgewandelt werden');
   }
   toast('Foto wird hochgeladen …', 6000);
-  const r = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': blob.type || 'image/jpeg', 'X-JulOS': '1' }, body: blob });
+  const r = await fetch('/api/upload?c=' + encodeURIComponent(s.conn.id), { method: 'POST', headers: { 'Content-Type': blob.type || 'image/jpeg', 'X-JulOS': '1' }, body: blob });
   if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'Fehler ' + r.status); }
   dbg('photo', { kb: Math.round(blob.size / 1024), auto: S.autoPaste });
   if (S.autoPaste) { await sleep(250); await s.sendChord([KS.ctrl, charKeysym('v')]); toast('Foto eingefügt (Strg+V)'); }

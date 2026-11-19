@@ -19,7 +19,7 @@ host, backend library, integrations, workers and tests, the folders around them)
 | Database | PostgreSQL, plain SQL through Npgsql, SQL migrations in `database/`, no ORM |
 | Remote display | `guacd` (container, no published port); the server relays the Guacamole protocol itself. Optional second engine per connection: own RDP client with H.264 (see "Display engines") |
 | Terminal | SSH client in the server (SSH.NET behind `ISshSession`), text to the browser, drawn there by xterm.js (see "Native terminal") |
-| Linux agent | Python (GTK/Wnck) behind the language-neutral agent API; a Windows agent later in C# |
+| Linux agent | Python (GTK/Wnck, standard library only apart from PyGObject) behind the language-neutral agent API; it connects outbound to the server (WebSocket) or, on the same machine, answers on a Unix socket; a Windows agent later in C# |
 | Delivery | One image on ghcr.io (amd64, arm64) and a compose file |
 
 ## Layout (same shape as the sibling projects)
@@ -29,7 +29,7 @@ JulOS.slnx  global.json  Directory.Build.props  Directory.Packages.props  .edito
 src/
   JulOS.Frontend/       ASP.NET host: static client (PWA), HTTP API, WebSocket endpoint, security headers
   JulOS.Backend/        class library: Services, Logic, Data (PostgreSQL access), accounts, sessions, connections
-  JulOS.Integrations/   outside communication: the guacd relay with its one-time tickets, the agent client (Unix socket)
+  JulOS.Integrations/   outside communication: the guacd relay with its one-time tickets, the agent client (Unix socket), the agent link registry (outbound WebSocket of the agents)
   JulOS.Workers/        background jobs: purge expired sessions and tickets, upload clean-up
 tests/
   JulOS.Backend.Tests/  unit and integration tests (including a real guacd and PostgreSQL in containers)
@@ -112,7 +112,23 @@ connection dialog ("Bildübertragung"); terminals do not use these engines at al
 - **Pacing and acknowledgements:** at most 3 pictures are in flight (`PictureWindow`). The browser acknowledges with the sequence number of a picture, and an acknowledgement covers that picture and every one before it. So a picture the browser never draws (dropped because no decoder was open, lost when the decoder was reopened or failed) cannot leave the window full for good: the next acknowledgement, or the one the browser sends when it drops or loses pictures, clears it. An old acknowledgement after a reset does not count twice, and a number beyond what was sent opens nothing in advance. A key frame request is answered even when the screen stands still and is already sharp. The browser also reopens a decoder that holds pictures for more than a second without drawing them. The server watchdog (2 s without an acknowledgement while the window is full: reset and key frame, with a warning in the log) stays as the last safety net.
 - **Wire protocol:** binary, documented in `ScreenProtocol.cs` and the header of `stream.js`. Message 16 (browser to server, 1 byte: 1 pause, 0 resume) is sent for a session that is in the background. The clipboard is message 6 (server to browser, UTF-8 text, the remote desktop copied) and message 9 (browser to server, UTF-8 text, up to 1 MiB; the remote desktop fetches it when it pastes). `stream.js` presents it to `app.js` through the same stream objects as the Guacamole client (`onclipboard`, `createClipboardStream`), so the clipboard dialog is shared.
 - **Wire protocol:** binary, documented in `ScreenProtocol.cs` and the header of `stream.js`. The clipboard is message 6 (server to browser, UTF-8 text, the remote desktop copied) and message 9 (browser to server, UTF-8 text, up to 1 MiB; the remote desktop fetches it when it pastes). `stream.js` presents it to `app.js` through the same stream objects as the Guacamole client (`onclipboard`, `createClipboardStream`), so the clipboard dialog is shared. Images and files have their own messages (7 to 10 to the browser, 10 to 15 from it: chunked, with sizes and names checked on both sides) and callbacks (`onclipimage`, `onclipfiles`, `sendTransfer`, `fetchFile`); the layout is in [CLIPBOARD.md](CLIPBOARD.md).
-- **The agent is independent of the engine.** `/api/agent/*` (health, windows, apps, launch, mode), the window bar and uploads talk to the agent through its Unix socket on the server and never see the picture path. They work the same with `guac` and `stream` (checked on the test instance with `stream`: health, window list, launch, window bar).
+- **The agent is independent of the engine.** `/api/agent/*` (health, windows, apps, launch, mode), the window bar and uploads talk to the agent (agent link or Unix socket, see "The agent link") and never see the picture path. They work the same with `guac` and `stream` (checked on the test instance with `stream`: health, window list, launch, window bar).
+
+## The agent link (agents on other machines)
+
+The agent API used to work only when the server and the desktop ran on one machine (Unix socket in a shared folder). The agent now also connects **outbound** to the server, so the
+window bar, the launcher and photo/file/clipboard work for desktops anywhere. Protocol, enrolment and security properties are in [AGENT_API.md](AGENT_API.md); the design in short:
+
+- **One agent per saved desktop connection.** Tables `agents` (connection id, user id, SHA-256 of the token, last seen, version, platform) and `agent_codes` (SHA-256 of a
+  one-time code, 10 minutes, one use). `AgentStore` (Backend) holds the SQL, `AgentCredentials` the code and token format.
+- **`AgentLinks`** (Integrations, singleton) holds the live WebSocket of each agent, found only by connection id *and* owning user. `AgentLink` is request/response with ids over
+  the socket plus chunked binary frames for data (back pressure comes from awaiting each frame; one transfer at a time per agent; 15 s per frame, 3 minutes in total; 14 MB image, 64 MB file).
+  `LinkTransfers` does the checks (image header, file name, extension, size) before anything is sent and maps the agent's answer to the same outcomes as the shared-folder uploaders.
+- **`AgentRouter`** (Frontend) picks the transport per call from `?c=<connection id>`: link if connected; "offline" (no answer, never the socket) if one is enrolled but gone; otherwise the
+  Unix socket as before (also without `c`). The browser can only trigger the fixed requests of `AgentEndpoints`; the server sends nothing the browser chose freely.
+- **Authentication:** `/api/agent-link` (WebSocket, `Authorization: Bearer`) and `/api/agent-link/enroll` are outside the session check (`ApiGuard.IsAgentPath`) because the agent is not a browser; they check
+  the token or the one-time code themselves and are rate limited. Everything that manages agents (create code, remove, status) needs the normal session.
+- The three agent files are served by the server (`/agent-files/<name>`, a fixed allowlist, copied into the image), so what runs on the machine matches the server's version.
 
 ## Several sessions at once
 

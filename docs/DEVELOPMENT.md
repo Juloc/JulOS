@@ -17,6 +17,18 @@ deploy/dev/smoke.sh     # walk-through on the running instance: setup, login, wi
 - The RDP target gets `/dev/fuse` and `SYS_ADMIN` (throwaway container, local only) and has `fuse3`: xrdp mounts the files of a client's clipboard through FUSE, which the clipboard tests for files need. xrdp's `chansrv` keeps the capabilities of the last connected client, so after a Guacamole connection it offers no file streaming to the stream engine until it restarts (`docker restart` of the target, or a new session); see [CLIPBOARD.md](CLIPBOARD.md).
 - Stop with `docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/.env down` (add `-v` to also drop the database).
 
+## Testing the agent link (agent on another machine)
+
+The default test instance shares a folder between server and desktop, so it uses the Unix socket. To check the outbound link, run a **second compose project** (own name and ports; do not touch
+`julos-dev`) whose server does **not** share the folder (`JULOS_AGENT_SOCKET` pointing nowhere, no shared volume) and whose `rdp-target` has none either:
+
+1. start it, set up a throwaway account, add a desktop connection to `rdp-target`, connect once (this starts the agent in socket mode);
+2. in the connection dialog choose **Agent einrichten**; in the desktop container, as the desktop user and with `DISPLAY=:10`, download the files from `http://<server>:8080/agent-files/` and run
+   `bash install-linux-agent.sh --server http://<server>:8080 --code CODE --allow-http` (`--allow-http` is only for this plain-HTTP test network);
+3. reconnect in the browser: the window bar, the launcher, the photo button and "Bild aus der VM holen" now work over the link; the dialog shows **Verbunden**.
+
+`AgentLinkTests` (enrolment, tokens, routing, transfers with a fake agent in memory) run with `deploy/dev/test.sh`.
+
 ## First start and accounts on the test instance
 
 On a fresh database the server logs a one-time **setup code**:
@@ -85,7 +97,7 @@ dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj    # 
 | `JULOS_DB` | PostgreSQL connection string (required) |
 | `JULOS_GUACD` | `host:port` of guacd, default `guacd:4822` |
 | `JULOS_ALLOWED_HOSTS` | optional comma-separated list of hosts the signed-in user may connect to; empty means any host the server can reach |
-| `JULOS_AGENT_SOCKET` | Unix socket of the agent, default `/uploads/.agent/agent.sock` |
+| `JULOS_AGENT_SOCKET` | Unix socket of the agent on the same machine, default `/uploads/.agent/agent.sock` (agents on other machines connect outbound, no setting needed; see AGENT_API.md) |
 | `JULOS_UPLOAD_DIR` | shared folder for photo uploads, default `/uploads`; its disk is the one the system overview shows |
 | `JULOS_FILES_ROOT` | the one folder the read-only file browser shows, default `JULOS_UPLOAD_DIR`; `off` disables the file browser |
 | `JULOS_SETUP_CODE` | optional fixed setup code (otherwise a random one is logged while no account exists) |

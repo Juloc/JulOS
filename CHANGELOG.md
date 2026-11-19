@@ -4,6 +4,16 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unreleased]
+
+### Neu
+- Der Agent meldet sich von der Ziel-Maschine aus beim Server (WebSocket über HTTPS, ausgehend): Fensterleiste, Programmstart sowie Foto-, Datei- und Zwischenablage-Übertragung gehen jetzt auch, wenn der Server auf einem anderen Rechner läuft.
+- „Agent einrichten“ und „Agent entfernen“ im Verbindungsdialog: einmaliger Code (10 Minuten) und fertige Befehle für das Ziel; Status je Verbindung (verbunden, getrennt, Version).
+- Der Agent bleibt eine einzige Python-Datei ohne Zusatzpakete; der Unix-Socket-Weg für denselben Rechner funktioniert weiter.
+
+### Geändert
+- Die Aufrufe der App an Agent, Foto-Upload, Datei-Upload und „Bild aus der VM holen“ nennen die Verbindung (`?c=`); ohne Angabe gilt wie bisher der lokale Socket.
+
 ## [0.2.0] - 2026-11-19
 
 ### Neu

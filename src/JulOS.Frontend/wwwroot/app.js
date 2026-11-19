@@ -265,6 +265,8 @@ const DEFAULT_ROWS = [
     ACT('zoom_out', 'zoomout'), ACT('zoom_in', 'zoomin'), ACT('fullscreen', 'fullscreen'), ACT('more', 'menu'),
     ACT('expand_less', 'expand'), ACT('keyboard', 'keyboard') ] },
 ];
+// Namen der Symbol-Tasten der Leiste (Schluessel); "expand" waehlt je nach Zustand
+const ACT_NAME = { zoomout: tk('app.actZoomOut'), zoomin: tk('app.actZoomIn'), fullscreen: tk('app.actFullscreen'), menu: tk('app.actMenu'), expand: 'expand', keyboard: tk('app.actKeyboard') };
 const clone = (o) => JSON.parse(JSON.stringify(o));
 /** Standardtitel der Gruppen und Standardbeschriftungen der Tasten: gespeichert (lokal und auf dem Server) steht der deutsche Text; angezeigt wird er in der Sprache der
     Oberflaeche, aber nur, wenn er genau dem Standard entspricht (eigene Beschriftungen bleiben, wie sie sind). */
@@ -1371,7 +1373,11 @@ export class RemoteSession extends Session {
       if (this.actOn[act]) b.classList.add('on');
       if (act === 'sessions' && Sessions.count > 1) b.dataset.badge = String(Sessions.count);
     }
-    if (isIcon && ICONS[icon]) { b.innerHTML = ico(icon); b.classList.add('ic'); } else b.textContent = keyLabel(def.label);
+    if (isIcon && ICONS[icon]) {
+      b.innerHTML = ico(icon); b.classList.add('ic');
+      const name = def.type === 'action' ? ACT_NAME[String(def.value).toLowerCase()] : null;          // Symbole brauchen einen Namen (Vorlesen, Tooltip)
+      if (name) { const text = t(name === 'expand' ? (S.expanded ? tk('app.actCollapse') : tk('app.actExpand')) : name); b.setAttribute('aria-label', text); b.title = text; }
+    } else b.textContent = keyLabel(def.label);
     b.dataset.r = String(r); b.dataset.i = String(i);
     if (def.type === 'mod') b.dataset.mod = MODNAME[String(def.value).toLowerCase()] || '';
     b.addEventListener('click', () => {
@@ -1386,7 +1392,8 @@ export class RemoteSession extends Session {
     wrap.className = 'row ' + (bar ? 'bar' : 'grp') + (S.editing ? ' editing' : '');
     const rk = document.createElement('div'); rk.className = 'rk'; rk.dataset.r = String(r);
     if (label && !bar) { const t = document.createElement('div'); t.className = 'gt'; t.textContent = rowTitle(row); rk.appendChild(t); }
-    row.items.forEach((def, i) => { if (S.editing || keyInScope(def, this.kind === 'vnc' ? 'desktop' : this.kind)) rk.appendChild(this.keyEl(def, r, i)); });
+    // Im Terminal hat die Eingabeleiste (terminal-input.js) Esc, Tab und Strg+C selbst: die Leiste der Fernsteuerung zeigt dort nur ihre Symbol-Tasten
+    row.items.forEach((def, i) => { if (S.editing || (keyInScope(def, this.kind === 'vnc' ? 'desktop' : this.kind) && !(bar && this.kind === 'terminal' && def.type !== 'action'))) rk.appendChild(this.keyEl(def, r, i)); });
     if (S.editing) {
       const add = document.createElement('div'); add.setAttribute('role', 'button'); add.className = 'k add'; add.innerHTML = ico('add') + `<span>${t('app.key')}</span>`;
       add.addEventListener('click', () => openKeyEditor(r, -1)); rk.appendChild(add);

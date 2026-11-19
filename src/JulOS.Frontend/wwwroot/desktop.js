@@ -1,5 +1,6 @@
 import { remoteApi, getScheme, setTheme, setLanguage } from './app.js';
 import { SCHEMES } from './scheme.js';
+import { GROUPS, rowsFor, aboutValues } from './settings.js';
 import { Sessions } from './sessions.js';
 import { looksLikeAddress } from './quick.js';
 import { filterByFolder, groupByFolder, recentList, folderIconSvg, folderName, setFavorite } from './folders.js';
@@ -928,17 +929,44 @@ function renderAppsView(m) {
   m.innerHTML = `<h3 style="margin-top:14px">${t('desktop.apps')}</h3><div class="dk-grid">${shownApps().map((a) => `<button type="button" class="dk-b dk-app" data-app="${a.id}"${a.soon ? ` aria-disabled="true" title="${t('desktop.soonTitle')}"` : ''}>${tile(a.g, a.ic)}<span class="dk-n">${a.name}</span>${a.soon ? `<span class="dk-tag">${t('desktop.soon')}</span>` : ''}</button>`).join('')}</div>
     <p class="dk-lead">${t('desktop.appsGrayed')}</p>`;
 }
+/* Einstellungen: dieselben Gruppen wie am Handy (settings.js); die Angaben des Servers (Version, Backup) kommen von /api/about */
+let aboutCache = null, aboutAt = 0;
+const dkChoice = (attr, opts, cur, label) => `<span class="dk-btns" role="group" aria-label="${ctx.esc(label)}">${opts.map(([id, l]) => `<button type="button" class="dk-b dk-btn${id === cur ? ' pri' : ''}" data-${attr}="${id}" aria-pressed="${id === cur}">${l}</button>`).join('')}</span>`;
+function dkSettingRow(r, ab) {
+  const label = t(r.label); let help = t(r.help), ctl = '';
+  switch (r.id) {
+    case 'user': ctl = `<b>${ctx.esc(ctx.state.user || '')}</b>`; break;
+    case 'scheme': ctl = dkChoice('scheme', SCHEMES, getScheme(), label); break;
+    case 'lang': ctl = dkChoice('lang', LANG_CHOICES.map(([id, l]) => [id, id === 'system' ? t('lang.system') : l]), getPref(), label); break;
+    case 'dock': ctl = dkChoice('dockmode', DOCK_MODES, dockMode, label); break;
+    case 'backup': case 'backupCopy': {
+      const info = r.id === 'backup' ? ab.backup : ab.copy; if (!info) return '';
+      if (!info.next && !info.details) help = info.line;
+      ctl = `<span class="dk-tag dk-t-${info.tone}">${ctx.esc(info.chip)}</span>`; break;
+    }
+    case 'version': case 'build': case 'transfer': { const v = ab[r.id]; if (!v && r.optional) return ''; ctl = `<span class="dk-val">${ctx.esc(v || t('common.loading'))}</span>`; break; }
+    case 'licenses': ctl = `<a class="dk-btn" href="/licenses.txt" target="_blank" rel="noopener" aria-label="${ctx.esc(label + ': ' + t(r.action))}">${t(r.action)}</a>`; break;
+    case 'source': if (!ab.repository) return ''; ctl = `<a class="dk-btn" href="${ctx.esc(ab.repository)}" target="_blank" rel="noopener" aria-label="${ctx.esc(label + ': ' + t(r.action))}">${t(r.action)}</a>`; break;
+    default: if (r.ctl === 'button') ctl = `<button type="button" class="dk-b dk-btn${r.danger ? ' dk-danger' : ''}" data-act="${r.id === 'password' ? 'account' : r.id}" aria-label="${ctx.esc(label + ': ' + t(r.action))}">${t(r.action)}</button>`;
+  }
+  return `<div class="dk-srow"><div class="dk-st"><b>${ctx.esc(label)}</b><i>${ctx.esc(help)}</i></div>${ctl ? `<div class="dk-sc">${ctl}</div>` : ''}</div>`;
+}
+const dkBackupNotes = (ab) => [ab.backup, ab.copy].filter((i) => i && (i.next || i.details)).map((i) => `<div class="dk-msg dk-t-${i.tone}" role="${i.tone === 'error' ? 'alert' : 'status'}"><b>${ctx.esc(i.line)}</b>${i.next ? `<span>${ctx.esc(i.next)}</span>` : ''}${i.details ? `<details><summary>${t('set.details')}</summary><pre>${ctx.esc(i.details)}</pre></details>` : ''}</div>`).join('');
 function renderSettings(m) {
-  m.innerHTML = `<h3 style="margin-top:14px">${t('desktop.settings')}</h3>
-    <div class="dk-card"><h4>${t('desktop.account')}</h4><p>${t('desktop.signedInAs', { user: `<b>${ctx.esc(ctx.state.user || '')}</b>` })}</p>
-      <div class="dk-btns"><button type="button" class="dk-b dk-btn" data-act="account">${ic('key')}${t('desktop.passwordAuth')}</button><button type="button" class="dk-b dk-btn" data-act="devices">${ic('shield')}${t('desktop.devices')}</button><button type="button" class="dk-b dk-btn" data-act="signout">${ic('power')}${t('desktop.signOut')}</button></div></div>
-    <div class="dk-card"><h4>${t('desktop.remoteControl')}</h4><p>${t('desktop.remoteControlText')}</p></div>
-    <div class="dk-card"><h4>${t('desktop.dock')}</h4><p>${t('desktop.dockText')}</p>
-      <div class="dk-btns">${DOCK_MODES.map(([id, label]) => `<button type="button" class="dk-b dk-btn${id === dockMode ? ' pri' : ''}" data-dockmode="${id}" aria-pressed="${id === dockMode}">${label}</button>`).join('')}</div></div>
-    <div class="dk-card"><h4>${t('desktop.appearance')}</h4><p>${t('desktop.appearanceText')}</p>
-      <div class="dk-btns" role="group" aria-label="${t('desktop.appearance')}">${SCHEMES.map(([id, label]) => `<button type="button" class="dk-b dk-btn${id === getScheme() ? ' pri' : ''}" data-scheme="${id}" aria-pressed="${id === getScheme()}">${label}</button>`).join('')}</div></div>
-    <div class="dk-card"><h4>${t('lang.title')}</h4><p>${t('lang.text')}</p>
-      <div class="dk-btns" role="group" aria-label="${t('lang.title')}">${LANG_CHOICES.map(([id, label]) => `<button type="button" class="dk-b dk-btn${id === getPref() ? ' pri' : ''}" data-lang="${id}" aria-pressed="${id === getPref()}">${id === 'system' ? t('lang.system') : label}</button>`).join('')}</div></div>`;
+  const ab = aboutValues(aboutCache);
+  m.innerHTML = `<h3 style="margin-top:14px">${t('desktop.settings')}</h3>${GROUPS.map((g) => {
+    const rows = rowsFor(g, 'desktop').map((r) => dkSettingRow(r, ab)).filter(Boolean);
+    if (!rows.length) return '';
+    return `<section class="dk-sg${g.danger ? ' dk-danger-zone' : ''}" aria-labelledby="dk-set-${g.id}"><h4 id="dk-set-${g.id}">${ctx.esc(t(g.title))}</h4><p class="dk-sh">${ctx.esc(t(g.help))}</p><div class="dk-card dk-rows">${rows.join('')}</div>${g.id === 'backup' ? dkBackupNotes(ab) : ''}</section>`;
+  }).join('')}`;
+  if (!aboutCache || Date.now() - aboutAt > 60000) {
+    aboutAt = Date.now();
+    ctx.api('/api/about').then((a) => {
+      aboutCache = a;
+      const w = wins.get('home'); if (!w || nav.view !== 'einstellungen') return;
+      const top = w.main.scrollTop; renderHome(); w.main.scrollTop = top;
+    }, () => { /* ohne Angaben bleiben die Werte leer */ });
+  }
 }
 function onMainClick(e) {
   const t = e.target.closest('[data-conn],[data-edit],[data-extra],[data-act],[data-go],[data-app],[data-dockmode],[data-scheme],[data-lang],[data-hostfilter],[data-folderfilter],[data-groupby],[data-fav],[data-hostedit],[data-hostagent]'); if (!t) return;
@@ -962,6 +990,7 @@ function onMainClick(e) {
   else if (t.dataset.act === 'add') ctx.add();
   else if (t.dataset.act === 'quick') ctx.quick();
   else if (t.dataset.act === 'devices') ctx.devices();
+  else if (t.dataset.act === 'nettools') ctx.nettools();
   else if (t.dataset.act === 'account') ctx.account();
   else if (t.dataset.act === 'signout') ctx.signOut();
   else if (t.dataset.act === 'settings') goto('einstellungen');

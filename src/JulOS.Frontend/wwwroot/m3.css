@@ -51,7 +51,7 @@
 
   /* Formen: Skala, dazu die "expressiven" groesseren Radien fuer Kacheln und Karten */
   --m3-shape-xs: 4px; --m3-shape-sm: 8px; --m3-shape-md: 12px; --m3-shape-lg: 16px; --m3-shape-xl: 28px; --m3-shape-full: 999px;
-  --m3-shape-tile: 22px; --m3-shape-card: 26px; --m3-shape-sheet: 28px;
+  --m3-shape-tile: 20px; --m3-shape-card: 20px; --m3-shape-sheet: 28px;
 
   /* Typografie (M3-Skala, kompakt). Systemschrift, keine Webfonts. */
   --m3-font: "Roboto Flex", Roboto, "Google Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -72,6 +72,9 @@
   --m3-ease-accel: cubic-bezier(.3, 0, .8, .15);
   --m3-ease-std: cubic-bezier(.2, 0, 0, 1);
   --m3-dur-short: 150ms; --m3-dur-medium: 250ms; --m3-dur-long: 400ms;
+
+  /* Abstaende: nur diese Stufen (4, 8, 12, 16, 24); Seitenrand --m3-pad */
+  --m3-sp-1: 4px; --m3-sp-2: 8px; --m3-sp-3: 12px; --m3-sp-4: 16px; --m3-sp-5: 24px;
 
   /* Dichte: kompakt */
   --m3-touch: 44px;          /* kleinste Tippflaeche */
@@ -100,7 +103,7 @@
 .mb > :not(.rip) { position: relative; }
 
 /* Tasten: gefuellt, getont, umrandet, Text */
-.m3-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 40px; padding: 0 20px; border-radius: var(--m3-shape-full); font: var(--m3-label-l); letter-spacing: .1px; white-space: nowrap; transition: border-radius var(--m3-dur-medium) var(--m3-ease), box-shadow var(--m3-dur-short); }
+.m3-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: var(--m3-touch); padding: 0 20px; border-radius: var(--m3-shape-full); font: var(--m3-label-l); letter-spacing: .1px; white-space: nowrap; transition: border-radius var(--m3-dur-medium) var(--m3-ease), box-shadow var(--m3-dur-short); }
 .m3-btn svg { width: 18px; height: 18px; }
 .m3-btn:active { border-radius: var(--m3-shape-lg); }  /* Expressive: die Taste "formt" sich beim Druck */
 .m3-btn.filled { background: var(--m3-primary); color: var(--m3-on-primary); }
@@ -109,23 +112,24 @@
 .m3-btn.text { color: var(--m3-primary); padding: 0 12px; }
 .m3-btn.danger { background: var(--m3-error-container); color: var(--m3-on-error-container); }
 .m3-btn.block { width: 100%; }
-.m3-btn.big { height: 48px; }
-.m3-iconbtn { width: 40px; height: 40px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: var(--m3-on-surface-variant); }
+.m3-btn.big { height: 52px; }
+a.m3-btn { text-decoration: none; }
+.m3-btn.sm { padding: 0 var(--m3-sp-4); }   /* kompakt in Zeilen; die Hoehe bleibt die Tippflaeche (44 px) */
+.m3-iconbtn { width: var(--m3-touch); height: var(--m3-touch); border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: var(--m3-on-surface-variant); }
 .m3-iconbtn.tonal { background: var(--m3-surface-container); color: var(--m3-on-surface-variant); }
-/* Tippflaeche mindestens 44 px, auch wenn die Taste kleiner aussieht */
-.m3-iconbtn::after, .m3-chip::after { content: ""; position: absolute; inset: -3px; }
 
 /* Chips (Filter): Haken im gewaehlten Zustand */
-.m3-chip { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: var(--m3-shape-md); font: var(--m3-label-l); color: var(--m3-on-surface-variant);
+.m3-chip { display: inline-flex; align-items: center; gap: 6px; height: var(--m3-touch); padding: 0 14px; border-radius: var(--m3-shape-md); font: var(--m3-label-l); color: var(--m3-on-surface-variant);
   box-shadow: inset 0 0 0 1px var(--m3-outline-variant); background: var(--m3-glass); flex: 0 0 auto; transition: background var(--m3-dur-short), color var(--m3-dur-short), border-radius var(--m3-dur-medium) var(--m3-ease); }
 .m3-chip svg { width: 18px; height: 18px; }
 .m3-chip[aria-pressed="true"], .m3-chip[aria-checked="true"], .m3-chip.sel { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); box-shadow: none; border-radius: var(--m3-shape-full); }
 .m3-chip.status { height: 32px; padding: 0 12px 0 10px; border-radius: var(--m3-shape-full); background: var(--m3-glass-strong); box-shadow: inset 0 0 0 1px var(--m3-glass-edge); color: var(--m3-on-surface); font: var(--m3-label-m); }
 .m3-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--m3-primary); flex: 0 0 auto; }
 .m3-dot.ok { background: var(--m3-ok); }
+.m3-dot.bad { background: var(--m3-error); }
 
 /* Segmentierte Tasten (ersetzen select bei wenigen Optionen) */
-.m3-seg { display: flex; height: 40px; border-radius: var(--m3-shape-full); border: 1px solid var(--m3-outline); overflow: hidden; }
+.m3-seg { display: flex; height: calc(var(--m3-touch) + 2px); border-radius: var(--m3-shape-full); border: 1px solid var(--m3-outline); overflow: hidden; }
 .m3-seg .mb { flex: 1 1 0; display: flex; align-items: center; justify-content: center; gap: 6px; font: var(--m3-label-l); color: var(--m3-on-surface); padding: 0 8px; min-width: 0; transition: background var(--m3-dur-short), color var(--m3-dur-short); }
 .m3-seg .mb + .mb { box-shadow: inset 1px 0 0 var(--m3-outline); }
 .m3-seg .mb { font-size: .8125rem; line-height: 1.1; text-align: center; }
@@ -160,14 +164,6 @@
 .m3-li > svg { color: var(--m3-on-surface-variant); }
 .m3-li + .m3-li { box-shadow: inset 0 1px 0 var(--m3-outline-variant); }
 .m3-li.static { cursor: default; }
-
-/* FAB, erweitert: schrumpft beim Scrollen */
-.m3-fab { position: absolute; right: 16px; bottom: calc(var(--m3-nav-h) + 16px); z-index: 4; display: inline-flex; align-items: center; justify-content: center; gap: 12px; height: 56px; min-width: 56px; padding: 0 20px 0 16px; border-radius: 18px;
-  background: var(--m3-primary-container); color: var(--m3-on-primary-container); box-shadow: var(--m3-elev-3); font: var(--m3-label-l); letter-spacing: .1px; transition: padding var(--m3-dur-medium) var(--m3-ease), gap var(--m3-dur-medium) var(--m3-ease), transform var(--m3-dur-medium) var(--m3-ease), opacity var(--m3-dur-short); }
-.m3-fab .fl { display: inline-block; max-width: 140px; overflow: hidden; white-space: nowrap; transition: max-width var(--m3-dur-medium) var(--m3-ease), opacity var(--m3-dur-short); }
-.m3-fab.small { padding: 0 16px; gap: 0; }
-.m3-fab.small .fl { max-width: 0; opacity: 0; }
-.m3-fab.gone { transform: scale(.6) translateY(24px); opacity: 0; pointer-events: none; }
 
 /* Navigationsleiste: Pille hinter dem gewaehlten Symbol */
 .m3-nav { display: flex; height: var(--m3-nav-h); flex: 0 0 auto; background: var(--m3-glass-strong); backdrop-filter: blur(20px) saturate(1.4); -webkit-backdrop-filter: blur(20px) saturate(1.4);
@@ -204,7 +200,7 @@ dialog.m3sheet:not([open])::backdrop { opacity: 0; }
 dialog.m3sheet::before { content: ""; position: absolute; left: 50%; top: 8px; width: 32px; height: 4px; margin-left: -16px; border-radius: 2px; background: var(--m3-outline); opacity: .6; }
 dialog.m3sheet.dragging { transition: none; }
 dialog.m3sheet h2 { margin: 0 0 14px; font: var(--m3-title-l); }
-dialog.m3sheet .hint { font: var(--m3-body-s); color: var(--m3-on-surface-variant); margin: 2px 4px 10px; }
+dialog.m3sheet .hint { font: var(--m3-body-s); color: var(--m3-on-surface-variant); margin: 0 0 var(--m3-sp-3); }
 dialog.m3sheet .msg { font: var(--m3-body-s); min-height: 0; margin: 0 4px 6px; }
 dialog.m3sheet .msg:empty { display: none; }
 dialog.m3sheet .msg.ok { color: var(--m3-primary); }
@@ -236,11 +232,103 @@ dialog.m3sheet .dev { background: var(--m3-surface-highest); border-radius: var(
 dialog.m3sheet .dev span { font: var(--m3-body-s); color: var(--m3-on-surface-variant); }
 dialog.m3sheet .dev.current { box-shadow: inset 0 0 0 2px var(--m3-primary); }
 
+
+/* ===================================================================================================
+ * Komponentenblatt: die Bausteine, aus denen jede Seite der Handy-Oberflaeche besteht (lebende Seite: docs/ui-kit.html).
+ * Ueberschrift der Seite (.m3-h), Abschnitt (.m3-sec mit .m3-help), Karte (.m3-card) mit Zeilen (.m3-row, .m3-li), Kacheln (.tile),
+ * Tasten (.m3-btn filled / tonal / text), Chips, Schalter, Leerzustand (.m3-empty), Meldung (.m3-msg), Sheet (dialog.m3sheet).
+ * Abstaende nur --m3-sp-*, Farben nur --m3-*, Schriften nur --m3-<stufe>. Eine neue Seite baut nur daraus, kein eigener Wert.
+ * =================================================================================================== */
+.m3-h { margin: var(--m3-sp-2) var(--m3-sp-1) var(--m3-sp-4); }
+.m3-h h1 { margin: 0; font: var(--m3-headline-m); letter-spacing: -.2px; }
+.m3-h p { margin: var(--m3-sp-1) 0 0; font: var(--m3-body-m); color: var(--m3-on-surface-variant); }
+.m3-sec { display: flex; align-items: center; gap: var(--m3-sp-2); margin: var(--m3-sp-5) var(--m3-sp-1) var(--m3-sp-2); min-height: 32px; font: var(--m3-title-m); color: var(--m3-on-surface); }
+.m3-sec svg { width: 20px; height: 20px; fill: currentColor; color: var(--m3-primary); flex: 0 0 auto; }
+.m3-sec .sp { flex: 1; }
+.m3-h .m3-h-top { display: flex; align-items: center; justify-content: space-between; gap: var(--m3-sp-3); min-height: 40px; }
+.m3-h .m3-h-top .m3-btn { flex: 0 0 auto; }
+.m3-sec .m3-btn.text { margin: -6px 0; padding: 0 var(--m3-sp-2) 0 var(--m3-sp-3); font: var(--m3-label-m); color: var(--m3-primary); }
+.m3-sec .m3-btn.text svg { width: 16px; height: 16px; }
+.m3-help { margin: calc(-1 * var(--m3-sp-1)) var(--m3-sp-1) var(--m3-sp-2); font: var(--m3-body-s); color: var(--m3-on-surface-variant); }
+
+/* Zeile mit Beschriftung, kurzer Erklaerung und genau einem Bedienelement (Taste, Schalter, Auswahl, Wert) */
+.m3-rows { overflow: hidden; }
+.m3-row { display: flex; align-items: center; gap: var(--m3-sp-4); min-height: 56px; padding: var(--m3-sp-3) var(--m3-sp-4); width: 100%; color: var(--m3-on-surface); text-align: left; }
+.m3-row + .m3-row { box-shadow: inset 0 1px 0 var(--m3-outline-variant); }
+.m3-row .rt { flex: 1; min-width: 0; font: var(--m3-title-s); overflow-wrap: anywhere; }
+.m3-row .rt small { display: block; margin-top: 2px; font: var(--m3-body-s); color: var(--m3-on-surface-variant); }
+.m3-row .rc { flex: 0 0 auto; max-width: 55%; display: flex; align-items: center; justify-content: flex-end; }
+.m3-row .rv { font: var(--m3-label-l); color: var(--m3-on-surface-variant); text-align: right; overflow-wrap: anywhere; }
+.m3-row.stack { flex-direction: column; align-items: stretch; gap: var(--m3-sp-3); }
+.m3-row.stack .rc { max-width: none; justify-content: stretch; }
+.m3-row.stack .rc > * { flex: 1 1 auto; }
+.m3-row.tap { cursor: pointer; }           /* die ganze Zeile ist die Taste (Schalter) */
+.m3-row .m3-chip.status { height: 32px; }
+.m3-row.bad .rt small { color: var(--m3-error); }
+.m3-sw { width: 52px; height: 32px; border-radius: var(--m3-shape-full); background: var(--m3-surface-highest); box-shadow: inset 0 0 0 2px var(--m3-outline); position: relative; flex: 0 0 auto; transition: background var(--m3-dur-short), box-shadow var(--m3-dur-short); }
+.m3-sw::after { content: ""; position: absolute; left: 8px; top: 8px; width: 16px; height: 16px; border-radius: 50%; background: var(--m3-outline); transition: all var(--m3-dur-medium) var(--m3-ease); }
+[aria-checked="true"] > .rc > .m3-sw, [aria-checked="true"] > .m3-sw { background: var(--m3-primary); box-shadow: none; }
+[aria-checked="true"] > .rc > .m3-sw::after, [aria-checked="true"] > .m3-sw::after { left: 24px; top: 4px; width: 24px; height: 24px; background: var(--m3-on-primary); }
+
+/* Hauptzeile: die eine grosse Aktion einer Seite (Start: "Weiter" mit der zuletzt benutzten Verbindung) */
+.m3-main { display: flex; align-items: center; gap: var(--m3-sp-4); width: 100%; min-height: 88px; padding: var(--m3-sp-4); border-radius: var(--m3-shape-card); background: var(--m3-primary-container); color: var(--m3-on-primary-container); text-align: left; box-shadow: var(--m3-elev-1); }
+.m3-main .ti { flex: 0 0 auto; width: 48px; height: 48px; border-radius: 16px; display: flex; align-items: center; justify-content: center; background: color-mix(in oklab, var(--m3-on-primary-container) 12%, transparent); }
+.m3-main .ti svg { width: 26px; height: 26px; }
+.m3-main .tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.m3-main .cl { font: var(--m3-label-m); letter-spacing: .4px; text-transform: uppercase; }
+.m3-main .cn { font: var(--m3-title-l); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m3-main .th { display: flex; align-items: center; gap: 6px; font: var(--m3-body-s); min-width: 0; }
+.m3-main .th > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m3-main .hdot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; }
+.m3-main .go { flex: 0 0 auto; width: var(--m3-touch); height: var(--m3-touch); border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--m3-primary); color: var(--m3-on-primary); }
+.m3-main .go svg { width: 24px; height: 24px; }
+
+/* Leerzustand: ein Symbol, ein Satz, eine Taste */
+.m3-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--m3-sp-2); padding: var(--m3-sp-5) var(--m3-sp-4); color: var(--m3-on-surface-variant); font: var(--m3-body-m); }
+.m3-empty .ei { width: 52px; height: 52px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--m3-primary-container); color: var(--m3-on-primary-container); }
+.m3-empty .ei svg { width: 26px; height: 26px; }
+.m3-empty.inline { flex-direction: row; text-align: left; gap: var(--m3-sp-4); padding: var(--m3-sp-4); }
+.m3-empty.inline .ei { flex: 0 0 auto; }
+.m3-empty .et { font: var(--m3-title-m); color: var(--m3-on-surface); }
+.m3-empty p { margin: 0; max-width: 28em; }
+.m3-empty .m3-btn { margin-top: var(--m3-sp-2); }
+
+/* Meldung: ein kurzer Satz, was zu tun ist, Technisches hinter "Details" */
+.m3-msg { display: flex; gap: var(--m3-sp-3); align-items: flex-start; padding: var(--m3-sp-3) var(--m3-sp-4); border-radius: var(--m3-shape-md); font: var(--m3-body-m); background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
+.m3-msg .msg-i { flex: 0 0 auto; display: flex; padding-top: 1px; }
+.m3-msg .msg-i svg { width: 20px; height: 20px; }
+.m3-msg .msg-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--m3-sp-1); }
+.m3-msg .msg-t b { font: var(--m3-title-s); }
+.m3-msg details { font: var(--m3-body-s); }
+.m3-msg summary { cursor: pointer; min-height: var(--m3-touch); display: flex; align-items: center; font: var(--m3-label-m); text-decoration: underline; list-style: none; }
+.m3-msg summary::-webkit-details-marker { display: none; }
+.m3-msg pre { margin: 0 0 var(--m3-sp-1); white-space: pre-wrap; overflow-wrap: anywhere; font: var(--m3-body-s); font-family: ui-monospace, "Roboto Mono", monospace; }
+.m3-msg .m3-btn { align-self: flex-start; }
+.m3-msg.ok { background: color-mix(in oklab, var(--m3-ok) 16%, var(--m3-surface-lowest)); color: var(--m3-on-surface); }
+.m3-msg.ok .msg-i { color: var(--m3-ok); }
+.m3-msg.warn { background: var(--m3-tertiary-container); color: var(--m3-on-tertiary-container); }
+.m3-msg.error { background: var(--m3-error-container); color: var(--m3-on-error-container); }
+.m3-btn.sm.tonal.onmsg { background: color-mix(in oklab, currentColor 14%, transparent); color: inherit; }
+
+/* Suchzeile: Suchfeld und Taste "Filter" nebeneinander; gesetzte Filter darunter als Chips zum Entfernen */
+.m3-searchrow { display: flex; gap: var(--m3-sp-2); align-items: center; margin-bottom: var(--m3-sp-3); }
+.m3-searchrow .m3-search { flex: 1 1 auto; min-width: 0; }
+.m3-searchrow .m3-btn { flex: 0 0 auto; padding: 0 var(--m3-sp-4); }
+.m3-count { min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--m3-shape-full); background: var(--m3-primary); color: var(--m3-on-primary); font: var(--m3-label-m); line-height: 20px; text-align: center; }
+.m3-chipset { display: flex; flex-wrap: wrap; gap: var(--m3-sp-2); margin-bottom: var(--m3-sp-3); }
+.m3-chipset:empty, .m3-chipset[hidden] { display: none; }
+dialog.m3sheet .m3-chipset { margin-bottom: var(--m3-sp-2); }
+dialog.m3sheet h3.m3-sec { margin: var(--m3-sp-4) 0 var(--m3-sp-2); font: var(--m3-title-s); }
+
+/* Gefahrenbereich: getrennt am Ende der Seite */
+.m3-danger { margin-top: var(--m3-sp-5); padding-top: var(--m3-sp-2); }
+.m3-danger .m3-sec { color: var(--m3-error); }
+
 @keyframes m3-fade-out { to { opacity: 0; } }
 @keyframes m3-fade-through { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
 @keyframes m3-fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes m3-shell-out { to { opacity: 0; transform: scale(1.04); } }
 @keyframes m3-shell-in { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
-  .m3-fab, .m3-fab .fl, .m3-snack, .m3-nav .pill::before, dialog.m3sheet, dialog.m3sheet::backdrop { transition-duration: .01ms !important; }
+  .m3-snack, .m3-nav .pill::before, dialog.m3sheet, dialog.m3sheet::backdrop { transition-duration: .01ms !important; }
 }

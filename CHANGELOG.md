@@ -4,6 +4,21 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Geändert
+- Handy-Oberfläche und Einstellungen neu gegliedert (Plan und Stand: [docs/MOBILE-UX.md](docs/MOBILE-UX.md)): ein Komponentenblatt als lebende Seite (`docs/ui-kit.html`) mit festen Abständen, Radien, Schriftstufen und Farben aus den Theme-Variablen; alle Seiten benutzen nur diese Bausteine.
+- Einstellungen (Handy: Profil, Desktop: Einstellungen) in Gruppen mit Titel und einer Zeile Hilfe: Konto, Darstellung, Verbindungen, Terminal und Programme, Zwischenablage und Ton, Backup, Über JulOS und Diagnose, Abmelden am Ende; jede Zeile hat Beschriftung, kurze Erklärung und ein Bedienelement. Das Backup zeigt einen Satz mit nächstem Schritt, der Rohtext steht hinter „Details“. Der Schalter „Seiten ohne Daten zeigen“ entfällt.
+- Handy: die Seite „Dienste“ heißt „Verbindungen“ (das Modul der Dienst-Widgets behält den Namen), „Server“ heißt „Hosts“, Monitoring fehlt in der Navigation. Eine Such- und Filterzeile ersetzt die drei Chip-Reihen; Kacheln in zwei Spalten mit Symbol, Name, Statuspunkt und Host; gleiche Namen werden mit Host, Art oder Adresse ergänzt; ein einziger Haupt-Knopf „Neue Verbindung“ (kein schwebender Knopf, keine doppelte Schnellaktion).
+- Handy-Startseite: große Zeile „Weiter“, Favoriten in zwei Spalten, „Programme“ (Claude Code und Codex), eine kleine Server-Zeile statt der großen Karte; das Schlüssel-Symbol der Kachel steht als Text („Passwort gespeichert“) im Kachelmenü.
+- Terminal-Eingabeleiste: eine Zeile mit höchstens sechs beschrifteten Tasten und „Mehr“ (Blatt „Mehr Tasten“ mit allen Tasten und beschrifteten Werkzeugen), „Einfügen“ und „Senden“ mit Text; die allgemeine Tastenleiste wiederholt im Terminal Esc, Strg und Tab nicht mehr. Tasten, Chips und Knöpfe sind 44 px hoch.
+- Verständlichere Texte: „Erkennungsschlüssel des Rechners“ statt „Host-Schlüssel“, „Schnell verbinden“ statt „Quick Connect“, Verbindungsfehler in der Sitzung nennen „Neu verbinden“; bekannte Serverfehler bekommen einen Satz mit dem nächsten Schritt (Deutsch und Englisch). Der Desktop nennt die Verbindungsliste ebenfalls „Verbindungen“.
+
+### Neu
+- Ersthinweis für Claude und Codex im Terminal (einmal, bis „Verstanden“): Adresse öffnen, anmelden, Code einfügen; „Adresse öffnen“ öffnet auf Tipp die letzte https-Adresse im Terminal (auch über umbrochene Zeilen).
+- Alle Symbol-Tasten der Sitzungsleiste haben einen Namen (Vorlesen, Tooltip).
+- Tests: `settings.test.mjs`, `conn-names.test.mjs`, `findLastUrl`, `primaryKeys`, Hinweise zu Serverfehlern; Browser-Test 10 und 11 folgen der neuen Oberfläche. Service Worker `pd-v56`.
+
 ## [0.10.3] - 2026-11-19
 
 ### Behoben

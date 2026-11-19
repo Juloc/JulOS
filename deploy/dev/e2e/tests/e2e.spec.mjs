@@ -196,14 +196,14 @@ test('5 Natives SSH-Terminal zeigt eine Eingabeaufforderung und führt Befehle a
 
 test('6 Handy- und Desktop-Oberfläche laden ohne Konsolenfehler', async ({ browser }) => {
   const checks = [
-    { name: 'phone', url: '/?phone', options: PHONE, root: '#mobile', tile: '#mobile [data-conn]', before: (page) => page.locator('#mobile').getByText('Dienste', { exact: true }).last().click() },
+    { name: 'phone', url: '/?phone', options: PHONE, root: '#mobile', tile: '#mobile [data-conn]', before: (page) => page.locator('#mobile').getByText('Verbindungen', { exact: true }).last().click() },
     { name: 'desktop', url: '/?desktop', options: DESKTOP, root: '#desktop', tile: '#desktop .dk-tile' },
   ];
   for (const c of checks) {
     const { context, page, errors } = await signedIn(browser, c.options);
     await page.goto(c.url);
     await expect(page.locator(c.root), c.name).toBeVisible();
-    if (c.before) await c.before(page);                            // Handy: die Verbindungen stehen unter "Dienste"
+    if (c.before) await c.before(page);                            // Handy: die Verbindungen stehen unter "Verbindungen"
     await expect(page.locator(c.tile).filter({ hasText: DESKTOP_CONN.name }).first(), c.name).toBeVisible();
     await page.waitForLoadState('networkidle');
     expect(errors, c.name).toEqual([]);
@@ -369,7 +369,15 @@ test('10 Programm-Sitzungen: Claude startet im Arbeitsverzeichnis, die Eingabele
   await expect(rows).toContainText('fake-claude-start cwd=/tmp', { timeout: 30_000 });
   await expect(rows).toContainText('claude>');
   await expect(page.locator('.term-bar')).toBeVisible();                                // bei Programmen ist die Eingabeleiste offen
-  for (const key of ['esc', 'shiftTab', 'tab', 'ctrlC', 'ctrlD', 'up', 'down', 'left', 'right', 'pgUp', 'pgDn']) await expect(page.locator(`.term-key[data-key="${key}"]`), key).toBeVisible();
+  // Ersthinweis zur Anmeldung (einmal, bis "Verstanden"), dann wenige Tasten in der Zeile und der Rest im Blatt "Mehr Tasten"
+  await expect(page.locator('.term-tip')).toContainText('meldest du dich');
+  await page.locator('.term-tip .term-act.primary').click();
+  await expect(page.locator('.term-tip')).toHaveCount(0);
+  for (const key of ['esc', 'shiftTab', 'tab', 'ctrlC', 'up', 'down']) await expect(page.locator(`.term-bar .term-key[data-key="${key}"]`), key).toBeVisible();
+  await page.locator('.term-more-btn').click();
+  for (const key of ['esc', 'shiftTab', 'tab', 'ctrlC', 'ctrlD', 'up', 'down', 'left', 'right', 'pgUp', 'pgDn']) await expect(page.locator(`.term-more .term-key[data-key="${key}"]`), key).toBeVisible();
+  await page.locator('.term-more .term-more-done').click();
+  await expect(page.locator('.term-more')).toHaveCount(0);
 
   // Eingabeleiste: Enter sendet, Umschalt+Enter ist eine neue Zeile, der Knopf sendet mehrzeilig, das Feld ist danach leer
   const input = page.locator('.term-input');
@@ -388,7 +396,8 @@ test('10 Programm-Sitzungen: Claude startet im Arbeitsverzeichnis, die Eingabele
   await expect(input).toHaveValue('');
 
   // Schnelltaste: Strg+D beendet das Programm, die Sitzung meldet das Ende (und es gibt kein stilles Neuverbinden)
-  await page.locator('.term-key[data-key="ctrlD"]').click();
+  await page.locator('.term-more-btn').click();
+  await page.locator('.term-more .term-key[data-key="ctrlD"]').click();
   await expect(rows).toContainText('fake-claude-ende');
   await expect(page.locator('.sv-overlay')).toBeVisible();
 
@@ -406,16 +415,17 @@ test('10 Programm-Sitzungen: Claude startet im Arbeitsverzeichnis, die Eingabele
   await context.close();
 });
 
-test('11 Programm-Kacheln am Handy: Symbol und Schnellstart "Claude" in den Diensten', async ({ browser }) => {
+test('11 Programm-Kacheln am Handy: Symbol in den Verbindungen, Schnellstart "Claude" auf der Start-Seite', async ({ browser }) => {
   const { context, page, errors } = await signedIn(browser, PHONE);
   await page.goto('/?phone');
   await expect(page.locator('#mobile')).toBeVisible();
-  await page.locator('#mobile').getByText('Dienste', { exact: true }).last().click();
+  await page.locator('#mobile').getByText('Verbindungen', { exact: true }).last().click();
   const claudeTile = page.locator('#mobile [data-conn]').filter({ hasText: PROG_CLAUDE.name }).first();
   await expect(claudeTile).toBeVisible();
   await expect(claudeTile).toHaveClass(/k-claude/);
   await expect(page.locator('#mobile [data-conn]').filter({ hasText: PROG_CODEX.name }).first()).toHaveClass(/k-codex/);
-  await page.locator('#mobile [data-act="prog"][data-prog="claude"]').click();          // genau eine Kachel: öffnet sie (Passwortdialog)
+  await page.locator('#mobile').getByText('Home', { exact: true }).last().click();
+  await page.locator('#mobile [data-act="prog"][data-prog="claude"]').click();          // Start-Seite, Programme: genau eine Kachel öffnet sie (Passwortdialog)
   await expect(page.locator('#startDlg')).toBeVisible();
   expect(errors).toEqual([]);
   await context.close();

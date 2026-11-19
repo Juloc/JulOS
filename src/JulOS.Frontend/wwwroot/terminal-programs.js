@@ -76,9 +76,18 @@ const PRESETS = {
   shell: ['esc', 'tab', 'shiftTab', 'ctrlC', 'ctrlD', 'up', 'down', 'left', 'right', 'pgUp', 'pgDn'],
 };
 PRESETS.custom = PRESETS.shell;
+// Die Tasten in der Zeile der Leiste (hoechstens sechs, damit sie auf ein Handy passen); alle anderen stehen im Blatt "Mehr Tasten"
+const PRIMARY = {
+  claude: ['esc', 'shiftTab', 'tab', 'ctrlC', 'up', 'down'],
+  codex: ['esc', 'tab', 'ctrlC', 'up', 'down', 'enter'],
+  shell: ['esc', 'tab', 'ctrlC', 'ctrlD', 'up', 'down'],
+};
+PRIMARY.custom = PRIMARY.shell;
 
 /** Die Schnelltasten fuer ein Programm (Liste von {id, label, aria, sym, mods} oder {id, label, aria, text}). */
 export const quickKeys = (program) => (PRESETS[PRESETS[program] ? program : 'shell']).map((id) => KEYS[id]);
+/** Die Tasten fuer die Zeile der Leiste (eine Auswahl aus quickKeys); der Rest steht im Blatt "Mehr Tasten". */
+export const primaryKeys = (program) => (PRIMARY[PRIMARY[program] ? program : 'shell']).map((id) => KEYS[id]);
 
 /* ---------- Hinweise des Servers (Nachricht "Bereit", Feld notice) ---------- */
 const NOTICE_KEYS = {

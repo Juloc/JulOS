@@ -38,27 +38,47 @@
 .sv-terminal .sv-stage { background: var(--m3-surface-lowest, #000); }
 .sv-terminal .mi[data-act="touchMode"], .sv-terminal .mi[data-act="autoPaste"] { display: none; }
 
-/* Eingabeleiste und Schnelltasten (terminal-input.js): unten in der Buehne; das Terminal endet ueber ihr (--term-bar-h misst die Leiste) */
+/* Eingabeleiste und Schnelltasten (terminal-input.js): unten in der Buehne; das Terminal endet ueber ihr (--term-bar-h misst die Leiste).
+ * Zeile 1: wenige Tasten mit kurzer Beschriftung und "Mehr"; Zeile 2: Eingabe, Einfuegen, neue Zeile, Senden. Alle Tasten mindestens 44 px hoch. */
 .sv-terminal .term-host { bottom: var(--term-bar-h, 0px); }
 .term-bar { position: absolute; left: 0; right: 0; bottom: 0; z-index: 12; display: flex; flex-direction: column; gap: 6px; padding: 6px 8px 8px; box-sizing: border-box;
   background: var(--m3-surface-container, #222); color: var(--m3-on-surface, #eee); border-top: 1px solid var(--m3-outline-variant, #444); font: 400 .9rem/1.3 system-ui, sans-serif; touch-action: manipulation; }
 .term-bar[hidden], .term-handle[hidden] { display: none; }
 .term-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.term-keys { display: flex; flex: 1; gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
-.term-keys::-webkit-scrollbar { display: none; }
-.term-tools { display: flex; gap: 2px; flex: none; margin-left: 6px; padding-left: 8px; border-left: 1px solid var(--m3-outline-variant, #555); }
-.term-bar button { flex: none; min-width: 40px; min-height: 40px; padding: 0 10px; border: 0; border-radius: 12px; cursor: pointer; font: 500 .8125rem system-ui, sans-serif;
-  background: var(--m3-surface-highest, #333); color: var(--m3-on-surface, #eee); display: inline-flex; align-items: center; justify-content: center; }
-.term-bar button:active { background: var(--m3-primary-container, #445); }
-.term-bar button svg { width: 22px; height: 22px; }
-.term-bar .term-tool { background: transparent; min-width: 36px; padding: 0 6px; }
-.term-bar .term-tool.txt { font-weight: 600; }
-.term-bar .term-key { font-family: ui-monospace, "DejaVu Sans Mono", monospace; }
+.term-keys { display: flex; flex: 1; gap: 4px; min-width: 0; }
+.term-bar button, .term-more button, .term-tip button { flex: none; min-width: 44px; min-height: 44px; padding: 0 8px; border: 0; border-radius: 12px; cursor: pointer; font: 500 .8125rem system-ui, sans-serif;
+  background: var(--m3-surface-highest, #333); color: var(--m3-on-surface, #eee); display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.term-bar button:active, .term-more button:active, .term-tip button:active { background: var(--m3-primary-container, #445); }
+.term-bar button svg { width: 20px; height: 20px; }
+.term-bar .term-key, .term-more .term-key { font-family: ui-monospace, "DejaVu Sans Mono", monospace; }
+.term-bar .term-more-btn { margin-left: auto; padding: 0 10px 0 12px; background: transparent; box-shadow: inset 0 0 0 1px var(--m3-outline, #777); }
 .term-compose { display: flex; align-items: flex-end; gap: 6px; }
-.term-input { flex: 1; min-width: 0; box-sizing: border-box; min-height: 40px; max-height: 40vh; resize: none; padding: 9px 12px; border: 1px solid var(--m3-outline, #777); border-radius: 14px;
+.term-input { flex: 1; min-width: 0; box-sizing: border-box; min-height: 44px; max-height: 40vh; resize: none; padding: 11px 12px; border: 1px solid var(--m3-outline, #777); border-radius: 14px;
   background: var(--m3-surface-lowest, #111); color: inherit; font: 400 1rem/1.35 system-ui, sans-serif; }
 .term-input:focus { outline: 2px solid var(--m3-primary, #8ab4ff); outline-offset: -1px; }
-.term-bar .term-send { min-width: 48px; background: var(--m3-primary, #8ab4ff); color: var(--m3-on-primary, #000); }
-.term-handle { position: absolute; right: 8px; bottom: 8px; z-index: 12; width: 40px; height: 32px; padding: 0; border: 0; border-radius: 12px; cursor: pointer; opacity: .85;
+.term-bar .term-nl { min-width: 44px; padding: 0; }
+.term-bar .term-send { padding: 0 14px; background: var(--m3-primary, #8ab4ff); color: var(--m3-on-primary, #000); }
+.term-handle { position: absolute; right: 8px; bottom: 8px; z-index: 12; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 12px; cursor: pointer; opacity: .9;
   background: var(--m3-surface-highest, #333); color: var(--m3-on-surface, #eee); display: inline-flex; align-items: center; justify-content: center; }
 .term-handle svg { width: 22px; height: 22px; }
+
+/* Blatt "Mehr Tasten" ueber der Leiste: alle Tasten mit Namen, darunter die Werkzeuge als beschriftete Tasten */
+.term-more { position: absolute; left: 0; right: 0; bottom: var(--term-bar-h, 0px); z-index: 14; max-height: 70%; overflow-y: auto; box-sizing: border-box; padding: 12px; display: flex; flex-direction: column; gap: 12px;
+  background: var(--m3-surface-container, #222); color: var(--m3-on-surface, #eee); border-radius: 20px 20px 0 0; box-shadow: 0 -4px 18px rgb(0 0 0 / .35); font: 400 .9rem/1.3 system-ui, sans-serif; }
+.term-more-h { display: flex; align-items: center; justify-content: space-between; font-size: 1rem; }
+.term-more .term-more-done { background: var(--m3-primary, #8ab4ff); color: var(--m3-on-primary, #000); padding: 0 18px; }
+.term-more-keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.term-more .term-key.big { flex-direction: column; gap: 2px; min-height: 56px; padding: 6px 4px; }
+.term-more .term-key.big b { font-size: 1rem; font-weight: 600; }
+.term-more .term-key.big small { font: 400 .6875rem/1.2 system-ui, sans-serif; text-align: center; color: var(--m3-on-surface-variant, #bbb); }
+.term-more-acts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.term-more .term-act, .term-tip .term-act { padding: 0 12px; }
+
+/* Ersthinweis fuer Claude und Codex (einmal, bis "Verstanden") */
+.term-tip { position: absolute; left: 8px; right: 8px; top: 8px; z-index: 22; box-sizing: border-box; padding: 12px 14px; border-radius: 16px; display: flex; flex-direction: column; gap: 6px;
+  background: var(--m3-inverse-surface, #333); color: var(--m3-inverse-on-surface, #fff); font: 400 .875rem/1.35 system-ui, sans-serif; box-shadow: 0 4px 16px rgb(0 0 0 / .4); }
+.term-tip b { font-size: .9375rem; }
+.term-tip ol { margin: 0; padding-left: 20px; }
+.term-tip-act { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 2px; }
+.term-tip button { background: transparent; color: var(--m3-inverse-primary, #8ab4ff); box-shadow: inset 0 0 0 1px var(--m3-inverse-primary, #8ab4ff); }
+.term-tip button.primary { background: var(--m3-inverse-primary, #8ab4ff); color: var(--m3-inverse-surface, #222); box-shadow: none; }

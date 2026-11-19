@@ -3,7 +3,7 @@
  * Texte einem Schluessel zu (SERVER_TEXTS genau, SERVER_PATTERNS fuer Texte mit eingesetzten Werten). Unbekannte Texte bleiben unveraendert.
  * Der Server aendert dafuer nichts: Verhalten und Statuscodes bleiben, in Deutsch ist alles wie vorher.
  * ===================================================================== */
-import { t, getLang } from './i18n.js';
+import { t, tk, getLang } from './i18n.js';
 
 /** Fester Text des Servers -> Schluessel (Quellen: Error(...)-Antworten in src/JulOS.Frontend, Regelpruefungen in src/JulOS.Backend/Logic, Anmeldung, SSH- und Bildstrom-Meldungen). */
 export const SERVER_TEXTS = {
@@ -170,10 +170,20 @@ export const SERVER_PATTERNS = [
 ];
 
 /** Der Text einer Server-Fehlermeldung in der gewaehlten Sprache; unbekannt oder Deutsch: unveraendert. */
+/** Fehler, bei denen der Nutzer etwas tun kann: der naechste Schritt steht hinter dem Satz des Servers (Schluessel des Servertexts -> Schluessel des Hinweises). */
+export const NEXT_STEP = {
+  'err.connectFailed': tk('next.connect'), 'err.connectTimeout': tk('next.connect'),
+  'err.hostKeyChanged': tk('next.hostKeyChanged'), 'err.hostKeyNotTrusted': tk('next.hostKeyNotTrusted'),
+  'err.notSignedIn': tk('next.signIn'), 'err.codeInvalid': tk('next.code'),
+  'err.dnsFail': tk('next.dns'), 'err.noTarget': tk('next.pickConnection'),
+  'err.clipNoSpace': tk('next.space'), 'err.clipWriteFail': tk('next.space'), 'err.imageTooBig': tk('next.smaller'), 'err.imageTooBig2': tk('next.smaller'),
+};
 export function serverMsg(text) {
-  if (typeof text !== 'string' || !text || getLang() === 'de') return text;
+  if (typeof text !== 'string' || !text) return text;
   const key = SERVER_TEXTS[text];
-  if (key) return t(key) || text;
+  const hint = key && NEXT_STEP[key] ? ' ' + t(NEXT_STEP[key]) : '';
+  if (getLang() === 'de') return text + hint;
+  if (key) return (t(key) || text) + hint;
   for (const [re, k, names] of SERVER_PATTERNS) {
     const m = re.exec(text);
     if (m) { const p = {}; (names || []).forEach((n, i) => { p[n] = m[i + 1]; }); return t(k, p) || text; }

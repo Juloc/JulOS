@@ -114,6 +114,10 @@ numbers use `Intl` with `de-DE` or `en-GB` (`fmtDate`, `fmtTime`, `fmtDay`, `fmt
 
 `deploy/dev/test-display.sh` runs `tests/JulOS.Display.Tests` in an SDK container on the test network (`JULOS_DEV_NET` names another compose project's network, for example `julos-xyz_default`). The integration tests (`ScreenStreamTests`) are skipped without `JULOS_TEST_RDP_HOST`; the script sets it and also plays a tone and records the microphone in the desktop in the background, which the sound test (PCM blocks arrive, loud enough) and the microphone test (a 600 Hz tone sent as the browser would arrives in the recording) check. Close any browser tab connected to the same desktop first: a second client takes the xrdp session over.
 
+## VNC tests
+
+`deploy/dev/test-vnc.sh` runs the VNC tests of `tests/JulOS.Display.Tests` against throwaway TigerVNC servers: two containers of `deploy/dev/vnc-target` (Xvnc, openbox, xterm, a probe window that logs keys and clicks, a clipboard probe; one with the VNC password, one with VeNCrypt and a certificate) in a network of their own, with the test password `vnctest1`. Container and network are removed at the end; the test instance (`deploy/dev/up.sh`) is not needed and not touched. Extra arguments go to `dotnet test` (default: the namespace `JulOS.Integrations.Display.Tests.Vnc`). The unit tests of the same namespace need no container and run in `deploy/dev/test-display.sh` as well; the target tests are skipped there (`JULOS_TEST_VNC_HOST` unset). See [VNC.md](VNC.md).
+
 ## Browser tests (real browser, Playwright in Docker)
 
 ```bash

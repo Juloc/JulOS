@@ -131,3 +131,30 @@ test('a folder (kind 3) and a file with a path are begun with the path as name a
   assert.deepEqual(await sending, { code: 2, text: 'Ungültiger Dateiname oder Pfad.' });
   c.disconnect();
 });
+
+// ---- Text: Rueckgabe des Sendens und Nachricht 15 (Diagnose) ----
+
+test('sendClipboardText sagt, was daraus wurde: gesendet, leer, zu lang, ohne Verbindung', () => {
+  const { c, s } = connected();
+  assert.equal(c.sendClipboardText('Hallo ä'), 'sent');
+  assert.deepEqual([...s.sent.at(-1)], [9, ...enc('Hallo ä')]);
+  const n = s.sent.length;
+  assert.equal(c.sendClipboardText(''), 'empty');
+  assert.equal(c.sendClipboardText('x'.repeat(1024 * 1024 + 1)), 'tooLong');
+  assert.equal(c.sendClipboardText('x'.repeat(1024 * 1024)), 'sent');            // genau die Grenze des Servers geht noch
+  assert.equal(s.sent.length, n + 1);
+  c.disconnect();
+  assert.equal(c.sendClipboardText('weg'), 'offline');
+  const fresh = new StreamClient('ws://x/api/remote/screen');
+  assert.equal(fresh.sendClipboardText('nie verbunden'), 'offline');
+});
+
+test('Nachricht 15 kommt als onclipnote mit Kanalstand, Art und Zahl', () => {
+  const { c } = connected();
+  const got = []; c.onclipnote = (n) => got.push(n);
+  c.receive(Uint8Array.of(15, 3, 3, 0, 0, 1, 0x2c).buffer);
+  c.receive(Uint8Array.of(15, 0, 0, 0, 0, 0, 0).buffer);
+  c.receive(Uint8Array.of(15, 1).buffer);                       // zu kurz: ignoriert
+  assert.deepEqual(got, [{ ready: true, files: true, note: 3, count: 300 }, { ready: false, files: false, note: 0, count: 0 }]);
+  c.disconnect();
+});

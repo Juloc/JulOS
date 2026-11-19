@@ -56,7 +56,7 @@ internal sealed class FakeVncServer : IDisposable
     public FakeVncServer()
     {
         _listener.Start();
-        _ = Task.Run(Serve);
+        _ = Task.Factory.StartNew(Serve, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
     }
 
     public IReadOnlyList<byte[]> Messages

@@ -30,7 +30,8 @@ public sealed partial class VncClient
             _reader = new RfbReader(_stream);
             // The handshake reads blocking; the registration closes the socket when the time is up or the caller gives up.
             using var abort = limit.Token.Register(Abort);
-            await Task.Run(() => Handshake(limit.Token), CancellationToken.None);
+            // A thread of its own: the handshake blocks on reads, and the pool must not be held up by that
+            await Task.Factory.StartNew(() => Handshake(limit.Token), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
             _writer = Task.Run(WriteLoopAsync, CancellationToken.None);
             SendSetup();
         }

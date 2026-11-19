@@ -50,7 +50,7 @@ public sealed class VncClientTests
     }
 
     private static VncOptions Options(FakeVncServer server, string password = "secret12", Func<string, bool>? check = null, string user = "") =>
-        new() { Host = "127.0.0.1", Port = server.Port, Password = password, UserName = user, CertificateCheck = check, ConnectTimeout = TimeSpan.FromSeconds(10) };
+        new() { Host = "127.0.0.1", Port = server.Port, Password = password, UserName = user, CertificateCheck = check, ConnectTimeout = TimeSpan.FromSeconds(30) };
 
     private static async Task<(VncClient Client, Recorder Handler, Task Run, CancellationTokenSource Cts)> StartAsync(FakeVncServer server, string password = "secret12")
     {

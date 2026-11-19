@@ -1,0 +1,73 @@
+# Hosts
+
+A **host** is one machine or server you run: it has a name, its own saved connections and at most one agent. Before hosts, JulOS
+saw one machine; now the desktop interface and the phone shell list several, each with its own status.
+
+## Model
+
+| Thing | Belongs to | Notes |
+| --- | --- | --- |
+| Host (`hosts`) | one user | name (1 to 60 characters), at most 20 per user |
+| Connection (`connections.host_id`) | one host | RDP, SSH and so on; a connection is a **service** of its host |
+| Agent (`agents.host_id`) | one host | one per host, serves all its connections; enrolment code and token are per host |
+
+- A user always has a host: the first connection (or the first `GET /api/hosts`) creates **Mein Rechner** when there is none.
+  A new connection without a host goes to the user's first host.
+- **Migration 007** moves the existing data without loss: every user with connections gets one default host holding all of them.
+  Until now an agent hung on one connection; a user with several agents keeps the most recently seen one on the default host, and
+  each further agent gets its own host (named after its connection, the connection moves there), so no token is lost and the agent
+  keeps working. Open one-time codes are dropped (they live 10 minutes).
+- A host with connections cannot be deleted (`409`): move or delete the connections first, so none is lost on the side. Deleting a host
+  removes its agent and closes the link.
+- Moving a connection to another host (`PUT /api/connections/{id}` with `hostId`) changes which agent serves it. Both hosts must be the user's own.
+
+## Status
+
+`GET /api/hosts` (session needed, 30 per minute and user) returns every host with its state:
+
+```json
+{ "hosts": [ { "id": "…", "name": "Heimserver", "online": true, "hostname": "werkbank-01", "os": "Debian GNU/Linux 13 (trixie)",
+    "agent": { "online": true, "lastSeen": "…", "version": "0.3.0", "platform": "linux-x11", "outdated": false },
+    "services": [ { "connection": "…", "kind": "terminal", "online": true } ] } ] }
+```
+
+- **Service** (`services[].online`): the server opens a TCP connection to the saved address and port (1.5 s, nothing is sent, closed at once) and
+  remembers the answer for 15 s (`TcpProbe`, at most 8 probes at a time). Targets come only from the user's saved connections and must pass
+  `JULOS_ALLOWED_HOSTS`; a target that does not is not probed and `online` is left out (shown as "unbekannt", grey).
+- **Host** (`online`): the agent link is connected **or** at least one service answers. `agent` is absent when none is enrolled;
+  `agent.online` is the live link, `lastSeen` the last report.
+- **Operating system and name** (`os`, `hostname`) come from the agent (its `hello` and enrolment). Values are display only: up to 64
+  characters of letters, digits, spaces and `. - _ + / ( ) ,`; anything else is dropped, and the last good value stays when the agent is away.
+- The browser refreshes the state every 30 s while the page is visible (the server's 15 s memory keeps this light).
+
+The status dot is **green** (online) or **grey** (offline or unknown), per host and per service.
+
+## Endpoints
+
+All need the session, the `X-JulOS` header for changes, and only ever show the signed-in user's own hosts (a foreign id is `404`).
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/api/hosts` | list with state, see above |
+| POST | `/api/hosts` `{name}` | new host |
+| PUT | `/api/hosts/{id}` `{name}` | rename |
+| DELETE | `/api/hosts/{id}` | `409` while it has connections |
+| POST | `/api/hosts/{id}/agent/code` | one-time enrolment code (10 minutes, once) for this host's agent |
+| DELETE | `/api/hosts/{id}/agent` | remove the agent, close its link |
+| GET | `/api/agent/*`, `POST /api/upload*`, `POST /api/clipboard/pull` | `?c=<connection id>` (its host's agent) or `?h=<host id>` |
+
+`GET /api/connections` and connection requests carry the host as `hostId` (the field `host` stays the address). The old
+`/api/connections/{id}/agent/*` and `/api/agents` are gone: the agent belongs to the host now.
+
+## In the app
+
+- **Desktop interface:** menu **Hosts** (list with state, manage, new), dock icon **Hosts**, the Start window's view **Hosts** (cards with state, agent, services
+  and "Agent einrichten"), and in **Dienste** a host selection plus services grouped by host once there is more than one host.
+- **Phone:** page **Server** shows the hosts (state, services, "Agent einrichten", edit, add) below the server's load; **Dienste** gets a host selection when
+  there is more than one host, and every tile has its status dot.
+- **Connection dialog:** a **Host** field (with "Neuer Host …"); the **host dialog** holds the name, delete and **Agent einrichten / entfernen** for that host.
+
+## Not part of this step
+
+A Windows agent, groups or tenants, roles, and sharing a host between users. The agent's Unix-socket mode still serves the machine the
+server runs on: a host without an agent uses it, as before, so several hosts on different machines each need their own agent.

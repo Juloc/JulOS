@@ -22,6 +22,22 @@ import urllib.error, urllib.parse, urllib.request
 AGENT_VERSION = "0.3.0"      # der Server lehnt aeltere ab (AgentLinks.MinAgentVersion)
 API_VERSION = 1
 PLATFORM = "linux-x11"
+
+
+def host_info():
+    """Rechnername und Betriebssystem fuer die Anzeige in der App (der Server verwirft Werte mit Sonderzeichen oder ueber 64 Zeichen)."""
+    name = socket.gethostname()
+    system = ""
+    try:
+        with open("/etc/os-release", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("PRETTY_NAME="):
+                    system = line.split("=", 1)[1].strip().strip('"')
+    except OSError:
+        pass
+    return {"hostname": name, "os": system}
+
+
 CONFIG = os.environ.get("JULOS_AGENT_CONFIG") or os.path.expanduser("~/.config/julos/agent.json")
 UPLOADS = os.path.expanduser("~/julos-uploads")        # den Ordner beobachtet der Zwischenablage-Helfer (julos-clip.py)
 
@@ -57,7 +73,7 @@ def server_url(text, allow_http):
 def enroll(server, code, allow_http):
     """Tauscht den einmaligen Code aus der App gegen ein Token und merkt es (0600)."""
     base = server_url(server, allow_http)
-    body = json.dumps({"code": code, "version": AGENT_VERSION, "platform": PLATFORM}).encode()
+    body = json.dumps({"code": code, "version": AGENT_VERSION, "platform": PLATFORM, **host_info()}).encode()
     req = urllib.request.Request(base + "/api/agent-link/enroll", data=body, headers={"Content-Type": "application/json", "User-Agent": "julos-agent/" + AGENT_VERSION})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
@@ -73,7 +89,7 @@ def enroll(server, code, allow_http):
     token = ans.get("token")
     if not isinstance(token, str) or not token.startswith("jat_"):
         raise SystemExit("Unerwartete Antwort des Servers")
-    save_config({"server": base, "token": token, "connection": ans.get("connection"), "allow_http": bool(allow_http)})
+    save_config({"server": base, "token": token, "host": ans.get("host"), "allow_http": bool(allow_http)})
     print("Eingerichtet. Der Agent meldet sich ab jetzt selbst bei", base, flush=True)
 
 
@@ -714,7 +730,7 @@ class Link:
         ws = WsClient.connect(self.cfg["server"], {"Authorization": "Bearer " + self.cfg["token"]}, bool(self.cfg.get("allow_http")))
         self.ws = ws
         try:
-            ws.send_text(json.dumps({"t": "hello", "agent": AGENT_VERSION, "platform": PLATFORM, "api": API_VERSION}))
+            ws.send_text(json.dumps({"t": "hello", "agent": AGENT_VERSION, "platform": PLATFORM, "api": API_VERSION, **host_info()}))
             stop = threading.Event()
             threading.Thread(target=self.heartbeat, args=(ws, stop), daemon=True).start()
             try:

@@ -3,6 +3,7 @@ using JulOS.Frontend.About;
 using JulOS.Frontend.Agent;
 using JulOS.Frontend.Auth;
 using JulOS.Frontend.Files;
+using JulOS.Frontend.Hosts;
 using JulOS.Frontend.SystemInfo;
 
 namespace JulOS.Frontend;
@@ -33,7 +34,9 @@ namespace JulOS.Frontend;
 [JsonSerializable(typeof(AgentEnrollRequest))]
 [JsonSerializable(typeof(AgentEnrollResponse))]
 [JsonSerializable(typeof(AgentCodeResponse))]
-[JsonSerializable(typeof(AgentsResponse))]
+[JsonSerializable(typeof(HostDto))]
+[JsonSerializable(typeof(HostsResponse))]
+[JsonSerializable(typeof(HostRequest))]
 [JsonSerializable(typeof(OverviewResponse))]
 [JsonSerializable(typeof(FileListingDto))]
 [JsonSerializable(typeof(FileSearchDto))]

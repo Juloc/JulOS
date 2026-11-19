@@ -38,12 +38,12 @@ internal sealed class FakeLinkAgent : IAsyncDisposable
     }
 
     /// <summary>Baut die Verbindung auf und begruesst den Server. Wirft, wenn der Server die Verbindung ablehnt.</summary>
-    public static async Task<FakeLinkAgent> ConnectAsync(TestServer server, string? token, string version = "0.3.0", string platform = "test-linux")
+    public static async Task<FakeLinkAgent> ConnectAsync(TestServer server, string? token, string version = "0.3.0", string platform = "test-linux", string? hostname = null, string? os = null)
     {
         var client = server.CreateWebSocketClient();
         client.ConfigureRequest = r => { if (token is not null) r.Headers["Authorization"] = "Bearer " + token; };
         var ws = await client.ConnectAsync(new Uri("ws://localhost/api/agent-link"), CancellationToken.None);
-        await SendText(ws, JsonSerializer.Serialize(new { t = "hello", agent = version, platform }));
+        await SendText(ws, JsonSerializer.Serialize(new { t = "hello", agent = version, platform, hostname, os }));
         var agent = new FakeLinkAgent(ws);
         return agent;
     }

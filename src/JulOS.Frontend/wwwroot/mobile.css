@@ -154,3 +154,13 @@ html.m3, html.m3 body { background: var(--m3-surface); }
 .sesslist .sx svg { width: 22px; height: 22px; fill: currentColor; }
 .tile .liveb { position: absolute; top: 6px; right: 8px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--m3-ok); color: var(--m3-surface); font: var(--m3-label-s); line-height: 18px; text-align: center; }
 .tile.live .badge { right: 30px; }
+
+/* ---------- Hosts (docs/HOSTS.md): Statuspunkt gruen/grau, Host-Karten ---------- */
+.hdot { background: var(--m3-outline); }
+.hdot.ok { background: var(--m3-ok); }
+.tile .hdot { position: absolute; top: 8px; left: 9px; width: 8px; height: 8px; border-radius: 50%; }
+.m3-li .hl .hdot { display: inline-block; margin-right: 7px; vertical-align: 1px; }
+.m3-li .hl small { font: var(--m3-label-s); color: var(--m3-on-surface-variant); margin-left: 4px; }
+.m3-card.host { margin-top: 12px; padding-bottom: 10px; }
+.m3-card.host .svcs, .m3-card.host .acts-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 16px 0; }
+.m3-card.host .svcs .m3-chip .hdot { margin-right: 6px; }

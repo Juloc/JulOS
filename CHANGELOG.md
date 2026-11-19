@@ -4,6 +4,17 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unreleased]
+
+### Neu
+- Mehrere Hosts: ein Host ist ein Rechner oder Server mit eigenen Verbindungen und eigenem Agenten. Die Desktop-Oberfläche (Menü „Hosts“, Dock, Ansicht „Hosts“, Dienste nach Host gruppiert und filterbar) und die Handy-Shell (Server-Seite, Host-Auswahl bei den Diensten) zeigen sie mit Statuspunkt grün/grau je Host und Dienst. Online heißt: Agent verbunden oder ein Dienst antwortet am Port; Rechnername und Betriebssystem meldet der Agent. Siehe [docs/HOSTS.md](docs/HOSTS.md).
+- Im Verbindungsdialog gibt es ein Feld „Host“ (auch „Neuer Host …“); „Agent einrichten“ und „Agent entfernen“ stehen im neuen Host-Dialog.
+
+### Geändert
+- Der Agent gehört jetzt zum Host statt zu einer einzelnen Verbindung und bedient alle Verbindungen seines Hosts. Die Wege dafür sind `/api/hosts/{id}/agent/code` und `/api/hosts/{id}/agent`; `/api/agents` und `/api/connections/{id}/agent/*` entfallen. Aufrufe des Agenten nehmen weiter `?c=<Verbindung>` oder neu `?h=<Host>`.
+- Migration 007: bestehende Verbindungen kommen auf einen Standard-Host „Mein Rechner“ pro Benutzer, bestehende Agenten behalten ihr Token (hatte ein Benutzer mehrere, bekommt jeder weitere einen eigenen Host mit dem Namen seiner Verbindung). Offene Einrichtungscodes (10 Minuten) entfallen.
+- Der Agent meldet Rechnername und Betriebssystem (nur zur Anzeige); ältere Agenten funktionieren unverändert.
+
 ## [0.4.0] - 2026-11-19
 
 ### Neu

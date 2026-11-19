@@ -85,6 +85,7 @@ Production and the test instance differ only in ports, volumes and secrets.
 - **First start:** with no account the server prints a one-time **setup code** to its log. The browser shows a setup screen asking for that code, a user name and a password,
   then shows the authenticator secret (link and key) and ten recovery codes, and finishes only after a valid authenticator code was entered. Afterwards the setup screen is gone.
   The console tool `tools/julos-user.sh` stays as the recovery path (reset password or authenticator).
+- **Hosts:** connections belong to hosts (machines or servers), each with its own agent and a status dot from the agent link or a TCP probe; see [HOSTS.md](HOSTS.md).
 - **Connections:** a user keeps a list of connections: name, kind (**Desktop** = RDP, **Terminal** = SSH, **Screen** = VNC later), host, port, user name. The password is typed per connection (a password manager can fill it) or, on request, stored encrypted (see the security model). A connection for the machine the server runs next to is offered at setup. The target host is chosen by the signed-in
   user, so the server may reach anything the signed-in user names; an optional allow-list in the configuration restricts that.
 - **Home:** after login the user sees the list, can add, edit and delete connections, and starts one with a tap. The remote view is the existing client.
@@ -123,12 +124,12 @@ connection dialog ("Bildübertragung"); terminals do not use these engines at al
 The agent API used to work only when the server and the desktop ran on one machine (Unix socket in a shared folder). The agent now also connects **outbound** to the server, so the
 window bar, the launcher and photo/file/clipboard work for desktops anywhere. Protocol, enrolment and security properties are in [AGENT_API.md](AGENT_API.md); the design in short:
 
-- **One agent per saved desktop connection.** Tables `agents` (connection id, user id, SHA-256 of the token, last seen, version, platform) and `agent_codes` (SHA-256 of a
+- **One agent per host.** A host (table `hosts`, see [HOSTS.md](HOSTS.md)) is a machine with its own saved connections; the agent belongs to it and serves all its connections. Tables `agents` (host id, user id, SHA-256 of the token, last seen, version, platform, host name and system as the agent reports them) and `agent_codes` (SHA-256 of a
   one-time code, 10 minutes, one use). `AgentStore` (Backend) holds the SQL, `AgentCredentials` the code and token format.
-- **`AgentLinks`** (Integrations, singleton) holds the live WebSocket of each agent, found only by connection id *and* owning user. `AgentLink` is request/response with ids over
+- **`AgentLinks`** (Integrations, singleton) holds the live WebSocket of each agent, found only by host id *and* owning user. `AgentLink` is request/response with ids over
   the socket plus chunked binary frames for data (back pressure comes from awaiting each frame; one transfer at a time per agent; 15 s per frame, 3 minutes in total; 14 MB image, 64 MB file).
   `LinkTransfers` does the checks (image header, file name, extension, size) before anything is sent and maps the agent's answer to the same outcomes as the shared-folder uploaders.
-- **`AgentRouter`** (Frontend) picks the transport per call from `?c=<connection id>`: link if connected; "offline" (no answer, never the socket) if one is enrolled but gone; otherwise the
+- **`AgentRouter`** (Frontend) picks the transport per call from `?c=<connection id>` (its host) or `?h=<host id>`: link if connected; "offline" (no answer, never the socket) if one is enrolled but gone; otherwise the
   Unix socket as before (also without `c`). The browser can only trigger the fixed requests of `AgentEndpoints`; the server sends nothing the browser chose freely.
 - **Authentication:** `/api/agent-link` (WebSocket, `Authorization: Bearer`) and `/api/agent-link/enroll` are outside the session check (`ApiGuard.IsAgentPath`) because the agent is not a browser; they check
   the token or the one-time code themselves and are rate limited. Everything that manages agents (create code, remove, status) needs the normal session.

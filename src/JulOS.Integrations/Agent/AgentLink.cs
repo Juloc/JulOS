@@ -37,15 +37,17 @@ public sealed class AgentLink
     private readonly ConcurrentDictionary<int, Pending> _pending = new();
     private int _nextId;
 
-    public Guid ConnectionId { get; }
+    public Guid HostId { get; }
     public Guid UserId { get; }
     public string? Version { get; private set; }
     public string? Platform { get; private set; }
+    public string? Hostname { get; private set; }
+    public string? Os { get; private set; }
     public DateTimeOffset Since { get; } = DateTimeOffset.UtcNow;
 
-    public AgentLink(WebSocket ws, Guid connectionId, Guid userId, ILogger log)
+    public AgentLink(WebSocket ws, Guid hostId, Guid userId, ILogger log)
     {
-        _ws = ws; ConnectionId = connectionId; UserId = userId; _log = log;
+        _ws = ws; HostId = hostId; UserId = userId; _log = log;
     }
 
     private sealed class Pending(int blobCap)
@@ -65,7 +67,7 @@ public sealed class AgentLink
         timeout.CancelAfter(HelloTimeout);
         var msg = await ReceiveAsync(timeout.Token).ConfigureAwait(false);
         if (msg is not { Text: { } bytes }) { await CloseAsync(WebSocketCloseStatus.ProtocolError, "Begrüßung erwartet").ConfigureAwait(false); return null; }
-        string? version, platform;
+        string? version, platform, hostname, os;
         try
         {
             using var doc = JsonDocument.Parse(bytes);
@@ -73,21 +75,23 @@ public sealed class AgentLink
             if (root.GetProperty("t").GetString() != "hello") throw new JsonException();
             version = root.TryGetProperty("agent", out var v) && v.ValueKind == JsonValueKind.String ? AgentLabels.Clean(v.GetString()) : null;
             platform = root.TryGetProperty("platform", out var p) && p.ValueKind == JsonValueKind.String ? AgentLabels.Clean(p.GetString()) : null;
+            hostname = root.TryGetProperty("hostname", out var hn) && hn.ValueKind == JsonValueKind.String ? AgentLabels.CleanText(hn.GetString()) : null;
+            os = root.TryGetProperty("os", out var o) && o.ValueKind == JsonValueKind.String ? AgentLabels.CleanText(o.GetString()) : null;
         }
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
         {
             await CloseAsync(WebSocketCloseStatus.ProtocolError, "Begrüßung ungültig").ConfigureAwait(false);
             return null;
         }
-        Version = version; Platform = platform;
+        Version = version; Platform = platform; Hostname = hostname; Os = os;
         if (!versionOk(version))
         {
             await TrySendAsync(w => w.WriteString("t", "bye"), w => w.WriteString("reason", "agent_outdated"), ct).ConfigureAwait(false);
             await CloseAsync(WebSocketCloseStatus.PolicyViolation, "Agent zu alt").ConfigureAwait(false);
-            return new AgentHello(version, platform, false);
+            return new AgentHello(new AgentInfo(version, platform, hostname, os), false);
         }
         await SendJsonAsync(w => { w.WriteString("t", "welcome"); w.WriteString("server", serverVersion); }, ct).ConfigureAwait(false);
-        return new AgentHello(version, platform, true);
+        return new AgentHello(new AgentInfo(version, platform, hostname, os), true);
     }
 
     internal async Task LoopAsync(CancellationToken ct)
@@ -107,7 +111,7 @@ public sealed class AgentLink
         catch (OperationCanceledException) { /* Leerlauf oder Ende des Servers */ }
         catch (Exception e) when (e is WebSocketException or IOException or ObjectDisposedException or ProtocolViolation or JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
         {
-            _log.LogInformation("Agent-Link {Connection}: Verbindung beendet ({Reason})", ConnectionId, e is ProtocolViolation ? e.Message : e.GetType().Name);
+            _log.LogInformation("Agent-Link {Host}: Verbindung beendet ({Reason})", HostId, e is ProtocolViolation ? e.Message : e.GetType().Name);
         }
         finally
         {
@@ -333,7 +337,13 @@ public sealed class AgentLink
     }
 }
 
-internal sealed record AgentHello(string? Version, string? Platform, bool Accepted);
+/// <summary>Was ein Agent von sich meldet (reine Anzeigewerte, jeder darf fehlen).</summary>
+public sealed record AgentInfo(string? Version, string? Platform, string? Hostname = null, string? Os = null);
+
+internal sealed record AgentHello(AgentInfo Info, bool Accepted)
+{
+    public string? Version => Info.Version;
+}
 
 public static class AgentLabels
 {
@@ -343,5 +353,13 @@ public static class AgentLabels
         if (string.IsNullOrWhiteSpace(s)) return null;
         s = s.Trim();
         return s.Length <= max && s.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_' or '+' or ' ') ? s : null;
+    }
+
+    /// <summary>Freier Anzeigetext, den der Agent meldet (Rechnername, Betriebssystem): hoechstens 64 Zeichen aus Buchstaben, Ziffern, Leerzeichen und . - _ + / ( ) ,. Alles andere gilt als unbrauchbar, nicht als zu kuerzen.</summary>
+    public static string? CleanText(string? s, int max = 64)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        s = s.Trim();
+        return s.Length <= max && s.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_' or '+' or ' ' or '/' or '(' or ')' or ',') ? s : null;
     }
 }

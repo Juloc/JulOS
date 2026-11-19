@@ -23,10 +23,10 @@ deploy/dev/smoke.sh     # walk-through on the running instance: setup, login, wi
 The default test instance shares a folder between server and desktop, so it uses the Unix socket. To check the outbound link, run a **second compose project** (own name and ports; do not touch
 `julos-dev`) whose server does **not** share the folder (`JULOS_AGENT_SOCKET` pointing nowhere, no shared volume) and whose `rdp-target` has none either:
 
-1. start it, set up a throwaway account, add a desktop connection to `rdp-target`, connect once (this starts the agent in socket mode);
-2. in the connection dialog choose **Agent einrichten**; in the desktop container, as the desktop user and with `DISPLAY=:10`, download the files from `http://<server>:8080/agent-files/` and run
+1. start it, set up a throwaway account, add a desktop connection to `rdp-target` (it lands on your default host), connect once (this starts the agent in socket mode);
+2. in the host dialog (Hosts view, edit the host) choose **Agent einrichten**; in the desktop container, as the desktop user and with `DISPLAY=:10`, download the files from `http://<server>:8080/agent-files/` and run
    `bash install-linux-agent.sh --server http://<server>:8080 --code CODE --allow-http` (`--allow-http` is only for this plain-HTTP test network);
-3. reconnect in the browser: the window bar, the launcher, the photo button and "Bild aus der VM holen" now work over the link; the dialog shows **Verbunden**.
+3. reconnect in the browser: the window bar, the launcher, the photo button and "Bild aus der VM holen" now work over the link; the host dialog shows **Agent verbunden**.
 
 `AgentLinkTests` (enrolment, tokens, routing, transfers with a fake agent in memory) run with `deploy/dev/test.sh`.
 

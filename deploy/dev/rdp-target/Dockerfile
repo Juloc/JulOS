@@ -3,7 +3,7 @@
 FROM debian:trixie-slim
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
- && apt-get install -y --no-install-recommends xrdp xorgxrdp xfce4 xfce4-terminal dbus-x11 xauth openssl sudo procps xclip \
+ && apt-get install -y --no-install-recommends xrdp xorgxrdp xfce4 xfce4-terminal dbus-x11 xauth openssl sudo procps xclip fuse3 \
     pipewire pipewire-pulse wireplumber pipewire-module-xrdp pulseaudio-utils alsa-utils \
     python3-gi gir1.2-gtk-3.0 gir1.2-wnck-3.0 gir1.2-gdkpixbuf-2.0 \
  && rm -rf /var/lib/apt/lists/*

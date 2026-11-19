@@ -4,6 +4,7 @@ using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
 using JulOS.Backend.Services;
 using JulOS.Frontend;
+using JulOS.Frontend.About;
 using JulOS.Frontend.Agent;
 using JulOS.Frontend.Auth;
 using JulOS.Frontend.Cli;
@@ -57,6 +58,8 @@ builder.Services.AddSingleton(new AgentOptions(builder.Configuration["JULOS_AGEN
 builder.Services.AddSingleton<AgentClient>();
 builder.Services.AddSingleton(new UploadOptions(builder.Configuration["JULOS_UPLOAD_DIR"] ?? "/uploads"));
 builder.Services.AddSingleton<ClipboardUploader>();
+builder.Services.AddSingleton<ClipboardFileUploader>();
+builder.Services.AddSingleton<ClipboardPuller>();
 builder.Services.AddSingleton<HitCounter>();
 // Auslastung des Rechners (CPU, Speicher, Datentraeger des Upload-Ordners, Netzwerk), alle 2 s gemessen
 builder.Services.AddSingleton(new HostMonitor(HostSource.Linux(builder.Configuration["JULOS_UPLOAD_DIR"] ?? "/uploads")));
@@ -109,7 +112,7 @@ app.UseDefaultFiles();
 app.UseStaticFiles(new StaticFileOptions { OnPrepareResponse = c => c.Context.Response.Headers.CacheControl = "no-cache" });
 app.UseMiddleware<ApiGuard>();
 
-var version = typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion?.Split('+')[0] ?? "0";
+var info = AppInfo.From(typeof(Program).Assembly, Environment.GetEnvironmentVariable("JULOS_BUILD_DATE"));
 app.MapGet("/api/health", async (NpgsqlDataSource data, CancellationToken ct) =>
 {
     var dbOk = false;
@@ -121,9 +124,10 @@ app.MapGet("/api/health", async (NpgsqlDataSource data, CancellationToken ct) =>
         dbOk = await cmd.ExecuteScalarAsync(timeout.Token) is not null;
     }
     catch (Exception) { /* Datenbank nicht erreichbar: ok=false */ }
-    return new Health(dbOk, dbOk, version);
+    return new Health(dbOk, dbOk, info.Version);
 });
 app.MapAuth();
+app.MapAbout(info);
 app.MapRemote();
 app.MapConnections();
 app.MapAgent();

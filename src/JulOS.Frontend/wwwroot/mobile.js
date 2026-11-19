@@ -416,6 +416,8 @@ function renderProfile() {
     <div class="grp-t">Geräte und Sitzungen</div>
     <div class="m3-card grp"><div class="sessions" id="mSessions"><p class="empty-hint">Wird geladen …</p></div></div>
     <p class="note" id="mSessMsg" role="status"></p>
+    <div class="grp-t">Über JulOS</div>
+    <div class="m3-card grp" id="mAbout"><div class="setrow"><div class="lab">Version<small>Wird geladen …</small></div></div></div>
     <button type="button" class="mb m3-btn danger block big logout m3-state" id="mOut">${icon('logout')}Abmelden</button>`;
   pg.scrollTop = top;
   $('#mScheme').addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (!b) return; setTheme({ scheme: b.dataset.v }); applyShellTheme(); renderProfile(); });
@@ -423,7 +425,18 @@ function renderProfile() {
   $('#mEngine').addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (!b) return; ls.set('engine', b.dataset.v); $$('#mEngine .mb').forEach((x) => x.setAttribute('aria-checked', x === b)); });
   $('#mPlanned').addEventListener('click', (e) => { const on = e.currentTarget.getAttribute('aria-checked') !== 'true'; ls.set('planned', on); e.currentTarget.setAttribute('aria-checked', on); renderNav(); });
   $('#mOut').addEventListener('click', () => ctx.signOut());
-  if (current === 'profile') loadSessions();
+  if (current === 'profile') { loadSessions(); loadAbout(); }
+}
+async function loadAbout() {
+  const box = $('#mAbout'); if (!box || !ctx) return;
+  try {
+    const a = await ctx.api('/api/about');
+    const built = a.built ? new Date(a.built).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+    const row = (k, v, extra = '') => `<div class="setrow line"><div class="lab">${k}<small>${esc(v)}</small></div>${extra}</div>`;
+    box.innerHTML = row('Version', `JulOS ${a.version}`) + (a.commit || built ? row('Build', [a.commit, built].filter(Boolean).join(' · ')) : '')
+      + row('Bildübertragung', a.engines.stream ? 'Stream (H.264) und Guacamole' : 'Guacamole (Stream nicht verfügbar)')
+      + `<div style="padding:4px 12px 10px;display:flex;gap:8px"><a class="mb m3-btn tonal block m3-state" href="/licenses.txt" target="_blank" rel="noopener">Lizenzen</a><a class="mb m3-btn tonal block m3-state" href="${esc(a.repository)}" target="_blank" rel="noopener">Quelltext</a></div>`;
+  } catch (e) { box.innerHTML = `<p class="empty-hint">${esc(e.message)}</p>`; }
 }
 async function loadSessions() {
   const box = $('#mSessions'); if (!box || !ctx) return;

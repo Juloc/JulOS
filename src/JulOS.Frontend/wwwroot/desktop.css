@@ -62,7 +62,7 @@ html.desktop body { background: #d9d4f2; }
 .dk-win.active { box-shadow: var(--dk-shadow); }
 @keyframes dkwin { from { opacity: 0; transform: scale(.965) translateY(8px); } to { opacity: 1; transform: none; } }
 .dk-win.min { opacity: 0; transform: translateY(60px); pointer-events: none; visibility: hidden; transition: opacity .18s, transform .18s, visibility 0s .18s; }   /* ohne scale: die Groesse der Anzeige darf sich beim Minimieren nicht aendern */
-.dk-win.max { left: 0 !important; top: 34px !important; width: 100% !important; height: calc(100% - 34px - 96px) !important; border-radius: 0; }
+.dk-win.max { left: 0 !important; top: 34px !important; width: 100% !important; height: calc(100% - 34px - var(--dk-reserve, 96px)) !important; border-radius: 0; }
 .dk-win.dragging, .dk-win.resizing { transition: none; }
 .dk-wh { flex: 0 0 auto; height: 42px; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 14px; cursor: default; border-radius: 16px 16px 0 0; }
 .dk-win.max .dk-wh { border-radius: 0; }
@@ -90,10 +90,8 @@ html.desktop body { background: #d9d4f2; }
 .dk-win.dk-session .dk-wb { background: #000; }
 html.desktop #remote { flex: 1; min-height: 0; }
 html.desktop #remote #rowsTop { display: none; }
-html.desktop #remote #dock { border-radius: 0; background: rgba(255, 255, 255, .86); box-shadow: 0 -1px 0 rgba(90, 80, 150, .14); }
-html.desktop #remote #dock .row.bar { padding-top: 4px; padding-bottom: 4px; }
-html.desktop #remote #dock #menuSheet { left: 12px; right: auto; width: 360px; }
-html.desktop #remote #topbar { border-radius: 0; background: rgba(255, 255, 255, .86); box-shadow: 0 1px 0 rgba(90, 80, 150, .14); }
+/* Die Tastenleiste und die Fensterleiste der VM stehen nicht mehr im Fenster: ihre Funktionen sind Menues in der oberen Leiste (desktop-remote.js) */
+html.desktop #remote #dock, html.desktop #remote #topbar { display: none !important; }
 html.desktop #remote #overlay .box { border-radius: 20px; background: rgba(255, 255, 255, .94); }
 
 /* ---------- Home-Fenster ---------- */
@@ -255,3 +253,39 @@ html.desktop #remote #overlay .box { border-radius: 20px; background: rgba(255, 
 
 @media (max-width: 1180px) { .dk-sys { grid-template-columns: repeat(2, 1fr); } }
 @media (prefers-reduced-motion: reduce) { .dk-win, .dk-menu, .dk-launch, .dk-toast { animation: none; } }
+
+/* ---------- Menues der oberen Leiste fuer das Fernfenster, Untermenues, Dock-Modi ---------- */
+.dk-menus { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.dk-bar .dk-mi.dk-appname { font-weight: 700; }
+.dk-menu.sub { z-index: 6100; min-width: 150px; }
+.dk-menu .dk-it .dk-hint svg { width: 14px; height: 14px; }
+.dk-dock { transition: transform .22s cubic-bezier(.2, .8, .3, 1), opacity .18s, visibility 0s; }
+.dk-dock.away { transform: translate(-50%, calc(100% + 40px)); opacity: 0; visibility: hidden; pointer-events: none; transition: transform .22s ease-in, opacity .18s, visibility 0s .22s; }
+.dk-knob { position: absolute; left: 50%; bottom: 86px; transform: translateX(-50%); z-index: 4400; width: 46px; height: 18px; border-radius: 99px; display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, .6); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, .8); color: #4a4d70; box-shadow: 0 2px 8px rgba(78, 62, 140, .18); transition: bottom .22s cubic-bezier(.2, .8, .3, 1), background .12s; }
+.dk-knob[hidden] { display: none; }
+.dk-knob svg { width: 14px; height: 14px; transition: transform .2s; }
+.dk-knob.closed { bottom: 4px; } .dk-knob.closed svg { transform: rotate(180deg); }
+#desktop button.dk-knob:hover { background: rgba(255, 255, 255, .9); }
+.dk-win:fullscreen { border-radius: 0; }
+.dk-win:fullscreen .dk-wh, .dk-win:fullscreen .dk-rz { display: none; }
+@media (prefers-reduced-motion: reduce) { .dk-dock, .dk-knob { transition: none; } }
+
+/* ---------- Tastatur: wohin wird getippt ---------- */
+.dk-keys { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; margin-right: 4px; border-radius: 99px; font-size: 12px; color: #7a7ea0; background: rgba(90, 80, 150, .08); white-space: nowrap; }
+.dk-keys[hidden] { display: none; }
+.dk-keys svg.dk-i { width: 14px; height: 14px; }
+.dk-keys.on { color: #3a29b8; background: rgba(106, 88, 230, .16); font-weight: 600; }
+.dk-win.keys { box-shadow: 0 0 0 2px rgba(106, 88, 230, .6), var(--dk-shadow); }
+.dk-win.keys .dk-wh .dk-wt span::after { content: "Tastatur"; margin-left: 9px; padding: 2px 7px; border-radius: 99px; font-size: 10.5px; font-weight: 600; background: rgba(106, 88, 230, .16); color: #3a29b8; vertical-align: 1px; }
+
+/* Ueber JulOS */
+.dk-about { padding: 20px 26px 18px; text-align: center; }
+.dk-ab-logo { width: 60px; margin: 0 auto; }
+.dk-about h2 { margin: 10px 0 2px; }
+.dk-ab-rows { margin: 14px 0 6px; text-align: left; font-size: 13px; border-top: 1px solid rgba(92, 96, 127, .18); }
+.dk-ab-row { display: flex; justify-content: space-between; gap: 14px; padding: 6px 2px; border-bottom: 1px solid rgba(92, 96, 127, .12); }
+.dk-ab-row span { color: #5c607f; flex: none; }
+.dk-ab-row b { font-weight: 500; text-align: right; overflow-wrap: anywhere; }
+.dk-ab-links { display: flex; gap: 18px; justify-content: center; margin: 12px 0 0; font-size: 13px; }
+.dk-ab-links a { color: inherit; text-decoration: underline; }

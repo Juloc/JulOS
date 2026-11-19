@@ -37,6 +37,18 @@ to run as **that same user** (`user:` in the compose file), otherwise it cannot 
 20 per minute and user). The server writes it into the shared folder; the clipboard helper (`tools/julos-clip.py`) in the session
 puts it on the clipboard and answers with `<file>.ok` or `<file>.err`. No answer within 8 s gives `504` and the file is removed again.
 
+## File upload and clipboard pull (Guacamole engine)
+
+`POST /api/upload-file` takes any file as the request body (up to 64 MB, 20 per minute and user) and its name URL-encoded in the header
+`X-File-Name`. The name is cleaned to a plain file name and names that would run when opened (`.exe`, `.desktop`, `.lnk` ...) are refused
+with 400. The server writes `files/<id>/<name>` into the shared folder; the helper offers it as a file list on the clipboard
+(`x-special/gnome-copied-files` and `text/uri-list`) and answers with `.ok` or `.err` in that folder. No answer within 8 s gives `504` and the
+folder is removed again. The helper deletes these folders after 7 days.
+
+`POST /api/clipboard/pull` (30 per minute and user) writes `pull/<id>.req`; the helper answers `<id>.png` (the clipboard image, up to 14 MB),
+`<id>.none` (no image: the server answers `204`) or `<id>.err`. Only images, never files or paths. No answer within 8 s gives `504`.
+Both are described in [CLIPBOARD.md](CLIPBOARD.md).
+
 ## Client log
 
 `POST /api/log` `{events:[{...}]}` (at most 12 kB, 40 events, 60 requests per minute and user) writes measurement values into the

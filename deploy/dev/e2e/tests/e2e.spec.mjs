@@ -65,7 +65,7 @@ const API = { 'X-JulOS': '1', Origin: 'http://127.0.0.1:8080' };   // so erkennt
 const DESKTOP_CONN = { name: 'E2E Desktop', kind: 'desktop', host: RDP.host, user: RDP.user };
 const SSH_CONN = { name: 'E2E Terminal', kind: 'terminal', host: SSH.host, port: SSH.port, user: SSH.user };
 
-const tile = (page, name) => page.locator('#desktop .dk-tile', { hasText: name });
+const tile = (page, name) => page.locator('#desktop .dk-tile', { hasText: name }).first(); // die Kachel steht auch unter "Zuletzt benutzt"
 
 /** Legt eine Verbindung über den Dialog an (Desktop-Oberfläche: Kachel "Verbindung hinzufügen" auf der Startseite). */
 async function addConnection(page, c) {

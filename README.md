@@ -99,12 +99,12 @@ the "fetch the image from the remote clipboard" button (`pull/`); the own stream
 - `tests/` (`frontend/` runs with node), `database/` (SQL migrations), `deploy/dev/` the test instance with throwaway SSH and RDP targets (see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md); testing on a real phone: [docs/PHONE-TEST.md](docs/PHONE-TEST.md))
 - `tools/julos-agent.py` Linux agent (windows, apps, app mode, outbound link to the server), `tools/julos-clip.py` photo clipboard helper
 - `tools/install-linux-agent.sh`, `tools/julos-user.sh`, `tools/make-client-cert.sh`
-- `CHANGELOG.md` and `docs/RELEASING.md` the versions and how to release one, `docs/AGENT_API.md` the agent API, `docs/ARCHITECTURE.md` the stack and security design, `caddy/Caddyfile.example`
+- `CHANGELOG.md` and `docs/RELEASING.md` the versions and how to release one, `docs/AGENT_API.md` the agent API, `docs/ARCHITECTURE.md` the stack and security design, `docs/MODULES.md` the optional read-only Caddy and DDNS modules (off by default), `caddy/Caddyfile.example`
 - `.github/workflows/docker.yml` builds the image for `ghcr.io/<owner>/<repo>` (amd64 + arm64)
 
 ## Roadmap
 
-Now: the Remote module (see [docs/SCOPE.md](docs/SCOPE.md)). Next: a module core, then Docker, Caddy and DDNS modules, files, Windows agent, multi-host. The goal is one interface for everything you run.
+Now: the Remote module (see [docs/SCOPE.md](docs/SCOPE.md)). Next: a module core, then the Docker module and write access for Caddy and DDNS (their read-only first stage exists, off by default), files, Windows agent, multi-host. The goal is one interface for everything you run.
 
 ## License
 

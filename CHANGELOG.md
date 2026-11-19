@@ -18,6 +18,10 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ### Geändert
 - Entwicklung: `deploy/dev/e2e.sh` startet einen eigenen Test-Stack und prüft in einem echten Browser (Playwright in Docker, Chromium) sechs Abläufe: Ersteinrichtung und Anmeldung, Verbindungen anlegen, RDP-Stream mit Bild, Klick und Tastatur im Ziel, SSH-Terminal, Handy- und Desktop-Oberfläche ohne Konsolenfehler. Beschreibung in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md), optionaler Schritt vor dem Tag in [docs/RELEASING.md](docs/RELEASING.md).
+## [Unreleased]
+
+### Neu
+- Module Caddy und DDNS, erste Stufe, nur lesend und standardmäßig aus (`JULOS_CADDY`, `JULOS_DDNS`, siehe [docs/MODULES.md](docs/MODULES.md)): Caddy zeigt „Domain → Ziel“ aus einem nur lesend eingebundenen Caddyfile und/oder der Admin-API (ein fester Abruf), mit einer Erreichbarkeitsprüfung nur der gelisteten Ziele; DDNS vergleicht die öffentliche Adresse (Router oder Lookup-Dienst) mit der Namensauflösung der eingestellten Namen („Synchron“ oder „Nicht synchron“, mit Zeit der Prüfung), ohne Token und ohne zu schreiben. Fenster im Desktop (Dock, Launcher, Menü) und Karten in der Handy-Shell erscheinen nur, wenn der Server das Modul eingeschaltet hat.
 
 ## [0.4.0] - 2026-11-19
 

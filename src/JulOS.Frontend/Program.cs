@@ -10,6 +10,7 @@ using JulOS.Frontend.Auth;
 using JulOS.Frontend.Cli;
 using JulOS.Frontend.Connections;
 using JulOS.Frontend.Files;
+using JulOS.Frontend.Modules;
 using JulOS.Frontend.Remote;
 using JulOS.Frontend.SystemInfo;
 using JulOS.Integrations;
@@ -93,6 +94,8 @@ builder.Services.AddSingleton(new HostMonitor(HostSource.Linux(builder.Configura
 builder.Services.AddHostedService<HostSamplerWorker>();
 // Dateien (nur lesen): genau ein Ordner, Standard der Upload-Ordner; "off" schaltet ab
 builder.Services.AddSingleton(new FileBrowser(builder.Configuration["JULOS_FILES_ROOT"] ?? builder.Configuration["JULOS_UPLOAD_DIR"] ?? "/uploads"));
+// Module Caddy und DDNS (nur lesen, standardmaessig aus): JULOS_CADDY, JULOS_DDNS, siehe docs/MODULES.md
+builder.Services.AddModules(builder.Configuration);
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJson.Default));
 
 // Hinter einem Proxy im eigenen Netz (zum Beispiel Caddy) kommen Client-Adresse, Protokoll und Host aus den X-Forwarded-Kopfzeilen
@@ -166,6 +169,7 @@ app.MapAgent();
 app.MapAgentLink(info);
 app.MapSystem();
 app.MapFiles();
+app.MapModules();
 
 app.Run();
 return 0;

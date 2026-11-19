@@ -154,3 +154,9 @@ html.m3, html.m3 body { background: var(--m3-surface); }
 .sesslist .sx svg { width: 22px; height: 22px; fill: currentColor; }
 .tile .liveb { position: absolute; top: 6px; right: 8px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--m3-ok); color: var(--m3-surface); font: var(--m3-label-s); line-height: 18px; text-align: center; }
 .tile.live .badge { right: 30px; }
+
+/* Module Caddy und DDNS (nur lesen): Zustand rechts in der Zeile */
+.m3-li .tr.m3mod { font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 99px; background: var(--m3-surface-high, rgba(0,0,0,.08)); white-space: nowrap; }
+.m3-li .tr.m3mod.ok { background: color-mix(in oklab, var(--m3-ok) 18%, transparent); color: var(--m3-ok); }
+.m3-li .tr.m3mod.bad { background: var(--m3-error-container); color: var(--m3-on-error-container); }
+#mModDlg .m3-li .sl { overflow-wrap: anywhere; }

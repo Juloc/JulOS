@@ -1,463 +1,63 @@
 #!/bin/sh
-# install-host-agent.sh - install the JulOS host agent on a Linux machine WITHOUT a desktop (Docker VM, Proxmox host, Debian/Ubuntu server).
-#
-# What it does (details: docs/HOST-AGENT.md):
-#   1. creates the system user "julos-agent" (no login shell, home /var/lib/julos-agent),
-#   2. downloads julos-agent.py from YOUR JulOS server (/agent-files/, SHA-256 checked against /agent-files/SHA256SUMS) into /opt/julos-agent,
-#   3. creates /etc/julos-agent/permissions (owned by root: the agent cannot change what it may do). It is EMPTY unless you name words with --allow (see below),
-#   4. enrols the agent with the one-time code from the JulOS app ("Agent per SSH installieren"),
-#   5. installs and starts the systemd service julos-agent (restart on failure, NoNewPrivileges, ProtectSystem=strict, only the paths it needs),
-#   6. only when you allow actions that need root (updates, reboot, services, logs): installs the small root helper (julos-agent-helper.py, from your server, checksum checked) as a
-#      socket-activated systemd service. The agent itself stays an unprivileged user without sudo; the helper runs one fixed program per confirmed request and checks the same file again.
-# It talks to the server you name with --server and to nobody else. It never reads or asks for passwords; sudo asks for its own.
-#
-# Usage (as root, for example through sudo):
-#   sh install-host-agent.sh --server https://julos.example.org --code ABCDE-FGHIJ [options]
-#   --dry-run          only show what would happen (needs no root, changes nothing, downloads nothing)
-#   --user NAME        service account (default julos-agent; created when missing)
-#   --allow WORDS      write these words to /etc/julos-agent/permissions, comma separated, from: updates reboot services docker logs. NEVER a default: without this option the agent can only read.
-#                      Every action also needs your confirmation in the app each time and the "Aktionen" level for this host there. updates: install updates, refresh package lists (apt only);
-#                      reboot: reboot and power off; services: list/start/stop/restart systemd services; docker: start/stop/restart containers, pull images (needs Docker socket access:
-#                      see --docker-group); logs: read bounded logs of services and containers. The words only add; remove one by editing the file as root.
-#   --allow-updates    same as --allow updates
-#   --docker-group     let the service read the Docker socket (supplementary group "docker"; that group is root-equivalent, read the docs first)
-#   --allow-http       test only: allow a server address without TLS
-#   --no-start         install, but do not start the service
-#   --uninstall        stop and remove service, files, configuration, token and (if this script created it) the user
-#   --help
-# Re-running is safe: present users, files and units are left alone unless they differ.
-# Without systemd the files are installed and the command to start the agent by hand is printed.
+# install-host-agent.sh - kept so that existing commands keep working. There is ONE installer for the JulOS agent now: install-agent.sh (desktop and host in one,
+# docs/HOST-AGENT.md). This file only forwards to it with --host in front of your options, so everything it understood still works:
+#   sh install-host-agent.sh --server https://julos.example.org --code ABCDE-FGHIJ [options]    ==    sh install-agent.sh --host --server ... --code ... [options]
+# The installer is taken from the folder of this file; when it is not there, from the server you name with --server (/agent-files/install-agent.sh,
+# SHA-256 checked against /agent-files/SHA256SUMS, TLS required, no redirects). That download happens even with --dry-run: it is only the installer, it is not run
+# beyond what you asked for. No password is read here; sudo (if you use it) asks for its own.
 # POSIX sh; checked with "shellcheck -s sh".
 
 set -eu
-PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"      # useradd, nologin and friends live there; a plain user's PATH often lacks it
+FLAG=--host
+dir=$(cd "$(dirname "$0")" && pwd)
+printf 'note: install-host-agent.sh is now install-agent.sh (one installer for desktop and host); forwarding with %s\n' "$FLAG" >&2
 
-APP_DIR=/opt/julos-agent
-ETC_DIR=/etc/julos-agent
-UNIT_NAME=julos-agent.service
-UNIT_FILE=/etc/systemd/system/$UNIT_NAME
-HELPER_DIR=/usr/local/libexec/julos-agent
-HELPER_FILE=$HELPER_DIR/julos-agent-helper.py
-HELPER_SOCKET_PATH=/run/julos-agent-helper.sock
-HELPER_SOCKET_UNIT=julos-agent-helper.socket
-HELPER_SERVICE_UNIT=julos-agent-helper@.service
-HELPER_SOCKET_FILE=/etc/systemd/system/$HELPER_SOCKET_UNIT
-HELPER_SERVICE_FILE=/etc/systemd/system/$HELPER_SERVICE_UNIT
-KNOWN_WORDS="updates reboot services docker logs"
-
-SERVER="" CODE="" USER_NAME=julos-agent ALLOW_WORDS="" DOCKER_GROUP=0 ALLOW_HTTP=0 DRY=0 NO_START=0 UNINSTALL=0
-TMPDIRS=""
-
-say() { printf '%s\n' "$*"; }
-warn() { printf 'warning: %s\n' "$*" >&2; }
-die() { printf 'error: %s\n' "$*" >&2; exit 1; }
-have() { command -v "$1" >/dev/null 2>&1; }
-plan() { printf '  [would] %s\n' "$*"; }
-doing() { printf '  [do]    %s\n' "$*"; }
-
-# shellcheck disable=SC2317  # called through the trap
-cleanup() {
-  for d in $TMPDIRS; do rm -rf "$d"; done
-}
-trap cleanup EXIT INT TERM
-
-# act "description" command args...: in a dry run only the description is shown
-act() {
-  desc=$1; shift
-  if [ "$DRY" = 1 ]; then plan "$desc"; return 0; fi
-  doing "$desc"
-  "$@"
-}
-
-usage() { sed -n '2,/^$/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
-
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --server) [ $# -ge 2 ] || die "--server needs a value"; SERVER=$2; shift 2 ;;
-    --code) [ $# -ge 2 ] || die "--code needs a value"; CODE=$2; shift 2 ;;
-    --user) [ $# -ge 2 ] || die "--user needs a value"; USER_NAME=$2; shift 2 ;;
-    --allow) [ $# -ge 2 ] || die "--allow needs a value (for example updates,logs)"; ALLOW_WORDS="$ALLOW_WORDS $(printf '%s' "$2" | tr ',' ' ')"; shift 2 ;;
-    --allow-updates) ALLOW_WORDS="$ALLOW_WORDS updates"; shift ;;
-    --docker-group) DOCKER_GROUP=1; shift ;;
-    --allow-http) ALLOW_HTTP=1; shift ;;
-    --no-start) NO_START=1; shift ;;
-    --dry-run) DRY=1; shift ;;
-    --uninstall) UNINSTALL=1; shift ;;
-    --help|-h) usage; exit 0 ;;
-    *) die "unknown option: $1 (see --help)" ;;
-  esac
-done
-
-case "$USER_NAME" in
-  ''|*[!a-z0-9_-]*|-*) die "--user: lower-case letters, digits, - and _ only" ;;
-esac
-HOME_DIR=/var/lib/$USER_NAME
-
-# The allowed words: only known ones, each once
-WORDS=""
-for w in $ALLOW_WORDS; do
-  case " $KNOWN_WORDS " in
-    *" $w "*) case " $WORDS " in *" $w "*) ;; *) WORDS="$WORDS $w" ;; esac ;;
-    *) die "--allow: unknown word \"$w\" (known: $KNOWN_WORDS)" ;;
-  esac
-done
-WORDS=${WORDS# }
-has_word() { case " $WORDS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
-# What needs root: apt, systemctl, journalctl, reboot. Docker goes through the socket the agent already reads.
-NEED_HELPER=0
-for w in updates reboot services logs; do if has_word "$w"; then NEED_HELPER=1; fi; done
-
-if [ "$DRY" = 0 ] && [ "$(id -u)" != 0 ]; then
-  die "needs root: run it with sudo (or add --dry-run to only look)"
+if [ -f "$dir/install-agent.sh" ]; then
+  exec sh "$dir/install-agent.sh" "$FLAG" "$@"
 fi
 
-# ----------------------------------------------------------------------------------------------- uninstall
-uninstall() {
-  say "Removing the JulOS host agent."
-  if have systemctl && [ -d /run/systemd/system ]; then
-    act "stop and disable $UNIT_NAME" systemctl disable --now "$UNIT_NAME" || true
-  fi
-  [ ! -e "$UNIT_FILE" ] || act "remove $UNIT_FILE" rm -f "$UNIT_FILE"
-  if have systemctl && [ -d /run/systemd/system ] && [ -e "$HELPER_SOCKET_FILE" ]; then
-    act "stop and disable $HELPER_SOCKET_UNIT" systemctl disable --now "$HELPER_SOCKET_UNIT" || true
-  fi
-  [ ! -e "$HELPER_SOCKET_FILE" ] || act "remove $HELPER_SOCKET_FILE" rm -f "$HELPER_SOCKET_FILE"
-  [ ! -e "$HELPER_SERVICE_FILE" ] || act "remove $HELPER_SERVICE_FILE" rm -f "$HELPER_SERVICE_FILE"
-  [ ! -d "$HELPER_DIR" ] || act "remove $HELPER_DIR (the root helper)" rm -rf "$HELPER_DIR"
-  if have systemctl && [ -d /run/systemd/system ]; then act "systemctl daemon-reload" systemctl daemon-reload; fi
-  [ ! -d "$APP_DIR" ] || act "remove $APP_DIR" rm -rf "$APP_DIR"
-  created=""
-  [ ! -f "$ETC_DIR/.created-user" ] || created=$(cat "$ETC_DIR/.created-user")
-  [ ! -d "$ETC_DIR" ] || act "remove $ETC_DIR" rm -rf "$ETC_DIR"
-  [ ! -d "$HOME_DIR" ] || act "remove $HOME_DIR (log and the stored token)" rm -rf "$HOME_DIR"
-  if [ "$created" = "$USER_NAME" ] && id "$USER_NAME" >/dev/null 2>&1; then
-    if have userdel; then act "remove the user $USER_NAME (created by this script)" userdel "$USER_NAME"
-    elif have deluser; then act "remove the user $USER_NAME (created by this script)" deluser "$USER_NAME"
-    fi
-  fi
-  say "Done. Also remove the agent in the JulOS app (host dialog, \"Agent entfernen\") so the token is dead on the server too."
-}
-
-if [ "$UNINSTALL" = 1 ]; then uninstall; exit 0; fi
-
-# ----------------------------------------------------------------------------------------------- checks
-[ -n "$SERVER" ] || die "--server is required (the address of your JulOS server, for example https://julos.example.org)"
+# Not next to this file (it was downloaded alone): fetch it from the named server
+SERVER="" HTTP=0 prev=""
+for a in "$@"; do
+  if [ "$prev" = --server ]; then SERVER=$a; fi
+  if [ "$a" = --allow-http ]; then HTTP=1; fi
+  prev=$a
+done
+[ -n "$SERVER" ] || { echo "error: install-agent.sh is not next to this file: give --server so it can be downloaded from your JulOS server" >&2; exit 1; }
 SERVER=${SERVER%/}
 case "$SERVER" in
   https://*) ;;
   http://localhost|http://localhost:*|http://127.0.0.1|http://127.0.0.1:*) ;;
-  http://*) [ "$ALLOW_HTTP" = 1 ] || die "a server address without TLS (http) is refused: the token would travel in the clear. Test only: --allow-http" ;;
-  *) die "--server must start with https://" ;;
+  http://*) [ "$HTTP" = 1 ] || { echo "error: a server address without TLS (http) is refused. Test only: --allow-http" >&2; exit 1; } ;;
+  *) echo "error: --server must start with https://" >&2; exit 1 ;;
 esac
 case "$SERVER" in
-  *[!A-Za-z0-9._:/-]*) die "--server contains characters that do not belong in a server address" ;;
+  *[!A-Za-z0-9._:/-]*) echo "error: --server contains characters that do not belong in a server address" >&2; exit 1 ;;
 esac
-if [ -n "$CODE" ]; then
-  printf '%s' "$CODE" | grep -Eq '^[A-Za-z2-7]{5}-?[A-Za-z2-7]{5}$' || die "--code: expected the one-time code from the JulOS app, like ABCDE-FGHIJ"
-fi
+tmp=$(mktemp -d)
+# shellcheck disable=SC2317  # called through the trap
+cleanup() { rm -rf "$tmp"; }
+trap cleanup EXIT INT TERM
 
-PYTHON=$(command -v python3 || true)
-if [ -z "$PYTHON" ]; then
-  if [ "$DRY" = 1 ]; then warn "python3 is missing (install it first: apt install python3)"; else die "python3 is missing: apt install python3 (3.8 or newer)"; fi
-  PYTHON=/usr/bin/python3
-elif ! "$PYTHON" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)'; then
-  die "python3 is older than 3.8"
-fi
-FETCH=""
-if have curl; then FETCH=curl; elif have wget; then FETCH=wget; fi
-if [ -z "$FETCH" ]; then
-  if [ "$DRY" = 1 ]; then warn "neither curl nor wget found"; else die "neither curl nor wget found (apt install curl)"; fi
-fi
-SYSTEMD=0
-if have systemctl && [ -d /run/systemd/system ]; then SYSTEMD=1; fi
-NOLOGIN=/usr/sbin/nologin
-for n in /usr/sbin/nologin /sbin/nologin /usr/bin/nologin /bin/false; do
-  if [ -x "$n" ]; then NOLOGIN=$n; break; fi
-done
-
-say "JulOS host agent: server $SERVER, service account $USER_NAME, files in $APP_DIR"
-if [ -n "$WORDS" ]; then say "Actions you allow on this machine (each one still needs your confirmation in the app): $WORDS"; else say "No action words: the agent can only read (add --allow to change that, see --help)."; fi
-if has_word docker && [ "$DOCKER_GROUP" = 0 ]; then warn "docker is allowed, but the agent has no access to the Docker socket yet (--docker-group, or give it a socket proxy that allows start/stop; see docs/HOST-AGENT.md)"; fi
-[ "$DRY" = 0 ] || say "Dry run: nothing is changed."
-
-# ----------------------------------------------------------------------------------------------- helpers
-sha256_of() {
-  if have sha256sum; then sha256sum "$1" | cut -d' ' -f1
-  elif have shasum; then shasum -a 256 "$1" | cut -d' ' -f1
-  elif have openssl; then openssl dgst -sha256 "$1" | sed 's/^.*= //'
-  else die "no sha256sum, shasum or openssl to check the download"
-  fi
-}
-
-# Only from the server named with --server, no redirects, bounded size
 fetch() {  # url dest
-  case "$FETCH" in
-    curl) curl -fsS --max-redirs 0 --max-filesize 2097152 --connect-timeout 15 --max-time 60 -o "$2" "$1" ;;
-    wget) wget -q --max-redirect=0 --timeout=30 -O "$2" "$1" ;;
-  esac
-}
-
-# run_as command args...: as the service account, without a shell login
-run_as() {
-  if have runuser; then runuser -u "$USER_NAME" -- "$@"
-  elif have setpriv; then setpriv --reuid="$USER_NAME" --regid="$USER_NAME" --init-groups "$@"
-  else
-    line=""
-    for a in "$@"; do line="$line '$(printf '%s' "$a" | sed "s/'/'\\\\''/g")'"; done
-    su -s /bin/sh -c "exec$line" "$USER_NAME"
+  if command -v curl >/dev/null 2>&1; then curl -fsS --max-redirs 0 --max-filesize 2097152 --connect-timeout 15 --max-time 60 -o "$2" "$1"
+  elif command -v wget >/dev/null 2>&1; then wget -q --max-redirect=0 --timeout=30 -O "$2" "$1"
+  else echo "error: neither curl nor wget found" >&2; return 1
   fi
 }
-
-install_user() {
-  if id "$USER_NAME" >/dev/null 2>&1; then
-    say "  user $USER_NAME exists"
-    return 0
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1
+  elif command -v openssl >/dev/null 2>&1; then openssl dgst -sha256 "$1" | sed 's/^.*= //'
+  else echo "error: no sha256sum, shasum or openssl to check the download" >&2; return 1
   fi
-  if have useradd; then act "create the system user $USER_NAME (no login shell)" useradd --system --user-group --home-dir "$HOME_DIR" --create-home --shell "$NOLOGIN" "$USER_NAME"
-  elif have adduser; then act "create the system user $USER_NAME (no login shell)" adduser -S -D -h "$HOME_DIR" -s "$NOLOGIN" "$USER_NAME"
-  elif [ "$DRY" = 1 ]; then warn "neither useradd nor adduser found"
-  else die "neither useradd nor adduser found"
-  fi
-  if [ "$DRY" = 0 ]; then mkdir -p "$ETC_DIR"; printf '%s\n' "$USER_NAME" > "$ETC_DIR/.created-user"; fi
 }
-
-install_files() {
-  act "create $APP_DIR (owned by $USER_NAME: the agent replaces its own file when you update it in the app)" mkdir -p "$APP_DIR"
-  act "create $HOME_DIR (token, log; only $USER_NAME)" mkdir -p "$HOME_DIR"
-  if [ "$DRY" = 1 ]; then
-    plan "download $SERVER/agent-files/julos-agent.py and $SERVER/agent-files/SHA256SUMS, compare the SHA-256, install as $APP_DIR/julos-agent.py"
-    return 0
-  fi
-  tmp=$(mktemp -d); TMPDIRS="$TMPDIRS $tmp"
-  doing "download julos-agent.py and SHA256SUMS from $SERVER"
-  fetch "$SERVER/agent-files/julos-agent.py" "$tmp/julos-agent.py" || die "download of julos-agent.py failed (is $SERVER the address of your JulOS server?)"
-  fetch "$SERVER/agent-files/SHA256SUMS" "$tmp/SHA256SUMS" || die "download of SHA256SUMS failed"
-  want=$(awk '$2 == "julos-agent.py" || $2 == "*julos-agent.py" { print $1 }' "$tmp/SHA256SUMS" | head -n 1)
-  [ -n "$want" ] || die "SHA256SUMS does not list julos-agent.py"
-  got=$(sha256_of "$tmp/julos-agent.py")
-  [ "$want" = "$got" ] || die "checksum mismatch for julos-agent.py (server says $want, download is $got): nothing installed"
-  say "  checksum ok: $got"
-  "$PYTHON" -c 'import sys; compile(open(sys.argv[1], "rb").read(), "julos-agent.py", "exec")' "$tmp/julos-agent.py" || die "the download is not valid Python"
-  if [ -f "$APP_DIR/julos-agent.py" ] && [ "$(sha256_of "$APP_DIR/julos-agent.py")" = "$got" ]; then
-    say "  $APP_DIR/julos-agent.py is already this version"
-  else
-    install -m 0755 "$tmp/julos-agent.py" "$APP_DIR/julos-agent.py"
-  fi
-  chown -R "$USER_NAME":"$(id -gn "$USER_NAME")" "$APP_DIR" "$HOME_DIR"
-  chmod 0750 "$HOME_DIR"
-}
-
-install_permissions() {
-  if [ "$DRY" = 1 ]; then
-    if [ -n "$WORDS" ]; then
-      plan "create $ETC_DIR/permissions (root-owned, 0644) and add the words: $WORDS"
-    else
-      plan "create $ETC_DIR/permissions (root-owned, 0644) with no word: the agent can only read"
-    fi
-    return 0
-  fi
-  doing "configure $ETC_DIR/permissions (owned by root: the agent cannot give itself rights)"
-  mkdir -p "$ETC_DIR"
-  chmod 0755 "$ETC_DIR"
-  if [ ! -f "$ETC_DIR/permissions" ]; then
-    cat > "$ETC_DIR/permissions" <<'PERMS'
-# What this agent may do on this machine, one word per line (the server must also allow it, and every single action needs your confirmation in the app).
-# Reading (system values, update list, failed services, containers) needs no entry. By default NOTHING below is set: the agent can only read.
-# Words (remove a line to take the right away; the agent and its root helper read this file again at every request):
-#   updates    install updates, refresh package lists (apt)
-#   reboot     reboot and power off
-#   services   list, start, stop, restart systemd services
-#   docker     start, stop, restart containers, pull images (also needs access to the Docker socket)
-#   logs       read bounded logs of services and containers
-PERMS
-  fi
-  chown root:root "$ETC_DIR/permissions" 2>/dev/null || true
-  chmod 0644 "$ETC_DIR/permissions"
-  for w in $WORDS; do
-    if ! grep -Eq "^[[:space:]]*${w}[[:space:]]*(#.*)?\$" "$ETC_DIR/permissions"; then printf '%s\n' "$w" >> "$ETC_DIR/permissions"; fi
-  done
-}
-
-helper_socket_unit_text() {
-  cat <<UNIT
-[Unit]
-Description=JulOS host agent helper (root side of confirmed actions)
-
-[Socket]
-ListenStream=$HELPER_SOCKET_PATH
-SocketUser=root
-SocketGroup=$USER_NAME
-SocketMode=0660
-Accept=yes
-MaxConnections=4
-
-[Install]
-WantedBy=sockets.target
-UNIT
-}
-
-helper_service_unit_text() {
-  cat <<UNIT
-[Unit]
-Description=JulOS host agent helper (one confirmed action, as root)
-
-[Service]
-Type=simple
-ExecStart=$PYTHON $HELPER_FILE
-StandardInput=socket
-StandardOutput=socket
-StandardError=journal
-TimeoutStopSec=30
-ProtectHome=yes
-PrivateTmp=yes
-ProtectKernelModules=yes
-LockPersonality=yes
-UNIT
-}
-
-# The root helper for actions that need root. Only installed when such a word was named with --allow; re-running this script updates it.
-install_helper() {
-  [ "$NEED_HELPER" = 1 ] || return 0
-  if [ "$SYSTEMD" = 0 ]; then
-    warn "no systemd on this machine: the root helper is not installed, so actions that need root (updates, reboot, services, logs) will not work"
-    return 0
-  fi
-  if [ "$DRY" = 1 ]; then
-    plan "download $SERVER/agent-files/julos-agent-helper.py, compare the SHA-256 with SHA256SUMS, install as $HELPER_FILE (root-owned, the agent cannot change it)"
-    plan "write $HELPER_SOCKET_FILE (socket $HELPER_SOCKET_PATH, mode 0660, group $USER_NAME) and $HELPER_SERVICE_FILE (runs the helper as root, one request per connection):"
-    helper_socket_unit_text | grep -v '^$' | sed 's/^/        | /'
-    helper_service_unit_text | grep -v '^$' | sed 's/^/        | /'
-    plan "systemctl daemon-reload; enable and start $HELPER_SOCKET_UNIT"
-    return 0
-  fi
-  tmp=$(mktemp -d); TMPDIRS="$TMPDIRS $tmp"
-  doing "download julos-agent-helper.py and SHA256SUMS from $SERVER"
-  fetch "$SERVER/agent-files/julos-agent-helper.py" "$tmp/julos-agent-helper.py" || die "download of julos-agent-helper.py failed (is the server new enough? the helper belongs to agent 0.6.0 and later)"
-  fetch "$SERVER/agent-files/SHA256SUMS" "$tmp/SHA256SUMS" || die "download of SHA256SUMS failed"
-  want=$(awk '$2 == "julos-agent-helper.py" || $2 == "*julos-agent-helper.py" { print $1 }' "$tmp/SHA256SUMS" | head -n 1)
-  [ -n "$want" ] || die "SHA256SUMS does not list julos-agent-helper.py"
-  got=$(sha256_of "$tmp/julos-agent-helper.py")
-  [ "$want" = "$got" ] || die "checksum mismatch for julos-agent-helper.py (server says $want, download is $got): nothing installed"
-  "$PYTHON" -c 'import sys; compile(open(sys.argv[1], "rb").read(), "julos-agent-helper.py", "exec")' "$tmp/julos-agent-helper.py" || die "the helper download is not valid Python"
-  say "  checksum ok: $got"
-  doing "install the helper as $HELPER_FILE (root-owned)"
-  mkdir -p "$HELPER_DIR"
-  chown root:root "$HELPER_DIR" 2>/dev/null || true
-  chmod 0755 "$HELPER_DIR"
-  install -m 0755 "$tmp/julos-agent-helper.py" "$HELPER_FILE"
-  chown root:root "$HELPER_FILE" 2>/dev/null || true
-  helper_socket_unit_text | grep -v '^$' > "$HELPER_SOCKET_FILE"; chmod 0644 "$HELPER_SOCKET_FILE"
-  helper_service_unit_text | grep -v '^$' > "$HELPER_SERVICE_FILE"; chmod 0644 "$HELPER_SERVICE_FILE"
-  systemctl daemon-reload
-  systemctl enable "$HELPER_SOCKET_UNIT" >/dev/null 2>&1 || true
-  systemctl restart "$HELPER_SOCKET_UNIT"
-}
-
-enrol() {
-  have_config=0
-  if [ -f "$HOME_DIR/.config/julos/agent.json" ]; then have_config=1; fi
-  if [ -z "$CODE" ]; then
-    if [ "$have_config" = 1 ]; then say "  already enrolled (no --code given, token kept)"; else warn "no --code given and not enrolled yet: the service will not start until you enrol (see docs/HOST-AGENT.md)"; fi
-    return 0
-  fi
-  if [ "$DRY" = 1 ]; then plan "enrol this machine with the one-time code (as $USER_NAME)"; return 0; fi
-  doing "enrol with the one-time code"
-  if [ "$ALLOW_HTTP" = 1 ]; then
-    run_as env HOME="$HOME_DIR" "$PYTHON" "$APP_DIR/julos-agent.py" --host --allow-http --server "$SERVER" --code "$CODE" && return 0
-  else
-    run_as env HOME="$HOME_DIR" "$PYTHON" "$APP_DIR/julos-agent.py" --host --server "$SERVER" --code "$CODE" && return 0
-  fi
-  if [ "$have_config" = 1 ]; then warn "enrolling failed (code used up or expired?); the earlier token is kept"; return 0; fi
-  die "enrolling failed: the code is valid 10 minutes and works once; create a new one in the app"
-}
-
-unit_text() {
-  groups=""
-  if [ "$DOCKER_GROUP" = 1 ]; then groups="SupplementaryGroups=docker"; fi
-  flags=""
-  [ "$ALLOW_HTTP" = 0 ] || flags=" --allow-http"
-  cat <<UNIT
-[Unit]
-Description=JulOS host agent (reports system values and updates to your JulOS server)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=$USER_NAME
-Group=$USER_NAME
-$groups
-ExecStart=$PYTHON $APP_DIR/julos-agent.py --host$flags
-Restart=on-failure
-RestartSec=10
-# exit 2: not enrolled, exit 3: prerequisites missing; trying again would not help
-RestartPreventExitStatus=2 3
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=$HOME_DIR $APP_DIR
-PrivateTmp=yes
-ProtectKernelModules=yes
-ProtectKernelLogs=yes
-ProtectControlGroups=yes
-RestrictSUIDSGID=yes
-RestrictRealtime=yes
-LockPersonality=yes
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
-CapabilityBoundingSet=
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-}
-
-install_service() {
-  if [ "$SYSTEMD" = 0 ]; then
-    warn "no systemd on this machine: the service is not installed. Start the agent by hand (or from your init system) as $USER_NAME:"
-    say "    su -s /bin/sh $USER_NAME -c 'HOME=$HOME_DIR $PYTHON $APP_DIR/julos-agent.py --host'"
-    return 0
-  fi
-  if [ "$DOCKER_GROUP" = 1 ] && ! getent group docker >/dev/null 2>&1; then
-    if [ "$DRY" = 1 ]; then warn "--docker-group: no group \"docker\" on this machine"; else die "--docker-group: no group \"docker\" on this machine"; fi
-  fi
-  if [ "$DRY" = 1 ]; then
-    plan "write $UNIT_FILE:"
-    unit_text | grep -v '^$' | sed 's/^/        | /'
-    plan "systemctl daemon-reload; enable and start $UNIT_NAME"
-    return 0
-  fi
-  doing "write $UNIT_FILE"
-  new=$(mktemp); TMPDIRS="$TMPDIRS $new"
-  unit_text | grep -v '^$' > "$new"
-  if [ -f "$UNIT_FILE" ] && cmp -s "$new" "$UNIT_FILE"; then say "  unit unchanged"; else cp "$new" "$UNIT_FILE"; chmod 0644 "$UNIT_FILE"; fi
-  systemctl daemon-reload
-  if [ "$NO_START" = 1 ]; then
-    systemctl enable "$UNIT_NAME" >/dev/null 2>&1 || true
-    say "  installed, not started (--no-start). Start: systemctl start $UNIT_NAME"
-    return 0
-  fi
-  if [ ! -f "$HOME_DIR/.config/julos/agent.json" ]; then
-    systemctl enable "$UNIT_NAME" >/dev/null 2>&1 || true
-    warn "not enrolled: the service is enabled but not started. Enrol with a new code from the app, then: systemctl start $UNIT_NAME"
-    return 0
-  fi
-  doing "enable and (re)start $UNIT_NAME"
-  systemctl enable "$UNIT_NAME" >/dev/null 2>&1 || true
-  systemctl restart "$UNIT_NAME"
-  sleep 2
-  systemctl --no-pager --lines=0 status "$UNIT_NAME" || true
-}
-
-install_user
-install_files
-install_permissions
-install_helper
-enrol
-install_service
-
-if [ "$DRY" = 1 ]; then
-  say "Dry run finished. Run it again without --dry-run (as root) to install."
-else
-  say "Done. The host should show up as connected in the JulOS app within a few seconds."
-  say "Log: journalctl -u $UNIT_NAME   Remove: sh install-host-agent.sh --uninstall"
-fi
+fetch "$SERVER/agent-files/install-agent.sh" "$tmp/install-agent.sh" || { echo "error: download of install-agent.sh failed (is $SERVER your JulOS server, and is it new enough?)" >&2; exit 1; }
+fetch "$SERVER/agent-files/SHA256SUMS" "$tmp/SHA256SUMS" || { echo "error: download of SHA256SUMS failed" >&2; exit 1; }
+want=$(awk '$2 == "install-agent.sh" || $2 == "*install-agent.sh" { print $1 }' "$tmp/SHA256SUMS" | head -n 1)
+[ -n "$want" ] || { echo "error: SHA256SUMS does not list install-agent.sh" >&2; exit 1; }
+got=$(sha256_of "$tmp/install-agent.sh") || exit 1
+[ "$want" = "$got" ] || { echo "error: checksum mismatch for install-agent.sh (server says $want, download is $got): nothing done" >&2; exit 1; }
+rc=0
+sh "$tmp/install-agent.sh" "$FLAG" "$@" || rc=$?
+exit "$rc"

@@ -11,6 +11,8 @@
  * eine Freigabe). Der Server schickt erst Ton, wenn "Ton an" (Nachricht 20 an den Server) gekommen ist.
  * ===================================================================== */
 
+import { t } from './i18n.js';
+
 const TO_SERVER = { audio: 20, microphone: 21 };
 const WORKLET = '/stream-audio-worklet.js';
 
@@ -81,7 +83,7 @@ export class StreamAudio {
   /* ---- Ton ein/aus ---- */
   /** Aufruf aus einer Eingabe des Benutzers (Antippen), damit der Browser den Ton freigibt. */
   async enable() {
-    if (!this.supported) throw new Error('Dieser Browser kann keinen Ton ausgeben.');
+    if (!this.supported) throw new Error(t('stream.audioUnsupported'));
     this.wanted = true;
     if (!this.ctx) {
       this.ctx = new AudioContext({ latencyHint: 'interactive' });
@@ -143,13 +145,13 @@ export class StreamAudio {
 
   /* ---- Mikrofon ---- */
   micProblem() {
-    if (!this.micSupported) return 'Das Mikrofon braucht eine sichere Verbindung (https) und einen Browser, der es freigeben kann.';
+    if (!this.micSupported) return t('stream.micNeedsHttps');
     return '';
   }
 
   async startMic() {
     if (this.mic || this.micStarting) return;
-    if (micOwner && micOwner !== this) throw new Error('Das Mikrofon läuft schon in der Sitzung „' + (micOwner.label || 'andere Sitzung') + '“. Dort ausschalten, dann hier einschalten.');
+    if (micOwner && micOwner !== this) throw new Error(t('stream.micBusyElsewhere', { name: micOwner.label || t('stream.otherSession') }));
     const problem = this.micProblem();
     if (problem) throw new Error(problem);
     this.micStarting = true;
@@ -160,10 +162,10 @@ export class StreamAudio {
     } catch (e) {
       this.micStarting = false; micOwner = null; notifyMic();
       const name = e && e.name;
-      if (name === 'NotAllowedError' || name === 'SecurityError') throw new Error('Der Browser hat das Mikrofon nicht freigegeben. In den Einstellungen der Seite erlauben und noch einmal versuchen.');
-      if (name === 'NotFoundError' || name === 'OverconstrainedError') throw new Error('Kein Mikrofon gefunden.');
-      if (name === 'NotReadableError') throw new Error('Das Mikrofon wird gerade von einem anderen Programm benutzt.');
-      throw new Error('Das Mikrofon lässt sich nicht öffnen.');
+      if (name === 'NotAllowedError' || name === 'SecurityError') throw new Error(t('stream.micDenied'));
+      if (name === 'NotFoundError' || name === 'OverconstrainedError') throw new Error(t('stream.micNotFound'));
+      if (name === 'NotReadableError') throw new Error(t('stream.micInUse'));
+      throw new Error(t('stream.micOpenFailed'));
     }
     try {
       const rate = this.remote.micRate || 16000;
@@ -184,7 +186,7 @@ export class StreamAudio {
     } catch (e) {
       this.micStarting = false; micOwner = null; notifyMic();
       for (const track of stream.getAudioTracks()) track.stop();
-      throw new Error('Das Mikrofon lässt sich nicht starten: ' + (e && e.message ? e.message : e));
+      throw new Error(t('stream.micStartFailed', { reason: e && e.message ? e.message : e }));
     }
   }
 

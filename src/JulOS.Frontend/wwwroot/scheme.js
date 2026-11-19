@@ -3,9 +3,10 @@
  * Gespeichert wird sie als Feld "scheme" der Server-Einstellung "theme" (prefs.js, SettingsRules.cs) und lokal als Rueckfall.
  * Kein DOM, damit es sich mit node pruefen laesst.
  * ===================================================================== */
+import { t } from './i18n.js';
 
 /** Die drei Werte in der Reihenfolge der Anzeige: Hell, Dunkel, System (auto = folgt prefers-color-scheme). */
-export const SCHEMES = [['light', 'Hell'], ['dark', 'Dunkel'], ['auto', 'System']];
+export const SCHEMES = [['light', t('sch.light')], ['dark', t('sch.dark')], ['auto', t('sch.auto')]];
 export const isScheme = (v) => SCHEMES.some(([id]) => id === v);
 /** Eine unbekannte Angabe (zum Beispiel aus einer alten lokalen Kopie) wird zu "auto". */
 export const normalizeScheme = (v) => (isScheme(v) ? v : 'auto');

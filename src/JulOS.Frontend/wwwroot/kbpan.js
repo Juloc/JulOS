@@ -5,6 +5,7 @@
  *   'follow' Die Remote-Aufloesung folgt der Flaeche (nach kurzer Entprellung, siehe SizeGate in layoutlog.js).
  * Hier steht nur Rechnen ohne Browser (deploy/dev/test.sh startet die Tests mit node).
  */
+import { t } from './i18n.js';
 
 export const KB_MODES = ['pan', 'follow'];
 export const KB_SETTLE_MS = 400;     // so lange muss sich die gewuenschte Groesse nicht mehr aendern, bevor sie an die VM geht
@@ -12,7 +13,7 @@ export const KB_SETTLE_MS = 400;     // so lange muss sich die gewuenschte Groes
 /** Gespeicherter Wert -> gueltiger Modus (alles Unbekannte ist der Standard). */
 export const normalizeKbMode = (v) => (KB_MODES.includes(v) ? v : 'pan');
 export const nextKbMode = (v) => KB_MODES[(KB_MODES.indexOf(normalizeKbMode(v)) + 1) % KB_MODES.length];
-export const kbModeLabel = (v) => (normalizeKbMode(v) === 'pan' ? 'Bild verschieben' : 'Auflösung folgt');
+export const kbModeLabel = (v) => (normalizeKbMode(v) === 'pan' ? t('term.kbPan') : t('term.kbFollow'));
 
 /**
  * Merkt sich, wie gross die Bildflaeche ohne Tastatur ist. Ohne Tastatur gilt immer die aktuelle Groesse; waehrend die Tastatur faehrt

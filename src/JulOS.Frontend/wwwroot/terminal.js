@@ -6,6 +6,9 @@
  *  und meldet ihren Zustand ueber Rueckrufe. Die Sondertasten-Leiste ruft sendKeyEvent(gedrueckt, X11-Keysym) wie beim Desktop-Client.
  * ===================================================================== */
 
+import { t } from './i18n.js';
+import { serverMsg } from './i18n-errors.js';
+
 const LIB = '/lib/xterm/';
 let libPromise = null;
 /** xterm.js erst beim ersten Terminal laden (das Handy braucht es sonst nicht). */
@@ -159,8 +162,8 @@ export class TerminalView {
     if (this.destroyed) return;
     const gen = ++this.generation;
     this._closeSocket();
-    this._setState('connecting', { message: 'Verbinde …' });
-    try { await this._ensureTerminal(); } catch (e) { console.error('Terminal konnte nicht gestartet werden', e); return this._setState('error', { message: 'Das Terminal konnte nicht geladen werden. Netz prüfen.', fatal: false }); }
+    this._setState('connecting', { message: t('term.connecting') });
+    try { await this._ensureTerminal(); } catch (e) { console.error('Terminal konnte nicht gestartet werden', e); return this._setState('error', { message: t('term.loadFailed'), fatal: false }); }
     if (gen !== this.generation) return;
     this.host.hidden = false;
     this._fitNow();
@@ -174,11 +177,11 @@ export class TerminalView {
       const data = await resp.json().catch(() => ({}));
       if (gen !== this.generation) return;
       if (resp.status === 401) return this.opts.onAuthExpired?.();
-      if (!resp.ok) return this._setState('error', { message: data.error || 'Fehler ' + resp.status, fatal: true });
+      if (!resp.ok) return this._setState('error', { message: serverMsg(data.error) || t('term.errorStatus', { status: resp.status }), fatal: true });
       ticket = data.ticket;
     } catch (e) {
       if (gen !== this.generation) return;
-      return this._setState('error', { message: e.name === 'TimeoutError' || e.name === 'TypeError' ? 'Keine Verbindung zum Server. Netz prüfen.' : e.message, fatal: false });
+      return this._setState('error', { message: e.name === 'TimeoutError' || e.name === 'TypeError' ? t('term.noServerCheckNet') : e.message, fatal: false });
     }
     const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/remote/ssh?ticket=' + encodeURIComponent(ticket));
     ws.binaryType = 'arraybuffer';
@@ -189,7 +192,7 @@ export class TerminalView {
       if (gen !== this.generation || this.destroyed) return;
       this.connected = false;
       if (ended) return;                                               // der Server hat schon gesagt, warum
-      this._setState(this.everConnected ? 'closed' : 'error', { message: this.everConnected ? 'Die Verbindung wurde getrennt. Die Shell auf dem Ziel ist beendet.' : 'Keine Verbindung zum Server.', fatal: false });
+      this._setState(this.everConnected ? 'closed' : 'error', { message: this.everConnected ? t('term.closedShellEnded') : t('term.noServer'), fatal: false });
     };
     ws.onerror = () => { /* onclose folgt */ };
   }
@@ -209,8 +212,8 @@ export class TerminalView {
       case FROM.ready: {
         const info = JSON.parse(new TextDecoder().decode(m.subarray(1)));
         this.connected = true; this.everConnected = true; this.fingerprint = info.fingerprint;
-        if (info.hostKey === 'new') this._banner(`Neuer Host-Schlüssel gemerkt (${info.fingerprint}). Ab jetzt wird er bei jeder Verbindung geprüft.`);
-        else if (info.hostKey === 'changed-accepted') this._banner(`Neuer Host-Schlüssel bestätigt und gespeichert (${info.fingerprint}).`);
+        if (info.hostKey === 'new') this._banner(t('term.hostKeyNew', { fingerprint: info.fingerprint }));
+        else if (info.hostKey === 'changed-accepted') this._banner(t('term.hostKeyAccepted', { fingerprint: info.fingerprint }));
         this.lastCols = 0;                                              // die Groesse nach dem Verbinden einmal sicher melden
         this._setState('connected', { hostKey: info.hostKey, fingerprint: info.fingerprint });
         this._sendResize(true);
@@ -224,7 +227,7 @@ export class TerminalView {
         if (info.code === END_HOSTKEY) return this._hostKeyDialog(info);
         if (info.code === END_SESSION_EXPIRED) return this.opts.onAuthExpired?.();
         const wasUp = this.everConnected;
-        this._setState(wasUp ? 'closed' : 'error', { message: info.message, code: info.code, fatal: !wasUp && (info.code === 769) });
+        this._setState(wasUp ? 'closed' : 'error', { message: serverMsg(info.message), code: info.code, fatal: !wasUp && (info.code === 769) });
         break;
       }
     }
@@ -429,15 +432,15 @@ export class TerminalView {
       document.body.appendChild(ta); ta.select();
       let ok = false; try { ok = document.execCommand('copy'); } catch { /* egal */ }
       ta.remove(); this.focus();
-      if (!ok) { this._banner('Kopieren nicht möglich.'); return false; }
+      if (!ok) { this._banner(t('term.copyFailed')); return false; }
     }
-    this._banner('Kopiert', 900);
+    this._banner(t('term.copied'), 900);
     return true;
   }
   paste(text) { if (text) this.term?.paste(text); }
   async pasteFromClipboard() {
     try { this.paste(await navigator.clipboard.readText()); }
-    catch { this._banner('Einfügen nicht erlaubt. Auf dem Handy die Tastatur lange drücken (Einfügen), am PC Strg+Umschalt+V.', 6000); }
+    catch { this._banner(t('term.pasteDenied'), 6000); }
     this.focus();
   }
 
@@ -533,9 +536,9 @@ export class TerminalView {
       b.addEventListener('click', (e) => { e.stopPropagation(); this._closeMenu(); fn(); });
       menu.appendChild(b);
     };
-    if (this.term.hasSelection()) add('Kopieren', () => { this.copy(); this.focus(); });
-    add('Einfügen', () => this.pasteFromClipboard());
-    if (all) add('Alles', () => { this.term.selectAll(); this._menu(x, y, { all: false }); });
+    if (this.term.hasSelection()) add(t('common.copy'), () => { this.copy(); this.focus(); });
+    add(t('term.paste'), () => this.pasteFromClipboard());
+    if (all) add(t('term.selectAll'), () => { this.term.selectAll(); this._menu(x, y, { all: false }); });
     this.host.appendChild(menu);
     const hr = this.host.getBoundingClientRect(), mw = menu.offsetWidth, mh = menu.offsetHeight;
     menu.style.left = clamp(x - hr.left - mw / 2, 4, Math.max(4, hr.width - mw - 4)) + 'px';
@@ -622,21 +625,21 @@ export class TerminalView {
     const wrap = el('div', 'term-dialog');
     const box = el('div', 'box');
     box.setAttribute('role', 'alertdialog');
-    box.appendChild(el('h2', '', 'Der Schlüssel des Ziels hat sich geändert'));
-    box.appendChild(el('p', '', 'Das kann ein Angriff sein (jemand gibt sich als dein Rechner aus) oder ein neu aufgesetzter Rechner. Die Verbindung wurde nicht aufgebaut und dein Passwort nicht gesendet.'));
+    box.appendChild(el('h2', '', t('term.keyChangedTitle')));
+    box.appendChild(el('p', '', t('term.keyChangedBody')));
     const row = (label, value) => { const r = el('p', 'fp'); r.appendChild(el('span', '', label)); r.appendChild(el('code', '', value || '–')); box.appendChild(r); };
-    row('Bisher', info.previous);
-    row('Jetzt', info.fingerprint);
-    box.appendChild(el('p', 'hint', 'Vertraue dem neuen Schlüssel nur, wenn du weißt, dass sich das Ziel geändert hat. Vergleiche ihn im Zweifel auf dem Ziel mit „ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub“.'));
-    const cancel = el('button', 'primary', 'Abbrechen'); cancel.type = 'button';
-    const trust = el('button', 'danger', 'Neuen Schlüssel vertrauen'); trust.type = 'button';
-    cancel.addEventListener('click', () => { wrap.remove(); this._setState('error', { message: 'Verbindung abgebrochen: der Schlüssel des Ziels hat sich geändert.', fatal: true }); });
+    row(t('term.keyPrevious'), info.previous);
+    row(t('term.keyNow'), info.fingerprint);
+    box.appendChild(el('p', 'hint', t('term.keyChangedHint')));
+    const cancel = el('button', 'primary', t('common.cancel')); cancel.type = 'button';
+    const trust = el('button', 'danger', t('term.keyTrust')); trust.type = 'button';
+    cancel.addEventListener('click', () => { wrap.remove(); this._setState('error', { message: t('term.keyChangedAborted'), fatal: true }); });
     trust.addEventListener('click', () => { wrap.remove(); this.connect({ acceptHostKey: info.fingerprint }); });
     const actions = el('div', 'actions'); actions.append(cancel, trust);
     box.appendChild(actions);
     wrap.appendChild(box);
     this.host.appendChild(wrap);
     cancel.focus();
-    this._setState('error', { message: 'Der Schlüssel des Ziels hat sich geändert.', code: END_HOSTKEY, fatal: true, dialog: true });
+    this._setState('error', { message: t('term.keyChanged'), code: END_HOSTKEY, fatal: true, dialog: true });
   }
 }

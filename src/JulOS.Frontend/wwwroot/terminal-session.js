@@ -7,6 +7,7 @@
 import { RemoteSession, softKeyboard } from './app.js';
 import { Sessions } from './sessions.js';
 import { TerminalView } from './terminal.js';
+import { t } from './i18n.js';
 
 // Maus und echte Tastatur: xterm nimmt die Tasten selbst an. ?softkb in der Adresse erzwingt zum Testen die Handy-Tastatur (Eingabefeld der Seite).
 const HW_KB = matchMedia('(pointer: fine) and (hover: hover)').matches && !location.search.includes('softkb');
@@ -24,15 +25,15 @@ export class TerminalSession extends RemoteSession {
     this.intentional = false; this.fatal = false; this.connectStarted = Date.now();
     this.teardown();
     const reconnecting = this.everConnected;
-    this.setState(reconnecting ? 'reconnecting' : 'connecting', reconnecting ? 'Verbinde neu …' : 'Verbinde …');
-    this.showBusy(reconnecting ? 'Verbinde neu …' : 'Verbinde …');
+    this.setState(reconnecting ? 'reconnecting' : 'connecting', reconnecting ? t('term.reconnecting') : t('term.connecting'));
+    this.showBusy(reconnecting ? t('term.reconnecting') : t('term.connecting'));
     const view = new TerminalView({
       conn: this.conn, sid: this.id, password: this.password, container: this.el.stage,
       externalKeyboard: !HW_KB,
       onState: (state, info) => this.onViewState(view, state, info),
       onKeyUsed: () => this.consumeOnce(),
       onTap: () => { if (!HW_KB && softKeyboard.auto() && !softKeyboard.isOpen()) softKeyboard.open(); else if (HW_KB) view.focusInput(); },
-      onAuthExpired: () => this.requestClose('Die Sitzung ist abgelaufen. Bitte neu anmelden.', 'auth'),
+      onAuthExpired: () => this.requestClose(t('term.authExpired'), 'auth'),
     });
     this.view = view;
     this.client = view;                       // die Leiste ruft this.client.sendKeyEvent(gedrueckt, keysym)
@@ -46,18 +47,18 @@ export class TerminalSession extends RemoteSession {
     if (state === 'connected') {
       this.connected = true; this.everConnected = true; this.connectedAt = Date.now();
       this.el.overlay.hidden = true; this.el.spinner.hidden = true;
-      this.setState('connected', 'Verbunden');
+      this.setState('connected', t('term.connected'));
       if (Sessions.active === this && HW_KB) view.focusInput();
       return;
     }
     this.connected = false;
-    if (info.dialog) { this.el.overlay.hidden = true; this.setState('error', 'Schlüssel geändert'); return; }   // die Warnung steht in der Ansicht selbst
-    if (info.code === 777) { this.fatal = true; this.setState('taken', 'Übernommen'); return this.showOverlay(info.message); }
+    if (info.dialog) { this.el.overlay.hidden = true; this.setState('error', t('term.keyChangedState')); return; }   // die Warnung steht in der Ansicht selbst
+    if (info.code === 777) { this.fatal = true; this.setState('taken', t('term.taken')); return this.showOverlay(info.message); }
     if (info.code === 797) { this.fatal = true; return this.requestClose(info.message); }                      // Obergrenze: Meldung des Servers
     if (state === 'error' && (info.fatal || !this.everConnected)) { this.fatal = !!info.fatal; return this.requestClose(info.message); }
     // Verbindung stand, ist aber weg: die Shell auf dem Ziel endet mit der Verbindung, darum kein stilles Neuverbinden (das ergaebe eine leere neue Shell)
-    this.setState('disconnected', state === 'closed' && info.code ? 'Beendet' : 'Getrennt');
-    this.showOverlay(info.message || 'Die Verbindung wurde getrennt.');
+    this.setState('disconnected', state === 'closed' && info.code ? t('term.ended') : t('term.disconnected'));
+    this.showOverlay(info.message || t('term.connectionClosed'));
   }
 
   teardown() {

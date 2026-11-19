@@ -13,8 +13,8 @@ const MOD_STATE = { off: tk('desktop.off'), once: tk('desktop.modOnce'), lock: t
 const ZOOMS = [75, 100, 125, 150, 200];
 
 /** Kennungen der Menues (Reihenfolge der Leiste); die Beschriftung kommt aus remoteMenuLabel */
-export function remoteMenuNames(kind) { return kind === 'desktop' ? ['keys', 'combos', 'view', 'windows'] : ['keys', 'combos', 'view']; }
-const MENU_LABELS = { keys: tk('desktop.menuKeys'), combos: tk('desktop.menuCombos'), view: tk('desktop.menuView'), windows: tk('desktop.menuWindows') };
+export function remoteMenuNames(kind) { return kind === 'desktop' ? ['keys', 'combos', 'view', 'windows', 'sound'] : kind === 'vnc' ? ['keys', 'combos', 'view', 'sound'] : ['keys', 'combos', 'view']; }
+const MENU_LABELS = { keys: tk('desktop.menuKeys'), combos: tk('desktop.menuCombos'), view: tk('desktop.menuView'), windows: tk('desktop.menuWindows'), sound: tk('desktop.menuAudio') };
 export const remoteMenuLabel = (name) => t(MENU_LABELS[name]);
 
 /** Menue "<Name der Verbindung>": die Sitzung als Ganzes (wie das Programm-Menue am Mac) */
@@ -82,6 +82,24 @@ function viewMenu(deps) {
   ];
 }
 
+/** Ton und Mikrofon: Ton vom Rechner an/aus, Lautstaerke, Mikrofon an/aus, Diagnose. VNC kennt weder Ton noch Mikrofon und sagt es. */
+const VOLUMES = [100, 75, 50, 25, 0];
+function soundMenu() {
+  const a = R.audio();
+  if (!a) return [{ label: t('audio.none'), disabled: true }];
+  if (a.vnc) return [{ label: t('audio.vnc'), disabled: true }];
+  const pct = Math.round(a.volume * 100);
+  return [
+    { label: t('app.menuSound'), icon: a.on ? 'check' : 'blank', hint: a.values.sound, run: () => R.audioAct('sound') },
+    { label: t('app.menuVolume'), icon: 'blank', hint: a.values.volume,
+      sub: VOLUMES.map((p) => ({ label: t('desktop.percent', { n: p }), icon: Math.abs(pct - p) <= 12 ? 'check' : 'blank', run: () => R.setVolume(p / 100) })) },
+    { sep: true },
+    { label: t('app.menuMic'), icon: a.micOn ? 'check' : 'blank', hint: a.values.mic, run: () => R.audioAct('mic') },
+    { sep: true },
+    { label: t('audio.menuDiag'), icon: 'blank', run: () => R.audioAct('audioDiag') },
+  ];
+}
+
 /** Fenster der Ziel-Maschine (Agent): die Liste wird beim Oeffnen frisch geholt */
 async function windowsMenu() {
   try { await Promise.race([R.refreshWindows(), new Promise((r) => setTimeout(r, 900))]); } catch { /* alte Liste */ }
@@ -99,5 +117,5 @@ async function windowsMenu() {
 
 /** Eintraege eines Menues der Leiste (kann ein Versprechen sein, weil die Fensterliste geholt wird) */
 export function remoteMenuItems(name, deps) {
-  return { keys: () => keysMenu(), combos: () => combosMenu(), view: () => viewMenu(deps), windows: () => windowsMenu() }[name]();
+  return { keys: () => keysMenu(), combos: () => combosMenu(), view: () => viewMenu(deps), windows: () => windowsMenu(), sound: () => soundMenu() }[name]();
 }

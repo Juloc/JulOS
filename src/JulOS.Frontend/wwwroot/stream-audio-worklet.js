@@ -16,7 +16,7 @@ class JulPlayer extends AudioWorkletProcessor {
     this.write = 0; this.pos = 0;                 // Schreib- und Leseposition, in Samples der Quellrate (wachsen ohne Ende, der Index ist modulo)
     this.targetMs = 60; this.buffering = true;
     this.underrunAt = -1;                         // Bild, an dem der letzte Aussetzer begann (currentFrame)
-    this.underruns = 0; this.dropped = 0; this.calm = 0; this.reported = 0; this.peak = 0; this.received = 0;
+    this.underruns = 0; this.dropped = 0; this.calm = 0; this.reported = 0; this.peak = 0; this.received = 0; this.played = 0;
     this.port.onmessage = (e) => this.onmessage(e.data);
   }
 
@@ -69,7 +69,7 @@ class JulPlayer extends AudioWorkletProcessor {
       const v = sl < 0 ? -sl : sl; if (v > peak) peak = v;
       pos += step;
     }
-    this.pos = pos; this.peak = peak;
+    this.pos = pos; this.peak = peak; this.played += i;                       // played: Samples, die wirklich aus dem Puffer an den Ausgang gingen (Diagnose und Tests)
     if (i < n) {
       // Aussetzer: Stille fuer den Rest, neu auffuellen, und die Reserve etwas groesser machen
       for (; i < n; i++) { l[i] = 0; if (r !== l) r[i] = 0; }
@@ -84,7 +84,7 @@ class JulPlayer extends AudioWorkletProcessor {
     if (++this.reported < 64) return;                                            // etwa 5 Mal pro Sekunde
     this.reported = 0;
     this.port.postMessage({ type: 'stats', bufferedMs: Math.round(((this.write - this.pos) / (this.rate || 1)) * 1000), targetMs: Math.round(this.targetMs),
-      underruns: this.underruns, dropped: this.dropped, peak: this.peak, received: this.received });
+      underruns: this.underruns, dropped: this.dropped, peak: this.peak, received: this.received, played: this.played });
     this.peak = 0;
   }
 }

@@ -6,6 +6,7 @@ import { StatusBar } from './statusbar.js';
 import { openPopout } from './popout-main.js';
 import { QUALITIES, normalizeQuality, qualityOf, nextQuality } from './perf.js';
 import { StreamAudio } from './stream-audio.js';
+import { audioLines, micPermission, micBeforeHint } from './audiodiag.js';
 import { SizeGate, LayoutLog } from './layoutlog.js';
 import { KB_SETTLE_MS, StageBase, effectiveStage, panOffset, panDrag, normalizeKbMode, nextKbMode, kbModeLabel } from './kbpan.js';
 import { Session, Sessions } from './sessions.js';
@@ -57,6 +58,7 @@ function saveTheme() {
 
 /* ---------- Material-Icons (inline SVG, 24 px) ---------- */
 const ICONS = {
+  info: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z',
   volume: 'M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z',
   mic: 'M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z',
   keyboard: 'M20 5H4c-1.1 0-1.99.9-1.99 2L2 17c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zm-1 2H5v-2h2v2zm0-3H5V8h2v2zm9 7H8v-2h8v2zm0-4h-2v-2h2v2zm0-3h-2V8h2v2zm3 3h-2v-2h2v2zm0-3h-2V8h2v2z',
@@ -100,7 +102,7 @@ function renderIcons(root = document) { root.querySelectorAll('[data-ic]').forEa
 const el = {
   kb: $('#kb'), kbInput: $('#kb'), kbRich: $('#kbRich'),
   imgSeedBtn: $('#imgSeedBtn'), imgSeedInput: $('#imgSeedInput'),
-  clipDlg: $('#clipDlg'), sendText: $('#sendText'), remoteClip: $('#remoteClip'), typeBtn: $('#typeBtn'), pasteBtn: $('#pasteBtn'), copyBtn: $('#copyBtn'),
+  audioDlg: $('#audioDlg'), clipDlg: $('#clipDlg'), sendText: $('#sendText'), remoteClip: $('#remoteClip'), typeBtn: $('#typeBtn'), pasteBtn: $('#pasteBtn'), copyBtn: $('#copyBtn'),
   keyDlg: $('#keyDlg'), keyDlgTitle: $('#keyDlgTitle'), keyLabel: $('#keyLabel'), keyType: $('#keyType'), keyScope: $('#keyScope'), keyValue: $('#keyValue'),
   keyValueLabel: $('#keyValueLabel'), keyHint: $('#keyHint'), keyLeft: $('#keyLeft'), keyRight: $('#keyRight'),
   keySave: $('#keySave'), keyDelete: $('#keyDelete'),
@@ -417,6 +419,17 @@ function renderClipDiag() {
   }));
 }
 setInterval(renderClipDiag, 1000);       // die Zeiten ("vor 12 s") laufen mit
+/* Die Diagnose von Ton und Mikrofon (audiodiag.js): Zeilen der aktiven Sitzung, nur solange der Dialog offen ist */
+let micPermState = 'unknown', micPermAt = 0;
+function renderAudioDiag() {
+  const s = cur(), list = $('#audioDiagList');
+  if (!s || !list || !el.audioDlg.open) return;
+  if (Date.now() - micPermAt > 2000) { micPermAt = Date.now(); micPermission().then((st) => { micPermState = st; }); }
+  const lines = audioLines({ audio: s.audioOf(), vnc: s.noAudio(), secure: window.isSecureContext !== false, micPerm: micPermState, kind: browserKind() });
+  list.replaceChildren(...lines.map((l) => { const li = document.createElement('li'); li.className = l.ok === true ? 'ok' : l.ok === false ? 'no' : 'note'; li.textContent = l.text; return li; }));
+}
+function openAudioDlg() { micPermAt = 0; el.audioDlg.showModal(); renderAudioDiag(); }
+setInterval(renderAudioDiag, 500);
 // Hatte die Seite beim Eintreffen von Text aus der VM keinen Fokus, versucht der Browser es beim naechsten Fokus noch einmal (nur fuer kurz zuvor kopierten Text)
 window.addEventListener('focus', () => {
   const s = cur(), p = s && s.clipPending;
@@ -626,16 +639,24 @@ export class RemoteSession extends Session {
   }
   /* ---------- Ton (nur beim Stream; jede Sitzung hat ihr eigenes Audio, siehe stream-audio.js) ---------- */
   audioOf() { return this.client instanceof StreamClient ? this.client.audio : null; }
+  /** VNC kennt weder Ton noch Mikrofon: dort bietet das Menue nichts davon an und sagt es. */
+  noAudio() { return this.conn.kind === 'vnc'; }
   wireAudio(client) {
     const a = client.audio;
     a.label = this.title;
-    a.onchange = () => { if (this.client === client) this.updateAudioMenu(); };
+    a.onchange = () => {
+      if (this.client !== client) return;
+      this.updateAudioMenu();
+      // Der Browser gibt Ton erst nach einer Eingabe frei: sagen, was zu tun ist, einmal je Verbindung und nur, wenn der Desktop Ton hat
+      if (a.wanted && a.remote.output && a.state !== 'running' && !a.tapNoted && cur() === this) { a.tapNoted = true; this.toast(t('audio.soundTapToast'), 5200); }
+    };
     a.onmicwait = (offered) => this.toast(offered ? t('app.micWaitOffered') : t('app.micWaitChannel'), 5200);
     a.setActive(this.visible && Sessions.active === this);
   }
   startAudio(client) {
     // Wie zuletzt: Ton an, wenn der Benutzer ihn nicht ausgeschaltet hat. Ohne Eingabe seit dem Laden der Seite bleibt der Browser stumm,
     // bis die erste Eingabe kommt (stream-audio.js wartet darauf).
+    if (this.noAudio()) { this.updateAudioMenu(); return; }
     const a = client.audio;
     a.setVolume(store.get('volume', 1));
     this.applyAudio();
@@ -644,19 +665,34 @@ export class RemoteSession extends Session {
   }
   /** Ton nur fuer die sichtbare und aktive Sitzung; die anderen bekommen vom Server nichts geschickt. */
   applyAudio() { const a = this.audioOf(); if (a) a.setActive(this.visible && Sessions.active === this); }
+  /** Die Werte der drei Zeilen "Ton vom Rechner", "Lautstaerke" und "Mikrofon" als Text (Menue der Sitzung auf dem Handy und Menue "Ton" der oberen Leiste am PC); null ohne Ton (kein Stream). */
+  audioValues() {
+    const a = this.audioOf(); if (!a) return null;
+    if (this.noAudio()) return { sound: t('app.soundVnc'), volume: '', mic: '' };
+    return {
+      sound: !a.remote.output ? t('app.soundNone') : !a.wanted ? t('app.off') : a.state === 'running' ? t('app.on') : t('app.soundTap'),
+      volume: t('app.percent', { n: Math.round(a.volume * 100) }),
+      mic: !a.micOn ? (StreamAudio.micOwner && StreamAudio.micOwner !== a ? t('app.micRunningIn', { name: StreamAudio.micOwner.label || t('app.otherSession') }) : t('app.off'))
+        : a.remote.recording ? t('app.micRecording') : t('app.micWaiting'),
+    };
+  }
+  /** Fuer das Menue "Ton" der oberen Leiste (desktop-remote.js): Werte und Schalter. */
+  audioSummary() {
+    const a = this.audioOf(); if (!a) return null;
+    return { vnc: this.noAudio(), on: a.wanted && a.state === 'running', volume: a.volume, micOn: a.micOn, values: this.audioValues() };
+  }
+  setVolumeValue(v) { const a = this.audioOf(); if (!a) return; a.setVolume(v); store.set('volume', a.volume); this.updateAudioMenu(); }
   updateAudioMenu() {
-    const a = this.audioOf();
-    for (const act of ['sound', 'volume', 'mic']) { const row = this.el.menu.querySelector(`[data-act="${act}"]`); if (row) row.hidden = !a; }
-    if (!a) return;
+    const a = this.audioOf(), vnc = this.noAudio();
+    for (const act of ['sound', 'volume', 'mic', 'audioDiag']) { const row = this.el.menu.querySelector(`[data-act="${act}"]`); if (row) row.hidden = !a || (vnc && act !== 'sound' && act !== 'audioDiag'); }
+    const v = this.audioValues(); if (!v) return;
     const set = (c, txt) => { const n = this.el.menu.querySelector(c); if (n) n.textContent = txt; };
-    set('.mv-sound', !a.remote.output ? t('app.soundNone') : !a.wanted ? t('app.off') : a.state === 'running' ? t('app.on') : t('app.soundTap'));
-    set('.mv-volume', t('app.percent', { n: Math.round(a.volume * 100) }));
-    set('.mv-mic', !a.micOn ? (StreamAudio.micOwner && StreamAudio.micOwner !== a ? t('app.micRunningIn', { name: StreamAudio.micOwner.label || t('app.otherSession') }) : t('app.off'))
-      : a.remote.recording ? t('app.micRecording') : t('app.micWaiting'));
+    set('.mv-sound', v.sound); set('.mv-volume', v.volume); set('.mv-mic', v.mic);
   }
   async audioAction(act) {
     const a = this.audioOf(); if (!a) return;
     a.label = this.title;
+    if (this.noAudio() && act !== 'audioDiag') { this.toast(t('audio.vnc'), 4200); return; }
     try {
       if (act === 'sound') {
         if (a.wanted && a.state === 'running') { a.disable(); store.set('audio', false); }
@@ -665,9 +701,17 @@ export class RemoteSession extends Session {
         const next = a.volume > 0.8 ? 0.6 : a.volume > 0.5 ? 0.3 : a.volume > 0.2 ? 0 : 1;
         a.setVolume(next); store.set('volume', next);
       } else if (act === 'mic') {
-        if (a.micOn) a.stopMic(); else await a.startMic();
+        if (a.micOn) a.stopMic();
+        else {
+          // Fragt der Browser gleich nach dem Mikrofon, steht der Hinweis schon da, wenn die Abfrage erscheint (die Antwort kommt nach der Eingabe zurueck, daher nicht abwarten)
+          micPermission().then((state) => { const hint = micBeforeHint(state); if (hint && !a.micOn) this.toast(hint, 4200); });
+          await a.startMic();
+        }
+      } else if (act === 'audioDiag') {
+        this.closeMenu(); openAudioDlg();
+        return;
       }
-    } catch (e) { this.toast(e.message, 4800); }
+    } catch (e) { this.toast(e.message, 6400); }
     this.updateAudioMenu();
   }
   /* ---------- Eigenes Fenster (Pop-out): dieselbe Strom-Sitzung in einem Browserfenster, ohne zweiten Login (popout-main.js, popout.js) ---------- */
@@ -1403,7 +1447,7 @@ export class RemoteSession extends Session {
   onMenuClick(e) {
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (!act) return;
-    if (['sound', 'volume', 'mic'].includes(act)) { this.audioAction(act); return; }
+    if (['sound', 'volume', 'mic', 'audioDiag'].includes(act)) { this.audioAction(act); return; }
     if (act === 'kbResize') {
       S.kbResize = nextKbMode(S.kbResize); store.set('kbResize', S.kbResize);
       for (const s of remotes()) { s.updateMenuLabels(); s.applyPan(); s.scheduleSize(); }
@@ -2239,6 +2283,8 @@ export const remoteApi = {
   /** Eigenes Fenster (nur Desktop-Oberflaeche): oeffnen oder wieder anheften; popped sagt, ob die Sitzung gerade dort ist */
   popOut: () => { const s = cur(); if (s) { if (s.popped) s.popBack(); else s.popOut(); } },
   popped: () => !!(cur() && cur().popped), canPopOut: () => !!cur(),
+  /** Ton und Mikrofon der aktiven Sitzung (Menue "Ton" der oberen Leiste; auf dem Handy steht dasselbe im Menue der Sitzung): Zustand, Aktion ('sound' | 'volume' | 'mic' | 'audioDiag'), Lautstaerke 0 bis 1 */
+  audio: () => (cur() && cur().audioSummary ? cur().audioSummary() : null), audioAct: (act) => cur() && cur().audioAction && cur().audioAction(act), setVolume: (v) => cur() && cur().setVolumeValue && cur().setVolumeValue(v),
   /** Statusleiste und Bildrate */
   perfShown: () => S.perf, setPerf: (on) => setPerf(on),
   quality: () => (cur() ? cur().quality : 'auto'), setQuality: (id) => cur() && cur().setQualityMode(id), qualities: QUALITIES,

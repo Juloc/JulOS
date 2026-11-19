@@ -153,6 +153,7 @@
             <div class="mi" role="menuitem" data-act="sound" hidden><span class="mic" data-ic="volume"></span><span class="mt" data-i18n="app.menuSound">Ton vom Rechner</span><span class="mv mv-sound"></span></div>
             <div class="mi" role="menuitem" data-act="volume" hidden><span class="mic" data-ic="volume"></span><span class="mt" data-i18n="app.menuVolume">Lautstärke</span><span class="mv mv-volume"></span></div>
             <div class="mi" role="menuitem" data-act="mic" hidden><span class="mic" data-ic="mic"></span><span class="mt" data-i18n="app.menuMic">Mikrofon</span><span class="mv mv-mic"></span></div>
+            <div class="mi" role="menuitem" data-act="audioDiag" hidden><span class="mic" data-ic="info"></span><span class="mt" data-i18n="audio.menuDiag">Ton und Mikrofon: Diagnose</span></div>
             <div class="mi" role="menuitem" data-act="password"><span class="mic" data-ic="key"></span><span class="mt" data-i18n="app.menuPassword">Passwort aus Passwortmanager</span></div>
             <div class="mi" role="menuitem" data-act="theme"><span class="mic" data-ic="palette"></span><span class="mt" data-i18n="app.themeTitle">Farben und Design</span></div>
             <div class="mi" role="menuitem" data-act="editKeys"><span class="mic" data-ic="edit"></span><span class="mt" data-i18n="app.menuEditKeys">Sondertasten bearbeiten</span></div>
@@ -422,6 +423,16 @@
         <p class="hint" data-i18n="clipdiag.hint">Zeigt, wo die Zwischenablage hakt. Inhalte erscheinen hier nie, nur Richtung, Zeit und Länge.</p>
         <ul id="clipDiagList"></ul>
       </details>
+      <div class="row">
+        <button class="ghost close" data-act="close" type="button" data-i18n="common.close">Schließen</button>
+      </div>
+    </dialog>
+
+    <!-- Ton und Mikrofon: Diagnose -->
+    <dialog id="audioDlg">
+      <h2 data-i18n="audio.dlgTitle">Ton und Mikrofon</h2>
+      <p class="hint" data-i18n="audio.dlgHint">Zeigt, wo Ton oder Mikrofon hakt. Es wird nie Ton gespeichert, nur Zähler und Pegel gezeigt.</p>
+      <ul id="audioDiagList"></ul>
       <div class="row">
         <button class="ghost close" data-act="close" type="button" data-i18n="common.close">Schließen</button>
       </div>

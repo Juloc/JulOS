@@ -293,11 +293,11 @@ label.check input { width: auto; }
 #remoteImg { display: block; max-width: 100%; max-height: 40vh; margin: 4px auto 0; border-radius: 12px; background: repeating-conic-gradient(#8883 0% 25%, transparent 0% 50%) 0 0 / 16px 16px; }
 #clipDiag { margin: 10px 0 4px; }
 #clipDiag summary { cursor: pointer; font-weight: 600; }
-#clipDiagList { list-style: none; margin: 6px 0 0; padding: 0; font-size: .85rem; }
-#clipDiagList li { padding: 3px 0 3px 1.3em; position: relative; }
-#clipDiagList li::before { position: absolute; left: 0; content: "\2022"; color: var(--muted); }
-#clipDiagList li.ok::before { content: "\2713"; color: #2e7d32; }
-#clipDiagList li.no::before { content: "\2717"; color: #c62828; }
+#clipDiagList, #audioDiagList { list-style: none; margin: 6px 0 0; padding: 0; font-size: .85rem; }
+#clipDiagList li, #audioDiagList li { padding: 3px 0 3px 1.3em; position: relative; }
+#clipDiagList li::before, #audioDiagList li::before { position: absolute; left: 0; content: "\2022"; color: var(--muted); }
+#clipDiagList li.ok::before, #audioDiagList li.ok::before { content: "\2713"; color: #2e7d32; }
+#clipDiagList li.no::before, #audioDiagList li.no::before { content: "\2717"; color: #c62828; }
 #remoteFiles { list-style: none; margin: 0; padding: 0; }
 #remoteFiles li { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
 #remoteFiles .nm { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

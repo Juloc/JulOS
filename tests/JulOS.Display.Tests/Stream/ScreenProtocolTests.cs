@@ -64,22 +64,36 @@ public sealed class ScreenProtocolTests
     }
 
     [Fact]
-    public void Image_file_list_file_chunk_and_result_messages_have_the_documented_layout()
+    public void Image_file_list_file_state_limits_and_result_messages_have_the_documented_layout()
     {
         Assert.Equal([7, 2, 9, 8], ScreenProtocol.Image(2, [9, 8]));
 
-        var files = ScreenProtocol.Files(0x01020304, [new RemoteFile("a.txt", 5), new RemoteFile("Größe.pdf", -1)]);
-        Assert.Equal([8, 1, 2, 3, 4, 2], files[..6]);
-        Assert.Equal(5, BinaryPrimitives.ReadInt64BigEndian(files.AsSpan(6)));
-        Assert.Equal(5, BinaryPrimitives.ReadUInt16BigEndian(files.AsSpan(14)));
-        Assert.Equal("a.txt", System.Text.Encoding.UTF8.GetString(files, 16, 5));
-        Assert.Equal(-1, BinaryPrimitives.ReadInt64BigEndian(files.AsSpan(21)));
-        var second = BinaryPrimitives.ReadUInt16BigEndian(files.AsSpan(29));
-        Assert.Equal("Größe.pdf", System.Text.Encoding.UTF8.GetString(files, 31, second));
-        Assert.Equal(31 + second, files.Length);
-        Assert.Equal([8, 0, 0, 0, 7, 0], ScreenProtocol.Files(7, []));
+        var files = ScreenProtocol.Files(0x01020304, [new RemoteFile("a.txt", 5), new RemoteFile("Ordner/Größe.pdf", -1), new RemoteFile("Ordner", 0, true)]);
+        Assert.Equal([8, 1, 2, 3, 4, 0, 3], files[..7]);                         // Nummer, Stapel, Anzahl (2 Bytes)
+        Assert.Equal(0, files[7]);                                              // flags: kein Ordner
+        Assert.Equal(5, BinaryPrimitives.ReadInt64BigEndian(files.AsSpan(8)));
+        Assert.Equal(5, BinaryPrimitives.ReadUInt16BigEndian(files.AsSpan(16)));
+        Assert.Equal("a.txt", System.Text.Encoding.UTF8.GetString(files, 18, 5));
+        Assert.Equal(0, files[23]);
+        Assert.Equal(-1, BinaryPrimitives.ReadInt64BigEndian(files.AsSpan(24)));
+        var second = BinaryPrimitives.ReadUInt16BigEndian(files.AsSpan(32));
+        Assert.Equal("Ordner/Größe.pdf", System.Text.Encoding.UTF8.GetString(files, 34, second));
+        Assert.Equal(1, files[34 + second]);                                    // der Ordner: Bit 0
+        var third = BinaryPrimitives.ReadUInt16BigEndian(files.AsSpan(34 + second + 9));
+        Assert.Equal("Ordner", System.Text.Encoding.UTF8.GetString(files, 34 + second + 11, third));
+        Assert.Equal(34 + second + 11 + third, files.Length);
+        Assert.Equal([8, 0, 0, 0, 7, 0, 0], ScreenProtocol.Files(7, []));
 
-        Assert.Equal([9, 0, 0, 0, 7, 3, 1, 5, 6], ScreenProtocol.FileChunk(7, 3, ClipboardBridge.ChunkLast, [5, 6]));
+        var state = ScreenProtocol.FileState(7, ClipboardBridge.StateRunning, 100, -1, "x");
+        Assert.Equal([9, 0, 0, 0, 7, 1], state[..6]);
+        Assert.Equal(100, BinaryPrimitives.ReadInt64BigEndian(state.AsSpan(6)));
+        Assert.Equal(-1, BinaryPrimitives.ReadInt64BigEndian(state.AsSpan(14)));
+        Assert.Equal("x", System.Text.Encoding.UTF8.GetString(state, ScreenProtocol.FileStateHeader, state.Length - ScreenProtocol.FileStateHeader));
+
+        var limits = ScreenProtocol.Limits(2L * 1024 * 1024 * 1024, 200, 255);
+        Assert.Equal(14, limits[0]);
+        Assert.Equal(2L * 1024 * 1024 * 1024, BinaryPrimitives.ReadInt64BigEndian(limits.AsSpan(1)));
+        Assert.Equal((200, 255), (BinaryPrimitives.ReadUInt16BigEndian(limits.AsSpan(9)), BinaryPrimitives.ReadUInt16BigEndian(limits.AsSpan(11))));
 
         var result = ScreenProtocol.Result(300, ClipboardBridge.ResultTooBig, "zu groß");
         Assert.Equal([10, 0, 0, 1, 44, 1], result[..6]);
@@ -87,14 +101,14 @@ public sealed class ScreenProtocolTests
     }
 
     [Fact]
-    public void Only_the_text_the_file_name_and_the_file_pieces_may_be_longer_than_an_input()
+    public void Only_the_text_the_file_path_and_the_file_pieces_may_be_longer_than_an_input()
     {
-        foreach (var type in new[] { ScreenProtocol.FromBrowserClipboard, ScreenProtocol.FromBrowserSendBegin, ScreenProtocol.FromBrowserSendChunk })
+        foreach (var type in new[] { ScreenProtocol.FromBrowserClipboard, ScreenProtocol.FromBrowserSendBegin, ScreenProtocol.FromBrowserSendChunk, ScreenProtocol.FromBrowserFileRequest })
         {
             Assert.True(ScreenProtocol.MayBeLong(type));
         }
 
-        foreach (var type in new[] { ScreenProtocol.FromBrowserAck, ScreenProtocol.FromBrowserMove, ScreenProtocol.FromBrowserKey, ScreenProtocol.FromBrowserSendEnd, ScreenProtocol.FromBrowserFileRequest })
+        foreach (var type in new[] { ScreenProtocol.FromBrowserAck, ScreenProtocol.FromBrowserMove, ScreenProtocol.FromBrowserKey, ScreenProtocol.FromBrowserSendEnd, ScreenProtocol.FromBrowserFileCancel })
         {
             Assert.False(ScreenProtocol.MayBeLong(type));
         }
@@ -118,7 +132,7 @@ public sealed class ScreenProtocolTests
         Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], new[]
         {
             ScreenProtocol.ToBrowserPicture, ScreenProtocol.ToBrowserCursor, ScreenProtocol.ToBrowserSize, ScreenProtocol.ToBrowserError, ScreenProtocol.ToBrowserTaken,
-            ScreenProtocol.ToBrowserClipboard, ScreenProtocol.ToBrowserImage, ScreenProtocol.ToBrowserFiles, ScreenProtocol.ToBrowserFileChunk, ScreenProtocol.ToBrowserResult,
+            ScreenProtocol.ToBrowserClipboard, ScreenProtocol.ToBrowserImage, ScreenProtocol.ToBrowserFiles, ScreenProtocol.ToBrowserFileState, ScreenProtocol.ToBrowserResult,
         }.Select(b => (int)b));
         Assert.Equal(16, ScreenProtocol.FromBrowserPause);
         Assert.Equal(30, ScreenProtocol.ToBrowserEncoder);

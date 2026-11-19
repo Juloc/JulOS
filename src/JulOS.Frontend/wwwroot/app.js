@@ -1,6 +1,7 @@
 import { StreamClient } from './stream.js';
 import { MouseInput, mouseState } from './mouse.js';
 import { Resume } from './resume.js';
+import { isLoginError, loginStep, userOfTarget, readLogin } from './login.js';
 import { StatusBar } from './statusbar.js';
 import { openPopout } from './popout-main.js';
 import { QUALITIES, normalizeQuality, qualityOf, nextQuality } from './perf.js';
@@ -10,7 +11,7 @@ import { KB_SETTLE_MS, StageBase, effectiveStage, panOffset, panDrag, normalizeK
 import { Session, Sessions } from './sessions.js';
 import { createPrefs } from './prefs.js';
 import { isScheme, normalizeScheme, isDark } from './scheme.js';
-import { LIMITS, fmtSize, bmpFromImage, pngFromBytes, filesFromTransfer, saveBlob } from './clip.js';
+import { LIMITS, fmtSize, bmpFromImage, pngFromBytes, filesFromTransfer, itemsFromFiles, planSend, topLevel, progressText, startDownload, saveBlob } from './clip.js';
 
 /* =====================================================================
  * JulOS – Fernsteuerung
@@ -248,7 +249,7 @@ const DEFAULT_ROWS = [
     ITEM('Strg+C', 'chord', 'ctrl+c'), ITEM('Strg+V', 'chord', 'ctrl+v'), ITEM('Strg+X', 'chord', 'ctrl+x'), ITEM('Strg+A', 'chord', 'ctrl+a'),
     ITEM('Strg+Z', 'chord', 'ctrl+z'), ITEM('Strg+F', 'chord', 'ctrl+f'), ITEM('Alt+Tab', 'chord', 'alt+tab'), ITEM('Strg+⇧+T', 'chord', 'ctrl+shift+t') ] },
   { id: 'funcs', title: 'Funktionen', icon: 'apps', items: [
-    ITEM('Bild einfügen', 'action', 'pasteimg'), ITEM('Foto wählen', 'action', 'photo'), ITEM('Datei senden', 'action', 'sendfile'), ITEM('Text senden', 'action', 'clip'), ITEM('Passwort', 'action', 'password') ] },
+    ITEM('Bild einfügen', 'action', 'pasteimg'), ITEM('Foto wählen', 'action', 'photo'), ITEM('Datei senden', 'action', 'sendfile'), ITEM('Ordner senden', 'action', 'sendfolder'), ITEM('Text senden', 'action', 'clip'), ITEM('Passwort', 'action', 'password') ] },
   // die Leiste: immer sichtbar, eine Zeile, ganz unten
   { id: 'bar', title: 'Leiste', fixed: true, items: [
     ITEM('Esc', 'chord', 'esc'), ITEM('Strg', 'mod', 'ctrl'), ITEM('Tab', 'chord', 'tab'),
@@ -395,6 +396,7 @@ const ACTIONS = {
   photo: () => openPhotoDlg(),
   pasteimg: () => pasteImageFromClipboard(),
   sendfile: () => pickFile(),
+  sendfolder: () => pickFolder(),
   clip: () => openClipDlg(),
   password: () => openPwDialog(),
   sessions: () => Sessions.requestSwitcher(),
@@ -464,7 +466,7 @@ const PROFILE = { stablePolls: 2, minGap: 8000 };
 /** Verstaendliche Texte zu den Statuscodes, die der Server mit einem Fehler schickt (siehe ScreenProtocol.cs). */
 const ERROR_TEXT = {
   513: 'Der Server ist gerade ausgelastet.', 514: 'Das Ziel antwortet nicht (Zeitüberschreitung).', 515: 'Die Verbindung zum Ziel ist fehlgeschlagen.',
-  519: 'Das Ziel wurde nicht gefunden.', 520: 'Das Ziel ist nicht erreichbar.', 769: 'Anmeldung am Ziel abgelehnt. Bitte Benutzername und Passwort prüfen.',
+  519: 'Das Ziel wurde nicht gefunden.', 520: 'Das Ziel ist nicht erreichbar.', 769: 'Anmeldung am Ziel abgelehnt. Bitte Benutzername und Passwort prüfen.', 770: 'Das Ziel verlangt Benutzer und Passwort.',
   777: 'Die Sitzung wurde in einem anderen Fenster oder auf einem anderen Gerät übernommen.',
   797: null,        // zu viele Sitzungen: der Server schickt den Text selbst ("Es sind schon 8 Sitzungen offen ...")
 };
@@ -705,6 +707,48 @@ export class RemoteSession extends Session {
     this.el.overlay.hidden = true; this.setState('error', 'Zertifikat geändert');
     cancel.focus();
   }
+  /** Anmeldung am Ziel abgelehnt (769) oder Anmeldedaten verlangt (770): Dialog mit Benutzer, Passwort und Domaene, bis zu drei neue Versuche. Jeder Versuch
+      holt ein neues Ticket mit den neuen Daten; das Passwort bleibt im Speicher dieser Sitzung und wird nirgends gespeichert. Die Sitzung (Fenster) bleibt. */
+  loginDialog(code) {
+    if (this.loginBox || this.disposed) return;
+    this.fatal = true; this.connected = false; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer);
+    this.teardown();
+    const step = loginStep(code, this.loginTries || 0);
+    if (!step.ask) return this.requestClose(step.text);
+    const wrap = document.createElement('div'); wrap.className = 'term-dialog'; this.loginBox = wrap;
+    const form = document.createElement('form'); form.className = 'box'; form.setAttribute('role', 'dialog'); form.autocomplete = 'off';
+    const add = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; n.textContent = text; form.appendChild(n); return n; };
+    add('h2', '', 'Anmeldung am Ziel');
+    add('p', '', step.text);
+    add('p', 'hint', `Versuch ${step.attempt} von ${step.of}. Das Passwort gilt nur für diese Sitzung und wird nicht gespeichert.`);
+    const field = (label, type, value, name) => {
+      const l = document.createElement('label'); l.className = 'login-field'; l.append(Object.assign(document.createElement('span'), { textContent: label }));
+      const i = document.createElement('input'); i.type = type; i.value = value || ''; i.name = name; i.autocomplete = type === 'password' ? 'off' : 'off'; i.spellcheck = false; i.autocapitalize = 'off'; i.maxLength = 256;
+      l.appendChild(i); form.appendChild(l); return i;
+    };
+    const user = field('Benutzer', 'text', this.loginUser ?? userOfTarget(this.conn.target), 'user');
+    const pw = field('Passwort', 'password', '', 'pw');
+    const domain = field('Domäne (optional)', 'text', this.loginDomain ?? this.conn.domain ?? '', 'domain');
+    const msg = add('p', 'hint login-msg', ''); msg.setAttribute('role', 'alert');
+    const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'danger'; cancel.textContent = 'Abbrechen';
+    const ok = document.createElement('button'); ok.type = 'submit'; ok.className = 'primary'; ok.textContent = 'Anmelden';
+    const actions = document.createElement('div'); actions.className = 'actions'; actions.append(cancel, ok); form.appendChild(actions);
+    const done = () => { this.loginBox = null; wrap.remove(); };
+    cancel.addEventListener('click', () => { done(); this.password = null; this.requestClose('Anmeldung abgebrochen.'); });
+    form.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const r = readLogin({ user: user.value, password: pw.value, domain: domain.value });
+      if (r.error) { msg.textContent = r.error; return; }
+      pw.value = '';
+      done();
+      this.password = r.password; this.loginUser = r.user; this.loginDomain = r.domain; this.loginTries = (this.loginTries || 0) + 1;
+      this.retry = 0; this.firstLogin = true; this.streamWorked = false; this.everConnected = false; this.resume.reset();
+      this.start();
+    });
+    wrap.appendChild(form); this.el.stage.appendChild(wrap);
+    this.el.overlay.hidden = true; this.setState('error', 'Anmeldung nötig');
+    (user.value ? pw : user).focus();
+  }
   showBusy(msg) { // Fortschritt mit Animation, ohne Knoepfe
     const e = this.el; e.overlayMsg.textContent = msg; e.spinner.hidden = false; e.overlay.hidden = false; e.reconnectBtn.hidden = true; e.closeBtn.hidden = true;
   }
@@ -716,6 +760,7 @@ export class RemoteSession extends Session {
   async connect(password) {
     if (password) this.password = password;
     this.retry = 0; this.everConnected = false; this.firstLogin = true; this.streamWorked = false; this.resume.reset();
+    this.loginTries = 0; this.loginUser = undefined; this.loginDomain = undefined;
     return this.start();
   }
 
@@ -745,6 +790,7 @@ export class RemoteSession extends Session {
   async start() {
     if (this.popped) { const p = this.popped; this.popped = null; p.stop(); this.el.reconnectBtn.textContent = 'Neu verbinden'; }   // zurueck ins Hauptfenster: das Fenster gibt die Leitung ab
     this.intentional = false; this.fatal = false; this.connectStarted = Date.now();
+    if (this.loginBox) { this.loginBox.remove(); this.loginBox = null; }
     if (this.client && this.client.drawn) this.resume.confirm();      // ein Bild kam schon (zum Beispiel Seite wieder sichtbar, bevor der tote Socket gemeldet wurde): das Token darf die Sitzung aufnehmen
     this.teardown(true);                   // der Server haelt eine Stream-Sitzung weiter, die nehmen wir gleich wieder auf (sonst endet sie dort nach Ablauf)
     const gen = this.gen;
@@ -776,7 +822,7 @@ export class RemoteSession extends Session {
     if (!resumeToken) try {
       const acceptCert = this.acceptCert; this.acceptCert = null;      // gilt nur fuer diesen einen Versuch (siehe certDialog)
       const resp = await fetch('/api/remote/ticket', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, signal: AbortSignal.timeout(10000),
-        body: JSON.stringify({ ...ticketTarget(this.conn), sid: this.id, password: this.password || undefined, width: w, height: h, acceptCert: acceptCert || undefined }) });
+        body: JSON.stringify({ ...ticketTarget(this.conn), sid: this.id, password: this.password || undefined, username: this.loginUser, domain: this.loginDomain, width: w, height: h, acceptCert: acceptCert || undefined }) });
       const data = await resp.json().catch(() => ({}));
       if (stale()) return;
       if (resp.status === 401) return this.requestClose('Die Sitzung ist abgelaufen. Bitte neu anmelden.', 'auth');
@@ -829,7 +875,7 @@ export class RemoteSession extends Session {
         this.startAudio(client);
         setTimeout(() => { if (this.client === client && !client.drawn && !this.streamWorked) this.streamFailed('Es kommt kein Bild an. Der Browser kann das Bild vielleicht nicht dekodieren. „Neu verbinden“ tippen.'); }, 10000);   // Groesse gemeldet, aber nie ein Bild: der Dekodierer geht nicht
         // Die Zaehler der Wiederholung gelten erst als zurueckgesetzt, wenn die Verbindung wirklich haelt (sonst endlos: verbunden, sofort getrennt, neu ...)
-        setTimeout(() => { if (this.client === client && this.connected) { this.firstLogin = false; this.retry = 0; } }, 12000);
+        setTimeout(() => { if (this.client === client && this.connected) { this.firstLogin = false; this.retry = 0; this.loginTries = 0; } }, 12000);
       } else if (st === 5) { // getrennt
         this.connected = false;
         if (client.drawn) { this.streamWorked = true; this.resume.confirm(); }      // die Sitzung am Ziel gibt es wirklich: ein Token darf sie wieder aufnehmen
@@ -838,7 +884,7 @@ export class RemoteSession extends Session {
         if (!this.everConnected) return; // Fehler wird von onerror gemeldet
         if (this.hasSibling() && !this.resume.usable()) return this.takenBySibling();
         // sofort nach dem Anmelden getrennt = xrdp hat das Passwort abgelehnt: nicht wiederholen (aber nicht, wenn schon ein Bild da war und der Server die Sitzung erhaelt)
-        if (!this.resume.usable() && this.firstLogin && Date.now() - this.connectedAt < 12000) return this.requestClose('Anmeldung fehlgeschlagen. Bitte Passwort prüfen.');
+        if (!this.resume.usable() && this.firstLogin && Date.now() - this.connectedAt < 12000) return this.loginDialog(769);
         this.scheduleReconnect();
       }
     };
@@ -847,6 +893,7 @@ export class RemoteSession extends Session {
       if (err && err.code === 520 && this.everConnected && this.resume.usable()) return;   // Leitung weg (Netzwechsel): das Schliessen des Sockets plant den naechsten Versuch (scheduleReconnect)
       if (err && err.code === 800) { this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); return this.certDialog(err); }   // Zertifikat des Ziels geaendert: der Benutzer entscheidet
       const code = err && err.code;
+      if (isLoginError(code)) { this.connected = false; return this.loginDialog(code); }   // Anmeldung abgelehnt oder Anmeldedaten verlangt: neu fragen, die Sitzung bleibt
       const known = ERROR_TEXT[code];
       const msg = known || ((err && err.message) ? err.message : 'Verbindungsfehler');
       this.connected = false;
@@ -854,7 +901,7 @@ export class RemoteSession extends Session {
       if (code === 797) { this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); return this.requestClose(msg); }   // Obergrenze der Sitzungen: Meldung des Servers, Sitzung zu
       if (!this.everConnected) this.requestClose(known || 'Verbindung nicht möglich: ' + msg);
       else if (this.hasSibling()) this.takenBySibling();
-      else if (this.firstLogin && Date.now() - this.connectedAt < 12000) this.requestClose('Anmeldung fehlgeschlagen. Bitte Passwort prüfen.');
+      else if (this.firstLogin && Date.now() - this.connectedAt < 12000) this.loginDialog(769);
       else { this.setState('error', 'Fehler'); this.showOverlay(msg); }
     };
     client.onclipboard = (data) => {
@@ -871,6 +918,7 @@ export class RemoteSession extends Session {
     client.onclipimage = (format, bytes) => this.onRemoteImage(format, bytes);
     client.onclipfiles = (batch, files) => this.onRemoteFiles(batch, files);
     client.onclipresult = (r) => { if (r.text) this.toast(r.text, 3600); };
+    this.dl = null; client.onfilestate = (st) => { if (this.client === client) this.onFileState(st); };
 
     this.setupMouse(client, display);
     client.connect(resumeToken ? 'resume=' + encodeURIComponent(resumeToken) : 'ticket=' + encodeURIComponent(ticket));
@@ -1376,28 +1424,30 @@ export class RemoteSession extends Session {
   async sendToRemote(list) {
     if (!this.connected || !this.client) { this.toast('Nicht verbunden'); return false; }
     if (this.xferAbort) { this.toast('Es läuft schon eine Übertragung.', 2400); return false; }
-    const files = list.filter((f) => f && f.size !== undefined);
-    if (!files.length) return false;
-    if (files.length === 1 && /^image\//.test(files[0].type)) return this.sendImage(files[0]);
-    if (files.length > LIMITS.files) { this.toast(`Zu viele Dateien (höchstens ${LIMITS.files}).`, 3600); return false; }
-    if (files.some((f) => f.size === 0)) { this.toast('Die Datei ist leer.', 3000); return false; }
-    const big = files.find((f) => f.size > LIMITS.fileBytes);
-    if (big || files.reduce((n, f) => n + f.size, 0) > LIMITS.fileBytes) { this.toast(`Datei zu groß (höchstens ${LIMITS.fileBytes / 1048576} MB).`, 3600); return false; }
+    // Entweder Dateien (File) oder Eintraege { path, file | dir } aus einem Ordner (clip.js)
+    const items = (list || []).map((f) => (f && (f.file || f.dir) ? f : f && f.size !== undefined ? { path: f.webkitRelativePath || f.name, file: f } : null)).filter(Boolean);
+    if (!items.length) return false;
+    if (items.length === 1 && items[0].file && /^image\//.test(items[0].file.type) && !items[0].path.includes('/')) return this.sendImage(items[0].file);
+    const plan = planSend(items, this.client.limits || LIMITS);
+    if (!plan.ok) { if (plan.error) this.toast(plan.error, 3600); return false; }
 
     const ctl = this.xferAbort = new AbortController();
+    const many = plan.list.length > 1, folder = plan.list.some((i) => i.path.includes('/') || i.kind === 3);
+    let before = 0;
     try {
-      for (let i = 0; i < files.length; i++) {
-        const f = files[i], label = files.length > 1 ? ` (${i + 1}/${files.length})` : '';
-        const progress = (done, total) => this.showXfer(`Sende ${f.name}${label} … ${Math.round(100 * done / total)} %`, null);
-        this.showXfer(`Sende ${f.name}${label} …`, null);
-        const r = await this.client.sendTransfer(2, f, f.name, i, files.length, progress, ctl.signal);
+      for (let i = 0; i < plan.list.length; i++) {
+        const it = plan.list[i], size = it.file ? it.file.size : 0, label = many ? ` (${i + 1}/${plan.list.length})` : '';
+        const progress = (done) => this.showXfer(`Sende ${it.path}${label} … ${progressText(before + done, plan.total)}`, null);
+        this.showXfer(`Sende ${it.path}${label} …`, null);
+        const r = await this.client.sendTransfer(it.kind, it.file, it.path, i, plan.list.length, progress, ctl.signal);
         if (ctl.signal.aborted) return false;
         if (r.code !== 0) { this.toast(r.text || 'Senden fehlgeschlagen', 4200); this.dbg('file-error', { c: r.code }); return false; }
+        before += size;
       }
     } catch (e) { if (!ctl.signal.aborted) this.toast('Senden: ' + e.message, 4200); return false; }
     finally { this.hideXfer(); }
-    this.dbg('file-sent', { n: files.length, kb: Math.round(files.reduce((n, f) => n + f.size, 0) / 1024) });
-    this.toast(files.length > 1 ? 'Dateien liegen in der Zwischenablage der VM – dort einfügen (Strg+V)' : 'Datei liegt in der Zwischenablage der VM – dort einfügen (Strg+V)', 4200);
+    this.dbg('file-sent', { n: plan.list.length, kb: Math.round(plan.total / 1024), folder });
+    this.toast(folder ? 'Ordner liegt in der Zwischenablage der VM – dort einfügen (Strg+V)' : many ? 'Dateien liegen in der Zwischenablage der VM – dort einfügen (Strg+V)' : 'Datei liegt in der Zwischenablage der VM – dort einfügen (Strg+V)', 4200);
     return true;
   }
 
@@ -1435,17 +1485,26 @@ export class RemoteSession extends Session {
   onRemoteFiles(batch, list) {
     if (!list.length) { this.remoteItem.files = null; if (cur() === this) renderRemoteItem(); return; }
     this.remoteItem.files = { batch, list }; this.remoteItem.image = null; if (cur() === this) renderRemoteItem();
-    this.toast((list.length === 1 ? 'Datei aus der VM: ' + list[0].name : list.length + ' Dateien aus der VM') + ' – tippen zum Laden', 6000, () => { Sessions.activate(this.id); openClipDlg(); });
+    const rows = topLevel(list), n = list.filter((f) => !f.dir).length;
+    this.toast((rows.length === 1 && !rows[0].dir ? 'Datei aus der VM: ' + rows[0].name : rows.length === 1 ? 'Ordner aus der VM: ' + rows[0].name : n + ' Dateien aus der VM') + ' – tippen zum Laden', 6000, () => { Sessions.activate(this.id); openClipDlg(); });
   }
-  async downloadRemoteFile(batch, index, name) {
-    if (!this.client || !this.client.fetchFile) return;
-    this.showXfer(`Lade ${name} …`, () => this.client.cancelFetch && this.client.cancelFetch(batch));
+  /* Download aus der VM: path ist eine Datei oder ein Ordner der Liste (leer: alles). Der Server schickt "bereit" mit einem Ticket, der Browser holt es selbst
+     (Download-Verwaltung des Browsers, ZIP bei Ordnern); hier laeuft nur die Anzeige des Fortschritts, den der Server meldet. */
+  downloadRemote(batch, path, label) {
+    if (!this.client || !this.client.requestDownload) return;
+    if (this.dl) { this.toast('Es läuft schon ein Download.', 2400); return; }
+    this.dl = { batch, label };
+    this.showXfer(`Lade ${label} …`, () => { if (this.client && this.client.cancelDownload) this.client.cancelDownload(batch); this.dl = null; });
     this.xferAbort = new AbortController();
-    try {
-      const blob = await this.client.fetchFile(batch, index, (n) => this.showXfer(`Lade ${name} … ${fmtSize(n)}`));
-      saveBlob(blob, name); this.toast('Gespeichert: ' + name, 3000);
-    } catch (e) { this.toast(e.message || 'Download fehlgeschlagen', 4200); }
-    finally { this.hideXfer(); }
+    this.client.requestDownload(batch, path);
+  }
+  onFileState(st) {
+    const dl = this.dl;
+    if (!dl || st.batch !== dl.batch) return;
+    if (st.state === 'ready') { startDownload(st.text, dl.label); this.showXfer(`Lade ${dl.label} …`); }
+    else if (st.state === 'running') this.showXfer(`Lade ${dl.label} … ${progressText(st.done, st.total)}`);
+    else if (st.state === 'done') { this.dl = null; this.hideXfer(); this.toast(`Geladen: ${dl.label} (${fmtSize(st.done)}) – im Download-Ordner des Browsers`, 4200); }
+    else { this.dl = null; this.hideXfer(); this.toast(st.text || 'Download fehlgeschlagen', 4200); }
   }
   /* Ablegen von Dateien auf das Bild dieser Sitzung */
   wireDrop() {
@@ -1457,9 +1516,9 @@ export class RemoteSession extends Session {
     st.addEventListener('drop', async (e) => {
       if (!hasFiles(e)) return;
       e.preventDefault(); depth = 0; st.classList.remove('dropping');
-      const { files, skipped } = filesFromTransfer(e.dataTransfer);
-      if (skipped.length) this.toast('Ordner werden nicht übertragen: ' + skipped.slice(0, 2).join(', '), 3200);
-      if (files.length) { try { await this.sendToRemote(files); } catch (err) { this.toast('Senden: ' + err.message, 4200); } }
+      const { items, skipped } = await filesFromTransfer(e.dataTransfer);
+      if (skipped.length) this.toast('Nicht lesbar: ' + skipped.slice(0, 2).join(', '), 3200);
+      if (items.length) { try { await this.sendToRemote(items); } catch (err) { this.toast('Senden: ' + err.message, 4200); } }
     });
     this.el.xferCancel.addEventListener('click', () => { if (this.xferAbort) this.xferAbort.abort(); if (this.xferCancelExtra) this.xferCancelExtra(); this.hideXfer(); this.toast('Abgebrochen'); });
   }
@@ -1782,22 +1841,34 @@ fileInput.addEventListener('change', async () => {
   if (files.length) try { await sendToRemote(files); } catch (e) { toast('Senden: ' + e.message, 4200); }
 });
 $('#sendFileBtn').addEventListener('click', () => { el.clipDlg.close(); pickFile(); });
+// Ordner senden: der Auswahldialog des Browsers (webkitdirectory) liefert alle Dateien mit ihrem Pfad (leere Ordner nennt er nicht)
+const folderInput = $('#folderInput');
+function pickFolder() { folderInput.value = ''; folderInput.click(); }
+folderInput.addEventListener('change', async () => {
+  const items = itemsFromFiles(folderInput.files || []);
+  if (items.length) try { await sendToRemote(items); } catch (e) { toast('Senden: ' + e.message, 4200); }
+});
+$('#sendFolderBtn').addEventListener('click', () => { el.clipDlg.close(); pickFolder(); });
 
-const itemBox = $('#remoteItem'), itemImg = $('#remoteImg'), itemFiles = $('#remoteFiles'), itemImgRow = $('#remoteImgRow');
+const itemBox = $('#remoteItem'), itemImg = $('#remoteImg'), itemFiles = $('#remoteFiles'), itemImgRow = $('#remoteImgRow'), itemAllRow = $('#remoteAllRow');
+$('#filesAllBtn').addEventListener('click', () => { const s = cur(); if (s && s.remoteItem.files) s.downloadRemote(s.remoteItem.files.batch, '', 'Dateien-aus-der-VM.zip'); });
 function renderRemoteItem() {
   const s = cur(), item = s ? s.remoteItem : { image: null, files: null };
   itemBox.hidden = !(item.image || item.files);
   itemImg.hidden = itemImgRow.hidden = !item.image;
   if (item.image) { if (item.imageUrl) URL.revokeObjectURL(item.imageUrl); item.imageUrl = URL.createObjectURL(item.image); itemImg.src = item.imageUrl; }
-  itemFiles.hidden = !item.files; itemFiles.textContent = '';
+  itemFiles.hidden = !item.files; itemFiles.textContent = ''; itemAllRow.hidden = true;
   if (item.files) {
-    for (const [i, f] of item.files.list.entries()) {
+    const rows = topLevel(item.files.list);
+    for (const row of rows) {
       const li = document.createElement('li'), nm = document.createElement('span'), sz = document.createElement('span'), b = document.createElement('button');
-      nm.className = 'nm'; nm.textContent = f.name; sz.className = 'sz'; sz.textContent = fmtSize(f.size);
-      b.type = 'button'; b.textContent = 'Laden'; b.className = 'ghost';
-      b.addEventListener('click', () => s.downloadRemoteFile(item.files.batch, i, f.name));
+      nm.className = 'nm'; nm.textContent = row.dir ? row.name + '/' : row.name;
+      sz.className = 'sz'; sz.textContent = row.dir ? `${row.count} ${row.count === 1 ? 'Datei' : 'Dateien'}${row.size >= 0 ? ', ' + fmtSize(row.size) : ''}` : fmtSize(row.size);
+      b.type = 'button'; b.textContent = row.dir ? 'Als ZIP' : 'Laden'; b.className = 'ghost';
+      b.addEventListener('click', () => s.downloadRemote(item.files.batch, row.path, row.dir ? row.name + '.zip' : row.name));
       li.append(nm, sz, b); itemFiles.append(li);
     }
+    itemAllRow.hidden = rows.length < 2;
   }
 }
 async function copyImageToLocal(blob) {

@@ -149,6 +149,8 @@ dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj    # 
 | `JULOS_MAX_SESSIONS_PER_USER` | most remote sessions (RDP and SSH together) one user may have open at once, default `8` |
 | `JULOS_DRIVE_ROOT` | the one folder that connections may hand to the desktop as a drive ; empty or `off` (default) disables drive redirection; see DRIVES.md |
 | `JULOS_STREAM_KEEP_SECONDS` | how long a stream (RDP) session lives on without a browser after the connection dropped, default `300`, `0` = off, at most `3600`; see SESSIONS.md |
+| `JULOS_CLIP_MAX_MB` | biggest file, and biggest paste in all, the browser may send into the clipboard of the remote desktop (megabytes), default `2048`, at most `65536`; the files lie on the server's disk until pasted; see CLIPBOARD.md |
+| `JULOS_CLIP_DIR` | folder for these files, default `julos-clip` in the server's temp folder (give it a disk with room: up to the limit per open session) |
 | `JULOS_TRUSTED_PROXIES` | networks whose `X-Forwarded-*` headers are trusted (default: private networks) |
 
 ## Container hardening and health

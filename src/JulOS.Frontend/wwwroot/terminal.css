@@ -27,6 +27,9 @@
 .term-dialog .hint { font-size: .8125rem; color: var(--m3-on-surface-variant, #bbb); }
 .term-dialog .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 6px; }
 .term-dialog button { min-height: 44px; padding: 0 18px; border: 0; border-radius: 999px; font: 500 .9rem system-ui, sans-serif; cursor: pointer; }
+.term-dialog .login-field { display: flex; flex-direction: column; gap: 2px; }
+.term-dialog .login-field span { font-size: .75rem; color: var(--m3-on-surface-variant, #bbb); }
+.term-dialog .login-field input { min-height: 44px; padding: 0 14px; border: 1px solid var(--m3-outline, #777); border-radius: 12px; background: var(--m3-surface-highest, #333); color: inherit; font: 400 1rem system-ui, sans-serif; }
 .term-dialog button.primary { background: var(--m3-primary, #8ab4ff); color: var(--m3-on-primary, #000); }
 .term-dialog button.danger { background: transparent; color: var(--m3-error, #f2b8b5); outline: 1px solid var(--m3-error, #f2b8b5); }
 

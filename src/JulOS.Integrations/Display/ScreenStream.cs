@@ -35,8 +35,11 @@ public sealed record ScreenClipboardImage(byte Format, byte[] Data) : ScreenEven
 /// <summary>Der ferne Rechner hat Dateien kopiert (leere Liste: die Auswahl ist weg).</summary>
 public sealed record ScreenClipboardFiles(uint Batch, IReadOnlyList<RemoteFile> Files) : ScreenEvent;
 
-/// <summary>Ein Stueck einer Datei, die der Browser angefordert hat (Flags siehe <see cref="ClipboardBridge.ChunkLast"/>).</summary>
-public sealed record ScreenFileChunk(uint Batch, int Index, byte Flags, byte[] Data) : ScreenEvent;
+/// <summary>Ein Download, den der Browser angefordert hat, ist vorbereitet: der Relay gibt ihm ein Ticket, mit dem der Browser ihn als HTTP-Strom abholt.</summary>
+public sealed record ScreenDownloadReady(uint Batch, ClipDownload Download) : ScreenEvent;
+
+/// <summary>Stand eines Downloads (Zustand siehe <see cref="ClipboardBridge.StateRunning"/>): uebertragen, gesamt (-1 unbekannt), bei Scheitern der Grund.</summary>
+public sealed record ScreenFileState(uint Batch, byte State, long Done, long Total, string Text) : ScreenEvent;
 
 /// <summary>Wie ein Senden vom Browser ausgegangen ist.</summary>
 public sealed record ScreenTransferResult(uint Id, byte Code, string Message) : ScreenEvent;
@@ -176,7 +179,8 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
             Text = text => _events.Writer.TryWrite(new ScreenClipboardText(text)),
             Image = (format, data) => _events.Writer.TryWrite(new ScreenClipboardImage(format, data)),
             Files = (batch, files) => _events.Writer.TryWrite(new ScreenClipboardFiles(batch, files)),
-            FileChunk = (batch, index, flags, data) => _events.Writer.TryWrite(new ScreenFileChunk(batch, index, flags, data)),
+            Download = (batch, download) => _events.Writer.TryWrite(new ScreenDownloadReady(batch, download)),
+            DownloadState = (batch, state, done, total, text) => _events.Writer.TryWrite(new ScreenFileState(batch, state, done, total, text)),
             Result = (id, code, message) => _events.Writer.TryWrite(new ScreenTransferResult(id, code, message)),
         });
         Audio = new AudioBridge(_soundChannel, _microphoneChannel);
@@ -601,8 +605,11 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
     public void CancelTransfer(uint id) => _clipboard.CancelTransfer(id);
 
-    /// <summary>Der Browser holt eine Datei, die der ferne Rechner kopiert hat.</summary>
-    public void RequestFile(uint batch, int index) => _clipboard.RequestFile(batch, index);
+    /// <summary>Der Browser holt einen Eintrag (Datei oder Ordner, leer: alles), den der ferne Rechner kopiert hat.</summary>
+    public void RequestFile(uint batch, string path) => _clipboard.RequestFile(batch, path);
+
+    /// <summary>Die Grenzen der Zwischenablage-Dateien dieser Sitzung (der Browser bekommt sie gemeldet).</summary>
+    public ClipboardOptions ClipboardLimits => _clipboard.Options;
 
     public void CancelFile(uint batch) => _clipboard.CancelFile(batch);
 

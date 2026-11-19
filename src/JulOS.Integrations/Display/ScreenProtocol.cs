@@ -11,15 +11,17 @@ namespace JulOS.Integrations.Display;
 ///   1 Bild       flags(1: Bit0 = Schluesselbild, Bit1 = H.265 statt H.264) folge(4) Annex B ...   (Schluesselbild: mit Parametersaetzen davor, H.265 mit VPS, SPS, PPS; der Browser liest den Codec-Text daraus)
 ///   2 Zeiger     art(1: 0 Form, 1 versteckt, 2 Standard) hotX(2) hotY(2) breite(2) hoehe(2) RGBA ...
 ///   3 Groesse    breite(2) hoehe(2)
-///   4 Fehler     code(2) UTF-8-Text ...            (Statuscodes: 769 Anmeldung abgelehnt, 515 Verbindung misslungen ...;
+///   4 Fehler     code(2) UTF-8-Text ...            (Statuscodes: 769 Anmeldung abgelehnt, 770 Anmeldedaten fehlen (der Server verlangt sie, bevor er etwas zeigt): in beiden Faellen fragt der Browser neu und holt ein neues Ticket;
+///                                                    515 Verbindung misslungen ...;
 ///                                                    800 Zertifikat geaendert: Text "<Fingerabdruck jetzt>\n<Fingerabdruck bisher>", es wurde nichts gesendet)
 ///   5 Uebernommen
 ///   6 Zwischenablage UTF-8-Text ...          (der ferne Rechner hat Text kopiert; bis ClipboardBridge.MaxTextBytes)
 ///  20 Ton          kanaele(1) rate(4) zeit(4, ms des Servers) PCM ...   (16 Bit, little endian, verschachtelt; nur wenn der Browser den Ton eingeschaltet hat)
 ///  21 Ton-Zustand  flags(1: Bit0 der ferne Rechner liefert Ton, Bit1 er bietet ein Mikrofon, Bit2 er nimmt gerade auf) mikrofonrate(4)
 ///   7 Bild           format(1: 1 PNG, 2 BMP) Bytes ...          (der ferne Rechner hat ein Bild kopiert)
-///   8 Dateien        stapel(4) anzahl(1) dann je Datei groesse(8, -1 unbekannt) namenlaenge(2) Name (UTF-8)   (anzahl 0: Auswahl weg)
-///   9 Dateistueck    stapel(4) nummer(1) flags(1: Bit0 letztes, Bit1 gescheitert) Bytes ...   (bei Scheitern der Grund als Text)
+///   8 Eintraege     stapel(4) anzahl(2) dann je Eintrag flags(1: Bit0 Ordner) groesse(8, -1 unbekannt) namenlaenge(2) Pfad (UTF-8, Trenner /, relativ)   (anzahl 0: Auswahl weg; ein Ordner steht vor seinem Inhalt)
+///   9 Dateistand     stapel(4) zustand(1: 0 bereit, 1 laeuft, 2 fertig, 3 gescheitert) fertig(8) gesamt(8, -1 unbekannt) Text ...   (bereit: der Text ist das Token fuer GET /api/remote/clip/<Token>, der Download laeuft dann als HTTP-Strom; gescheitert: der Grund)
+///  14 Grenzen        maxDatei(8) maxDateien(2) maxEintraege(2)   (einmal nach dem Verbinden: so viel darf der Browser an die Zwischenablage der VM senden)
 ///  10 Ergebnis       nummer(4) code(1: 0 ok, 1 zu gross, 2 nicht erlaubt, 3 keine Zwischenablage in der VM, 4 sonst) Text ...
 ///  11 Sitzung       sekunden(2) Token (ASCII)   (gleich nach dem Verbinden, wenn der Server Sitzungen erhaelt: so lange wartet die Sitzung ohne Browser; mit dem Token kommt der Browser zurueck, Adresse resume=)
 ///  12 Nicht wieder  (das Token ist unbekannt, abgelaufen oder fremd: der Browser baut neu auf)
@@ -39,11 +41,11 @@ namespace JulOS.Integrations.Display;
 ///  20 Ton ein/aus  an(1)                                  (ohne diese Nachricht kommt kein Ton)
 ///  21 Mikrofon     rate(4) PCM ...                         (Mono, 16 Bit, little endian; wird verworfen, solange der ferne Rechner keinen Ton verlangt)
 /// Die Tonnachrichten haben ihren eigenen Nummernbereich ab 20, damit sie nicht mit anderen Erweiterungen zusammenstossen.
-///  10 Senden Anfang  nummer(4) art(1: 1 Bild als BMP, 2 Datei) lfd(1) anzahl(1) groesse(8) Name (UTF-8)   (lfd und anzahl: Stelle in einem Stapel von Dateien)
+///  10 Senden Anfang  nummer(4) art(1: 1 Bild als BMP, 2 Datei, 3 leerer Ordner) lfd(1) anzahl(1) groesse(8) Pfad (UTF-8, relativ, Trenner /)   (lfd und anzahl: Stelle in einem Stapel von Eintraegen; ein Pfad mit .., ein absoluter Pfad oder ein Laufwerk wird abgelehnt)
 ///  11 Senden Stueck  nummer(4) Bytes ...   (bis ClipboardBridge.MaxChunkBytes)
 ///  12 Senden Ende    nummer(4)
 ///  13 Senden Abbruch nummer(4)
-///  14 Datei holen    stapel(4) nummer(1)
+///  14 Datei holen    stapel(4) Pfad (UTF-8, leer = alles)   (Datei: als sie selbst, Ordner oder alles: als ZIP; die Antwort ist Nachricht 9, Zustand bereit)
 ///  15 Holen Abbruch  stapel(4)
 ///  16 Pause          an(1: 1 = die Ansicht ist im Hintergrund, es werden keine Bilder kodiert; 0 = weiter)
 ///  17 Beenden        (der Benutzer schliesst die Sitzung: der Server haelt sie nicht fuer ein Wiederverbinden)
@@ -56,7 +58,7 @@ namespace JulOS.Integrations.Display;
 public static class ScreenProtocol
 {
     public const byte ToBrowserPicture = 1, ToBrowserCursor = 2, ToBrowserSize = 3, ToBrowserError = 4, ToBrowserTaken = 5, ToBrowserClipboard = 6,
-        ToBrowserImage = 7, ToBrowserFiles = 8, ToBrowserFileChunk = 9, ToBrowserResult = 10, ToBrowserSession = 11, ToBrowserResumeFailed = 12, ToBrowserEncoder = 30,
+        ToBrowserImage = 7, ToBrowserFiles = 8, ToBrowserFileState = 9, ToBrowserResult = 10, ToBrowserLimits = 14, ToBrowserSession = 11, ToBrowserResumeFailed = 12, ToBrowserEncoder = 30,
         ToBrowserRefine = 40, ToBrowserRefineClear = 41;
     public const byte FromBrowserAck = 1, FromBrowserMove = 2, FromBrowserButton = 3, FromBrowserWheel = 4, FromBrowserKey = 5,
         FromBrowserUnicode = 6, FromBrowserResize = 7, FromBrowserKeyFrame = 8, FromBrowserClipboard = 9,
@@ -64,7 +66,7 @@ public static class ScreenProtocol
         FromBrowserFileRequest = 14, FromBrowserFileCancel = 15, FromBrowserPause = 16, FromBrowserEnd = 17, FromBrowserCodecs = 30, FromBrowserQuality = 31;
 
     /// <summary>Nachrichten, die laenger als eine Eingabe sein duerfen (Text, Dateiname, Stueck einer Datei).</summary>
-    public static bool MayBeLong(byte type) => type is FromBrowserClipboard or FromBrowserSendBegin or FromBrowserSendChunk or FromBrowserMicrophone;
+    public static bool MayBeLong(byte type) => type is FromBrowserClipboard or FromBrowserSendBegin or FromBrowserSendChunk or FromBrowserMicrophone or FromBrowserFileRequest;
 
     public const byte ToBrowserAudio = 20, ToBrowserAudioStatus = 21;
     public const byte FromBrowserAudio = 20, FromBrowserMicrophone = 21;
@@ -198,33 +200,52 @@ public static class ScreenProtocol
         return result;
     }
 
+    /// <summary>Hoechstens so viele Eintraege in der Liste (zwei Bytes; der Server bietet nicht mehr an, siehe <see cref="ClipboardBridge.MaxRemoteEntries"/>).</summary>
+    public const int MaxListed = ushort.MaxValue;
+
     public static byte[] Files(uint batch, IReadOnlyList<RemoteFile> files)
     {
-        var names = files.Select(f => System.Text.Encoding.UTF8.GetBytes(f.Name)).ToArray();
-        var result = new byte[6 + files.Count * 10 + names.Sum(n => n.Length)];
+        var count = Math.Min(files.Count, MaxListed);
+        var names = files.Take(count).Select(f => System.Text.Encoding.UTF8.GetBytes(f.Name)).ToArray();
+        var result = new byte[7 + count * 11 + names.Sum(n => n.Length)];
         result[0] = ToBrowserFiles;
         BinaryPrimitives.WriteUInt32BigEndian(result.AsSpan(1), batch);
-        result[5] = (byte)files.Count;
-        var at = 6;
-        for (var i = 0; i < files.Count; i++)
+        BinaryPrimitives.WriteUInt16BigEndian(result.AsSpan(5), (ushort)count);
+        var at = 7;
+        for (var i = 0; i < count; i++)
         {
-            BinaryPrimitives.WriteInt64BigEndian(result.AsSpan(at), files[i].Size);
-            BinaryPrimitives.WriteUInt16BigEndian(result.AsSpan(at + 8), (ushort)names[i].Length);
-            names[i].CopyTo(result, at + 10);
-            at += 10 + names[i].Length;
+            result[at] = files[i].IsDirectory ? (byte)1 : (byte)0;
+            BinaryPrimitives.WriteInt64BigEndian(result.AsSpan(at + 1), files[i].Size);
+            BinaryPrimitives.WriteUInt16BigEndian(result.AsSpan(at + 9), (ushort)names[i].Length);
+            names[i].CopyTo(result, at + 11);
+            at += 11 + names[i].Length;
         }
 
         return result;
     }
 
-    public static byte[] FileChunk(uint batch, int index, byte flags, byte[] data)
+    public const int FileStateHeader = 22;
+
+    public static byte[] FileState(uint batch, byte state, long done, long total, string text)
     {
-        var result = new byte[7 + data.Length];
-        result[0] = ToBrowserFileChunk;
+        var bytes = System.Text.Encoding.UTF8.GetBytes(text.Length > 300 ? text[..300] : text);
+        var result = new byte[FileStateHeader + bytes.Length];
+        result[0] = ToBrowserFileState;
         BinaryPrimitives.WriteUInt32BigEndian(result.AsSpan(1), batch);
-        result[5] = (byte)index;
-        result[6] = flags;
-        data.CopyTo(result, 7);
+        result[5] = state;
+        BinaryPrimitives.WriteInt64BigEndian(result.AsSpan(6), done);
+        BinaryPrimitives.WriteInt64BigEndian(result.AsSpan(14), total);
+        bytes.CopyTo(result, FileStateHeader);
+        return result;
+    }
+
+    public static byte[] Limits(long maxFileBytes, int maxFiles, int maxEntries)
+    {
+        var result = new byte[13];
+        result[0] = ToBrowserLimits;
+        BinaryPrimitives.WriteInt64BigEndian(result.AsSpan(1), maxFileBytes);
+        BinaryPrimitives.WriteUInt16BigEndian(result.AsSpan(9), (ushort)maxFiles);
+        BinaryPrimitives.WriteUInt16BigEndian(result.AsSpan(11), (ushort)maxEntries);
         return result;
     }
 

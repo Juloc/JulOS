@@ -17,9 +17,21 @@ internal static class RemoteEndpoints
 {
     public const string ScreenWebSocketPath = "/api/remote/screen";
     public const string SshWebSocketPath = "/api/remote/ssh";
+    public const string ClipDownloadPath = "/api/remote/clip";
 
     private static IResult Error(int status, string message) =>
         Results.Text(JsonSerializer.Serialize(new ErrorBody(message), AppJson.Default.ErrorBody), "application/json", Encoding.UTF8, status);
+
+    /// <summary>Content-Disposition fuer einen Download: ein ASCII-Name zum Zurueckfallen und der Name in UTF-8 (RFC 6266), ohne Zeichen, die den Kopf stoeren koennten.</summary>
+    internal static string ContentDisposition(string name)
+    {
+        var clean = new string(name.Select(c => char.IsControl(c) || c is '"' or '\\' or '/' or ';' ? '_' : c).ToArray());
+        var ascii = new string(clean.Select(c => c < 127 && c >= 32 ? c : '_').ToArray());
+        return $"attachment; filename=\"{ascii}\"; filename*=UTF-8''{Uri.EscapeDataString(clean)}";
+    }
+
+    /// <summary>Benutzer und Domaene aus dem Anmeldedialog: hoechstens 256 Zeichen, keine Steuerzeichen (null: nicht angegeben).</summary>
+    internal static bool ValidLoginPart(string? value) => value is null || (value.Length <= 256 && !value.Any(char.IsControl));
 
     public static void MapRemote(this IEndpointRouteBuilder app)
     {
@@ -28,6 +40,7 @@ internal static class RemoteEndpoints
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (body.Password is { Length: > 256 }) return Error(400, "Das Passwort ist zu lang.");
+            if (!ValidLoginPart(body.Username) || !ValidLoginPart(body.Domain)) return Error(400, "Benutzer oder Domäne ist ungültig.");
             ConnectionRecord c;
             string? password = body.Password;
             Func<string, CancellationToken, Task> saveHostKey, saveCert;
@@ -83,8 +96,8 @@ internal static class RemoteEndpoints
             var trust = new CertificateTrust(c.CertFingerprint, body.AcceptCert, saveCert);
             var rdp = new RdpOptions
             {
-                Host = c.Host, Port = c.Port, UserName = c.Username, Password = password, Width = w & ~1, Height = h & ~1,
-                Domain = c.Domain, KeyboardLayout = KeyboardLayouts.WindowsId(c.KeyboardLayout), CertificateCheck = trust.Check, Sound = true,
+                Host = c.Host, Port = c.Port, UserName = string.IsNullOrWhiteSpace(body.Username) ? c.Username : body.Username.Trim(), Password = password, Width = w & ~1, Height = h & ~1,
+                Domain = body.Domain is null ? c.Domain : body.Domain.Trim(), KeyboardLayout = KeyboardLayouts.WindowsId(c.KeyboardLayout), CertificateCheck = trust.Check, Sound = true,
             };
             // Laufwerk: nur, wenn die Verbindung es verlangt (beide Schalter standardmaessig aus) und der Server eine Wurzel hat; die Wurzel kommt nur aus der Server-Einstellung
             var drive = c.DriveShare ? drives.For(c.DriveWrite) : null;
@@ -111,6 +124,33 @@ internal static class RemoteEndpoints
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
             await relay.RunAsync(ws, target, ct => auth.IsSessionAliveAsync(id.Id, ct), ctx.RequestAborted, owner: id.UserId,
                 clientCodecs: ScreenProtocol.ParseCodecs(ctx.Request.Query["codecs"]), resume: resume);
+            return Results.Empty;
+        });
+        // Download aus der Zwischenablage des fernen Rechners: der Server holt die Stuecke der Reihe nach vom Ziel und schreibt jedes erst, wenn das vorige beim
+        // Browser angekommen ist (nichts liegt auf dem Server). Eine Datei kommt als sie selbst, Ordner und mehrere Eintraege als ZIP. Das Ticket (Nachricht 9 des
+        // Streams) gilt einmal, 30 s und nur fuer den Benutzer der Sitzung.
+        app.MapGet(ClipDownloadPath + "/{ticket}", async (string ticket, HttpContext ctx, ScreenRelay relay) =>
+        {
+            var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
+            if (ctx.Request.Headers["Sec-Fetch-Site"].ToString() == "cross-site") return Error(403, "Anfrage abgelehnt.");
+            var download = ticket.Length is > 0 and <= 64 ? relay.Downloads.Take(ticket, id.UserId) : null;
+            if (download is null) return Error(404, "Der Download ist nicht mehr verfügbar.");
+            ctx.Response.ContentType = download.IsArchive ? "application/zip" : "application/octet-stream";
+            ctx.Response.Headers.ContentDisposition = ContentDisposition(download.FileName);
+            ctx.Response.Headers.CacheControl = "no-store";
+            ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
+            if (download.Length >= 0) ctx.Response.ContentLength = download.Length;
+            try
+            {
+                await download.RunAsync(ctx.Response.Body, ctx.RequestAborted);
+            }
+            catch (Exception e) when (e is OperationCanceledException or IOException or InvalidOperationException or ObjectDisposedException)
+            {
+                // Schon Daten gesendet: die Verbindung abbrechen, damit der Browser einen Fehler sieht und kein unvollstaendiges Archiv fuer vollstaendig haelt
+                if (ctx.Response.HasStarted) { ctx.Abort(); return Results.Empty; }
+                ctx.Response.Headers.Remove("Content-Disposition"); ctx.Response.ContentLength = null;
+                return Error(502, e is IOException ? e.Message : "Der Download ist nicht möglich.");
+            }
             return Results.Empty;
         });
         // Terminal: dasselbe Ticket-Verfahren, binaeres Protokoll (siehe SshProtocol)

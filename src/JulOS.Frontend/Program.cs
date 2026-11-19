@@ -85,6 +85,9 @@ builder.Services.AddSingleton(sp =>
     var settings = EncoderSettings.Parse(builder.Configuration["JULOS_ENCODER"], builder.Configuration["JULOS_CODEC"], message => encoderLog.LogWarning("{Message}", message));
     return EncoderSelector.CreateDefault(settings, encoderLog);
 });
+// Dateien in der Zwischenablage: Grenze (JULOS_CLIP_MAX_MB, Standard 2048) und Ablageordner (JULOS_CLIP_DIR), siehe docs/CLIPBOARD.md
+ClipboardOptions.Configure(ClipboardOptions.Parse(builder.Configuration["JULOS_CLIP_MAX_MB"], builder.Configuration["JULOS_CLIP_DIR"]));
+ClipboardBridge.SweepOld(ClipboardOptions.Default.TempRoot);
 // Sitzungserhalt: so lange lebt eine RDP-Sitzung ohne Browser weiter (JULOS_STREAM_KEEP_SECONDS, Standard 300, 0 = aus), siehe docs/SESSIONS.md
 builder.Services.AddSingleton(sp => new ScreenRelay(sp.GetRequiredService<ILogger<ScreenRelay>>(), registry: sp.GetRequiredService<SessionRegistry>(),
     encoders: sp.GetRequiredService<EncoderSelector>(), keep: ScreenRelay.ParseKeep(builder.Configuration["JULOS_STREAM_KEEP_SECONDS"])));

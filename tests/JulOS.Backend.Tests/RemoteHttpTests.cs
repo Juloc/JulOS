@@ -6,6 +6,7 @@ using System.Text.Json;
 using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
 using JulOS.Integrations;
+using JulOS.Integrations.Display;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -916,6 +917,68 @@ public sealed class RemoteHttpTests
         {
             Directory.Delete(root, true);
         }
+    }
+
+    [Fact]
+    public async Task A_ticket_can_carry_another_user_and_domain_for_one_attempt_without_changing_the_connection()
+    {
+        Assert.SkipUnless(JulOS.Integrations.Display.ScreenStream.IsAvailable, "libopenh264 fehlt: ohne Kodierer gibt es keine Desktop-Verbindung");
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db);
+        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (cookie, userId) = await SignedInAsync(app, c, db);
+        var connection = await new ConnectionStore(db.Data).CreateAsync(userId, "Test", "desktop", "ziel", 3389, "anna", domain: "FIRMA");
+        var tickets = app.Services.GetRequiredService<ScreenTickets>();
+
+        async Task<JulOS.Integrations.Display.Rdp.RdpOptions> Options(object body)
+        {
+            var response = await c.SendAsync(Post("/api/remote/ticket", body, cookie));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var ticket = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.GetProperty("ticket").GetString()!;
+            return tickets.Take(ticket, userId)!.Options;
+        }
+
+        var plain = await Options(new { connection = connection.Id, password = "x" });
+        Assert.Equal(("anna", "FIRMA"), (plain.UserName, plain.Domain));
+        var other = await Options(new { connection = connection.Id, password = "neu", username = " bernd ", domain = " ANDERS " });
+        Assert.Equal(("bernd", "ANDERS", "neu"), (other.UserName, other.Domain, other.Password));
+        var noDomain = await Options(new { connection = connection.Id, password = "neu", username = "bernd", domain = "" });
+        Assert.Equal("", noDomain.Domain);                                           // an empty domain is an answer: the stored one is not used
+        var blankUser = await Options(new { connection = connection.Id, password = "neu", username = "  " });
+        Assert.Equal("anna", blankUser.UserName);
+
+        // the connection itself is unchanged
+        var after = (await new ConnectionStore(db.Data).GetAsync(userId, connection.Id, CancellationToken.None))!;
+        Assert.Equal(("anna", "FIRMA"), (after.Username, after.Domain));
+
+        foreach (var bad in new object[] { new { connection = connection.Id, password = "x", username = "a\nb" }, new { connection = connection.Id, password = "x", domain = new string('d', 257) } })
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Post("/api/remote/ticket", bad, cookie))).StatusCode);
+        }
+    }
+
+    [Fact]
+    public async Task The_clipboard_download_route_needs_a_session_and_a_valid_ticket_and_refuses_cross_site_requests()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db);
+        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (cookie, _) = await SignedInAsync(app, c, db);
+
+        HttpRequestMessage Get(string path, string? withCookie, string? site = null)
+        {
+            var req = new HttpRequestMessage(HttpMethod.Get, path);
+            if (withCookie is not null) req.Headers.Add("Cookie", withCookie);
+            if (site is not null) req.Headers.Add("Sec-Fetch-Site", site);
+            return req;
+        }
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await c.SendAsync(Get("/api/remote/clip/irgendwas", null))).StatusCode);
+        var unknown = await c.SendAsync(Get("/api/remote/clip/irgendwas", cookie));
+        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+        Assert.Contains("Download", await unknown.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.Forbidden, (await c.SendAsync(Get("/api/remote/clip/irgendwas", cookie, "cross-site"))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Get("/api/remote/clip/" + new string('x', 65), cookie))).StatusCode);
     }
 
     [Fact]

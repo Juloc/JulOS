@@ -482,9 +482,10 @@ function soonHtml(ic, title, text) {
 function hostsHtml() {
   ctx.info.ensure(hosts());              // nur die Seite Server fragt nach Systemwerten und Updates (hoechstens alle 55 s), sonst niemand
   // Zeilen zum Host-Agenten: Modus, Systemwerte, Updates; warn faerbt, was Aufmerksamkeit braucht
-  const lines = (h) => cardLines(h, ctx.info.get(h.id)).map((l) => `<span class="sl hi-line${l.warn ? ' warn' : ''}">${esc(l.text)}</span>`).join('');
+  const lines = (h) => { const ls = cardLines(h, ctx.info.get(h.id)); return ls.length ? `<div class="m3-rows">${ls.map((l) => `<div class="m3-row${l.warn ? ' bad' : ''}"><div class="rt">${esc(l.text)}</div>${l.warn ? `<div class="rc"><span class="m3-chip status"><span class="m3-dot bad"></span>${t('hostinfo.attention')}</span></div>` : ''}</div>`).join('')}</div>` : ''; };
   const rows = hosts().map((h) => `<div class="m3-card host" data-host-card="${esc(h.id)}">
-      <div class="m3-li static"><span class="lead">${icon('dns')}</span><span class="txt"><span class="hl"><span class="m3-dot hdot ${hostDot(h.online)}"></span>${esc(h.name)} <small>${stateText(h.online)}</small></span><span class="sl">${esc([hostDetail(h), agentSummary(h), servicesSummary(h)].filter(Boolean).join(' · '))}</span>${lines(h)}</span></div>
+      <div class="m3-li static"><span class="lead">${icon('dns')}</span><span class="txt"><span class="hl"><span class="m3-dot hdot ${hostDot(h.online)}"></span>${esc(h.name)} <small>${stateText(h.online)}</small></span><span class="sl">${esc([hostDetail(h), agentSummary(h), servicesSummary(h)].filter(Boolean).join(' · '))}</span></span></div>
+      ${lines(h)}
       <div class="svcs">${h.services.map((s) => { const c = byId(s.connection); return c ? `<button type="button" class="mb m3-chip m3-state" data-act="start" data-conn="${esc(c.id)}"><span class="m3-dot hdot ${hostDot(serviceState(h, c.id))}"></span>${esc(c.name)}</button>` : ''; }).join('')}</div>
       <div class="acts-row">${wantsInfo(h) ? `<button type="button" class="mb m3-btn tonal m3-state" data-act="hostinfo" data-host="${esc(h.id)}">${icon('info')}${t('mobile.hostDetails')}</button>` : ''}<button type="button" class="mb m3-btn tonal m3-state" data-act="hostagent" data-host="${esc(h.id)}">${icon('download')}${h.agent ? t('mobile.agentManage') : t('shell.agentSetup')}</button>
         <button type="button" class="mb m3-btn text m3-state" data-act="hostedit" data-host="${esc(h.id)}">${icon('edit')}${t('common.edit')}</button></div></div>`).join('');

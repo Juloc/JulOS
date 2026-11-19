@@ -1,6 +1,6 @@
 import { t } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
-import { fetchKind, systemHtml, updatesHtml, servicesHtml, dockerHtml, wantsInfo, agentDetail, stateNote } from './hostinfo.js';
+import { fetchKind, systemHtml, updatesHtml, servicesHtml, dockerHtml, wantsInfo, agentDetail, stateNote, sectionHead, noteP, isKit } from './hostinfo.js';
 
 /* =====================================================================
  * Dialog "Host-Details" (docs/HOST-AGENT.md): Systemwerte, Updates, fehlgeschlagene Dienste und Docker-Container eines Hosts, vom Host-Agenten gelesen.
@@ -29,7 +29,7 @@ export function initHostInfoDialog({ state, api, esc, store }) {
     $('#hostInfoTitle').textContent = host.name;
     $('#hostInfoSub').textContent = agentDetail(host) || t('hostinfo.noInfoAgent');
     const caps = (host.agent && host.agent.caps) || [];
-    $('#hostInfoBody').innerHTML = SECTIONS.filter((s) => caps.includes(s.cap)).map((s) => `<section class="hi-sec" data-kind="${s.kind}"><h3>${esc(s.title())}</h3><div class="hi-body"><p class="hi-note">${esc(t('hostinfo.stLoading'))}</p></div></section>`).join('');
+    $('#hostInfoBody').innerHTML = SECTIONS.filter((s) => caps.includes(s.cap)).map((s) => `<section${isKit() ? '' : ' class="hi-sec"'} data-kind="${s.kind}">${sectionHead(s.title(), esc)}<div class="hi-body">${noteP(t('hostinfo.stLoading'), esc)}</div></section>`).join('');
   }
 
   /** Liest alle Abschnitte des Hosts (fresh: ausdruecklich neu) und zeichnet jeden, sobald seine Antwort da ist */
@@ -60,7 +60,7 @@ export function initHostInfoDialog({ state, api, esc, store }) {
     // Ein Host ohne verbundenen Host-Agenten hat nichts zu lesen: der Dialog sagt es, statt leer zu bleiben
     const nothing = !wantsInfo(host);
     $('#hostInfoRefresh').hidden = nothing;
-    if (nothing) $('#hostInfoBody').innerHTML = `<p class="hi-note">${esc(stateNote({ state: host.agent ? 'offline' : 'no_agent' }))}</p>`;
+    if (nothing) $('#hostInfoBody').innerHTML = noteP(stateNote({ state: host.agent ? 'offline' : 'no_agent' }), esc);
     $('#hostInfoDlg').showModal();
     if (!nothing) load(false);
   };

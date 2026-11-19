@@ -157,8 +157,33 @@ export function stateNote(resp) {
 }
 
 /* ---------- HTML-Bausteine (esc: Funktion, die Text fuer HTML schuetzt) ---------- */
-const dl = (rows, esc) => `<dl class="hi-dl">${rows.filter((r) => r[1] !== '' && r[1] != null).map(([k, v, cls]) => `<dt>${esc(k)}</dt><dd${cls ? ` class="${cls}"` : ''}>${esc(v)}</dd>`).join('')}</dl>`;
-const note = (resp, esc) => { const n = stateNote(resp); return n ? `<p class="hi-note">${esc(n)}</p>` : ''; };
+/**
+ * Auf dem Handy (html.m3) sind es die Bausteine aus docs/ui-kit.html (m3-rows, m3-list, m3-msg, m3-sec); am Desktop, der m3.css nicht laedt, gelten die schlichten hi-*-Stile.
+ * Gleiche Inhalte, zwei Huellen: kit darf zum Testen als letztes Argument von aussen kommen.
+ */
+export const isKit = () => typeof document !== 'undefined' && document.documentElement.classList.contains('m3');
+const multi = (v, esc) => String(v).split('\n').map(esc).join('<br>');
+const dl = (rows, esc, kit = isKit()) => {
+  const shown = rows.filter((r) => r[1] !== '' && r[1] != null);
+  if (kit) return `<div class="m3-card m3-rows">${shown.map(([k, v, cls]) => `<div class="m3-row${/\bwarn\b/.test(cls || '') ? ' bad' : ''}"><div class="rt">${esc(k)}</div><div class="rc"><span class="rv">${multi(v, esc)}</span></div></div>`).join('')}</div>`;
+  return `<dl class="hi-dl">${shown.map(([k, v, cls]) => `<dt>${esc(k)}</dt><dd${cls ? ` class="${cls}"` : ''}>${esc(v)}</dd>`).join('')}</dl>`;
+};
+/** Ein Hinweis: warn hebt ihn hervor */
+export const noteP = (text, esc, warn = false, kit = isKit()) => (kit
+  ? (warn ? `<div class="m3-msg warn"><div class="msg-t"><span>${esc(text)}</span></div></div>` : `<p class="hint">${esc(text)}</p>`)
+  : `<p class="hi-note${warn ? ' warn' : ''}">${esc(text)}</p>`);
+/** Die Kernaussage eines Abschnitts ("Updates: 3 verfuegbar") */
+const sumP = (text, esc, warn = false, kit = isKit()) => (kit
+  ? `<div class="m3-msg${warn ? ' warn' : ' ok'}"><div class="msg-t"><b>${esc(text)}</b></div></div>`
+  : `<p class="hi-sum${warn ? ' warn' : ''}">${esc(text)}</p>`);
+const subH = (text, esc, kit = isKit()) => (kit ? `<div class="m3-sec"><span>${esc(text)}</span></div>` : `<h4 class="hi-sub">${esc(text)}</h4>`);
+/** Eine Liste aus { name, detail, badge? (Text), off? } */
+const listBlock = (items, esc, kit = isKit()) => (kit
+  ? `<div class="m3-card m3-list">${items.map((i) => `<div class="m3-li static"><span class="txt"><span class="hl">${esc(i.name)}</span><span class="sl">${esc(i.detail)}</span></span>${i.badge ? `<span class="tr"><span class="m3-chip status"><span class="m3-dot bad"></span>${esc(i.badge)}</span></span>` : ''}</div>`).join('')}</div>`
+  : `<ul class="hi-list">${items.map((i) => `<li${i.badge ? ' class="sec"' : i.off ? ' class="off"' : ''}><b>${esc(i.name)}</b> <span>${esc(i.detail)}</span>${i.badge ? `<em class="hi-badge">${esc(i.badge)}</em>` : ''}</li>`).join('')}</ul>`);
+/** Ueberschrift eines Abschnitts im Dialog (siehe hostinfo-dialog.js) */
+export const sectionHead = (text, esc, kit = isKit()) => (kit ? `<div class="m3-sec"><span>${esc(text)}</span></div>` : `<h3>${esc(text)}</h3>`);
+const note = (resp, esc) => { const n = stateNote(resp); return n ? noteP(n, esc) : ''; };
 
 export function systemHtml(resp, esc) {
   const i = resp && resp.info;
@@ -190,8 +215,8 @@ export function systemHtml(resp, esc) {
 /** Platten-Gesundheit: SMART je Platte (oder warum nicht lesbar), RAID aus /proc/mdstat, ZFS; alles nur lesend */
 export function healthHtml(h, esc) {
   if (!h) return '';
-  const head = `<h4 class="hi-sub">${esc(t('hostinfo.health'))}</h4>`;
-  if (h.pending) return head + `<p class="hi-note">${esc(t('hostinfo.stLoading'))}</p>`;
+  const head = subH(t('hostinfo.health'), esc);
+  if (h.pending) return head + noteP(t('hostinfo.stLoading'), esc);
   const rows = [];
   const sm = h.smart;
   if (sm && sm.available) rows.push([t('hostinfo.smart'), (sm.devices || []).map((d) => `${d.name}: ${t(SMART_STATE[d.health] || SMART_STATE.unknown)}`).join('\n'), (sm.devices || []).some((d) => d.health === 'failing') ? 'warn hi-lines' : 'hi-lines']);
@@ -205,34 +230,34 @@ const PROXMOX = { ve: tk('hostinfo.pxVe'), pbs: tk('hostinfo.pxPbs'), pmg: tk('h
 export function updatesHtml(resp, esc) {
   const u = resp && resp.updates;
   if (!u) return note(resp, esc);
-  const head = `<p class="hi-sum${u.security > 0 ? ' warn' : ''}">${esc(updatesLine(resp))}</p>`;
-  const li = (p) => `<li${p.security ? ' class="sec"' : ''}><b>${esc(p.name)}</b> <span>${esc(p.from ? `${p.from} → ${p.to}` : t('hostinfo.newPackage', { v: p.to }))}</span>${p.security ? `<em class="hi-badge">${esc(t('hostinfo.security'))}</em>` : ''}</li>`;
+  const head = sumP(updatesLine(resp), esc, u.security > 0);
+  const items = (u.packages || []).map((p) => ({ name: p.name, detail: p.from ? `${p.from} → ${p.to}` : t('hostinfo.newPackage', { v: p.to }), badge: p.security ? t('hostinfo.security') : '' }));
   const extra = [];
-  if (u.keptBack && u.keptBack.length) extra.push(`<p class="hi-note">${esc(t('hostinfo.keptBack', { list: u.keptBack.join(', ') }))}</p>`);
-  if (u.held && u.held.length) extra.push(`<p class="hi-note">${esc(t('hostinfo.held', { list: u.held.join(', ') }))}</p>`);
-  if (u.removals > 0) extra.push(`<p class="hi-note">${esc(tp('hostinfo.removals', u.removals))}</p>`);
-  if (u.truncated) extra.push(`<p class="hi-note">${esc(t('hostinfo.truncated', { n: (u.packages || []).length }))}</p>`);
+  if (u.keptBack && u.keptBack.length) extra.push(noteP(t('hostinfo.keptBack', { list: u.keptBack.join(', ') }), esc));
+  if (u.held && u.held.length) extra.push(noteP(t('hostinfo.held', { list: u.held.join(', ') }), esc));
+  if (u.removals > 0) extra.push(noteP(tp('hostinfo.removals', u.removals), esc));
+  if (u.truncated) extra.push(noteP(t('hostinfo.truncated', { n: (u.packages || []).length }), esc));
   // Die Paketlisten aktualisiert nur root; der Agent zeigt, wie alt sie sind, damit "keine Updates" nicht truegt
-  const age = u.listsAgeSeconds != null ? `<p class="hi-note${u.listsAgeSeconds > 7 * 86400 ? ' warn' : ''}">${esc(t('hostinfo.listsAge', { age: fmtAge(u.listsAgeSeconds) }))} ${esc(t('hostinfo.listsHint'))}</p>` : '';
-  return note(resp, esc) + head + ((u.packages || []).length ? `<ul class="hi-list">${u.packages.map(li).join('')}</ul>` : '') + extra.join('') + age;
+  const age = u.listsAgeSeconds != null ? noteP(`${t('hostinfo.listsAge', { age: fmtAge(u.listsAgeSeconds) })} ${t('hostinfo.listsHint')}`, esc, u.listsAgeSeconds > 7 * 86400) : '';
+  return note(resp, esc) + head + (items.length ? listBlock(items, esc) : '') + extra.join('') + age;
 }
 
 export function servicesHtml(resp, esc) {
   const s = resp && resp.services;
   if (!s) return note(resp, esc);
-  const list = (s.failed || []).map((f) => `<li><b>${esc(f.unit)}</b>${f.description ? ` <span>${esc(f.description)}</span>` : ''}</li>`).join('');
-  return note(resp, esc) + (s.count > 0 ? `<p class="hi-sum warn">${esc(tp('hostinfo.failedUnits', s.count))}</p><ul class="hi-list">${list}</ul>` : `<p class="hi-sum">${esc(t('hostinfo.noFailedUnits'))}</p>`);
+  const items = (s.failed || []).map((f) => ({ name: f.unit, detail: f.description || '' }));
+  return note(resp, esc) + (s.count > 0 ? sumP(tp('hostinfo.failedUnits', s.count), esc, true) + listBlock(items, esc) : sumP(t('hostinfo.noFailedUnits'), esc));
 }
 
 const DOCKER_REASON = { no_socket: tk('hostinfo.dockerNoSocket'), no_access: tk('hostinfo.dockerNoAccess'), error: tk('hostinfo.dockerError') };
 export function dockerHtml(resp, esc) {
   const d = resp && resp.docker;
   if (!d) return note(resp, esc);
-  if (!d.available) return note(resp, esc) + `<p class="hi-note">${esc(t(DOCKER_REASON[d.reason] || DOCKER_REASON.error))}</p>`;
-  const li = (c) => `<li${c.state === 'running' ? '' : ' class="off"'}><b>${esc(c.name)}</b> <span>${esc(c.image)} · ${esc(c.status || c.state)}</span></li>`;
-  return note(resp, esc) + `<p class="hi-sum">${esc(t('hostinfo.dockerSum', { running: d.running, total: d.total }))}</p>`
-    + (d.restarting > 0 ? `<p class="hi-sum warn">${esc(tp('hostinfo.dockerRestarting', d.restarting))}</p>` : '') + ((d.containers || []).length ? `<ul class="hi-list">${d.containers.map(li).join('')}</ul>` : '')
-    + (d.truncated ? `<p class="hi-note">${esc(t('hostinfo.truncated', { n: d.containers.length }))}</p>` : '');
+  if (!d.available) return note(resp, esc) + noteP(t(DOCKER_REASON[d.reason] || DOCKER_REASON.error), esc);
+  const items = (d.containers || []).map((c) => ({ name: c.name, detail: `${c.image} · ${c.status || c.state}`, off: c.state !== 'running' }));
+  return note(resp, esc) + sumP(t('hostinfo.dockerSum', { running: d.running, total: d.total }), esc)
+    + (d.restarting > 0 ? sumP(tp('hostinfo.dockerRestarting', d.restarting), esc, true) : '') + (items.length ? listBlock(items, esc) : '')
+    + (d.truncated ? noteP(t('hostinfo.truncated', { n: d.containers.length }), esc) : '');
 }
 
 /* ---------- Speicher im Browser ---------- */

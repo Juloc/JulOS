@@ -994,6 +994,7 @@ export default {
   "hostinfo.zfsBad": "a pool has problems",
   "hostinfo.dockerRestarting.one": "{n} container keeps restarting",
   "hostinfo.dockerRestarting.other": "{n} containers keep restarting",
+  "hostinfo.attention": "Attention",
   "hostinfo.keptBack": "Kept back (not part of this update): {list}",
   "hostinfo.kernel": "Kernel",
   "hostinfo.listsAge": "Package lists last refreshed {age} ago.",

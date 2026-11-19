@@ -994,6 +994,7 @@ export default {
   "hostinfo.zfsBad": "ein Pool hat Probleme",
   "hostinfo.dockerRestarting.one": "{n} Container startet ständig neu",
   "hostinfo.dockerRestarting.other": "{n} Container starten ständig neu",
+  "hostinfo.attention": "Achtung",
   "hostinfo.keptBack": "Zurückgehalten (nicht Teil dieses Updates): {list}",
   "hostinfo.kernel": "Kernel",
   "hostinfo.listsAge": "Paketlisten zuletzt vor {age} aktualisiert.",

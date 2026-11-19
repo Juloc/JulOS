@@ -217,7 +217,7 @@ test('prefillState: Entwurf ersetzen, Leiste oeffnen, nichts senden', () => {
 
 test('die neue Datei steht im Service Worker und die Version ist erhoeht', () => {
   const sw = fs.readFileSync(new URL('../../src/JulOS.Frontend/wwwroot/sw.js', import.meta.url), 'utf8');
-  assert.match(sw, /VERSION = 'pd-v55'/);
+  assert.ok(Number(/VERSION = 'pd-v(\d+)'/.exec(sw)[1]) >= 55);
   for (const f of ['/hostinfo.js', '/hostinfo-dialog.js']) assert.ok(sw.includes(`'${f}'`), f);
 });
 
@@ -260,4 +260,26 @@ test('Netzwerkrate: aus zwei Ablesungen, nicht bei Zaehlerrueckgang oder kurzem 
   assert.equal(netRate(r(0, 5000, 500), r(10, 1000, 600)), null);            // Zaehler zurueckgesetzt (Neustart)
   assert.equal(netRate(null, r(10, 1, 1)), null);
   assert.equal(netRate(r(0, 1, 1), { at: at(10), info: {} }), null);
+});
+
+test('Handy-Huelle: dieselben Inhalte mit den Bausteinen aus docs/ui-kit.html (m3-rows, m3-list, m3-msg), alles escaped', async () => {
+  const { systemHtml, updatesHtml, servicesHtml, dockerHtml } = await import('../../src/JulOS.Frontend/wwwroot/hostinfo.js');
+  const kitDoc = globalThis.document;
+  globalThis.document = { documentElement: { classList: { contains: (c) => c === 'm3' } } };
+  try {
+    const sys = systemHtml({ state: 'ok', info: { hostname: '<x>', os: 'Debian', memory: { totalBytes: 100, availableBytes: 5 }, disks: [{ mount: '/', usedBytes: 1, totalBytes: 2, percent: 95 }], health: { smart: { available: false, reason: 'no_access' }, md: [{ name: 'md0', state: 'degraded', active: 1, total: 2 }] } } }, esc2);
+    assert.match(sys, /class="m3-card m3-rows"/);
+    assert.match(sys, /class="m3-row bad"/);                       // Speicher und Platte fast voll: hervorgehoben
+    assert.match(sys, /m3-sec/);                                   // Ueberschrift der Gesundheit
+    assert.doesNotMatch(sys, /hi-dl|hi-sub|<x>/);
+    const upd = updatesHtml({ state: 'ok', updates: { manager: 'apt', count: 2, security: 1, securityKnown: true, packages: [{ name: 'libc6', from: '1', to: '2', security: true }, { name: '<b>', to: '3', new: true }], keptBack: ['k'], listsAgeSeconds: 9 * 86400 } }, esc2);
+    assert.match(upd, /m3-card m3-list/);
+    assert.match(upd, /m3-chip status/);
+    assert.match(upd, /m3-msg warn/);                              // Summe mit Sicherheitsupdate und alte Paketlisten
+    assert.doesNotMatch(upd, /hi-list|hi-note/);
+    assert.match(upd, /&lt;b&gt;/);
+    assert.match(servicesHtml({ state: 'ok', services: { count: 1, failed: [{ unit: 'a.service' }] } }, esc2), /m3-msg warn/);
+    assert.match(servicesHtml({ state: 'ok', services: { count: 0, failed: [] } }, esc2), /m3-msg ok/);
+    assert.match(dockerHtml({ state: 'ok', docker: { available: false, reason: 'no_access' } }, esc2), /class="hint"/);
+  } finally { if (kitDoc === undefined) delete globalThis.document; else globalThis.document = kitDoc; }
 });

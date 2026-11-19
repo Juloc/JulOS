@@ -4,6 +4,22 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Neu
+- **Host-Agent, Stufe 3: Aktionen, jede bestätigt, nie still** (Agent 0.6.0, [docs/HOST-AGENT.md](docs/HOST-AGENT.md), Abschnitt „Actions“): Updates installieren (ein Paket aus der Liste oder alle, mit Fortschritt und Neustart-Hinweis) und Paketlisten aktualisieren, Neustart und Ausschalten, systemd-Dienste auflisten, starten, stoppen und neu starten, Docker-Container starten, stoppen und neu starten, Image neu holen, Logs lesen (10 bis 200 Zeilen, nur auf Anforderung).
+- **Zweistufige Bestätigung am Server**: `POST /api/hosts/{id}/actions/prepare` nennt genau Host, Aktion und Ziel und gibt eine kurzlebige (60 s), einmalige Bestätigung zurück (nur ihr SHA-256 im Speicher, gebunden an Sitzung, Host, Aktion und Ziel); erst `…/actions/run` führt aus und prüft alles noch einmal. Bei Neustart, Ausschalten und „alle Updates“ muss der Rechnername getippt werden. Nie durch einen Zeitplan, nie durch den Agenten.
+- **Zwei Schlüssel plus Pausenschalter**: der Server prüft die Stufe je Host (`agents.control`, Standard `read` = keine Aktion; neu einstellbar im Dialog „Host-Details“ → Aktionen: aus, Updates und Logs, alles), die Sitzung, ein Limit (30 Anfragen je Minute) und den Pausenschalter (`JULOS_HOST_ACTIONS=off` oder „Alle Aktionen pausieren“); der Agent prüft sein lokales Wort je Aktionsart in `/etc/julos-agent/permissions` (`updates`, `reboot`, `services`, `docker`, `logs`; nach der Installation keins gesetzt). Fehlt einer: abgelehnt.
+- **Installer**: `--allow WORTE` setzt die Wörter bewusst (nie Standard); nur wenn etwas root braucht, wird der **Root-Helfer** `tools/julos-agent-helper.py` als socket-aktivierter systemd-Dienst installiert (der Agent selbst bleibt ein Benutzer ohne sudo und mit `NoNewPrivileges`; der Helfer führt je Anfrage genau ein festes Programm ohne Shell aus und prüft dieselbe Datei noch einmal). Das sudo-Passwort tippt man weiter selbst.
+- **Verlauf (Audit)**: Migration 018, Tabelle `host_audit`: jede Anfrage, Ablehnung (mit Grund) und jedes Ergebnis mit Benutzer, Host, Aktion, Ziel und Zeit, ohne Geheimnis und ohne Ausgabe-Inhalt; `GET /api/hosts/{id}/audit` und die Ansicht „Verlauf“ im Dialog. Ohne Eintrag im Verlauf wird nichts ausgeführt.
+- **Fortschritt und Rückweg**: lange Aktionen melden `progress`-Nachrichten; ein Verbindungsabbruch bricht nichts ab, der Agent merkt sich die letzten 20 Ergebnisse (`GET /v1/host/jobs`) und der Server holt sie nach der Rückkehr ab; ein Neustart wird zuerst „angenommen“ gemeldet. Pro Host läuft nur eine schreibende Aktion (409 busy).
+- Oberfläche (Handy und Desktop): Tasten an Updates, Paketen, Diensten, Containern und im System-Abschnitt, Bestätigungsdialog mit Host, Aktion, Ziel, Warnungen (JulOS-eigene Container-Gruppe, zurückgehaltene Pakete), Fortschrittsbalken, Ergebnis mit Neustart-Hinweis; Texte Deutsch und Englisch. Service Worker `pd-v58`.
+- Tests: `tests/agent/test_actions.py` (Request-Recorder für jede Aktion, Ablehnung je fehlendem Schlüssel, Injektionsfälle, Helfer mit einsetzbarem Runner, Agent gegen den echten Helfer-Code über einen Unix-Socket), `HostActionTests.cs` (Bestätigung: abgelaufen, wiederverwendet, falsche Sitzung, falscher Host, geänderte Aktion oder Ziel; Rate-Limit, Pause, Verlauf, Eigentum, Rückweg), `hostactions.test.mjs`.
+
+### Grenzen
+- Updates und Paketlisten nur mit apt; „Image neu holen“ holt nur das Image (neu erstellen muss man den Container selbst); Docker-Aktionen brauchen Zugriff auf den Docker-Socket mit Schreibrecht (ein reiner Lese-Proxy reicht nicht).
+- Echtes systemd, echtes apt und echtes Docker auf einem echten Host sind nicht automatisch geprüft (Tests mit Recordern und Fakes).
+
 ## [0.12.0] - 2026-11-19
 
 ### Neu

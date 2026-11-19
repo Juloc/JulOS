@@ -69,7 +69,7 @@ All need the session, the `X-JulOS` header for changes, and only ever show the s
 
 ## Host agent
 
-A host without a desktop (Docker VM, Proxmox, servers) gets the **host-mode agent**: `GET /api/hosts/{id}/status`, `/updates`, `/services`, `/docker` (read only, session needed, 60 s memory, never polled by the server) show load, memory, disks, disk health, updates and containers on the host card and in the dialog **Host-Details**. `agent` in `GET /api/hosts` gains `kind`, `caps`, `allow` and `control`. Install it from the host dialog with **Agent per SSH installieren**. All of it: [HOST-AGENT.md](HOST-AGENT.md).
+A host without a desktop (Docker VM, Proxmox, servers) gets the **host-mode agent**: `GET /api/hosts/{id}/status`, `/updates`, `/services`, `/docker` (session needed, 60 s memory, never polled by the server) show load, memory, disks, disk health, updates and containers on the host card and in the dialog **Host-Details**. `agent` in `GET /api/hosts` gains `kind`, `caps`, `allow` and `control`. Install it from the host dialog with **Agent per SSH installieren**. Since agent 0.6.0 the dialog can also run **actions** (install updates, reboot, services, containers, logs, images): off by default, switched on per host, every single one confirmed by you in the app, with a history; see [HOST-AGENT.md](HOST-AGENT.md#actions-stage-3). All of it: [HOST-AGENT.md](HOST-AGENT.md).
 
 ## Not part of this step
 

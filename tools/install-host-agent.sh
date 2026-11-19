@@ -4,16 +4,22 @@
 # What it does (details: docs/HOST-AGENT.md):
 #   1. creates the system user "julos-agent" (no login shell, home /var/lib/julos-agent),
 #   2. downloads julos-agent.py from YOUR JulOS server (/agent-files/, SHA-256 checked against /agent-files/SHA256SUMS) into /opt/julos-agent,
-#   3. creates /etc/julos-agent/permissions (owned by root: the agent cannot change what it may do), with --allow-updates the line "updates",
+#   3. creates /etc/julos-agent/permissions (owned by root: the agent cannot change what it may do). It is EMPTY unless you name words with --allow (see below),
 #   4. enrols the agent with the one-time code from the JulOS app ("Agent per SSH installieren"),
-#   5. installs and starts the systemd service julos-agent (restart on failure, NoNewPrivileges, ProtectSystem=strict, only the paths it needs).
+#   5. installs and starts the systemd service julos-agent (restart on failure, NoNewPrivileges, ProtectSystem=strict, only the paths it needs),
+#   6. only when you allow actions that need root (updates, reboot, services, logs): installs the small root helper (julos-agent-helper.py, from your server, checksum checked) as a
+#      socket-activated systemd service. The agent itself stays an unprivileged user without sudo; the helper runs one fixed program per confirmed request and checks the same file again.
 # It talks to the server you name with --server and to nobody else. It never reads or asks for passwords; sudo asks for its own.
 #
 # Usage (as root, for example through sudo):
 #   sh install-host-agent.sh --server https://julos.example.org --code ABCDE-FGHIJ [options]
 #   --dry-run          only show what would happen (needs no root, changes nothing, downloads nothing)
 #   --user NAME        service account (default julos-agent; created when missing)
-#   --allow-updates    write "updates" to /etc/julos-agent/permissions (the agent may install updates once step 3 of the host agent exists; not built yet)
+#   --allow WORDS      write these words to /etc/julos-agent/permissions, comma separated, from: updates reboot services docker logs. NEVER a default: without this option the agent can only read.
+#                      Every action also needs your confirmation in the app each time and the "Aktionen" level for this host there. updates: install updates, refresh package lists (apt only);
+#                      reboot: reboot and power off; services: list/start/stop/restart systemd services; docker: start/stop/restart containers, pull images (needs Docker socket access:
+#                      see --docker-group); logs: read bounded logs of services and containers. The words only add; remove one by editing the file as root.
+#   --allow-updates    same as --allow updates
 #   --docker-group     let the service read the Docker socket (supplementary group "docker"; that group is root-equivalent, read the docs first)
 #   --allow-http       test only: allow a server address without TLS
 #   --no-start         install, but do not start the service
@@ -30,8 +36,16 @@ APP_DIR=/opt/julos-agent
 ETC_DIR=/etc/julos-agent
 UNIT_NAME=julos-agent.service
 UNIT_FILE=/etc/systemd/system/$UNIT_NAME
+HELPER_DIR=/usr/local/libexec/julos-agent
+HELPER_FILE=$HELPER_DIR/julos-agent-helper.py
+HELPER_SOCKET_PATH=/run/julos-agent-helper.sock
+HELPER_SOCKET_UNIT=julos-agent-helper.socket
+HELPER_SERVICE_UNIT=julos-agent-helper@.service
+HELPER_SOCKET_FILE=/etc/systemd/system/$HELPER_SOCKET_UNIT
+HELPER_SERVICE_FILE=/etc/systemd/system/$HELPER_SERVICE_UNIT
+KNOWN_WORDS="updates reboot services docker logs"
 
-SERVER="" CODE="" USER_NAME=julos-agent ALLOW_UPDATES=0 DOCKER_GROUP=0 ALLOW_HTTP=0 DRY=0 NO_START=0 UNINSTALL=0
+SERVER="" CODE="" USER_NAME=julos-agent ALLOW_WORDS="" DOCKER_GROUP=0 ALLOW_HTTP=0 DRY=0 NO_START=0 UNINSTALL=0
 TMPDIRS=""
 
 say() { printf '%s\n' "$*"; }
@@ -62,7 +76,8 @@ while [ $# -gt 0 ]; do
     --server) [ $# -ge 2 ] || die "--server needs a value"; SERVER=$2; shift 2 ;;
     --code) [ $# -ge 2 ] || die "--code needs a value"; CODE=$2; shift 2 ;;
     --user) [ $# -ge 2 ] || die "--user needs a value"; USER_NAME=$2; shift 2 ;;
-    --allow-updates) ALLOW_UPDATES=1; shift ;;
+    --allow) [ $# -ge 2 ] || die "--allow needs a value (for example updates,logs)"; ALLOW_WORDS="$ALLOW_WORDS $(printf '%s' "$2" | tr ',' ' ')"; shift 2 ;;
+    --allow-updates) ALLOW_WORDS="$ALLOW_WORDS updates"; shift ;;
     --docker-group) DOCKER_GROUP=1; shift ;;
     --allow-http) ALLOW_HTTP=1; shift ;;
     --no-start) NO_START=1; shift ;;
@@ -78,6 +93,20 @@ case "$USER_NAME" in
 esac
 HOME_DIR=/var/lib/$USER_NAME
 
+# The allowed words: only known ones, each once
+WORDS=""
+for w in $ALLOW_WORDS; do
+  case " $KNOWN_WORDS " in
+    *" $w "*) case " $WORDS " in *" $w "*) ;; *) WORDS="$WORDS $w" ;; esac ;;
+    *) die "--allow: unknown word \"$w\" (known: $KNOWN_WORDS)" ;;
+  esac
+done
+WORDS=${WORDS# }
+has_word() { case " $WORDS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+# What needs root: apt, systemctl, journalctl, reboot. Docker goes through the socket the agent already reads.
+NEED_HELPER=0
+for w in updates reboot services logs; do if has_word "$w"; then NEED_HELPER=1; fi; done
+
 if [ "$DRY" = 0 ] && [ "$(id -u)" != 0 ]; then
   die "needs root: run it with sudo (or add --dry-run to only look)"
 fi
@@ -89,6 +118,12 @@ uninstall() {
     act "stop and disable $UNIT_NAME" systemctl disable --now "$UNIT_NAME" || true
   fi
   [ ! -e "$UNIT_FILE" ] || act "remove $UNIT_FILE" rm -f "$UNIT_FILE"
+  if have systemctl && [ -d /run/systemd/system ] && [ -e "$HELPER_SOCKET_FILE" ]; then
+    act "stop and disable $HELPER_SOCKET_UNIT" systemctl disable --now "$HELPER_SOCKET_UNIT" || true
+  fi
+  [ ! -e "$HELPER_SOCKET_FILE" ] || act "remove $HELPER_SOCKET_FILE" rm -f "$HELPER_SOCKET_FILE"
+  [ ! -e "$HELPER_SERVICE_FILE" ] || act "remove $HELPER_SERVICE_FILE" rm -f "$HELPER_SERVICE_FILE"
+  [ ! -d "$HELPER_DIR" ] || act "remove $HELPER_DIR (the root helper)" rm -rf "$HELPER_DIR"
   if have systemctl && [ -d /run/systemd/system ]; then act "systemctl daemon-reload" systemctl daemon-reload; fi
   [ ! -d "$APP_DIR" ] || act "remove $APP_DIR" rm -rf "$APP_DIR"
   created=""
@@ -141,6 +176,8 @@ for n in /usr/sbin/nologin /sbin/nologin /usr/bin/nologin /bin/false; do
 done
 
 say "JulOS host agent: server $SERVER, service account $USER_NAME, files in $APP_DIR"
+if [ -n "$WORDS" ]; then say "Actions you allow on this machine (each one still needs your confirmation in the app): $WORDS"; else say "No action words: the agent can only read (add --allow to change that, see --help)."; fi
+if has_word docker && [ "$DOCKER_GROUP" = 0 ]; then warn "docker is allowed, but the agent has no access to the Docker socket yet (--docker-group, or give it a socket proxy that allows start/stop; see docs/HOST-AGENT.md)"; fi
 [ "$DRY" = 0 ] || say "Dry run: nothing is changed."
 
 # ----------------------------------------------------------------------------------------------- helpers
@@ -212,7 +249,11 @@ install_files() {
 
 install_permissions() {
   if [ "$DRY" = 1 ]; then
-    plan "create $ETC_DIR/permissions (root-owned, 0644)$([ "$ALLOW_UPDATES" = 1 ] && printf ' with the line "updates"')"
+    if [ -n "$WORDS" ]; then
+      plan "create $ETC_DIR/permissions (root-owned, 0644) and add the words: $WORDS"
+    else
+      plan "create $ETC_DIR/permissions (root-owned, 0644) with no word: the agent can only read"
+    fi
     return 0
   fi
   doing "configure $ETC_DIR/permissions (owned by root: the agent cannot give itself rights)"
@@ -220,18 +261,96 @@ install_permissions() {
   chmod 0755 "$ETC_DIR"
   if [ ! -f "$ETC_DIR/permissions" ]; then
     cat > "$ETC_DIR/permissions" <<'PERMS'
-# What this agent may do on this machine, one word per line (the server must also allow it).
-# Reading (system values, update list, failed services, containers) needs no entry.
-# Writing is not built yet (planned: install updates, reboot); the words are kept for that:
-#   updates
-#   reboot
+# What this agent may do on this machine, one word per line (the server must also allow it, and every single action needs your confirmation in the app).
+# Reading (system values, update list, failed services, containers) needs no entry. By default NOTHING below is set: the agent can only read.
+# Words (remove a line to take the right away; the agent and its root helper read this file again at every request):
+#   updates    install updates, refresh package lists (apt)
+#   reboot     reboot and power off
+#   services   list, start, stop, restart systemd services
+#   docker     start, stop, restart containers, pull images (also needs access to the Docker socket)
+#   logs       read bounded logs of services and containers
 PERMS
   fi
   chown root:root "$ETC_DIR/permissions" 2>/dev/null || true
   chmod 0644 "$ETC_DIR/permissions"
-  if [ "$ALLOW_UPDATES" = 1 ] && ! grep -Eq '^[[:space:]]*updates[[:space:]]*(#.*)?$' "$ETC_DIR/permissions"; then
-    printf 'updates\n' >> "$ETC_DIR/permissions"
+  for w in $WORDS; do
+    if ! grep -Eq "^[[:space:]]*${w}[[:space:]]*(#.*)?\$" "$ETC_DIR/permissions"; then printf '%s\n' "$w" >> "$ETC_DIR/permissions"; fi
+  done
+}
+
+helper_socket_unit_text() {
+  cat <<UNIT
+[Unit]
+Description=JulOS host agent helper (root side of confirmed actions)
+
+[Socket]
+ListenStream=$HELPER_SOCKET_PATH
+SocketUser=root
+SocketGroup=$USER_NAME
+SocketMode=0660
+Accept=yes
+MaxConnections=4
+
+[Install]
+WantedBy=sockets.target
+UNIT
+}
+
+helper_service_unit_text() {
+  cat <<UNIT
+[Unit]
+Description=JulOS host agent helper (one confirmed action, as root)
+
+[Service]
+Type=simple
+ExecStart=$PYTHON $HELPER_FILE
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+TimeoutStopSec=30
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+LockPersonality=yes
+UNIT
+}
+
+# The root helper for actions that need root. Only installed when such a word was named with --allow; re-running this script updates it.
+install_helper() {
+  [ "$NEED_HELPER" = 1 ] || return 0
+  if [ "$SYSTEMD" = 0 ]; then
+    warn "no systemd on this machine: the root helper is not installed, so actions that need root (updates, reboot, services, logs) will not work"
+    return 0
   fi
+  if [ "$DRY" = 1 ]; then
+    plan "download $SERVER/agent-files/julos-agent-helper.py, compare the SHA-256 with SHA256SUMS, install as $HELPER_FILE (root-owned, the agent cannot change it)"
+    plan "write $HELPER_SOCKET_FILE (socket $HELPER_SOCKET_PATH, mode 0660, group $USER_NAME) and $HELPER_SERVICE_FILE (runs the helper as root, one request per connection):"
+    helper_socket_unit_text | grep -v '^$' | sed 's/^/        | /'
+    helper_service_unit_text | grep -v '^$' | sed 's/^/        | /'
+    plan "systemctl daemon-reload; enable and start $HELPER_SOCKET_UNIT"
+    return 0
+  fi
+  tmp=$(mktemp -d); TMPDIRS="$TMPDIRS $tmp"
+  doing "download julos-agent-helper.py and SHA256SUMS from $SERVER"
+  fetch "$SERVER/agent-files/julos-agent-helper.py" "$tmp/julos-agent-helper.py" || die "download of julos-agent-helper.py failed (is the server new enough? the helper belongs to agent 0.6.0 and later)"
+  fetch "$SERVER/agent-files/SHA256SUMS" "$tmp/SHA256SUMS" || die "download of SHA256SUMS failed"
+  want=$(awk '$2 == "julos-agent-helper.py" || $2 == "*julos-agent-helper.py" { print $1 }' "$tmp/SHA256SUMS" | head -n 1)
+  [ -n "$want" ] || die "SHA256SUMS does not list julos-agent-helper.py"
+  got=$(sha256_of "$tmp/julos-agent-helper.py")
+  [ "$want" = "$got" ] || die "checksum mismatch for julos-agent-helper.py (server says $want, download is $got): nothing installed"
+  "$PYTHON" -c 'import sys; compile(open(sys.argv[1], "rb").read(), "julos-agent-helper.py", "exec")' "$tmp/julos-agent-helper.py" || die "the helper download is not valid Python"
+  say "  checksum ok: $got"
+  doing "install the helper as $HELPER_FILE (root-owned)"
+  mkdir -p "$HELPER_DIR"
+  chown root:root "$HELPER_DIR" 2>/dev/null || true
+  chmod 0755 "$HELPER_DIR"
+  install -m 0755 "$tmp/julos-agent-helper.py" "$HELPER_FILE"
+  chown root:root "$HELPER_FILE" 2>/dev/null || true
+  helper_socket_unit_text | grep -v '^$' > "$HELPER_SOCKET_FILE"; chmod 0644 "$HELPER_SOCKET_FILE"
+  helper_service_unit_text | grep -v '^$' > "$HELPER_SERVICE_FILE"; chmod 0644 "$HELPER_SERVICE_FILE"
+  systemctl daemon-reload
+  systemctl enable "$HELPER_SOCKET_UNIT" >/dev/null 2>&1 || true
+  systemctl restart "$HELPER_SOCKET_UNIT"
 }
 
 enrol() {
@@ -332,6 +451,7 @@ install_service() {
 install_user
 install_files
 install_permissions
+install_helper
 enrol
 install_service
 

@@ -5,15 +5,16 @@
  *
  * Nachrichten (alle binaer, Zahlen big endian), siehe ScreenProtocol auf dem Server:
  *   Server -> Browser: 1 Bild (flags, folge u32, H.264), 2 Zeiger, 3 Groesse, 4 Fehler, 5 uebernommen, 6 Zwischenablage (UTF-8-Text),
- *                      7 Bild aus der VM (format 1 PNG / 2 BMP), 8 Dateiliste der VM, 9 Dateistueck, 10 Ergebnis eines Sendens,
+ *                      7 Bild aus der VM (format 1 PNG / 2 BMP), 8 Eintraege (Dateien und Ordner) der VM, 9 Dateistand (bereit mit Token, laeuft, fertig, gescheitert), 10 Ergebnis eines Sendens,
  *                      11 Sitzung (sekunden u16, Token: so lange erhaelt der Server die Sitzung ohne Browser; mit dem Token geht connect('resume=...')),
  *                      12 Token unbekannt (neu aufbauen),
+ *                      14 Grenzen (maxDatei u64, maxDateien u16, maxEintraege u16: so viel darf der Browser an die Zwischenablage der VM senden),
  *                      30 Kodierer (codec, GPU ja/nein, Name: nur zum Anzeigen); ein Bild hat in flags Bit 1 gesetzt, wenn es H.265 ist
  *                      40 Nachbesserung (x, y, breite, hoehe u16, PNG: ein ruhendes Rechteck verlustfrei, kommt ueber das Video),
  *                      41 Nachbesserung weg (anzahl u16, je x, y, breite, hoehe: dort hat sich der Bildschirm geaendert)
  *   Browser -> Server: 1 Bestaetigung (Folgenummer u32: alle Bilder bis dahin), 2 Maus bewegt, 3 Maustaste (0 links, 1 Mitte, 2 rechts, 3 zurueck, 4 vor), 4 Mausrad (Betrag i16 in Windows-Einheiten, 120 je Raste; Byte: waagerecht), 5 Taste (Scancode), 6 Zeichen, 7 Fenstergroesse, 8 Schluesselbild,
  *                      9 Zwischenablage (UTF-8-Text, bis 1 MiB; der ferne Rechner holt ihn, wenn er einfuegt),
- *                      10 Senden Anfang (Bild als BMP oder Datei), 11 Stueck, 12 Ende, 13 Abbruch, 14 Datei der VM holen, 15 Holen Abbruch,
+ *                      10 Senden Anfang (Bild als BMP, Datei oder leerer Ordner; bei Dateien ein relativer Pfad), 11 Stueck, 12 Ende, 13 Abbruch, 14 Datei oder Ordner der VM holen (Pfad), 15 Holen Abbruch,
  *                      31 Bildrate (Stufe: 0 automatisch, 1 hoechstens 60 Bilder/s, 2 hoechstens 30, 3 sparsam; je Sitzung),
  *                      16 Pause (1 = die Ansicht ist nicht zu sehen: der Server kodiert nicht, 0 = weiter),
  *                      17 Beenden (die Sitzung wird geschlossen: der Server erhaelt sie nicht fuer ein Wiederverbinden),
@@ -22,14 +23,14 @@
  * Ton (20 und 21 in beide Richtungen: Ton vom fernen Rechner, Zustand, "Ton an", Mikrofon): siehe stream-audio.js, erreichbar als client.audio.
  *
  * Zwischenablage: Text kommt als onclipboard(text) und geht mit sendClipboardText(text) hinaus. Bilder und Dateien haben eigene Rueckrufe
- * (onclipimage, onclipfiles) und Methoden (sendTransfer, fetchFile); das Format steht in docs/CLIPBOARD.md und ScreenProtocol.cs.
+ * (onclipimage, onclipfiles, onfilestate) und Methoden (sendTransfer, requestDownload); das Format steht in docs/CLIPBOARD.md und ScreenProtocol.cs.
  * ===================================================================== */
 
 import { StreamAudio } from './stream-audio.js';
 import { StreamPerf, normalizeQuality, qualityOf } from './perf.js';
 import { codecMask, probeCodecs, codecStringOf, decoderConfig, CODEC_H264, CODEC_HEVC } from './codecs.js';
 
-const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, image: 7, files: 8, fileChunk: 9, result: 10, session: 11, resumeFailed: 12, audio: 20, audioStatus: 21, encoder: 30, refine: 40, refineClear: 41 };
+const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, image: 7, files: 8, fileState: 9, result: 10, session: 11, resumeFailed: 12, limits: 14, audio: 20, audioStatus: 21, encoder: 30, refine: 40, refineClear: 41 };
 const OUT = { ack: 1, move: 2, button: 3, wheel: 4, key: 5, unicode: 6, resize: 7, keyframe: 8, clipboard: 9,
   sendBegin: 10, sendChunk: 11, sendEnd: 12, sendCancel: 13, fileRequest: 14, fileCancel: 15, pause: 16, end: 17, codecs: 30, quality: 31 };
 const CHUNK = 128 * 1024;                 // so gross sind die Stuecke beim Senden (der Server nimmt bis 256 kB)
@@ -183,7 +184,9 @@ export class StreamClient {
     this.onstatechange = null; this.onerror = null; this.onclipboard = null;
     this.onsession = null; this.onresumefailed = null;                            // Sitzungserhalt: Token des Servers, Token abgelehnt (siehe resume.js)
     this.onclipimage = null; this.onclipfiles = null; this.onclipresult = null;   // Bilder, Dateien und Meldungen der VM (siehe docs/CLIPBOARD.md)
-    this.nextTransfer = 1; this.transfers = new Map(); this.fetches = new Map();
+    this.nextTransfer = 1; this.transfers = new Map();
+    this.onfilestate = null;                       // Stand eines Downloads aus der VM: { batch, state: 'ready' | 'running' | 'done' | 'failed', done, total, text }
+    this.limits = { fileBytes: 2 * 1024 ** 3, files: 200, entries: 255 };   // bis der Server die echten nennt (Nachricht 14)
     this.state = 0;
     this.socket = null; this.decoder = null; this.codec = '';
     this.connected = false; this.closing = false;
@@ -263,8 +266,6 @@ export class StreamClient {
     clearInterval(this.watch); this.unwatchFocus();
     this.socket = null; this.closeDecoder(); this.audio.close();
     for (const t of this.transfers.values()) t.result({ code: 4, text: 'Verbindung beendet.' });
-    for (const f of this.fetches.values()) f.fail('Verbindung beendet.');
-    this.fetches.clear();
     if (!this.closing) this.setState(5);
   }
 
@@ -331,7 +332,8 @@ export class StreamClient {
       case IN.audioStatus: this.audio.status(buffer); break;
       case IN.image: if (this.onclipimage && buffer.byteLength > 2) this.onclipimage(v.getUint8(1), new Uint8Array(buffer, 2)); break;
       case IN.files: this.incomingFiles(v, buffer); break;
-      case IN.fileChunk: this.incomingFileChunk(v, buffer); break;
+      case IN.fileState: this.incomingFileState(v, buffer); break;
+      case IN.limits: if (buffer.byteLength >= 13) this.limits = { fileBytes: Number(v.getBigInt64(1)), files: v.getUint16(9), entries: v.getUint16(11) }; break;
       case IN.result: {
         const id = v.getUint32(1), code = v.getUint8(5), text = new TextDecoder().decode(new Uint8Array(buffer, 6));
         const t = this.transfers.get(id);
@@ -348,64 +350,55 @@ export class StreamClient {
     this.onclipboard(new TextDecoder().decode(bytes));
   }
 
-  // Dateien, die der ferne Rechner kopiert hat: nur die Liste, der Inhalt kommt erst mit fetchFile
+  // Dateien und Ordner, die der ferne Rechner kopiert hat: nur die Liste (Pfad mit /, Groesse, Ordner), der Inhalt kommt erst mit requestDownload
   incomingFiles(v, buffer) {
-    const batch = v.getUint32(1), count = v.getUint8(5), files = [];
-    let at = 6;
-    for (let i = 0; i < count && at + 10 <= buffer.byteLength; i++) {
-      const size = Number(v.getBigInt64(at)), n = v.getUint16(at + 8);
-      files.push({ size, name: new TextDecoder().decode(new Uint8Array(buffer, at + 10, n)) });
-      at += 10 + n;
+    const batch = v.getUint32(1), count = v.getUint16(5), files = [];
+    let at = 7;
+    for (let i = 0; i < count && at + 11 <= buffer.byteLength; i++) {
+      const dir = (v.getUint8(at) & 1) !== 0, size = Number(v.getBigInt64(at + 1)), n = v.getUint16(at + 9);
+      if (at + 11 + n > buffer.byteLength) break;
+      files.push({ size, dir, name: new TextDecoder().decode(new Uint8Array(buffer, at + 11, n)) });
+      at += 11 + n;
     }
-    for (const [key, f] of this.fetches) if (f.batch !== batch) { this.fetches.delete(key); f.fail('Die Auswahl in der VM hat sich geändert.'); }
     if (this.onclipfiles) this.onclipfiles(batch, files);
   }
 
-  incomingFileChunk(v, buffer) {
-    const batch = v.getUint32(1), index = v.getUint8(5), flags = v.getUint8(6);
-    const f = this.fetches.get(batch);
-    if (!f) return;
-    const bytes = new Uint8Array(buffer, 7);
-    if (flags & 2) { this.fetches.delete(batch); f.fail(new TextDecoder().decode(bytes)); return; }
-    f.parts.push(bytes.slice()); f.received += bytes.length;
-    if (f.progress) f.progress(f.received);
-    if (flags & 1) { this.fetches.delete(batch); f.done(new Blob(f.parts)); }
+  // Stand eines Downloads: bereit (der Text ist das Token: der Browser holt ihn selbst als HTTP-Strom ab), laeuft, fertig oder gescheitert
+  incomingFileState(v, buffer) {
+    if (buffer.byteLength < 22) return;
+    const state = ['ready', 'running', 'done', 'failed'][v.getUint8(5)];
+    if (state && this.onfilestate) this.onfilestate({ batch: v.getUint32(1), state, done: Number(v.getBigInt64(6)), total: Number(v.getBigInt64(14)), text: new TextDecoder().decode(new Uint8Array(buffer, 22)) });
   }
 
-  // Eine Datei der VM holen (Nummer in der zuletzt gemeldeten Liste). Antwort: ein Blob, oder eine Ausnahme mit dem Grund (Text fuer die Anzeige).
-  fetchFile(batch, index, progress) {
-    if (this.fetches.has(batch)) return Promise.reject(new Error('Es läuft schon ein Download.'));
-    return new Promise((resolve, reject) => {
-      this.fetches.set(batch, { batch, parts: [], received: 0, progress, done: resolve, fail: (m) => reject(new Error(m)) });
-      const m = new Uint8Array(6); new DataView(m.buffer).setUint32(1, batch); m[0] = OUT.fileRequest; m[5] = index;
-      this.send(m);
-    });
+  // Eine Datei oder einen Ordner der VM holen (path aus der zuletzt gemeldeten Liste, leer = alles). Die Antwort kommt als onfilestate: erst "ready".
+  requestDownload(batch, path) {
+    const p = new TextEncoder().encode(path || '');
+    const m = new Uint8Array(5 + p.length); new DataView(m.buffer).setUint32(1, batch); m[0] = OUT.fileRequest; m.set(p, 5);
+    this.send(m);
   }
 
-  cancelFetch(batch) {
-    const f = this.fetches.get(batch);
-    if (!f) return;
-    this.fetches.delete(batch);
+  cancelDownload(batch) {
     const m = new Uint8Array(5); m[0] = OUT.fileCancel; new DataView(m.buffer).setUint32(1, batch);
-    this.send(m); f.fail('Abgebrochen.');
+    this.send(m);
   }
 
-  /* Ein Bild (kind 1, als BMP) oder eine Datei (kind 2, Teil eines Stapels: index von count) an die Zwischenablage der VM senden.
-     data ist ein Blob; signal bricht ab; progress(gesendet, gesamt). Antwort: { code, text } des Servers (code 0 = angenommen). */
+  /* Ein Bild (kind 1, als BMP), eine Datei (kind 2) oder einen leeren Ordner (kind 3, data null) an die Zwischenablage der VM senden; Dateien und Ordner sind Teil
+     eines Stapels (index von count), name ist ihr relativer Pfad mit /. data ist ein Blob; signal bricht ab; progress(gesendet, gesamt). Antwort: { code, text } des Servers (code 0 = angenommen). */
   async sendTransfer(kind, data, name, index, count, progress, signal) {
     const socket = this.socket;
     if (!socket || socket.readyState !== 1) return { code: 4, text: 'Keine Verbindung.' };
     const id = this.nextTransfer++;
-    const nameBytes = new TextEncoder().encode(name || '').slice(0, 255);
+    const nameBytes = new TextEncoder().encode(name || '').slice(0, 1200);
+    const total = data ? data.size : 0;
     const begin = new Uint8Array(16 + nameBytes.length), view = new DataView(begin.buffer);
-    begin[0] = OUT.sendBegin; view.setUint32(1, id); begin[5] = kind; begin[6] = index; begin[7] = count; view.setBigUint64(8, BigInt(data.size));
+    begin[0] = OUT.sendBegin; view.setUint32(1, id); begin[5] = kind; begin[6] = index; begin[7] = count; view.setBigUint64(8, BigInt(total));
     begin.set(nameBytes, 16);
     const answer = new Promise((resolve) => this.transfers.set(id, { result: resolve }));
     let early = null; answer.then((r) => { early = r; });
     const control = (type) => { const m = new Uint8Array(5); m[0] = type; new DataView(m.buffer).setUint32(1, id); return m; };
     try {
       this.send(begin);
-      for (let at = 0; at < data.size; at += CHUNK) {
+      for (let at = 0; at < total; at += CHUNK) {
         // ein Fehler gleich nach dem Anfang (zu gross, nicht erlaubt ...) beendet das Senden, ohne die Daten noch zu schicken
         if ((at / CHUNK) % 4 === 0) await new Promise((r) => setTimeout(r, 0));   // dem Socket Luft lassen: eine Antwort des Servers (Fehler) kommt nur zwischen den Stuecken an
         if (early) return early;
@@ -417,11 +410,12 @@ export class StreamClient {
         const part = new Uint8Array(await data.slice(at, at + CHUNK).arrayBuffer());
         const m = new Uint8Array(5 + part.length); m[0] = OUT.sendChunk; new DataView(m.buffer).setUint32(1, id); m.set(part, 5);
         this.send(m);
-        if (progress) progress(Math.min(at + CHUNK, data.size), data.size);
+        if (progress) progress(Math.min(at + CHUNK, total), total);
       }
       if (early) return early;
       this.send(control(OUT.sendEnd));
-      return await Promise.race([answer, new Promise((r) => setTimeout(() => r({ code: 4, text: 'Die VM antwortet nicht.' }), 20000))]);
+      let timer; const silent = new Promise((r) => { timer = setTimeout(() => r({ code: 4, text: 'Die VM antwortet nicht.' }), 20000); });
+      try { return await Promise.race([answer, silent]); } finally { clearTimeout(timer); }
     } finally { this.transfers.delete(id); }
   }
 

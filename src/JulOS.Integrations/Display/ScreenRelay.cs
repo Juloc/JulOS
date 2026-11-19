@@ -43,6 +43,9 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
     private readonly Dictionary<string, Live> _kept = [];
     private readonly Lock _keptGate = new();
 
+    /// <summary>Die vorbereiteten Downloads aus der Zwischenablage der fernen Rechner, die der Browser noch abholen kann (30 s, einmal, nur der Benutzer der Sitzung).</summary>
+    public ClipDownloads Downloads { get; } = new(TimeProvider.System);
+
     /// <summary>Wie lange eine Sitzung ohne Browser weiterlebt; null: gar nicht.</summary>
     public TimeSpan? Keep { get; } = keep is { } k && k >= TimeSpan.FromSeconds(1) ? (k > TimeSpan.FromSeconds(MaxKeepSeconds) ? TimeSpan.FromSeconds(MaxKeepSeconds) : k) : null;
 
@@ -292,7 +295,10 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                     await SendOnceAsync(ws, ScreenProtocol.Session(live.Token, (int)keepFor.TotalSeconds), ct).ConfigureAwait(false);
                 }
 
-                var send = PumpToBrowserAsync(ws, live.Stream, attach.Token);
+                var limits = live.Stream.ClipboardLimits;
+                await SendOnceAsync(ws, ScreenProtocol.Limits(limits.MaxFileBytes, ClipboardOptions.MaxFiles, ClipboardOptions.MaxEntries), ct).ConfigureAwait(false);
+
+                var send = PumpToBrowserAsync(ws, live.Stream, live.Owner, Downloads, attach.Token);
                 var receive = ReceiveFromBrowserAsync(ws, live.Stream, attach.Token);
                 var watch = WatchAsync(sessionAlive, sessionCheck, attach.Token);
                 var first = await Task.WhenAny(live.Run, send, receive, watch).ConfigureAwait(false);
@@ -515,7 +521,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
     }
 
     /// <summary>Stream -> Browser. Der einzige, der sendet; Puffer kommen aus dem Pool.</summary>
-    private static async Task PumpToBrowserAsync(WebSocket ws, ScreenStream stream, CancellationToken ct)
+    private static async Task PumpToBrowserAsync(WebSocket ws, ScreenStream stream, Guid owner, ClipDownloads downloads, CancellationToken ct)
     {
         var pool = ArrayPool<byte>.Shared;
         await foreach (var evt in stream.Events.ReadAllAsync(ct).ConfigureAwait(false))
@@ -581,8 +587,24 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                     case ScreenClipboardFiles files:
                         await SendOnceAsync(ws, ScreenProtocol.Files(files.Batch, files.Files), ct).ConfigureAwait(false);
                         continue;
-                    case ScreenFileChunk chunk:
-                        await SendOnceAsync(ws, ScreenProtocol.FileChunk(chunk.Batch, chunk.Index, chunk.Flags, chunk.Data), ct).ConfigureAwait(false);
+                    case ScreenDownloadReady ready:
+                    {
+                        // Der Browser holt den Download mit diesem Ticket als eigene HTTP-Anfrage ab
+                        var ticket = downloads.Create(owner, ready.Download);
+                        if (ticket is null)
+                        {
+                            stream.CancelFile(ready.Batch);
+                            await SendOnceAsync(ws, ScreenProtocol.FileState(ready.Batch, ClipboardBridge.StateFailed, 0, 0, "Zu viele offene Downloads."), ct).ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            await SendOnceAsync(ws, ScreenProtocol.FileState(ready.Batch, ClipboardBridge.StateReady, 0, ready.Download.Total, ticket), ct).ConfigureAwait(false);
+                        }
+
+                        continue;
+                    }
+                    case ScreenFileState state:
+                        await SendOnceAsync(ws, ScreenProtocol.FileState(state.Batch, state.State, state.Done, state.Total, state.Text), ct).ConfigureAwait(false);
                         continue;
                     case ScreenTransferResult result:
                         await SendOnceAsync(ws, ScreenProtocol.Result(result.Id, result.Code, result.Message), ct).ConfigureAwait(false);
@@ -707,7 +729,8 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             case ScreenProtocol.FromBrowserSendBegin when m.Length >= 16:
             {
                 var size = BinaryPrimitives.ReadUInt64BigEndian(m[8..]);
-                var name = m.Length > 16 ? System.Text.Encoding.UTF8.GetString(m[16..Math.Min(m.Length, 16 + 255)]) : "";
+                // Ein Pfad ist hoechstens 259 Zeichen lang (ClipboardNames.MaxPathLength); was darueber hinausgeht, wird abgelehnt, nicht abgeschnitten
+                var name = m.Length > 16 ? System.Text.Encoding.UTF8.GetString(m[16..Math.Min(m.Length, 16 + 1200)]) : "";
                 stream.BeginTransfer(BinaryPrimitives.ReadUInt32BigEndian(m[1..]), m[5], m[6], m[7], size > long.MaxValue ? long.MaxValue : (long)size, name);
                 break;
             }
@@ -720,8 +743,8 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             case ScreenProtocol.FromBrowserSendCancel when m.Length >= 5:
                 stream.CancelTransfer(BinaryPrimitives.ReadUInt32BigEndian(m[1..]));
                 break;
-            case ScreenProtocol.FromBrowserFileRequest when m.Length >= 6:
-                stream.RequestFile(BinaryPrimitives.ReadUInt32BigEndian(m[1..]), m[5]);
+            case ScreenProtocol.FromBrowserFileRequest when m.Length >= 5:
+                stream.RequestFile(BinaryPrimitives.ReadUInt32BigEndian(m[1..]), System.Text.Encoding.UTF8.GetString(m[5..Math.Min(m.Length, 5 + 1200)]));
                 break;
             case ScreenProtocol.FromBrowserFileCancel when m.Length >= 5:
                 stream.CancelFile(BinaryPrimitives.ReadUInt32BigEndian(m[1..]));

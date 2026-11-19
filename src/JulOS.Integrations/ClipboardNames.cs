@@ -61,6 +61,62 @@ public static class ClipboardNames
         return name;
     }
 
+    /// <summary>So lang darf ein relativer Pfad sein (so viel passt in einen Eintrag einer Dateiliste der Zwischenablage: 259 Zeichen).</summary>
+    public const int MaxPathLength = 259;
+
+    /// <summary>So viele Ordner dürfen ineinander liegen.</summary>
+    public const int MaxDepth = 16;
+
+    /// <summary>
+    /// Ein relativer Pfad (Trenner / oder \) aus dem Browser, der Teile eines Ordners bis zu einer Datei beschreibt, strikt geprueft: kein absoluter Pfad
+    /// (fuehrender Trenner, Laufwerk, UNC), kein ".." und kein ".", keine leeren Teile ("a//b", "a/"), nicht laenger als <see cref="MaxPathLength"/>, nicht
+    /// tiefer als <see cref="MaxDepth"/>. Jeder Teil wird wie ein Dateiname bereinigt (verbotene Zeichen werden zu "_", Geraetenamen bekommen ein Praefix).
+    /// Null bei allem, was ein Pfad-Trick sein koennte: der Pfad wird abgelehnt, nicht stillschweigend zurechtgestutzt.
+    /// </summary>
+    public static IReadOnlyList<string>? SafePath(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw) || raw.Length > MaxPathLength || raw[0] is '/' or '\\' || raw.Contains('\0'))
+        {
+            return null;
+        }
+
+        // "C:..." (Laufwerk, auch ohne Trenner dahinter) ist nirgends ein gewoehnlicher Name
+        if (raw.Length >= 2 && raw[1] == ':' && char.IsAsciiLetter(raw[0]))
+        {
+            return null;
+        }
+
+        var parts = raw.Split('/', '\\');
+        if (parts.Length > MaxDepth)
+        {
+            return null;
+        }
+
+        var clean = new List<string>(parts.Length);
+        foreach (var part in parts)
+        {
+            if (part.Length == 0 || part is "." or "..")
+            {
+                return null;
+            }
+
+            // nur Punkte oder Leerzeichen sind keine Namen, auch nicht in Verkleidung ("... ", ". .")
+            if (part.All(c => c is '.' or ' '))
+            {
+                return null;
+            }
+
+            if (Sanitize(part) is not { } safe)
+            {
+                return null;
+            }
+
+            clean.Add(safe);
+        }
+
+        return clean;
+    }
+
     /// <summary>Die Endung (mit Punkt), wenn Dateien mit ihr nicht angenommen werden, sonst null.</summary>
     public static string? BlockedExtension(string name)
     {

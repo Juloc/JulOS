@@ -2,8 +2,8 @@ using JulOS.Integrations.Display.Rdp.Channels;
 
 namespace JulOS.Integrations.Display;
 
-/// <summary>Eine Datei, die der ferne Rechner kopiert hat: der Name ist schon bereinigt (nur der Dateiname), die Groesse -1, wenn unbekannt.</summary>
-public readonly record struct RemoteFile(string Name, long Size);
+/// <summary>Ein Eintrag der Auswahl des fernen Rechners: der relative Pfad (Trenner /, schon geprueft), die Groesse (-1, wenn unbekannt; bei Ordnern 0) und ob es ein Ordner ist.</summary>
+public readonly record struct RemoteFile(string Name, long Size, bool IsDirectory = false);
 
 /// <summary>Wohin die Bruecke meldet, was der ferne Rechner kopiert hat. Wird auf dem Lesefaden des RDP-Clients gerufen: schnell zurueckkehren.</summary>
 public sealed class ClipboardSink
@@ -14,48 +14,56 @@ public sealed class ClipboardSink
     /// <summary>Ein Bild: Format (1 PNG, 2 BMP) und die Bytes.</summary>
     public Action<byte, byte[]>? Image { get; init; }
 
-    /// <summary>Dateien (Stapel-Nummer, Liste); eine leere Liste heisst: die Auswahl ist weg.</summary>
+    /// <summary>Dateien und Ordner (Stapel-Nummer, Liste); eine leere Liste heisst: die Auswahl ist weg.</summary>
     public Action<uint, IReadOnlyList<RemoteFile>>? Files { get; init; }
 
-    /// <summary>Ein Stueck einer angeforderten Datei: Stapel, Nummer in der Liste, Flags (1 letztes Stueck, 2 gescheitert: dann steht der Grund als UTF-8 in den Bytes), Bytes.</summary>
-    public Action<uint, int, byte, byte[]>? FileChunk { get; init; }
+    /// <summary>Ein Download ist vorbereitet (Stapel, Download): der Browser holt ihn mit einer eigenen Anfrage ab (<see cref="ClipDownload.RunAsync"/>).</summary>
+    public Action<uint, ClipDownload>? Download { get; init; }
+
+    /// <summary>Stand eines Downloads: Stapel, Zustand (<see cref="ClipboardBridge.StateRunning"/> ...), uebertragen, gesamt (-1 unbekannt), Text (bei Scheitern der Grund).</summary>
+    public Action<uint, byte, long, long, string>? DownloadState { get; init; }
 
     /// <summary>Ergebnis eines Sendens vom Browser (Nummer, Code, Text); Nummer 0 betrifft nichts, was der Browser gestartet hat.</summary>
     public Action<uint, byte, string>? Result { get; init; }
 }
 
 /// <summary>
-/// Zwischenablage zwischen Browser und fernem Rechner, beide Richtungen: Text, Bilder und Dateien. Der Kanal (<see cref="ClipboardChannel"/>)
+/// Zwischenablage zwischen Browser und fernem Rechner, beide Richtungen: Text, Bilder, Dateien und Ordner. Der Kanal (<see cref="ClipboardChannel"/>)
 /// kennt nur Ankuendigungen und Anfragen: wer etwas kopiert, sagt nur, welche Formate er haette, und erst beim Einfuegen wird der Inhalt geholt.
 ///
-/// Ferner Rechner kopiert: Dateien (Liste mit Namen und Groessen, der Inhalt erst, wenn der Browser eine Datei anfordert), sonst Text (sofort geholt,
-/// der Browser hat keine Zwischenablage, die er auf Anfrage fuellen koennte), sonst ein Bild (PNG, sonst CF_DIB als BMP).
-/// Browser legt etwas ab: es wird angekuendigt und geliefert, wenn der ferne Rechner einfuegt. Die neueste Ablage ersetzt die vorige.
-/// Bilder und Dateien kommen in Stuecken (<see cref="BeginTransfer"/> ...) und liegen bis zum Einfuegen im Speicher.
+/// Ferner Rechner kopiert: Dateien und Ordner (Liste mit Pfaden und Groessen, der Inhalt erst, wenn der Browser einen Download anfordert), sonst Text (sofort
+/// geholt, der Browser hat keine Zwischenablage, die er auf Anfrage fuellen koennte), sonst ein Bild (PNG, sonst CF_DIB als BMP). Ein Download laeuft als
+/// HTTP-Strom (<see cref="ClipDownload"/>): der Server holt die Stuecke der Reihe nach vom fernen Rechner und gibt jedes erst weiter, wenn das vorige beim
+/// Browser angekommen ist (Rueckdruck); nichts wird zusammengesetzt. Eine Datei kommt als sie selbst, ein Ordner oder mehrere Eintraege als ZIP.
+/// Browser legt etwas ab: es wird angekuendigt und geliefert, wenn der ferne Rechner einfuegt. Die neueste Ablage ersetzt die vorige. Bilder liegen im
+/// Speicher; Dateien und Ordner kommen in Stuecken (<see cref="BeginTransfer"/> ...) und liegen als Dateien im Ablageordner (<see cref="ClipboardOptions"/>),
+/// bis der ferne Rechner sie liest (Bereichsanfragen) oder etwas Neues abgelegt wird.
 /// </summary>
 public sealed class ClipboardBridge : IDisposable
 {
     /// <summary>Laenger darf ein Text auf dem Weg zwischen Browser und Server nicht sein (UTF-8, in beide Richtungen).</summary>
     public const int MaxTextBytes = 1024 * 1024;
 
-    public const int MaxFileBytes = 64 * 1024 * 1024;
-    public const int MaxBatchBytes = 64 * 1024 * 1024;
-    public const int MaxFiles = 10;
-
     /// <summary>Das Bild als BMP (oder PNG vom fernen Rechner); die Fotos vom Handy werden vorher verkleinert.</summary>
     public const int MaxImageBytes = 32 * 1024 * 1024;
 
     public const int MaxChunkBytes = 256 * 1024;
+
+    /// <summary>Hoechstens so viele Eintraege in der Auswahl des fernen Rechners; mehr wird nicht angeboten (eine halbe Auswahl waere falsch).</summary>
+    public const int MaxRemoteEntries = 10000;
+
     public static readonly TimeSpan IdleTimeout = TimeSpan.FromSeconds(60);
 
-    public const byte KindImage = 1, KindFile = 2;
+    public const byte KindImage = 1, KindFile = 2, KindFolder = 3;
     public const byte ResultOk = 0, ResultTooBig = 1, ResultNotAllowed = 2, ResultNoClipboard = 3, ResultOther = 4;
-    public const byte ChunkLast = 1, ChunkFailed = 2;
+    public const byte StateReady = 0, StateRunning = 1, StateDone = 2, StateFailed = 3;
     public const byte ImagePng = 1, ImageBmp = 2;
 
     // So gross darf die Anforderung an den fernen Rechner sein: ein Stueck pro Anfrage
     private const int RangeBytes = 1024 * 1024;
     private static readonly TimeSpan AnswerTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ReadyTimeout = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan ProgressEvery = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan EchoWindow = TimeSpan.FromMilliseconds(1500);
 
     private static readonly byte[] PngSignature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
@@ -64,47 +72,69 @@ public sealed class ClipboardBridge : IDisposable
 
     private enum LocalKind { None, Text, Image, Files }
 
+    // Ein Eintrag der Ablage vom Browser: eine Datei (im Ablageordner) oder ein Ordner. Pfad relativ, Trenner \
+    private sealed record LocalEntry(string Path, long Size, bool IsDirectory, string? File);
+
+    // Der Ablageordner einer Ablage: wird mit ihr geloescht
+    private sealed class Stash : IDisposable
+    {
+        public readonly string Directory;
+        public readonly List<LocalEntry> Entries = [];
+        public readonly HashSet<string> Paths = new(StringComparer.OrdinalIgnoreCase);
+        public long Bytes;
+        public int Files;
+
+        public Stash(string root)
+        {
+            Directory = System.IO.Path.Combine(root, Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(Directory);
+        }
+
+        public void Dispose()
+        {
+            try
+            {
+                System.IO.Directory.Delete(Directory, true);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // wird beim naechsten Start aufgeraeumt (Sweep)
+            }
+        }
+    }
+
     private sealed class Upload
     {
         public uint Id;
         public byte Kind;
-        public string Name = "";
-        public byte[] Data = [];
-        public int Received;
+        public string Path = "";
+        public long Size;
+        public long Received;
+        public byte[] Data = [];            // Bild
+        public FileStream? File;            // Datei
+        public string? FilePath;
         public Timer? Idle;
-    }
-
-    private sealed class Download
-    {
-        public uint Batch;
-        public int Index;       // Nummer in der Liste, die der Browser kennt
-        public int Source;      // Nummer in der Dateiliste des fernen Rechners
-        public long Size = -1;
-        public long Offset;
-        public int Asked;
-        public uint StreamId;
-        public uint? LockId;
-        public Timer? Answer;
     }
 
     private readonly ClipboardChannel _channel;
     private readonly ClipboardSink _sink;
     private readonly Lock _gate = new();
     private readonly TimeSpan _idle;
+    private readonly ClipboardOptions _options;
 
     // was der Browser zuletzt abgelegt hat
     private LocalKind _localKind;
     private byte[]? _local;
     private string? _lastLocal;
     private byte[]? _dib;
-    private List<(string Name, byte[] Data)> _localFiles = [];
+    private Stash? _localFiles;
     private long _echoUntil;
 
-    // eine laufende Uebertragung vom Browser, und der Stapel, der noch nicht vollstaendig ist
+    // eine laufende Uebertragung vom Browser, und die Ablage, die noch nicht vollstaendig ist
     private Upload? _upload;
-    private List<(string Name, byte[] Data)> _batch = [];
+    private Stash? _batch;
     private int _batchCount;
-    private long _batchBytes;
+    private int _batchReceived;
 
     // Antworten auf unsere Datenanfragen kommen in der Reihenfolge der Anfragen
     private readonly Queue<Expect> _expected = new();
@@ -113,9 +143,10 @@ public sealed class ClipboardBridge : IDisposable
     private uint _remoteBatch;
     private uint _lockCounter;
     private uint _streamCounter;
-    private List<(int Source, string Name, long Size)> _remoteFiles = [];
+    private List<DownloadEntry> _remoteEntries = [];
     private uint? _remoteLock;
-    private Download? _download;
+    private ClipDownload? _download;
+    private readonly Dictionary<uint, TaskCompletionSource<byte[]?>> _ranges = [];
     private bool _disposed;
 
     /// <param name="remoteText">Der ferne Rechner hat Text kopiert. Wird auf dem Lesefaden des RDP-Clients gerufen: schnell zurueckkehren.</param>
@@ -125,9 +156,11 @@ public sealed class ClipboardBridge : IDisposable
     }
 
     /// <param name="idleTimeout">So lange darf eine Uebertragung vom Browser ohne neue Daten stehen (Standard <see cref="IdleTimeout"/>).</param>
-    public ClipboardBridge(ClipboardChannel channel, ClipboardSink sink, TimeSpan? idleTimeout = null)
+    /// <param name="options">Grenzen und Ablageordner (Standard <see cref="ClipboardOptions.Default"/>).</param>
+    public ClipboardBridge(ClipboardChannel channel, ClipboardSink sink, TimeSpan? idleTimeout = null, ClipboardOptions? options = null)
     {
         _idle = idleTimeout ?? IdleTimeout;
+        _options = options ?? ClipboardOptions.Default;
         _channel = channel;
         _sink = sink;
         channel.RemoteFormats += OnRemoteFormats;
@@ -137,16 +170,61 @@ public sealed class ClipboardBridge : IDisposable
         channel.FileContentsReceived += OnFileContentsReceived;
     }
 
+    /// <summary>Die Grenzen, die diese Bruecke einhaelt (der Browser bekommt sie gemeldet).</summary>
+    public ClipboardOptions Options => _options;
+
     public void Dispose()
     {
+        List<TaskCompletionSource<byte[]?>> waiting;
+        ClipDownload? download;
+        Stash?[] stashes;
         lock (_gate)
         {
             _disposed = true;
-            _upload?.Idle?.Dispose();
-            _upload = null;
-            _download?.Answer?.Dispose();
+            DropUpload();
+            download = _download;
             _download = null;
-            _batch = [];
+            waiting = [.. _ranges.Values];
+            _ranges.Clear();
+            stashes = [_batch, _localFiles];
+            _batch = null;
+            _localFiles = null;
+        }
+
+        download?.Stop();
+        foreach (var w in waiting)
+        {
+            w.TrySetCanceled();
+        }
+
+        foreach (var stash in stashes)
+        {
+            stash?.Dispose();
+        }
+    }
+
+    /// <summary>Raeumt Ablageordner weg, die ein abgestuerzter Server zurueckgelassen hat (aelter als 12 Stunden). Wird beim Start einmal gerufen.</summary>
+    public static void SweepOld(string root)
+    {
+        try
+        {
+            if (!Directory.Exists(root))
+            {
+                return;
+            }
+
+            foreach (var dir in Directory.EnumerateDirectories(root))
+            {
+                if (DateTime.UtcNow - Directory.GetLastWriteTimeUtc(dir) > TimeSpan.FromHours(12))
+                {
+                    try { Directory.Delete(dir, true); }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException) { /* naechstes Mal */ }
+                }
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // ohne Ablageordner gibt es keine Aufraeumarbeit
         }
     }
 
@@ -161,24 +239,31 @@ public sealed class ClipboardBridge : IDisposable
         }
 
         var data = ClipboardText.Encode(text);
+        Stash? old;
         lock (_gate)
         {
             _local = data;
             _lastLocal = text;
             _localKind = LocalKind.Text;
             _dib = null;
-            _localFiles = [];
+            old = _localFiles;
+            _localFiles = null;
         }
 
+        old?.Dispose();
         _channel.AnnounceFormats([new ClipFormat(ClipboardText.FormatId, null)]);
     }
 
-    /// <summary>Der Browser faengt an, ein Bild (Art 1, als BMP) oder eine Datei (Art 2) zu senden. Fehler kommen als Ergebnis zurueck.</summary>
+    /// <summary>
+    /// Der Browser faengt an, ein Bild (Art 1, als BMP), eine Datei (Art 2) oder einen leeren Ordner (Art 3, Groesse 0) zu senden. <paramref name="name"/> ist bei Dateien
+    /// und Ordnern ein relativer Pfad (Trenner / oder \): ein Pfad mit "..", ein absoluter Pfad oder ein Laufwerk wird abgelehnt. Ordner mit Inhalt entstehen aus den
+    /// Pfaden der Dateien. Fehler kommen als Ergebnis zurueck.
+    /// </summary>
     public void BeginTransfer(uint id, byte kind, int index, int count, long size, string name)
     {
         string? error = null;
         byte code = ResultOther;
-        string? clean = null;
+        IReadOnlyList<string>? parts = null;
         lock (_gate)
         {
             DropUpload();
@@ -187,7 +272,7 @@ public sealed class ClipboardBridge : IDisposable
                 return;
             }
 
-            if (kind is not (KindImage or KindFile))
+            if (kind is not (KindImage or KindFile or KindFolder))
             {
                 (code, error) = (ResultOther, "Unbekannte Art.");
             }
@@ -195,70 +280,148 @@ public sealed class ClipboardBridge : IDisposable
             {
                 (code, error) = (ResultNoClipboard, "Die VM hat keine Zwischenablage (Kanal fehlt).");
             }
-            else if (size <= 0)
+            else if (kind == KindImage)
             {
-                (code, error) = (ResultOther, kind == KindFile ? "Die Datei ist leer." : "Das Bild ist leer.");
+                if (size <= 0)
+                {
+                    (code, error) = (ResultOther, "Das Bild ist leer.");
+                }
+                else if (size > MaxImageBytes)
+                {
+                    (code, error) = (ResultTooBig, "Bild zu groß (höchstens 14 MB).");
+                }
             }
-            else if (kind == KindImage && size > MaxImageBytes)
+            else
             {
-                (code, error) = (ResultTooBig, "Bild zu groß (höchstens 14 MB).");
-            }
-            else if (kind == KindFile)
-            {
-                if (!_channel.CanTransferFiles)
-                {
-                    (code, error) = (ResultNoClipboard, "Die VM unterstützt keine Dateien in der Zwischenablage.");
-                }
-                else if (count is < 1 or > MaxFiles || index < 0 || index >= count)
-                {
-                    (code, error) = (ResultTooBig, $"Zu viele Dateien (höchstens {MaxFiles}).");
-                }
-                else if (size > MaxFileBytes || (index == 0 ? 0 : _batchBytes) + size > MaxBatchBytes)
-                {
-                    (code, error) = (ResultTooBig, "Datei zu groß (höchstens 64 MB).");
-                }
-                else if (ClipboardNames.Sanitize(name) is not { } safe)
-                {
-                    (code, error) = (ResultNotAllowed, "Ungültiger Dateiname.");
-                }
-                else if (ClipboardNames.BlockedExtension(safe) is { } blocked)
-                {
-                    (code, error) = (ResultNotAllowed, $"Dateityp nicht erlaubt ({blocked}).");
-                }
-                else
-                {
-                    clean = safe;
-                }
+                (code, error) = CheckEntry(kind, index, count, size, name, out parts);
             }
 
             if (error is null)
             {
-                if (kind == KindFile)
+                var upload = new Upload { Id = id, Kind = kind, Size = size };
+                try
                 {
-                    if (index == 0)
+                    if (kind == KindImage)
                     {
-                        _batch = [];
-                        _batchBytes = 0;
-                        _batchCount = count;
+                        upload.Data = new byte[size];
                     }
-                    else if (count != _batchCount || index != _batch.Count)
+                    else
                     {
-                        (code, error) = (ResultOther, "Die Reihenfolge der Dateien stimmt nicht.");
-                    }
-                }
-            }
+                        if (index == 0)
+                        {
+                            _batch?.Dispose();
+                            _batch = new Stash(_options.TempRoot);
+                            _batchCount = count;
+                            _batchReceived = 0;
+                        }
 
-            if (error is null)
-            {
-                var upload = new Upload { Id = id, Kind = kind, Name = clean ?? "", Data = new byte[size] };
-                upload.Idle = new Timer(_ => Expire(upload), null, _idle, Timeout.InfiniteTimeSpan);
-                _upload = upload;
+                        upload.Path = string.Join('\\', parts!);
+                        if (kind == KindFile && size > 0)
+                        {
+                            upload.FilePath = Path.Combine(_batch!.Directory, "f" + index);
+                            upload.File = new FileStream(upload.FilePath, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 64 * 1024);
+                        }
+                    }
+
+                    upload.Idle = new Timer(_ => Expire(upload), null, _idle, Timeout.InfiniteTimeSpan);
+                    _upload = upload;
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    upload.File?.Dispose();
+                    (code, error) = (ResultOther, "Auf dem Server kann nicht abgelegt werden.");
+                }
             }
         }
 
         if (error is not null)
         {
             _sink.Result?.Invoke(id, code, error);
+        }
+    }
+
+    // Prueft einen Eintrag gegen die Regeln (unter _gate). Fehler: Code und Text.
+    private (byte Code, string? Error) CheckEntry(byte kind, int index, int count, long size, string name, out IReadOnlyList<string>? parts)
+    {
+        parts = null;
+        if (!_channel.CanTransferFiles)
+        {
+            return (ResultNoClipboard, "Die VM unterstützt keine Dateien in der Zwischenablage.");
+        }
+
+        if (count is < 1 or > ClipboardOptions.MaxEntries || index < 0 || index >= count)
+        {
+            return (ResultTooBig, $"Zu viele Dateien (höchstens {ClipboardOptions.MaxFiles}).");
+        }
+
+        if (kind == KindFolder ? size != 0 : size < 0 || (size == 0 && count == 1))
+        {
+            return (ResultOther, kind == KindFile ? "Die Datei ist leer." : "Ungültiger Ordner.");
+        }
+
+        if (size > _options.MaxFileBytes || (index == 0 ? 0 : _batch?.Bytes ?? 0) + size > _options.MaxFileBytes)
+        {
+            return (ResultTooBig, $"Datei zu groß (höchstens {FormatLimit(_options.MaxFileBytes)}).");
+        }
+
+        parts = ClipboardNames.SafePath(name);
+        if (parts is null)
+        {
+            return (ResultNotAllowed, "Ungültiger Dateiname oder Pfad.");
+        }
+
+        if (kind == KindFile && ClipboardNames.BlockedExtension(parts[^1]) is { } blocked)
+        {
+            return (ResultNotAllowed, $"Dateityp nicht erlaubt ({blocked}).");
+        }
+
+        if (index == 0)
+        {
+            // der Platz auf dem Datentraeger: eine Ablage, die ihn fuellt, wird gar nicht erst angenommen
+            if (!HasRoom(_options.TempRoot, Math.Min(_options.MaxFileBytes, Math.Max(size, 1))))
+            {
+                return (ResultOther, "Auf dem Server ist nicht genug Platz.");
+            }
+        }
+        else if (count != _batchCount || index != _batchReceived || _batch is null)
+        {
+            return (ResultOther, "Die Reihenfolge der Dateien stimmt nicht.");
+        }
+
+        var batch = index == 0 ? null : _batch;
+        var key = string.Join('\\', parts);
+        if (batch is not null)
+        {
+            if (kind == KindFile && batch.Files >= ClipboardOptions.MaxFiles)
+            {
+                return (ResultTooBig, $"Zu viele Dateien (höchstens {ClipboardOptions.MaxFiles}).");
+            }
+
+            if (batch.Paths.Contains(key))
+            {
+                return (ResultNotAllowed, "Doppelter Name in der Auswahl.");
+            }
+        }
+        else if (kind == KindFile && ClipboardOptions.MaxFiles < 1)
+        {
+            return (ResultTooBig, "Zu viele Dateien.");
+        }
+
+        return (ResultOk, null);
+    }
+
+    private static string FormatLimit(long bytes) => bytes % (1024L * 1024 * 1024) == 0 ? $"{bytes / (1024L * 1024 * 1024)} GB" : $"{bytes / (1024 * 1024)} MB";
+
+    private static bool HasRoom(string root, long needed)
+    {
+        try
+        {
+            Directory.CreateDirectory(root);
+            return new DriveInfo(Path.GetFullPath(root)).AvailableFreeSpace >= needed + ClipboardOptions.FreeSpaceReserve;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return true;       // nicht messbar: nicht blockieren, ein volles Laufwerk meldet sich beim Schreiben
         }
     }
 
@@ -273,16 +436,32 @@ public sealed class ClipboardBridge : IDisposable
                 return;
             }
 
-            if (data.Length > MaxChunkBytes || upload.Received + data.Length > upload.Data.Length)
+            if (data.Length > MaxChunkBytes || upload.Received + data.Length > upload.Size)
             {
                 DropUpload();
                 (code, error) = (ResultOther, "Mehr Daten als angekündigt.");
             }
             else
             {
-                data.CopyTo(upload.Data.AsSpan(upload.Received));
-                upload.Received += data.Length;
-                upload.Idle?.Change(_idle, Timeout.InfiniteTimeSpan);
+                try
+                {
+                    if (upload.File is { } file)
+                    {
+                        file.Write(data);
+                    }
+                    else
+                    {
+                        data.CopyTo(upload.Data.AsSpan((int)upload.Received));
+                    }
+
+                    upload.Received += data.Length;
+                    upload.Idle?.Change(_idle, Timeout.InfiniteTimeSpan);
+                }
+                catch (IOException)
+                {
+                    DropUpload();
+                    (code, error) = (ResultOther, "Auf dem Server konnte nicht geschrieben werden (Platz?).");
+                }
             }
         }
 
@@ -309,6 +488,7 @@ public sealed class ClipboardBridge : IDisposable
         byte code = ResultOk;
         string message = "";
         List<ClipFormat>? announce = null;
+        Stash? old = null;
         lock (_gate)
         {
             if (_upload is not { } upload || upload.Id != id)
@@ -316,8 +496,8 @@ public sealed class ClipboardBridge : IDisposable
                 return;
             }
 
-            DropUpload();
-            if (upload.Received != upload.Data.Length)
+            DropUpload(keepFile: upload.Received == upload.Size);
+            if (upload.Received != upload.Size)
             {
                 (code, message) = (ResultOther, "Die Übertragung war unvollständig.");
             }
@@ -330,24 +510,33 @@ public sealed class ClipboardBridge : IDisposable
                 }
                 else
                 {
+                    old = _localFiles;
                     _dib = dib;
                     _local = null;
                     _lastLocal = null;
-                    _localFiles = [];
+                    _localFiles = null;
                     _localKind = LocalKind.Image;
                     _echoUntil = Environment.TickCount64 + (long)EchoWindow.TotalMilliseconds;
                     announce = [new ClipFormat(DeviceIndependentBitmap.FormatId, null)];
                 }
             }
-            else
+            else if (_batch is { } batch)
             {
-                _batch.Add((upload.Name, upload.Data));
-                _batchBytes += upload.Data.Length;
-                if (_batch.Count == _batchCount)
+                batch.Entries.Add(new LocalEntry(upload.Path, upload.Size, upload.Kind == KindFolder, upload.FilePath));
+                batch.Paths.Add(upload.Path);
+                batch.Bytes += upload.Size;
+                if (upload.Kind == KindFile)
                 {
-                    _localFiles = _batch;
-                    _batch = [];
-                    _batchBytes = 0;
+                    batch.Files++;
+                }
+
+                _batchReceived++;
+                if (_batchReceived == _batchCount)
+                {
+                    old = _localFiles;
+                    Complete(batch);
+                    _localFiles = batch;
+                    _batch = null;
                     _local = null;
                     _lastLocal = null;
                     _dib = null;
@@ -370,12 +559,61 @@ public sealed class ClipboardBridge : IDisposable
             }
         }
 
+        old?.Dispose();
         _sink.Result?.Invoke(id, code, message);
     }
 
-    private void DropUpload()
+    // Aus den Eintraegen die Liste machen, die der ferne Rechner sieht: fehlende Ordner ergaenzen (jeder Pfad einer Datei hat seine Ordner), und
+    // jeder Ordner steht vor seinem Inhalt (so verlangt es die Liste), sonst nach dem Namen geordnet.
+    private static void Complete(Stash stash)
     {
-        _upload?.Idle?.Dispose();
+        var known = new HashSet<string>(stash.Entries.Where(e => e.IsDirectory).Select(e => e.Path), StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in stash.Entries.ToArray())
+        {
+            var at = -1;
+            while ((at = entry.Path.IndexOf('\\', at + 1)) > 0)
+            {
+                var folder = entry.Path[..at];
+                if (known.Add(folder))
+                {
+                    stash.Entries.Add(new LocalEntry(folder, 0, true, null));
+                }
+            }
+        }
+
+        stash.Entries.Sort((a, b) => ComparePaths(a.Path, b.Path));
+    }
+
+    private static int ComparePaths(string a, string b)
+    {
+        var x = a.Split('\\');
+        var y = b.Split('\\');
+        for (var i = 0; i < Math.Min(x.Length, y.Length); i++)
+        {
+            var c = string.Compare(x[i], y[i], StringComparison.OrdinalIgnoreCase);
+            if (c != 0)
+            {
+                return c;
+            }
+        }
+
+        return x.Length - y.Length;
+    }
+
+    // unter _gate; keepFile: die Datei ist vollstaendig und wird abgelegt
+    private void DropUpload(bool keepFile = false)
+    {
+        if (_upload is { } upload)
+        {
+            upload.Idle?.Dispose();
+            upload.File?.Dispose();
+            if (!keepFile && upload.FilePath is { } path)
+            {
+                try { File.Delete(path); }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { /* mit dem Ordner */ }
+            }
+        }
+
         _upload = null;
     }
 
@@ -534,16 +772,23 @@ public sealed class ClipboardBridge : IDisposable
             return;
         }
 
-        // Ordner und alles darin werden nicht uebertragen; von Dateien in Unterordnern zaehlt der Dateiname
-        var list = new List<(int Source, string Name, long Size)>();
-        for (var i = 0; i < files.Count && list.Count < MaxFiles; i++)
+        // Pfade, die nicht schlicht und relativ sind (Weg nach oben, Laufwerk, verbotene Zeichen), werden nicht angeboten; was darin liegt, hat einen eigenen Pfad
+        var list = new List<DownloadEntry>();
+        var tooMany = files.Count > MaxRemoteEntries;
+        for (var i = 0; i < files.Count && !tooMany; i++)
         {
-            if (files[i].IsDirectory || FileGroupDescriptor.PathParts(files[i].Name) is null || ClipboardNames.Sanitize(files[i].Name) is not { } name)
+            if (FileGroupDescriptor.PathParts(files[i].Name) is not { } parts)
             {
                 continue;
             }
 
-            list.Add((i, name, files[i].Size));
+            list.Add(new DownloadEntry(i, string.Join('/', parts), files[i].IsDirectory ? 0 : files[i].Size, files[i].IsDirectory, files[i].LastWriteTimeUtc));
+        }
+
+        if (tooMany)
+        {
+            list.Clear();
+            _sink.Result?.Invoke(0, ResultTooBig, $"Zu viele Dateien in der VM (höchstens {MaxRemoteEntries}).");
         }
 
         uint batch;
@@ -557,7 +802,7 @@ public sealed class ClipboardBridge : IDisposable
             }
 
             batch = ++_remoteBatch;
-            _remoteFiles = list;
+            _remoteEntries = list;
             oldLock = _remoteLock;
             _remoteLock = null;
             if (list.Count > 0 && _channel.CanLock)
@@ -581,66 +826,134 @@ public sealed class ClipboardBridge : IDisposable
             _channel.Unlock(previous);
         }
 
-        _sink.Files?.Invoke(batch, list.Select(f => new RemoteFile(f.Name, f.Size)).ToArray());
+        _sink.Files?.Invoke(batch, list.Select(f => new RemoteFile(f.Path, f.Size, f.IsDirectory)).ToArray());
     }
 
-    // ---------------------------------------------------------------- Browser holt eine Datei
+    // ---------------------------------------------------------------- Browser holt Dateien
 
-    /// <summary>Der Browser will die Datei Nummer <paramref name="index"/> aus der zuletzt gemeldeten Liste. Die Stuecke kommen als <see cref="ClipboardSink.FileChunk"/>.</summary>
-    public void RequestFile(uint batch, int index)
+    /// <summary>
+    /// Der Browser will den Eintrag <paramref name="path"/> aus der zuletzt gemeldeten Liste (leer: alles): eine Datei als sie selbst, ein Ordner mit allem darin
+    /// oder alles zusammen als ZIP. Kommt der Eintrag in Frage, meldet <see cref="ClipboardSink.Download"/> den vorbereiteten Download; sonst
+    /// <see cref="ClipboardSink.DownloadState"/> den Grund. Es laeuft hoechstens ein Download.
+    /// </summary>
+    public void RequestFile(uint batch, string path)
     {
         string? error = null;
-        Download? start = null;
+        ClipDownload? download = null;
         lock (_gate)
         {
             if (_download is not null)
             {
                 error = "Es läuft schon ein Download.";
             }
-            else if (batch != _remoteBatch || index < 0 || index >= _remoteFiles.Count)
+            else if (batch != _remoteBatch || _remoteEntries.Count == 0)
             {
                 error = "Die Auswahl in der VM hat sich geändert.";
             }
-            else if (_remoteFiles[index].Size > MaxFileBytes)
-            {
-                error = "Datei zu groß (höchstens 64 MB).";
-            }
             else
             {
-                var file = _remoteFiles[index];
-                start = new Download { Batch = batch, Index = index, Source = file.Source, Size = file.Size, LockId = _remoteLock };
-                _download = start;
+                download = Select(batch, path);
+                if (download is null)
+                {
+                    error = "Diesen Eintrag gibt es nicht (mehr).";
+                }
+                else
+                {
+                    _download = download;
+                    download.WaitingTimer = new Timer(_ => FailUnstarted(download), null, ReadyTimeout, Timeout.InfiniteTimeSpan);
+                }
             }
         }
 
         if (error is not null)
         {
-            _sink.FileChunk?.Invoke(batch, Math.Max(index, 0), ChunkFailed, System.Text.Encoding.UTF8.GetBytes(error));
+            _sink.DownloadState?.Invoke(batch, StateFailed, 0, 0, error);
             return;
         }
 
-        AskNext(start!);
+        _sink.Download?.Invoke(batch, download!);
     }
 
+    // unter _gate
+    private ClipDownload? Select(uint batch, string path)
+    {
+        var wanted = (path ?? "").Replace('\\', '/').Trim('/');
+        var all = _remoteEntries;
+        if (wanted.Length == 0)
+        {
+            if (all.Count == 1 && !all[0].IsDirectory)
+            {
+                return Single(batch, all[0]);
+            }
+
+            return Archive(batch, "Dateien-aus-der-VM.zip", all, 0);
+        }
+
+        var exact = all.FirstOrDefault(e => string.Equals(e.Path, wanted, StringComparison.Ordinal));
+        if (exact is { IsDirectory: false })
+        {
+            return Single(batch, exact);
+        }
+
+        var prefix = wanted + "/";
+        var below = all.Where(e => e.Path.StartsWith(prefix, StringComparison.Ordinal) || string.Equals(e.Path, wanted, StringComparison.Ordinal)).ToList();
+        if (below.Count == 0)
+        {
+            return null;
+        }
+
+        var cut = wanted.LastIndexOf('/') + 1;
+        return Archive(batch, wanted[cut..] + ".zip", below, cut);
+    }
+
+    private ClipDownload Single(uint batch, DownloadEntry e)
+    {
+        var name = e.Path[(e.Path.LastIndexOf('/') + 1)..];
+        return new ClipDownload(this, batch, name, false, e.Size, e.Size, [e], 0, _remoteLock);
+    }
+
+    private ClipDownload Archive(uint batch, string name, List<DownloadEntry> entries, int cut)
+    {
+        var total = entries.Any(e => !e.IsDirectory && e.Size < 0) ? -1 : entries.Where(e => !e.IsDirectory).Sum(e => e.Size);
+        return new ClipDownload(this, batch, name, true, -1, total, entries, cut, _remoteLock);
+    }
+
+    /// <summary>Der Browser bricht den Download ab (oder die Seite geht zu): der Strom endet, der Platz fuer einen neuen ist frei.</summary>
     public void CancelFile(uint batch)
     {
+        ClipDownload? download;
         lock (_gate)
         {
-            if (_download is { } d && d.Batch == batch)
-            {
-                d.Answer?.Dispose();
-                _download = null;
-            }
+            download = _download is { } d && d.Batch == batch ? d : null;
+        }
+
+        download?.Stop();
+        if (download is not null)
+        {
+            Release(download);
         }
     }
 
-    // Die naechste Anfrage an den fernen Rechner: erst die Groesse (wenn sie fehlt), dann ein Stueck nach dem anderen
-    private void AskNext(Download d)
+    // Der Download wurde nicht innerhalb der Frist abgeholt
+    private void FailUnstarted(ClipDownload d)
     {
-        bool wantSize;
-        long offset;
-        int count;
-        uint stream;
+        bool started;
+        lock (_gate)
+        {
+            started = d.Started || _download != d;
+        }
+
+        if (started)
+        {
+            return;
+        }
+
+        Release(d);
+        _sink.DownloadState?.Invoke(d.Batch, StateFailed, 0, 0, "Der Download wurde nicht gestartet.");
+    }
+
+    private void Release(ClipDownload d)
+    {
         lock (_gate)
         {
             if (_download != d)
@@ -648,137 +961,97 @@ public sealed class ClipboardBridge : IDisposable
                 return;
             }
 
-            wantSize = d.Size < 0;
-            offset = d.Offset;
-            count = (int)Math.Min(RangeBytes, d.Size - d.Offset);
-            d.Asked = count;
-            stream = d.StreamId = ++_streamCounter;
-            d.Answer?.Dispose();
-            d.Answer = new Timer(_ => Fail(d, "Die VM antwortet nicht."), null, AnswerTimeout, Timeout.InfiniteTimeSpan);
+            _download = null;
+        }
+
+        d.WaitingTimer?.Dispose();
+        d.WaitingTimer = null;
+    }
+
+    // Eine Anfrage an den fernen Rechner (Groesse oder ein Stueck) und warten auf die Antwort (Null: verweigert)
+    internal async Task<byte[]?> AskAsync(ClipDownload d, int source, long offset, int count, bool wantSize, CancellationToken ct)
+    {
+        var answer = new TaskCompletionSource<byte[]?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        uint stream;
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            stream = ++_streamCounter;
+            _ranges[stream] = answer;
         }
 
         try
         {
-            if (wantSize)
+            try
             {
-                _channel.RequestFileSize(stream, d.Source, d.LockId);
+                if (wantSize)
+                {
+                    _channel.RequestFileSize(stream, source, d.LockId);
+                }
+                else
+                {
+                    _channel.RequestFileRange(stream, source, offset, count, d.LockId);
+                }
             }
-            else
+            catch (ArgumentException)
             {
-                _channel.RequestFileRange(stream, d.Source, offset, count, d.LockId);
+                throw new IOException("Die Datei ist nicht mehr da.");
+            }
+
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(AnswerTimeout);
+            try
+            {
+                return await answer.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                throw new IOException("Die VM antwortet nicht.");
             }
         }
-        catch (ArgumentException)
+        finally
         {
-            Fail(d, "Die Datei ist nicht mehr da.");
+            lock (_gate)
+            {
+                _ranges.Remove(stream);
+            }
         }
     }
 
     private void OnFileContentsReceived(uint streamId, byte[]? data)
     {
-        Download? d;
-        bool wasSize;
+        TaskCompletionSource<byte[]?>? answer;
         lock (_gate)
         {
-            d = _download;
-            if (d is null || d.StreamId != streamId)
-            {
-                return;
-            }
-
-            wasSize = d.Size < 0;
+            _ranges.TryGetValue(streamId, out answer);
         }
 
-        if (data is null)
-        {
-            Fail(d, "Die VM hat die Datei nicht herausgegeben.");
-            return;
-        }
-
-        if (wasSize)
-        {
-            var size = ClipboardChannel.FileSize(data);
-            if (size is null || size < 0)
-            {
-                Fail(d, "Die VM hat die Größe nicht genannt.");
-                return;
-            }
-
-            if (size > MaxFileBytes)
-            {
-                Fail(d, "Datei zu groß (höchstens 64 MB).");
-                return;
-            }
-
-            lock (_gate)
-            {
-                d.Size = size.Value;
-            }
-
-            if (size == 0)
-            {
-                Finish(d, []);
-                return;
-            }
-
-            AskNext(d);
-            return;
-        }
-
-        bool last;
-        lock (_gate)
-        {
-            d.Offset += data.Length;
-            // Ein kuerzerer Block als verlangt heisst: die Datei endet hier
-            last = d.Offset >= d.Size || data.Length < d.Asked;
-            if (d.Offset > MaxFileBytes)
-            {
-                last = true;
-            }
-        }
-
-        if (last)
-        {
-            Finish(d, data);
-        }
-        else
-        {
-            _sink.FileChunk?.Invoke(d.Batch, d.Index, 0, data);
-            AskNext(d);
-        }
+        answer?.TrySetResult(data);
     }
 
-    private void Finish(Download d, byte[] data)
+    internal bool Begin(ClipDownload d)
     {
         lock (_gate)
         {
-            if (_download != d)
+            if (_download != d || d.Started || _disposed)
             {
-                return;
+                return false;
             }
 
-            d.Answer?.Dispose();
-            _download = null;
+            d.Started = true;
+            d.WaitingTimer?.Dispose();
+            d.WaitingTimer = null;
+            return true;
         }
-
-        _sink.FileChunk?.Invoke(d.Batch, d.Index, ChunkLast, data);
     }
 
-    private void Fail(Download d, string reason)
-    {
-        lock (_gate)
-        {
-            if (_download != d)
-            {
-                return;
-            }
+    internal void Report(ClipDownload d, byte state, long done, long total, string text) => _sink.DownloadState?.Invoke(d.Batch, state, done, total, text);
 
-            d.Answer?.Dispose();
-            _download = null;
-        }
+    internal void End(ClipDownload d) => Release(d);
 
-        _sink.FileChunk?.Invoke(d.Batch, d.Index, ChunkFailed, System.Text.Encoding.UTF8.GetBytes(reason));
-    }
+    internal static TimeSpan ReportInterval => ProgressEvery;
+
+    internal static int Range => RangeBytes;
 
     // ---------------------------------------------------------------- Der ferne Rechner fuegt ein
 
@@ -795,8 +1068,16 @@ public sealed class ClipboardBridge : IDisposable
                 case LocalKind.Image when formatId == DeviceIndependentBitmap.FormatId:
                     data = _dib;
                     break;
-                case LocalKind.Files when formatId == FileGroupDescriptor.DefaultFormatId:
-                    data = FileGroupDescriptor.Encode(_localFiles.Select(f => new ClipFile(f.Name, f.Data.Length)).ToArray());
+                case LocalKind.Files when formatId == FileGroupDescriptor.DefaultFormatId && _localFiles is { } stash:
+                    try
+                    {
+                        data = FileGroupDescriptor.Encode(stash.Entries.Select(f => new ClipFile(f.Path, f.IsDirectory ? 0 : f.Size, f.IsDirectory)).ToArray());
+                    }
+                    catch (ArgumentException)
+                    {
+                        data = null;          // ein Name, der nicht in die Liste passt: der ferne Rechner bekommt nichts
+                    }
+
                     break;
             }
         }
@@ -808,24 +1089,28 @@ public sealed class ClipboardBridge : IDisposable
     {
         byte[]? data = null;
         long? size = null;
+        LocalEntry? entry = null;
         lock (_gate)
         {
-            if (_localKind == LocalKind.Files && request.Index >= 0 && request.Index < _localFiles.Count)
+            if (_localKind == LocalKind.Files && _localFiles is { } stash && request.Index >= 0 && request.Index < stash.Entries.Count)
             {
-                var file = _localFiles[request.Index].Data;
-                if (request.IsSizeRequest)
-                {
-                    size = file.Length;
-                }
-                else if (request.Offset >= file.Length)
-                {
-                    data = [];
-                }
-                else
-                {
-                    var count = (int)Math.Min(request.Count, file.Length - request.Offset);
-                    data = file.AsSpan((int)request.Offset, count).ToArray();
-                }
+                entry = stash.Entries[request.Index];
+            }
+        }
+
+        if (entry is { IsDirectory: false })
+        {
+            if (request.IsSizeRequest)
+            {
+                size = entry.Size;
+            }
+            else if (request.Offset >= entry.Size)
+            {
+                data = [];
+            }
+            else
+            {
+                data = ReadStashed(entry, request.Offset, (int)Math.Min(request.Count, entry.Size - request.Offset));
             }
         }
 
@@ -837,5 +1122,211 @@ public sealed class ClipboardBridge : IDisposable
         {
             _channel.SendFileContents(request.StreamId, data);
         }
+    }
+
+    // Ein Bereich einer abgelegten Datei: der Speicher ist nur so gross wie der Bereich (der Kanal begrenzt ihn)
+    private static byte[]? ReadStashed(LocalEntry entry, long offset, int count)
+    {
+        if (entry.File is null)
+        {
+            return [];
+        }
+
+        try
+        {
+            using var handle = File.OpenHandle(entry.File, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            var data = new byte[count];
+            var read = 0;
+            while (read < count)
+            {
+                var n = RandomAccess.Read(handle, data.AsSpan(read), offset + read);
+                if (n == 0)
+                {
+                    break;
+                }
+
+                read += n;
+            }
+
+            return read == count ? data : data[..read];
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+}
+
+/// <summary>Ein Eintrag der Auswahl des fernen Rechners: Nummer in dessen Liste (Anfragen gehen nach ihr), Pfad (/), Groesse, Ordner, Zeit.</summary>
+internal sealed record DownloadEntry(int Source, string Path, long Size, bool IsDirectory, DateTime? Time);
+
+/// <summary>
+/// Ein vorbereiteter Download vom fernen Rechner zum Browser: eine Datei (<see cref="IsArchive"/> falsch) oder ein ZIP aus Ordnern und Dateien. Der Aufruf
+/// <see cref="RunAsync"/> schreibt ihn in einen Strom (die HTTP-Antwort) und holt dazu Stueck fuer Stueck vom fernen Rechner, immer erst das naechste, wenn das
+/// vorige geschrieben ist: der Server haelt nie mehr als ein Stueck (1 MiB) im Speicher, egal wie gross die Dateien sind.
+/// </summary>
+public sealed class ClipDownload
+{
+    private readonly ClipboardBridge _bridge;
+    private readonly List<DownloadEntry> _entries;
+    private readonly int _cut;
+    private readonly CancellationTokenSource _stop = new();
+
+    internal ClipDownload(ClipboardBridge bridge, uint batch, string fileName, bool isArchive, long length, long total, List<DownloadEntry> entries, int cut, uint? lockId)
+    {
+        _bridge = bridge;
+        Batch = batch;
+        FileName = fileName;
+        IsArchive = isArchive;
+        Length = length;
+        Total = total;
+        _entries = entries;
+        _cut = cut;
+        LockId = lockId;
+    }
+
+    public uint Batch { get; }
+
+    /// <summary>Der Name, unter dem der Browser speichert.</summary>
+    public string FileName { get; }
+
+    public bool IsArchive { get; }
+
+    /// <summary>Die Laenge der Antwort, wenn sie vorher feststeht (eine Datei bekannter Groesse), sonst -1.</summary>
+    public long Length { get; }
+
+    /// <summary>Die Summe der Dateigroessen (-1, wenn eine unbekannt ist): Grundlage der Fortschrittsanzeige.</summary>
+    public long Total { get; }
+
+    internal uint? LockId { get; }
+
+    internal bool Started { get; set; }
+
+    internal Timer? WaitingTimer { get; set; }
+
+    internal void Stop()
+    {
+        try { _stop.Cancel(); }
+        catch (ObjectDisposedException) { /* war schon fertig */ }
+    }
+
+    /// <summary>Schreibt den Download in <paramref name="output"/>. Wirft <see cref="IOException"/> mit dem Grund (auch Text fuer den Browser), wenn er scheitert.</summary>
+    public async Task RunAsync(Stream output, CancellationToken ct)
+    {
+        if (!_bridge.Begin(this))
+        {
+            throw new InvalidOperationException("Der Download ist nicht (mehr) bereit.");
+        }
+
+        using var link = CancellationTokenSource.CreateLinkedTokenSource(ct, _stop.Token);
+        long done = 0;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var lastReport = TimeSpan.Zero;
+        void Progress(bool force)
+        {
+            if (force || clock.Elapsed - lastReport >= ClipboardBridge.ReportInterval)
+            {
+                lastReport = clock.Elapsed;
+                _bridge.Report(this, ClipboardBridge.StateRunning, done, Total, "");
+            }
+        }
+
+        try
+        {
+            Progress(true);
+            if (!IsArchive)
+            {
+                var written = await CopyAsync(_entries[0], _entries[0].Size, data => output.WriteAsync(data, link.Token).AsTask(), link.Token, n => { done += n; Progress(false); }).ConfigureAwait(false);
+                if (_entries[0].Size >= 0 && written != _entries[0].Size)
+                {
+                    throw new IOException("Die Datei war kürzer als angekündigt.");
+                }
+            }
+            else
+            {
+                var zip = new ClipboardZipWriter(output);
+                foreach (var e in _entries)
+                {
+                    link.Token.ThrowIfCancellationRequested();
+                    var name = e.Path[_cut..];
+                    if (name.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    if (e.IsDirectory)
+                    {
+                        await zip.AddDirectoryAsync(name, e.Time, link.Token).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    var size = e.Size >= 0 ? e.Size : await AskSizeAsync(e, link.Token).ConfigureAwait(false);
+                    await zip.BeginFileAsync(name, size, e.Time, link.Token).ConfigureAwait(false);
+                    await CopyAsync(e, size, data => zip.WriteFileAsync(data, link.Token), link.Token, n => { done += n; Progress(false); }).ConfigureAwait(false);
+                    await zip.EndFileAsync(link.Token).ConfigureAwait(false);
+                }
+
+                await zip.FinishAsync(link.Token).ConfigureAwait(false);
+            }
+
+            await output.FlushAsync(link.Token).ConfigureAwait(false);
+            _bridge.Report(this, ClipboardBridge.StateDone, done, Total < 0 ? done : Total, "");
+        }
+        catch (OperationCanceledException)
+        {
+            _bridge.Report(this, ClipboardBridge.StateFailed, done, Total, "Abgebrochen.");
+            throw;
+        }
+        catch (IOException e)
+        {
+            _bridge.Report(this, ClipboardBridge.StateFailed, done, Total, e.Message);
+            throw;
+        }
+        finally
+        {
+            _bridge.End(this);
+            link.Cancel();
+        }
+    }
+
+    // Dateigroesse beim fernen Rechner erfragen
+    private async Task<long> AskSizeAsync(DownloadEntry e, CancellationToken ct)
+    {
+        var data = await _bridge.AskAsync(this, e.Source, 0, 8, true, ct).ConfigureAwait(false)
+            ?? throw new IOException("Die VM hat die Datei nicht herausgegeben.");
+        return Rdp.Channels.ClipboardChannel.FileSize(data) is { } size and >= 0 ? size : throw new IOException("Die VM hat die Größe nicht genannt.");
+    }
+
+    // Eine Datei Stueck fuer Stueck vom fernen Rechner holen und an "write" geben (das erst zurueckkehrt, wenn der Browser es angenommen hat): das ist der Rueckdruck.
+    // Gibt die Zahl der Bytes zurueck. Ein kuerzerer Block als verlangt heisst: die Datei endet hier.
+    private async Task<long> CopyAsync(DownloadEntry e, long size, Func<ReadOnlyMemory<byte>, Task> write, CancellationToken ct, Action<long> progress)
+    {
+        if (size < 0)
+        {
+            size = await AskSizeAsync(e, ct).ConfigureAwait(false);
+        }
+
+        long offset = 0;
+        while (offset < size)
+        {
+            ct.ThrowIfCancellationRequested();
+            var count = (int)Math.Min(ClipboardBridge.Range, size - offset);
+            var data = await _bridge.AskAsync(this, e.Source, offset, count, false, ct).ConfigureAwait(false)
+                ?? throw new IOException("Die VM hat die Datei nicht herausgegeben.");
+            if (data.Length == 0)
+            {
+                break;
+            }
+
+            await write(data).ConfigureAwait(false);
+            offset += data.Length;
+            progress(data.Length);
+            if (data.Length < count)
+            {
+                break;
+            }
+        }
+
+        return offset;
     }
 }

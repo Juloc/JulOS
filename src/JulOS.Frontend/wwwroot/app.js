@@ -10,7 +10,7 @@ import { SizeGate, LayoutLog } from './layoutlog.js';
 import { KB_SETTLE_MS, StageBase, effectiveStage, panOffset, panDrag, normalizeKbMode, nextKbMode, kbModeLabel } from './kbpan.js';
 import { Session, Sessions } from './sessions.js';
 import { createPrefs } from './prefs.js';
-import { LIMITS, fmtSize, bmpFromImage, pngFromBytes, filesFromTransfer, saveBlob } from './clip.js';
+import { LIMITS, fmtSize, bmpFromImage, pngFromBytes, filesFromTransfer, itemsFromFiles, planSend, topLevel, progressText, startDownload, saveBlob } from './clip.js';
 
 /* =====================================================================
  * JulOS – Fernsteuerung
@@ -248,7 +248,7 @@ const DEFAULT_ROWS = [
     ITEM('Strg+C', 'chord', 'ctrl+c'), ITEM('Strg+V', 'chord', 'ctrl+v'), ITEM('Strg+X', 'chord', 'ctrl+x'), ITEM('Strg+A', 'chord', 'ctrl+a'),
     ITEM('Strg+Z', 'chord', 'ctrl+z'), ITEM('Strg+F', 'chord', 'ctrl+f'), ITEM('Alt+Tab', 'chord', 'alt+tab'), ITEM('Strg+⇧+T', 'chord', 'ctrl+shift+t') ] },
   { id: 'funcs', title: 'Funktionen', icon: 'apps', items: [
-    ITEM('Bild einfügen', 'action', 'pasteimg'), ITEM('Foto wählen', 'action', 'photo'), ITEM('Datei senden', 'action', 'sendfile'), ITEM('Text senden', 'action', 'clip'), ITEM('Passwort', 'action', 'password') ] },
+    ITEM('Bild einfügen', 'action', 'pasteimg'), ITEM('Foto wählen', 'action', 'photo'), ITEM('Datei senden', 'action', 'sendfile'), ITEM('Ordner senden', 'action', 'sendfolder'), ITEM('Text senden', 'action', 'clip'), ITEM('Passwort', 'action', 'password') ] },
   // die Leiste: immer sichtbar, eine Zeile, ganz unten
   { id: 'bar', title: 'Leiste', fixed: true, items: [
     ITEM('Esc', 'chord', 'esc'), ITEM('Strg', 'mod', 'ctrl'), ITEM('Tab', 'chord', 'tab'),
@@ -395,6 +395,7 @@ const ACTIONS = {
   photo: () => openPhotoDlg(),
   pasteimg: () => pasteImageFromClipboard(),
   sendfile: () => pickFile(),
+  sendfolder: () => pickFolder(),
   clip: () => openClipDlg(),
   password: () => openPwDialog(),
   sessions: () => Sessions.requestSwitcher(),
@@ -916,6 +917,7 @@ export class RemoteSession extends Session {
     client.onclipimage = (format, bytes) => this.onRemoteImage(format, bytes);
     client.onclipfiles = (batch, files) => this.onRemoteFiles(batch, files);
     client.onclipresult = (r) => { if (r.text) this.toast(r.text, 3600); };
+    this.dl = null; client.onfilestate = (st) => { if (this.client === client) this.onFileState(st); };
 
     this.setupMouse(client, display);
     client.connect(resumeToken ? 'resume=' + encodeURIComponent(resumeToken) : 'ticket=' + encodeURIComponent(ticket));
@@ -1421,28 +1423,30 @@ export class RemoteSession extends Session {
   async sendToRemote(list) {
     if (!this.connected || !this.client) { this.toast('Nicht verbunden'); return false; }
     if (this.xferAbort) { this.toast('Es läuft schon eine Übertragung.', 2400); return false; }
-    const files = list.filter((f) => f && f.size !== undefined);
-    if (!files.length) return false;
-    if (files.length === 1 && /^image\//.test(files[0].type)) return this.sendImage(files[0]);
-    if (files.length > LIMITS.files) { this.toast(`Zu viele Dateien (höchstens ${LIMITS.files}).`, 3600); return false; }
-    if (files.some((f) => f.size === 0)) { this.toast('Die Datei ist leer.', 3000); return false; }
-    const big = files.find((f) => f.size > LIMITS.fileBytes);
-    if (big || files.reduce((n, f) => n + f.size, 0) > LIMITS.fileBytes) { this.toast(`Datei zu groß (höchstens ${LIMITS.fileBytes / 1048576} MB).`, 3600); return false; }
+    // Entweder Dateien (File) oder Eintraege { path, file | dir } aus einem Ordner (clip.js)
+    const items = (list || []).map((f) => (f && (f.file || f.dir) ? f : f && f.size !== undefined ? { path: f.webkitRelativePath || f.name, file: f } : null)).filter(Boolean);
+    if (!items.length) return false;
+    if (items.length === 1 && items[0].file && /^image\//.test(items[0].file.type) && !items[0].path.includes('/')) return this.sendImage(items[0].file);
+    const plan = planSend(items, this.client.limits || LIMITS);
+    if (!plan.ok) { if (plan.error) this.toast(plan.error, 3600); return false; }
 
     const ctl = this.xferAbort = new AbortController();
+    const many = plan.list.length > 1, folder = plan.list.some((i) => i.path.includes('/') || i.kind === 3);
+    let before = 0;
     try {
-      for (let i = 0; i < files.length; i++) {
-        const f = files[i], label = files.length > 1 ? ` (${i + 1}/${files.length})` : '';
-        const progress = (done, total) => this.showXfer(`Sende ${f.name}${label} … ${Math.round(100 * done / total)} %`, null);
-        this.showXfer(`Sende ${f.name}${label} …`, null);
-        const r = await this.client.sendTransfer(2, f, f.name, i, files.length, progress, ctl.signal);
+      for (let i = 0; i < plan.list.length; i++) {
+        const it = plan.list[i], size = it.file ? it.file.size : 0, label = many ? ` (${i + 1}/${plan.list.length})` : '';
+        const progress = (done) => this.showXfer(`Sende ${it.path}${label} … ${progressText(before + done, plan.total)}`, null);
+        this.showXfer(`Sende ${it.path}${label} …`, null);
+        const r = await this.client.sendTransfer(it.kind, it.file, it.path, i, plan.list.length, progress, ctl.signal);
         if (ctl.signal.aborted) return false;
         if (r.code !== 0) { this.toast(r.text || 'Senden fehlgeschlagen', 4200); this.dbg('file-error', { c: r.code }); return false; }
+        before += size;
       }
     } catch (e) { if (!ctl.signal.aborted) this.toast('Senden: ' + e.message, 4200); return false; }
     finally { this.hideXfer(); }
-    this.dbg('file-sent', { n: files.length, kb: Math.round(files.reduce((n, f) => n + f.size, 0) / 1024) });
-    this.toast(files.length > 1 ? 'Dateien liegen in der Zwischenablage der VM – dort einfügen (Strg+V)' : 'Datei liegt in der Zwischenablage der VM – dort einfügen (Strg+V)', 4200);
+    this.dbg('file-sent', { n: plan.list.length, kb: Math.round(plan.total / 1024), folder });
+    this.toast(folder ? 'Ordner liegt in der Zwischenablage der VM – dort einfügen (Strg+V)' : many ? 'Dateien liegen in der Zwischenablage der VM – dort einfügen (Strg+V)' : 'Datei liegt in der Zwischenablage der VM – dort einfügen (Strg+V)', 4200);
     return true;
   }
 
@@ -1480,17 +1484,26 @@ export class RemoteSession extends Session {
   onRemoteFiles(batch, list) {
     if (!list.length) { this.remoteItem.files = null; if (cur() === this) renderRemoteItem(); return; }
     this.remoteItem.files = { batch, list }; this.remoteItem.image = null; if (cur() === this) renderRemoteItem();
-    this.toast((list.length === 1 ? 'Datei aus der VM: ' + list[0].name : list.length + ' Dateien aus der VM') + ' – tippen zum Laden', 6000, () => { Sessions.activate(this.id); openClipDlg(); });
+    const rows = topLevel(list), n = list.filter((f) => !f.dir).length;
+    this.toast((rows.length === 1 && !rows[0].dir ? 'Datei aus der VM: ' + rows[0].name : rows.length === 1 ? 'Ordner aus der VM: ' + rows[0].name : n + ' Dateien aus der VM') + ' – tippen zum Laden', 6000, () => { Sessions.activate(this.id); openClipDlg(); });
   }
-  async downloadRemoteFile(batch, index, name) {
-    if (!this.client || !this.client.fetchFile) return;
-    this.showXfer(`Lade ${name} …`, () => this.client.cancelFetch && this.client.cancelFetch(batch));
+  /* Download aus der VM: path ist eine Datei oder ein Ordner der Liste (leer: alles). Der Server schickt "bereit" mit einem Ticket, der Browser holt es selbst
+     (Download-Verwaltung des Browsers, ZIP bei Ordnern); hier laeuft nur die Anzeige des Fortschritts, den der Server meldet. */
+  downloadRemote(batch, path, label) {
+    if (!this.client || !this.client.requestDownload) return;
+    if (this.dl) { this.toast('Es läuft schon ein Download.', 2400); return; }
+    this.dl = { batch, label };
+    this.showXfer(`Lade ${label} …`, () => { if (this.client && this.client.cancelDownload) this.client.cancelDownload(batch); this.dl = null; });
     this.xferAbort = new AbortController();
-    try {
-      const blob = await this.client.fetchFile(batch, index, (n) => this.showXfer(`Lade ${name} … ${fmtSize(n)}`));
-      saveBlob(blob, name); this.toast('Gespeichert: ' + name, 3000);
-    } catch (e) { this.toast(e.message || 'Download fehlgeschlagen', 4200); }
-    finally { this.hideXfer(); }
+    this.client.requestDownload(batch, path);
+  }
+  onFileState(st) {
+    const dl = this.dl;
+    if (!dl || st.batch !== dl.batch) return;
+    if (st.state === 'ready') { startDownload(st.text, dl.label); this.showXfer(`Lade ${dl.label} …`); }
+    else if (st.state === 'running') this.showXfer(`Lade ${dl.label} … ${progressText(st.done, st.total)}`);
+    else if (st.state === 'done') { this.dl = null; this.hideXfer(); this.toast(`Geladen: ${dl.label} (${fmtSize(st.done)}) – im Download-Ordner des Browsers`, 4200); }
+    else { this.dl = null; this.hideXfer(); this.toast(st.text || 'Download fehlgeschlagen', 4200); }
   }
   /* Ablegen von Dateien auf das Bild dieser Sitzung */
   wireDrop() {
@@ -1502,9 +1515,9 @@ export class RemoteSession extends Session {
     st.addEventListener('drop', async (e) => {
       if (!hasFiles(e)) return;
       e.preventDefault(); depth = 0; st.classList.remove('dropping');
-      const { files, skipped } = filesFromTransfer(e.dataTransfer);
-      if (skipped.length) this.toast('Ordner werden nicht übertragen: ' + skipped.slice(0, 2).join(', '), 3200);
-      if (files.length) { try { await this.sendToRemote(files); } catch (err) { this.toast('Senden: ' + err.message, 4200); } }
+      const { items, skipped } = await filesFromTransfer(e.dataTransfer);
+      if (skipped.length) this.toast('Nicht lesbar: ' + skipped.slice(0, 2).join(', '), 3200);
+      if (items.length) { try { await this.sendToRemote(items); } catch (err) { this.toast('Senden: ' + err.message, 4200); } }
     });
     this.el.xferCancel.addEventListener('click', () => { if (this.xferAbort) this.xferAbort.abort(); if (this.xferCancelExtra) this.xferCancelExtra(); this.hideXfer(); this.toast('Abgebrochen'); });
   }
@@ -1827,22 +1840,34 @@ fileInput.addEventListener('change', async () => {
   if (files.length) try { await sendToRemote(files); } catch (e) { toast('Senden: ' + e.message, 4200); }
 });
 $('#sendFileBtn').addEventListener('click', () => { el.clipDlg.close(); pickFile(); });
+// Ordner senden: der Auswahldialog des Browsers (webkitdirectory) liefert alle Dateien mit ihrem Pfad (leere Ordner nennt er nicht)
+const folderInput = $('#folderInput');
+function pickFolder() { folderInput.value = ''; folderInput.click(); }
+folderInput.addEventListener('change', async () => {
+  const items = itemsFromFiles(folderInput.files || []);
+  if (items.length) try { await sendToRemote(items); } catch (e) { toast('Senden: ' + e.message, 4200); }
+});
+$('#sendFolderBtn').addEventListener('click', () => { el.clipDlg.close(); pickFolder(); });
 
-const itemBox = $('#remoteItem'), itemImg = $('#remoteImg'), itemFiles = $('#remoteFiles'), itemImgRow = $('#remoteImgRow');
+const itemBox = $('#remoteItem'), itemImg = $('#remoteImg'), itemFiles = $('#remoteFiles'), itemImgRow = $('#remoteImgRow'), itemAllRow = $('#remoteAllRow');
+$('#filesAllBtn').addEventListener('click', () => { const s = cur(); if (s && s.remoteItem.files) s.downloadRemote(s.remoteItem.files.batch, '', 'Dateien-aus-der-VM.zip'); });
 function renderRemoteItem() {
   const s = cur(), item = s ? s.remoteItem : { image: null, files: null };
   itemBox.hidden = !(item.image || item.files);
   itemImg.hidden = itemImgRow.hidden = !item.image;
   if (item.image) { if (item.imageUrl) URL.revokeObjectURL(item.imageUrl); item.imageUrl = URL.createObjectURL(item.image); itemImg.src = item.imageUrl; }
-  itemFiles.hidden = !item.files; itemFiles.textContent = '';
+  itemFiles.hidden = !item.files; itemFiles.textContent = ''; itemAllRow.hidden = true;
   if (item.files) {
-    for (const [i, f] of item.files.list.entries()) {
+    const rows = topLevel(item.files.list);
+    for (const row of rows) {
       const li = document.createElement('li'), nm = document.createElement('span'), sz = document.createElement('span'), b = document.createElement('button');
-      nm.className = 'nm'; nm.textContent = f.name; sz.className = 'sz'; sz.textContent = fmtSize(f.size);
-      b.type = 'button'; b.textContent = 'Laden'; b.className = 'ghost';
-      b.addEventListener('click', () => s.downloadRemoteFile(item.files.batch, i, f.name));
+      nm.className = 'nm'; nm.textContent = row.dir ? row.name + '/' : row.name;
+      sz.className = 'sz'; sz.textContent = row.dir ? `${row.count} ${row.count === 1 ? 'Datei' : 'Dateien'}${row.size >= 0 ? ', ' + fmtSize(row.size) : ''}` : fmtSize(row.size);
+      b.type = 'button'; b.textContent = row.dir ? 'Als ZIP' : 'Laden'; b.className = 'ghost';
+      b.addEventListener('click', () => s.downloadRemote(item.files.batch, row.path, row.dir ? row.name + '.zip' : row.name));
       li.append(nm, sz, b); itemFiles.append(li);
     }
+    itemAllRow.hidden = rows.length < 2;
   }
 }
 async function copyImageToLocal(blob) {

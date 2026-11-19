@@ -958,6 +958,30 @@ public sealed class RemoteHttpTests
     }
 
     [Fact]
+    public async Task The_clipboard_download_route_needs_a_session_and_a_valid_ticket_and_refuses_cross_site_requests()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db);
+        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (cookie, _) = await SignedInAsync(app, c, db);
+
+        HttpRequestMessage Get(string path, string? withCookie, string? site = null)
+        {
+            var req = new HttpRequestMessage(HttpMethod.Get, path);
+            if (withCookie is not null) req.Headers.Add("Cookie", withCookie);
+            if (site is not null) req.Headers.Add("Sec-Fetch-Site", site);
+            return req;
+        }
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await c.SendAsync(Get("/api/remote/clip/irgendwas", null))).StatusCode);
+        var unknown = await c.SendAsync(Get("/api/remote/clip/irgendwas", cookie));
+        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+        Assert.Contains("Download", await unknown.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.Forbidden, (await c.SendAsync(Get("/api/remote/clip/irgendwas", cookie, "cross-site"))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Get("/api/remote/clip/" + new string('x', 65), cookie))).StatusCode);
+    }
+
+    [Fact]
     public async Task Domain_notes_and_keyboard_layout_are_saved_checked_and_kept_when_not_sent()
     {
         await using var db = await TestDb.CreateAsync();

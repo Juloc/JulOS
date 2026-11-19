@@ -10,17 +10,23 @@ public sealed class ClipboardTransferTests
 {
     private const uint Text = 13, Dib = 8;
     private const uint FileFormat = 0xC0BC;
+    private const long Limit = 64L * 1024 * 1024;
 
     private sealed class Log
     {
         public List<string> Texts { get; } = [];
         public List<(byte Format, byte[] Data)> Images { get; } = [];
         public List<(uint Batch, RemoteFile[] Files)> Files { get; } = [];
-        public List<(uint Batch, int Index, byte Flags, byte[] Data)> Chunks { get; } = [];
+        public List<(uint Batch, ClipDownload Download)> Downloads { get; } = [];
+        public List<(uint Batch, byte State, long Done, long Total, string Text)> States { get; } = [];
         public List<(uint Id, byte Code, string Message)> Results { get; } = [];
     }
 
-    private static (ClipboardChannel Channel, Wire Wire, ClipboardBridge Bridge, Log Log) Started(uint serverFlags = 0x3E, TimeSpan? idle = null)
+    // Grenzen wie frueher (64 MB) und ein eigener Ablageordner je Test
+    internal static ClipboardOptions SmallLimits(long megabytes = 64) =>
+        new(megabytes * 1024 * 1024, Path.Combine(Path.GetTempPath(), "julos-clip-test-" + Guid.NewGuid().ToString("N")[..8]));
+
+    private static (ClipboardChannel Channel, Wire Wire, ClipboardBridge Bridge, Log Log) Started(uint serverFlags = 0x3E, TimeSpan? idle = null, ClipboardOptions? options = null)
     {
         var channel = new ClipboardChannel();
         var wire = new Wire(channel);
@@ -30,9 +36,10 @@ public sealed class ClipboardTransferTests
             Text = log.Texts.Add,
             Image = (format, data) => log.Images.Add((format, data)),
             Files = (batch, files) => log.Files.Add((batch, files.ToArray())),
-            FileChunk = (batch, index, flags, data) => log.Chunks.Add((batch, index, flags, data)),
+            Download = (batch, download) => log.Downloads.Add((batch, download)),
+            DownloadState = (batch, state, done, total, text) => log.States.Add((batch, state, done, total, text)),
             Result = (id, code, message) => log.Results.Add((id, code, message)),
-        }, idle);
+        }, idle, options ?? SmallLimits());
         channel.Receive(ClipServer.Capabilities(serverFlags));
         channel.Receive(ClipServer.MonitorReady());
         channel.Receive(ClipServer.FormatListResponse(true));
@@ -126,75 +133,197 @@ public sealed class ClipboardTransferTests
         Assert.Empty(log.Images);
     }
 
+    // Ein Draht, den auch ein anderer Faden lesen darf (ein Download laeuft asynchron und fragt vom Threadpool aus)
+    private sealed class SafeWire
+    {
+        private readonly List<byte[]> _sent = [];
+
+        public SafeWire(ClipboardChannel channel)
+        {
+            channel.Send = message =>
+            {
+                lock (_sent)
+                {
+                    _sent.Add(message.ToArray());
+                }
+            };
+        }
+
+        public async Task<byte[]?> NextAsync(TimeSpan wait)
+        {
+            var until = DateTime.UtcNow + wait;
+            while (DateTime.UtcNow < until)
+            {
+                lock (_sent)
+                {
+                    if (_sent.Count > 0)
+                    {
+                        var first = _sent[0];
+                        _sent.RemoveAt(0);
+                        return first;
+                    }
+                }
+
+                await Task.Delay(2);
+            }
+
+            return null;
+        }
+    }
+
+    // Der ferne Rechner: beantwortet Groessen- und Bereichsanfragen aus "files" (Nummer in der Liste -> Inhalt; null: verweigert), bis "stop" fertig ist
+    private static async Task ServeAsync(ClipboardChannel channel, SafeWire wire, Func<int, byte[]?> files, Task stop, List<uint?>? locks = null, List<(int Index, long Offset, int Count)>? ranges = null)
+    {
+        while (!stop.IsCompleted)
+        {
+            if (await wire.NextAsync(TimeSpan.FromMilliseconds(50)) is not { } message)
+            {
+                continue;
+            }
+
+            var request = ClipServer.Parse(message);
+            if (request.Type != ClipServer.FileRequestType)
+            {
+                continue;
+            }
+
+            var stream = U32(request.Body, 0);
+            var index = (int)U32(request.Body, 1);
+            locks?.Add(request.Body.Length >= 28 ? U32(request.Body, 6) : null);
+            var content = files(index);
+            if (U32(request.Body, 2) == 1)
+            {
+                channel.Receive(ClipServer.FileResponse(stream, content is null ? null : ClipServer.U64((ulong)content.Length)));
+            }
+            else
+            {
+                var offset = (long)(((ulong)U32(request.Body, 4) << 32) | U32(request.Body, 3));
+                var count = (int)U32(request.Body, 5);
+                ranges?.Add((index, offset, count));
+                channel.Receive(ClipServer.FileResponse(stream, content is null ? null : content[(int)Math.Min(offset, content.Length)..(int)Math.Min(offset + count, content.Length)]));
+            }
+        }
+    }
+
+    private static async Task<byte[]> RunAsync(ClipDownload download, ClipboardChannel channel, SafeWire wire, Func<int, byte[]?> files, List<uint?>? locks = null, List<(int, long, int)>? ranges = null)
+    {
+        var output = new MemoryStream();
+        var run = download.RunAsync(output, CancellationToken.None);
+        var serve = ServeAsync(channel, wire, files, run, locks, ranges);
+        await run.WaitAsync(TimeSpan.FromSeconds(20));
+        await serve;
+        return output.ToArray();
+    }
+
     [Fact]
-    public void Files_copied_on_the_remote_desktop_are_listed_and_fetched_in_pieces_when_asked()
+    public async Task Files_and_folders_copied_on_the_remote_desktop_are_listed_with_paths_and_a_file_streams_in_pieces()
     {
         var (channel, wire, bridge, log) = Started();
-        var size = ClipboardBridge.MaxFileBytes / 16 + 10;                      // 4 MiB und ein Rest: mehrere Stuecke
-        var list = Descriptor(new ClipFile("Ordner", 0, true), new ClipFile("Ordner\\Bericht.pdf", size), new ClipFile("..\\..\\boese.txt", 5), new ClipFile("Notiz.txt", 3));
+        var size = 4 * 1024 * 1024 + 10;                                        // 4 MiB und ein Rest: mehrere Stuecke
+        var list = Descriptor(new ClipFile("Ordner", 0, true), new ClipFile("Ordner\\Bericht.pdf", size), new ClipFile("..\\..\\boese.txt", 5), new ClipFile("C:\\x.txt", 5), new ClipFile("Notiz.txt", 3));
 
         channel.Receive(ClipServer.LongFormatList((FileFormat, "FileGroupDescriptorW"), (0xC0BD, "FileContents")));
         Assert.Equal(FileFormat, U32(ClipServer.Parse(wire.Take()[1]).Body, 0));
         channel.Receive(ClipServer.DataResponse(list));
 
         var (batch, files) = Assert.Single(log.Files);
-        Assert.Equal([new RemoteFile("Bericht.pdf", size), new RemoteFile("Notiz.txt", 3)], files);   // Ordner weg, der Pfad mit ".." weg
+        Assert.Equal([new RemoteFile("Ordner", 0, true), new RemoteFile("Ordner/Bericht.pdf", size), new RemoteFile("Notiz.txt", 3)], files);   // Pfade nach oben und Laufwerke sind weg
         var locked = ClipServer.Parse(wire.One());
         Assert.Equal(ClipServer.LockType, locked.Type);
 
-        bridge.RequestFile(batch, 0);
+        bridge.RequestFile(batch, "Ordner/Bericht.pdf");
+        var (_, download) = Assert.Single(log.Downloads);
+        Assert.Equal(("Bericht.pdf", false, (long)size), (download.FileName, download.IsArchive, download.Length));
+
         var data = new byte[size];
         new Random(7).NextBytes(data);
-        for (var step = 0; step < 10; step++)
-        {
-            var request = ClipServer.Parse(wire.One());
-            Assert.Equal(ClipServer.FileRequestType, request.Type);
-            var stream = U32(request.Body, 0);
-            Assert.Equal(1u, U32(request.Body, 1));                            // Nummer in der Liste des fernen Rechners (hinter dem Ordner)
-            var offset = (int)U32(request.Body, 3);
-            var count = (int)U32(request.Body, 5);
-            Assert.Equal(U32(locked.Body, 0), U32(request.Body, 6));           // mit der Sperre der Liste
-            channel.Receive(ClipServer.FileResponse(stream, data[offset..Math.Min(offset + count, size)]));
-            if (log.Chunks[^1].Flags == ClipboardBridge.ChunkLast)
-            {
-                break;
-            }
-        }
+        var safe = new SafeWire(channel);
+        var locks = new List<uint?>();
+        var ranges = new List<(int, long, int)>();
+        var received = await RunAsync(download, channel, safe, index => index == 1 ? data : null, locks, ranges);
 
-        Assert.Equal(ClipboardBridge.ChunkLast, log.Chunks[^1].Flags);
-        Assert.Equal(data, log.Chunks.SelectMany(chunk => chunk.Data).ToArray());
-        Assert.True(log.Chunks.Count >= 4);
-        Assert.All(log.Chunks, chunk => Assert.Equal((batch, 0), (chunk.Batch, chunk.Index)));
+        Assert.Equal(data, received);
+        Assert.True(ranges.Count >= 4);
+        Assert.All(ranges, r => Assert.Equal(1, r.Item1));                       // Nummer in der Liste des fernen Rechners (hinter dem Ordner)
+        Assert.All(locks, l => Assert.Equal(U32(locked.Body, 0), l));            // mit der Sperre der Liste
+        Assert.Equal(ClipboardBridge.StateDone, log.States[^1].State);
+        Assert.Equal(size, log.States[^1].Done);
+        Assert.Contains(log.States, st => st.State == ClipboardBridge.StateRunning);
     }
 
     [Fact]
-    public void A_file_of_unknown_size_asks_for_the_size_first_and_one_over_the_limit_is_not_fetched()
+    public async Task A_folder_or_the_whole_selection_comes_as_a_zip_with_the_structure_and_unknown_sizes_are_asked_for()
+    {
+        var (channel, wire, bridge, log) = Started();
+        var content = new Dictionary<string, byte[]> { ["Ordner/a.txt"] = [1, 2, 3], ["Ordner/sub/b.bin"] = Enumerable.Range(0, 3000).Select(i => (byte)i).ToArray(), ["Notiz.txt"] = [9, 9, 9, 9, 9] };
+        var list = Descriptor(new ClipFile("Ordner", 0, true), new ClipFile("Ordner\\a.txt", 3), new ClipFile("Ordner\\sub", 0, true), new ClipFile("Ordner\\sub\\b.bin", -1), new ClipFile("Notiz.txt", 5));
+        channel.Receive(ClipServer.LongFormatList((FileFormat, "FileGroupDescriptorW")));
+        wire.Take();
+        channel.Receive(ClipServer.DataResponse(list));
+        wire.Take();
+        var batch = log.Files[0].Batch;
+        var names = new[] { "Ordner", "Ordner/a.txt", "Ordner/sub", "Ordner/sub/b.bin", "Notiz.txt" };
+        byte[]? Source(int i) => names[i] is var n && content.TryGetValue(n, out var c) ? c : null;
+        var safe = new SafeWire(channel);
+
+        bridge.RequestFile(batch, "Ordner");
+        var (_, folder) = log.Downloads[^1];
+        Assert.Equal(("Ordner.zip", true, -1L), (folder.FileName, folder.IsArchive, folder.Length));
+        var zipped = await RunAsync(folder, channel, safe, Source);
+        using (var zip = new System.IO.Compression.ZipArchive(new MemoryStream(zipped)))
+        {
+            Assert.Equal(["Ordner/", "Ordner/a.txt", "Ordner/sub/", "Ordner/sub/b.bin"], zip.Entries.Select(e => e.FullName));
+            using var reader = new MemoryStream();
+            zip.GetEntry("Ordner/sub/b.bin")!.Open().CopyTo(reader);
+            Assert.Equal(content["Ordner/sub/b.bin"], reader.ToArray());
+        }
+
+        // Ein Ordner im Ordner: die Namen im Archiv beginnen beim gewaehlten Ordner
+        bridge.RequestFile(batch, "Ordner/sub");
+        var (_, inner) = log.Downloads[^1];
+        Assert.Equal("sub.zip", inner.FileName);
+        using (var zip = new System.IO.Compression.ZipArchive(new MemoryStream(await RunAsync(inner, channel, safe, Source))))
+        {
+            Assert.Equal(["sub/", "sub/b.bin"], zip.Entries.Select(e => e.FullName));
+        }
+
+        bridge.RequestFile(batch, "");
+        var (_, all) = log.Downloads[^1];
+        Assert.Equal(("Dateien-aus-der-VM.zip", true), (all.FileName, all.IsArchive));
+        using (var zip = new System.IO.Compression.ZipArchive(new MemoryStream(await RunAsync(all, channel, safe, Source))))
+        {
+            Assert.Equal(["Ordner/", "Ordner/a.txt", "Ordner/sub/", "Ordner/sub/b.bin", "Notiz.txt"], zip.Entries.Select(e => e.FullName));
+        }
+
+        Assert.Equal(ClipboardBridge.StateDone, log.States[^1].State);
+        bridge.RequestFile(batch, "gibt-es-nicht");
+        Assert.Equal(ClipboardBridge.StateFailed, log.States[^1].State);
+    }
+
+    [Fact]
+    public async Task Without_a_limit_on_the_size_a_file_of_unknown_size_is_asked_for_first_and_an_empty_one_needs_no_range()
     {
         var (channel, wire, bridge, log) = Started();
         channel.Receive(ClipServer.LongFormatList((FileFormat, "FileGroupDescriptorW")));
         wire.Take();
-        channel.Receive(ClipServer.DataResponse(Descriptor(new ClipFile("a.bin", -1), new ClipFile("riesig.iso", ClipboardBridge.MaxFileBytes + 1L))));
+        channel.Receive(ClipServer.DataResponse(Descriptor(new ClipFile("a.bin", -1), new ClipFile("riesig.iso", 5L * 1024 * 1024 * 1024), new ClipFile("leer.txt", 0))));
         wire.Take();
         var batch = log.Files[0].Batch;
+        Assert.Equal(new RemoteFile("riesig.iso", 5L * 1024 * 1024 * 1024), log.Files[0].Files[1]);   // bis 2 GiB und darueber: der Server haelt nichts, es gibt keine Grenze
 
-        bridge.RequestFile(batch, 0);
-        var sizeRequest = ClipServer.Parse(wire.One());
-        Assert.Equal(1u, U32(sizeRequest.Body, 2));                            // Art: Groesse
-        channel.Receive(ClipServer.FileResponse(U32(sizeRequest.Body, 0), ClipServer.U64(3)));
-        var range = ClipServer.Parse(wire.One());
-        Assert.Equal(3u, U32(range.Body, 5));
-        channel.Receive(ClipServer.FileResponse(U32(range.Body, 0), [1, 2, 3]));
-        Assert.Equal(new byte[] { 1, 2, 3 }, log.Chunks[^1].Data);
-        Assert.Equal(ClipboardBridge.ChunkLast, log.Chunks[^1].Flags);
+        var safe = new SafeWire(channel);
+        bridge.RequestFile(batch, "a.bin");
+        Assert.Equal(-1, log.Downloads[^1].Download.Length);
+        var ranges = new List<(int, long, int)>();
+        Assert.Equal(new byte[] { 1, 2, 3 }, await RunAsync(log.Downloads[^1].Download, channel, safe, _ => [1, 2, 3], ranges: ranges));
+        Assert.Equal([(0, 0L, 3)], ranges);                                     // erst die Groesse (kein Bereich), dann genau ein Stueck
 
-        bridge.RequestFile(batch, 1);
-        wire.Nothing();
-        Assert.Equal(ClipboardBridge.ChunkFailed, log.Chunks[^1].Flags);
-        Assert.Contains("zu groß", Encoding.UTF8.GetString(log.Chunks[^1].Data));
+        bridge.RequestFile(batch, "leer.txt");
+        Assert.Empty(await RunAsync(log.Downloads[^1].Download, channel, safe, _ => throw new InvalidOperationException("nichts zu holen")));
     }
 
     [Fact]
-    public void A_stale_batch_a_refusal_by_the_remote_and_a_cancel_end_the_download_with_a_reason()
+    public async Task A_stale_batch_a_second_download_a_refusal_by_the_remote_and_a_cancel_end_the_download_with_a_reason()
     {
         var (channel, wire, bridge, log) = Started();
         channel.Receive(ClipServer.LongFormatList((FileFormat, "FileGroupDescriptorW")));
@@ -202,23 +331,36 @@ public sealed class ClipboardTransferTests
         channel.Receive(ClipServer.DataResponse(Descriptor(new ClipFile("a.txt", 10))));
         wire.Take();
         var batch = log.Files[0].Batch;
+        var safe = new SafeWire(channel);
 
-        bridge.RequestFile(batch + 1, 0);                                       // eine Liste, die es nicht mehr gibt
-        Assert.Contains("geändert", Encoding.UTF8.GetString(log.Chunks[^1].Data));
+        bridge.RequestFile(batch + 1, "a.txt");                                 // eine Liste, die es nicht mehr gibt
+        Assert.Contains("geändert", log.States[^1].Text);
 
-        bridge.RequestFile(batch, 0);
-        var request = ClipServer.Parse(wire.One());
-        bridge.RequestFile(batch, 0);                                           // zweiter Download gleichzeitig
-        Assert.Contains("schon ein Download", Encoding.UTF8.GetString(log.Chunks[^1].Data));
-        channel.Receive(ClipServer.FileResponse(U32(request.Body, 0), null));
-        Assert.Equal(ClipboardBridge.ChunkFailed, log.Chunks[^1].Flags);
+        bridge.RequestFile(batch, "a.txt");
+        bridge.RequestFile(batch, "a.txt");                                     // zweiter Download gleichzeitig
+        Assert.Contains("schon ein Download", log.States[^1].Text);
+        var download = Assert.Single(log.Downloads).Download;
 
-        bridge.RequestFile(batch, 0);
-        var again = ClipServer.Parse(wire.One());
+        var failure = await Assert.ThrowsAsync<IOException>(() => RunAsync(download, channel, safe, _ => null));   // der ferne Rechner verweigert
+        Assert.Contains("nicht herausgegeben", failure.Message);
+        Assert.Equal(ClipboardBridge.StateFailed, log.States[^1].State);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => download.RunAsync(new MemoryStream(), CancellationToken.None));   // ein Download laeuft nur einmal
+
+        bridge.RequestFile(batch, "a.txt");                                     // der Platz ist wieder frei
+        var again = log.Downloads[^1].Download;
+        bridge.CancelFile(batch);                                               // der Browser bricht ab, bevor er etwas geholt hat
+        await Assert.ThrowsAsync<InvalidOperationException>(() => again.RunAsync(new MemoryStream(), CancellationToken.None));
+        bridge.RequestFile(batch, "a.txt");
+        Assert.Equal(3, log.Downloads.Count);
+
+        // Abbruch waehrend des Laufs: der Strom endet, nichts kommt mehr
+        var running = log.Downloads[^1].Download;
+        var output = new MemoryStream();
+        var run = running.RunAsync(output, CancellationToken.None);
+        await safe.NextAsync(TimeSpan.FromSeconds(5));                          // die erste Anfrage (Groesse oder Bereich) ist unterwegs und bleibt unbeantwortet
         bridge.CancelFile(batch);
-        var count = log.Chunks.Count;
-        channel.Receive(ClipServer.FileResponse(U32(again.Body, 0), new byte[10]));
-        Assert.Equal(count, log.Chunks.Count);                                  // nach dem Abbruch kommt nichts mehr
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+        Assert.Equal("Abgebrochen.", log.States[^1].Text);
     }
 
     [Fact]
@@ -267,7 +409,7 @@ public sealed class ClipboardTransferTests
         var (channel, wire, bridge, log) = Started();
         var content = Enumerable.Range(0, 5000).Select(i => (byte)i).ToArray();
 
-        Upload(bridge, 9, ClipboardBridge.KindFile, 0, 1, content, "..\\..\\Bericht: 1?.txt");
+        Upload(bridge, 9, ClipboardBridge.KindFile, 0, 1, content, "Bericht: 1?.txt");
         Assert.Equal(ClipboardBridge.ResultOk, log.Results[^1].Code);
         var announce = ClipServer.Parse(wire.One());
         Assert.Equal(ClipServer.FormatListType, announce.Type);
@@ -276,7 +418,7 @@ public sealed class ClipboardTransferTests
         channel.Receive(ClipServer.DataRequest(FileGroupDescriptor.DefaultFormatId));
         var list = FileGroupDescriptor.Decode(ClipServer.Parse(wire.One()).Body);
         var file = Assert.Single(list!);
-        Assert.Equal(("Bericht_ 1_.txt", 5000), (file.Name, file.Size));          // der Pfad ist weg, verbotene Zeichen sind ersetzt
+        Assert.Equal(("Bericht_ 1_.txt", 5000), (file.Name, file.Size));          // verbotene Zeichen sind ersetzt
 
         channel.Receive(ClipServer.FileSizeRequest(1, 0));
         Assert.Equal(5000ul, BinaryPrimitives.ReadUInt64LittleEndian(ClipServer.Parse(wire.One()).Body.AsSpan(4)));
@@ -324,9 +466,9 @@ public sealed class ClipboardTransferTests
     {
         var (_, wire, bridge, log) = Started();
 
-        bridge.BeginTransfer(1, ClipboardBridge.KindFile, 0, 1, ClipboardBridge.MaxFileBytes + 1L, "a.bin");
+        bridge.BeginTransfer(1, ClipboardBridge.KindFile, 0, 1, Limit + 1L, "a.bin");
         Assert.Equal((ClipboardBridge.ResultTooBig, "Datei zu groß (höchstens 64 MB)."), (log.Results[^1].Code, log.Results[^1].Message));
-        bridge.BeginTransfer(2, ClipboardBridge.KindFile, 0, ClipboardBridge.MaxFiles + 1, 10, "a.bin");
+        bridge.BeginTransfer(2, ClipboardBridge.KindFile, 0, ClipboardOptions.MaxEntries + 1, 10, "a.bin");
         Assert.Contains("Zu viele Dateien", log.Results[^1].Message);
         bridge.BeginTransfer(3, ClipboardBridge.KindFile, 0, 1, 10, "...");
         Assert.Equal(ClipboardBridge.ResultNotAllowed, log.Results[^1].Code);
@@ -338,7 +480,7 @@ public sealed class ClipboardTransferTests
         Assert.Equal(ClipboardBridge.ResultOther, log.Results[^1].Code);
 
         // zusammen mehr als 64 MB in einer Reihe
-        bridge.BeginTransfer(7, ClipboardBridge.KindFile, 0, 2, ClipboardBridge.MaxFileBytes, "gross.bin");
+        bridge.BeginTransfer(7, ClipboardBridge.KindFile, 0, 2, Limit, "gross.bin");
         bridge.CancelTransfer(7);
 
         // mehr Daten als angekuendigt, ein zu grosses Stueck
@@ -370,7 +512,7 @@ public sealed class ClipboardTransferTests
         var (_, wire, bridge, log) = Started();
 
         Upload(bridge, 1, ClipboardBridge.KindFile, 0, 2, new byte[100], "a.bin");
-        bridge.BeginTransfer(2, ClipboardBridge.KindFile, 1, 2, ClipboardBridge.MaxBatchBytes, "b.bin");
+        bridge.BeginTransfer(2, ClipboardBridge.KindFile, 1, 2, Limit, "b.bin");
         Assert.Equal(ClipboardBridge.ResultTooBig, log.Results[^1].Code);
         wire.Nothing();
     }

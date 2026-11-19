@@ -12,3 +12,6 @@ public sealed record ScreenTarget(RdpOptions Options, string? Slot = null, int M
 
 /// <summary>Einmal-Tickets fuer den Bildschirm-WebSocket (siehe <see cref="Tickets{T}"/>).</summary>
 public sealed class ScreenTickets(TimeProvider time) : Tickets<ScreenTarget>(time);
+
+/// <summary>Einmal-Tickets fuer Downloads aus der Zwischenablage (der Browser holt sie mit GET /api/remote/clip/Ticket ab; siehe <see cref="ClipDownload"/>).</summary>
+public sealed class ClipDownloads(TimeProvider time) : Tickets<ClipDownload>(time);

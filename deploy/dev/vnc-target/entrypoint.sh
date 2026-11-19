@@ -13,6 +13,8 @@ case "$security" in
     extra="-X509Cert $HOME/.vnc/cert.pem -X509Key $HOME/.vnc/key.pem"
     ;;
 esac
+# Reste eines frueheren Starts (docker restart behaelt das Dateisystem): sonst weigert sich Xvnc, "Server is already active"
+rm -f /tmp/.X1-lock /tmp/.X11-unix/X1 2>/dev/null || true
 # shellcheck disable=SC2086
 Xvnc :1 -geometry "${VNC_GEOMETRY:-1024x768}" -depth 24 -rfbport 5900 -rfbauth "$HOME/.vnc/passwd" -SecurityTypes "$security" -AlwaysShared $extra >"$HOME/xvnc.log" 2>&1 &
 export DISPLAY=:1

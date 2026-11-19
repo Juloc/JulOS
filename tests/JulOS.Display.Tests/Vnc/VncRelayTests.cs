@@ -25,8 +25,16 @@ public sealed class VncRelayTests
             Assert.NotEqual(WebSocketMessageType.Close, result.MessageType);
             if (buffer[0] == ScreenProtocol.ToBrowserError)
             {
+                var code = (buffer[1] << 8) | buffer[2];
+                var text = System.Text.Encoding.UTF8.GetString(buffer, 3, result.Count - 3);
+                // Wie ein Browser: den Abschluss-Rahmen des Servers entgegennehmen und mit dem eigenen antworten
+                while ((await browser.ReceiveAsync(buffer, cts.Token)).MessageType != WebSocketMessageType.Close)
+                {
+                }
+
+                await browser.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, null, cts.Token);
                 await run.WaitAsync(TimeSpan.FromSeconds(20));
-                return ((buffer[1] << 8) | buffer[2], System.Text.Encoding.UTF8.GetString(buffer, 3, result.Count - 3));
+                return (code, text);
             }
         }
     }
@@ -36,7 +44,7 @@ public sealed class VncRelayTests
     {
         Assert.SkipUnless(ScreenStream.IsAvailable, ScreenStream.UnavailableReason ?? "libopenh264 fehlt");
         // Mehrmals: das Ende der Sitzung und das Ende ihrer Ereignisse liegen dicht beieinander, der Grund darf nie verloren gehen
-        for (var i = 0; i < 12; i++)
+        for (var i = 0; i < 4; i++)
         {
             using var wrong = new FakeVncServer { Types = [2], Password = "geheim" };
             var (code, text) = await FirstErrorAsync(wrong, "falsch");

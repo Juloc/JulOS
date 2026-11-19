@@ -335,7 +335,13 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                 // Zuerst sagen, warum es endet (ein abgebrochenes Senden oder Empfangen reisst den WebSocket ein), dann die Schleifen beenden
                 if (last is not null)
                 {
-                    await FinishAsync(ws, last, ct).ConfigureAwait(false);
+                    await FinishAsync(ws, last, ct, log).ConfigureAwait(false);
+
+                    // Den Abschluss-Rahmen senden und dem Browser Zeit zum Antworten lassen (sein Rahmen beendet die Empfangsschleife), bevor das Abbrechen
+                    // die Verbindung einreisst: sonst geht die Nachricht (der Grund, etwa "Passwort abgelehnt") oft auf dem Weg verloren, weil der Server
+                    // die Verbindung schliesst, bevor seine Ausgabe auf dem Draht ist, und der Browser sieht nur einen Abriss
+                    await CloseAsync(ws).ConfigureAwait(false);
+                    await Task.WhenAny(receive, Task.Delay(2000, CancellationToken.None)).ConfigureAwait(false);
                 }
 
                 await attach.CancelAsync().ConfigureAwait(false);
@@ -795,7 +801,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
     }
 
     /// <summary>Eine letzte Nachricht senden und den WebSocket schliessen (Fehler, Ablosung, Abmeldung).</summary>
-    private static async Task FinishAsync(WebSocket ws, byte[] message, CancellationToken ct)
+    private static async Task FinishAsync(WebSocket ws, byte[] message, CancellationToken ct, ILogger? log = null)
     {
         try
         {
@@ -806,6 +812,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         catch (Exception e) when (e is WebSocketException or OperationCanceledException or ObjectDisposedException or InvalidOperationException)
         {
             // der Browser ist schon weg
+            log?.LogDebug("Bildschirm: letzte Nachricht nicht gesendet: {Type} {Message}", e.GetType().Name, e.Message);
         }
     }
 

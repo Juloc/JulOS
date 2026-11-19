@@ -1,16 +1,19 @@
 import Guacamole from '/lib/guacamole-common.min.js';
 import { StreamClient } from './stream.js';
 import { SizeGate, LayoutLog } from './layoutlog.js';
+import { Session, Sessions } from './sessions.js';
 import { LIMITS, fmtSize, bmpFromImage, pngFromBytes, filesFromTransfer, xhrUpload, saveBlob } from './clip.js';
 
 /* =====================================================================
- * JulOS – Client
- *  - Verbindung (guacamole-common-js, RDP ueber guacd)
+ * JulOS – Fernsteuerung
+ *  - RemoteSession: eine Sitzung (eigene Verbindung, Anzeige, Eingabe, Tastenleiste, Fensterleiste), siehe docs/SESSIONS.md
+ *  - Verbindung (guacamole-common-js, RDP und SSH ueber guacd; oder der eigene Stream, stream.js)
  *  - dynamische Aufloesung (Fenstergroesse, Tastatur, Drehen, Zoom)
  *  - Touch: Tippen, Langdruecken, Ziehen, Zwei-Finger-Scrollen, Pinch-Zoom
  *  - Android-Tastatur ohne Autokorrektur + eigene, anpassbare Sondertasten
+ * Gemeinsam fuer alle Sitzungen (nur hier): Farben, Einstellungen, Tasten-Editor, Dialoge, das unsichtbare Eingabefeld. Was "die" Sitzung
+ * ist, sagt Sessions.active.
  * ===================================================================== */
-
 const $ = (s, r = document) => r.querySelector(s);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
@@ -18,7 +21,6 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem('pd.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem('pd.' + k, JSON.stringify(v)); } catch { /* ignorieren */ } },
 };
-
 
 /* ---------- Material-Icons (inline SVG, 24 px) ---------- */
 const ICONS = {
@@ -51,63 +53,63 @@ const ICONS = {
   minimize: 'M6 19h12v2H6z',
   window: 'M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v10z',
   bolt: 'M11 21h-1l1-7H7.5c-.58 0-.57-.32-.38-.66.19-.34.05-.08.07-.12C8.48 10.94 10.42 7.54 13 3h1l-1 7h3.5c.49 0 .56.33.47.51l-.07.15C12.96 17.55 11 21 11 21z',
+  layers: 'M11.99 18.54l-7.37-5.73L3 14.07l9 7 9-7-1.63-1.27-7.38 5.74zM12 16l7.36-5.73L21 9l-9-7-9 7 1.63 1.27L12 16z',
+  home: 'M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z',
   backspace: 'M22 3H7c-.69 0-1.23.35-1.59.88L0 12l5.41 8.11c.36.53.9.89 1.59.89h15c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-3 12.59L17.59 17 14 13.41 10.41 17 9 15.59 12.59 12 9 8.41 10.41 7 14 10.59 17.59 7 19 8.41 15.41 12 19 15.59z',
 };
 export const ico = (name) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${ICONS[name] || ''}"/></svg>`;
 function renderIcons(root = document) { root.querySelectorAll('[data-ic]').forEach((n) => { n.innerHTML = ico(n.dataset.ic); }); }
 
-/* ---------- Elemente ---------- */
+/* ---------- Gemeinsamer Zustand: Einstellungen, die fuer alle Sitzungen gelten (je Sitzung steht alles in RemoteSession) ---------- */
 const el = {
-  remote: $('#remote'), stage: $('#stage'), display: $('#display'), touch: $('#touchLayer'), toast: $('#toast'),
-  overlay: $('#overlay'), overlayMsg: $('#overlayMsg'), reconnectBtn: $('#reconnectBtn'), toLoginBtn: $('#toLoginBtn'),
-  dock: $('#dock'), topbar: $('#topbar'), zoomPop: $('#zoomPop'),
   kb: $('#kb'), kbInput: $('#kb'), kbRich: $('#kbRich'),
-  menuSheet: $('#menuSheet'), menuScrim: $('#menuScrim'), spinner: $('#spinner'), imgSeedBtn: $('#imgSeedBtn'), imgSeedInput: $('#imgSeedInput'), kbModeLabel: $('#kbModeLabel'), touchModeLabel: $('#touchModeLabel'), autoKbLabel: $('#autoKbLabel'),
+  imgSeedBtn: $('#imgSeedBtn'), imgSeedInput: $('#imgSeedInput'),
   clipDlg: $('#clipDlg'), sendText: $('#sendText'), remoteClip: $('#remoteClip'), typeBtn: $('#typeBtn'), pasteBtn: $('#pasteBtn'), copyBtn: $('#copyBtn'),
   keyDlg: $('#keyDlg'), keyDlgTitle: $('#keyDlgTitle'), keyLabel: $('#keyLabel'), keyType: $('#keyType'), keyValue: $('#keyValue'),
   keyValueLabel: $('#keyValueLabel'), keyHint: $('#keyHint'), keyLeft: $('#keyLeft'), keyRight: $('#keyRight'),
   keySave: $('#keySave'), keyDelete: $('#keyDelete'),
-  photoInput: $('#photoInput'), autoPasteLabel: $('#autoPasteLabel'),
+  photoInput: $('#photoInput'),
   themeDlg: $('#themeDlg'), swatches: $('#swatches'), seedInput: $('#seedInput'), schemeSel: $('#schemeSel'),
   pwDlg: $('#pwDlg'), pwUser: $('#pwUser'), pwPass: $('#pwPass'), pwTypePass: $('#pwTypePass'), pwTypeBoth: $('#pwTypeBoth'),
 };
 
-/* ---------- Zustand ---------- */
+const S = {
+  kbMode: store.get('kbMode2', 'rich'),       // 'rich' (Bilder aus der Tastatur) | 'normal' (mit Vorschlaegen) | 'direct' (ohne Vorschlaege)
+  touchMode: store.get('touchMode', 'direct'),// 'direct' (Tippen = Klick an der Stelle) | 'pad' (Touchpad)
+  sizeHoldUntil: 0,                           // solange die Bildschirmtastatur faehrt, geht keine neue Groesse an die VMs (gilt fuer alle Sitzungen)
+  expanded: store.get('expanded', false), group: store.get('group', 'keys'), editing: false,
+  autoKb: store.get('autoKb', true),   // Tastatur oeffnet sich beim Tippen auf ein Textfeld (Erkennung am Mauszeiger)
+  debug: store.get('debug', true),     // sendet nur Messwerte (Groessen, Ereignisarten), nie getippten Text
+  autoPaste: store.get('autoPaste', true),   // Foto nach dem Hochladen sofort mit Strg+V einfuegen
+  seed: store.get('seed', '#9a67ea'),         // Grundfarbe fuer das Material-You-Design ('system' oder #rrggbb), Standard Violett wie die Handy-Oberflaeche
+  scheme: store.get('scheme', 'auto'),       // 'auto' | 'light' | 'dark'
+};
 // Am PC (grosser Schirm, Maus) steht die VM 1:1 auf dem Schirm: ein Bild, das auf 80 % verkleinert angefordert und dann hochgezogen wird, ist
 // ueberall weich, besonders der Text. Auf dem Handy bleibt es bei 0,8 (Inhalt etwas groesser).
 function pcDefaultK() {
   try { return matchMedia('(pointer: fine)').matches && matchMedia('(min-width: 1000px)').matches ? 1 : 0.8; } catch { return 0.8; }
 }
-const S = {
-  client: null, tunnel: null, display: null, mouse: null,
-  password: null,            // nur im Arbeitsspeicher dieser Seite
-  connected: false, everConnected: false, intentional: false,
-  k: clamp(store.get('k', pcDefaultK()), 0.35, 1.8),   // Remote-Pixel pro Geraetepixel (kleiner = Inhalt groesser; 1 = jedes Pixel der VM ein Pixel des Schirms)
-  kbMode: store.get('kbMode2', 'rich'),       // 'rich' (Bilder aus der Tastatur) | 'normal' (mit Vorschlaegen) | 'direct' (ohne Vorschlaege)
-  touchMode: store.get('touchMode', 'direct'),// 'direct' (Tippen = Klick an der Stelle) | 'pad' (Touchpad)
-  lastSent: { w: 0, h: 0 }, gate: new SizeGate(), sizeHoldUntil: 0,
-  retry: 0, retryTimer: null, resizeTimer: null, toastTimer: null,
-  expanded: store.get('expanded', false), group: store.get('group', 'keys'), actOn: {}, zoomTimer: null, editing: false,
-  autoKb: store.get('autoKb', true),   // Tastatur oeffnet sich beim Tippen auf ein Textfeld (Erkennung am Mauszeiger)
-  debug: store.get('debug', true),     // sendet nur Messwerte (Groessen, Ereignisarten), nie getippten Text
-  cursor: { ibeam: false },
-  autoPaste: store.get('autoPaste', true),   // Foto nach dem Hochladen sofort mit Strg+V einfuegen
-  seed: store.get('seed', '#9a67ea'),         // Grundfarbe fuer das Material-You-Design ('system' oder #rrggbb), Standard Violett wie die Handy-Oberflaeche
-  scheme: store.get('scheme', 'auto'),       // 'auto' | 'light' | 'dark'
-};
+let lastStageSize = { w: window.innerWidth, h: window.innerHeight };   // zuletzt gemessene sichtbare Bildflaeche (fuer Sitzungen im Hintergrund)
+
+/** Alle Fernsteuer-Sitzungen und die aktive (andere Sitzungsarten, etwa das native Terminal, gehoeren nicht hierher). */
+const remotes = () => Sessions.list().filter((s) => s instanceof RemoteSession);
+const cur = () => (Sessions.active instanceof RemoteSession ? Sessions.active : null);
 
 /* ---------- Toast / kleine Helfer ---------- */
+let gToastEl = null, gToastTimer = 0;
 function toast(msg, ms = 1400, onTap = null) {
-  el.toast.textContent = msg; el.toast.classList.add('show');
-  el.toast.classList.toggle('tap', !!onTap); el.toast.onclick = onTap ? () => { el.toast.classList.remove('show'); onTap(); } : null;
-  clearTimeout(S.toastTimer); S.toastTimer = setTimeout(() => el.toast.classList.remove('show'), ms);
+  const s = cur();
+  if (s) return s.toast(msg, ms, onTap);
+  if (!gToastEl) { gToastEl = document.createElement('div'); gToastEl.className = 'sv-toast'; gToastEl.style.cssText = 'position:fixed;z-index:200;top:calc(12px + env(safe-area-inset-top))'; document.body.appendChild(gToastEl); }
+  gToastEl.textContent = msg; gToastEl.classList.add('show');
+  clearTimeout(gToastTimer); gToastTimer = setTimeout(() => gToastEl.classList.remove('show'), ms);
 }
 
 /* ---------- Diagnose: sendet nur Messwerte an das Server-Log (keine Eingaben) ---------- */
 const dbgQueue = [];
 let dbgTimer = null;
 function dbg(evt, data = {}) {
-  if (!S.debug || !S.conn) return;     // Messwerte nur waehrend einer Verbindung (davor gibt es noch keine Sitzung)
+  if (!S.debug || !Sessions.count) return;     // Messwerte nur waehrend einer Verbindung (davor gibt es noch keine Sitzung)
   if (dbgQueue.length >= 400) dbgQueue.shift();
   dbgQueue.push({ t: Math.round(performance.now()), evt, ...data });
   if (!dbgTimer) dbgTimer = setTimeout(function flush() {
@@ -118,17 +120,16 @@ function dbg(evt, data = {}) {
   }, 2500);
 }
 
-/* ---------- Sichtbarer Bereich (Tastatur, Vollbild) und Tastatur-Erkennung ---------- */
+/* ---------- Sichtbarer Bereich (Tastatur, Vollbild) und Tastatur-Erkennung (gilt fuer das ganze Geraet) ---------- */
 const vv = window.visualViewport;
 let baseH = vv ? vv.height : window.innerHeight;
 let lastW = vv ? vv.width : window.innerWidth;
 let kbOpen = false;
-// Messwerte und Schleifen-Erkennung (layoutlog.js). Die Anzeige auf dem Bild und die dichten "lay"-Eintraege gibt es nur mit ?debug in der Adresse
+// Messwerte und Schleifen-Erkennung (layoutlog.js, eine je Sitzung). Die Anzeige auf dem Bild und die dichten "lay"-Eintraege gibt es nur mit ?debug in der Adresse
 // (der Wert bleibt fuer diesen Tab gemerkt, falls die Seite neu geladen wird); eine erkannte Schleife kommt immer ins Log.
 const LAYDEBUG = (() => {
   try { if (/[?&]debug\b/.test(location.search)) sessionStorage.setItem('pd.laydebug', '1'); return sessionStorage.getItem('pd.laydebug') === '1'; } catch { return /[?&]debug\b/.test(location.search); }
 })();
-const lay = new LayoutLog({ emit: (evt, d) => dbg(evt, d), parts: { app: $('#app'), stage: el.stage, topbar: el.topbar, dock: el.dock }, state: () => ({ kbOpen }), visible: LAYDEBUG });
 const kbFocused = () => document.activeElement === el.kbInput || document.activeElement === el.kbRich;
 // Waehrend die Tastatur ein- oder ausfaehrt, wird keine neue Remote-Groesse gesendet (die Ansicht ruckelt sonst durch mehrere Zwischengroessen)
 const KB_HOLD_MS = 600;
@@ -153,10 +154,10 @@ function applyViewport(why) {
     holdSize();
     // Tastatur per Zurueck-Geste geschlossen, Feld hat aber noch den Fokus: Fokus loesen, damit der Zustand stimmt
     if (!open && kbFocused()) el.kb.blur();
-    setActOn('keyboard', open);
+    setActOnAll('keyboard', open);
     dbg('kbvisible', { open, vvh: Math.round(h), base: Math.round(baseH), inner: window.innerHeight });
   }
-  lay.layout(why);
+  for (const s of remotes()) s.lay.layout(why);
 }
 if (vv) { vv.addEventListener('resize', () => layoutViewport('vv')); vv.addEventListener('scroll', () => layoutViewport('vvs')); }
 window.addEventListener('resize', () => layoutViewport('win'));
@@ -196,43 +197,6 @@ function parseChord(str) {
   });
 }
 
-const mods = { ctrl: 'off', alt: 'off', shift: 'off', super: 'off' };
-const kdown = (s) => S.client && S.client.sendKeyEvent(1, s);
-const kup = (s) => S.client && S.client.sendKeyEvent(0, s);
-
-function setMod(name, mode) {
-  const prev = mods[name];
-  if (prev === mode) return;
-  if (prev === 'off') kdown(MODSYM[name]);
-  if (mode === 'off') kup(MODSYM[name]);
-  mods[name] = mode;
-  refreshModButtons();
-}
-const cycleMod = (name) => setMod(name, mods[name] === 'off' ? 'once' : mods[name] === 'once' ? 'lock' : 'off');
-function consumeOnce() { for (const n of Object.keys(mods)) if (mods[n] === 'once') setMod(n, 'off'); }
-function resetMods() { for (const n of Object.keys(mods)) mods[n] = 'off'; refreshModButtons(); }
-
-// Alle Tasten laufen strikt nacheinander durch eine Warteschlange (sonst vertauscht sich die Reihenfolge,
-// zum Beispiel bei "Backspace x3, dann neues Wort" nach einer Autokorrektur).
-let keyChain = Promise.resolve();
-const enqueue = (fn) => { keyChain = keyChain.then(fn).catch(() => {}); return keyChain; };
-const sendChord = (syms, gap = 12) => enqueue(async () => {
-  for (const s of syms) { kdown(s); await sleep(gap); }
-  for (const s of [...syms].reverse()) { kup(s); await sleep(gap); }
-  consumeOnce();
-});
-const tapKey = (sym) => enqueue(async () => { kdown(sym); await sleep(8); kup(sym); consumeOnce(); });
-const typeText = (str) => enqueue(async () => {
-  for (const ch of str) {
-    const sym = charKeysym(ch);
-    kdown(sym); await sleep(6); kup(sym); await sleep(4);
-    consumeOnce();
-  }
-});
-
-/* =====================================================================
- *  Leisten-Zeilen: Tasten (Schnell, Mehr), je einklappbar und bearbeitbar; dazu die Fensterleiste
- * ===================================================================== */
 const ITEM = (label, type, value) => ({ label, type, value });
 const ACT = (icon, action) => ITEM(':' + icon, 'action', action);
 const DEFAULT_ROWS = [
@@ -272,108 +236,6 @@ let suppressClick = false;
 let editRow = 0, editIndex = -1;      // editIndex -1 = neue Taste
 const saveRows = () => store.set('rows4', rows);
 
-function refreshModButtons() {
-  document.querySelectorAll('#rowsTop .k[data-mod], #rowsBottom .k[data-mod]').forEach((b) => {
-    const m = mods[b.dataset.mod];
-    b.classList.toggle('mod-once', m === 'once');
-    b.classList.toggle('mod-lock', m === 'lock');
-  });
-}
-
-async function activateKey(def) {
-  try {
-    if (def.type === 'mod') {
-      const name = MODNAME[String(def.value).toLowerCase()];
-      if (!name) throw new Error('Unbekannter Umschalter');
-      cycleMod(name);
-    } else if (def.type === 'text') {
-      await typeText(def.value || '');
-    } else if (def.type === 'action') {
-      const v = String(def.value).toLowerCase();
-      const f = ACTIONS[v];
-      if (!f) throw new Error('Unbekannte Aktion');
-      f();
-    } else {
-      await sendChord(parseChord(def.value));
-    }
-  } catch (e) { toast(e.message); }
-}
-
-function keyEl(def, r, i) {
-  const b = document.createElement('div');
-  b.setAttribute('role', 'button'); b.className = 'k' + (S.editing ? ' edit' : '');
-  const isIcon = String(def.label).startsWith(':');
-  let icon = isIcon ? def.label.slice(1) : '';
-  if (def.type === 'action') {
-    const act = String(def.value).toLowerCase();
-    b.dataset.act = act;
-    if (act === 'expand') icon = S.expanded ? 'expand_more' : 'expand_less';   // Pfeil zeigt, was der naechste Tipp tut
-    if (S.actOn[act]) b.classList.add('on');
-  }
-  if (isIcon && ICONS[icon]) { b.innerHTML = ico(icon); b.classList.add('ic'); } else b.textContent = def.label;
-  b.dataset.r = String(r); b.dataset.i = String(i);
-  if (def.type === 'mod') b.dataset.mod = MODNAME[String(def.value).toLowerCase()] || '';
-  b.addEventListener('click', () => {
-    if (suppressClick) { suppressClick = false; return; }
-    if (S.editing) openKeyEditor(r, i); else activateKey(def);
-  });
-  if (S.editing) enableDrag(b);
-  return b;
-}
-
-function groupRow(row, r, label) {
-  const wrap = document.createElement('div');
-  wrap.className = 'row grp' + (S.editing ? ' editing' : '');
-  const rk = document.createElement('div'); rk.className = 'rk'; rk.dataset.r = String(r);
-  if (label) { const t = document.createElement('div'); t.className = 'gt'; t.textContent = row.title; rk.appendChild(t); }
-  row.items.forEach((def, i) => rk.appendChild(keyEl(def, r, i)));
-  if (S.editing) {
-    const add = document.createElement('div'); add.setAttribute('role', 'button'); add.className = 'k add'; add.innerHTML = ico('add') + '<span>Taste</span>';
-    add.addEventListener('click', () => openKeyEditor(r, -1)); rk.appendChild(add);
-    if (r === rows.length - 1) {
-      const done = document.createElement('div'); done.setAttribute('role', 'button'); done.className = 'k'; done.textContent = 'Fertig';
-      done.addEventListener('click', () => { S.editing = false; renderRows(); toast('Tasten gespeichert'); }); rk.appendChild(done);
-    }
-  }
-  wrap.append(rk);
-  return wrap;
-}
-/* Oben: Akkordeon aus drei schmalen Koepfen (nur Symbol und Pfeil) und darunter die Tasten der geoeffneten Gruppe. Beim Bearbeiten sind alle Gruppen offen. */
-function renderRows() {
-  const top = $('#rowsTop'), bottom = $('#rowsBottom');
-  top.replaceChildren(); bottom.replaceChildren();
-  const groups = rows.map((row, r) => ({ row, r })).filter((g) => !g.row.fixed);
-  if (S.group && !groups.some((g) => g.row.id === S.group)) S.group = groups[0].row.id;
-  if (!S.editing) {
-    const heads = document.createElement('div'); heads.className = 'acc'; heads.setAttribute('role', 'tablist');
-    for (const { row } of groups) {
-      const open = row.id === S.group;
-      const h = document.createElement('div'); h.setAttribute('role', 'tab'); h.className = 'acch' + (open ? ' sel' : ''); h.setAttribute('aria-label', row.title); h.setAttribute('aria-expanded', open ? 'true' : 'false');
-      h.innerHTML = ico(row.icon || 'apps') + ico(open ? 'expand_less' : 'expand_more');
-      h.addEventListener('click', () => { S.group = open ? '' : row.id; store.set('group', S.group); renderRows(); });
-      heads.appendChild(h);
-    }
-    top.appendChild(heads);
-  }
-  for (const { row, r } of groups) if (S.editing || row.id === S.group) top.appendChild(groupRow(row, r, S.editing));
-  rows.forEach((row, r) => {
-    if (!row.fixed) return;
-    const wrap = document.createElement('div');
-    wrap.className = 'row bar' + (S.editing ? ' editing' : '');
-    const rk = document.createElement('div'); rk.className = 'rk'; rk.dataset.r = String(r);
-    row.items.forEach((def, i) => rk.appendChild(keyEl(def, r, i)));
-    if (S.editing) {
-      const add = document.createElement('div'); add.setAttribute('role', 'button'); add.className = 'k add'; add.innerHTML = ico('add') + '<span>Taste</span>';
-      add.addEventListener('click', () => openKeyEditor(r, -1)); rk.appendChild(add);
-      const done = document.createElement('div'); done.setAttribute('role', 'button'); done.className = 'k'; done.textContent = 'Fertig';
-      done.addEventListener('click', () => { S.editing = false; renderRows(); toast('Tasten gespeichert'); }); rk.appendChild(done);
-    }
-    wrap.append(rk); bottom.appendChild(wrap);
-  });
-  applyKeysOpen(); refreshModButtons();
-}
-const renderKeys = renderRows;
-
 /* Tasten per langem Druecken ziehen: innerhalb der Zeile und in andere Zeilen */
 function enableDrag(btn) {
   let timer = null, dragging = false, sx = 0, sy = 0;
@@ -408,12 +270,11 @@ function enableDrag(btn) {
       rows[tr].items.splice(Math.min(ti, rows[tr].items.length), 0, m);
       saveRows();
     }
-    renderRows();
+    renderAllRows();
   };
   btn.addEventListener('pointerup', end);
   btn.addEventListener('pointercancel', end);
 }
-
 /* ----- Editor fuer eine Taste ----- */
 function updateKeyEditorHints() {
   const t = el.keyType.value;
@@ -441,276 +302,79 @@ el.keySave.addEventListener('click', () => {
     if (def.type === 'action' && !ACTIONS[def.value.toLowerCase()]) throw new Error('Aktion: ' + Object.keys(ACTIONS).join(', '));
   } catch (e) { toast(e.message, 2600); return; }
   if (editIndex >= 0) rows[editRow].items[editIndex] = def; else rows[editRow].items.push(def);
-  saveRows(); el.keyDlg.close(); renderRows();
+  saveRows(); el.keyDlg.close(); renderAllRows();
 });
-el.keyDelete.addEventListener('click', () => { if (editIndex >= 0) { rows[editRow].items.splice(editIndex, 1); saveRows(); el.keyDlg.close(); renderRows(); } });
+el.keyDelete.addEventListener('click', () => { if (editIndex >= 0) { rows[editRow].items.splice(editIndex, 1); saveRows(); el.keyDlg.close(); renderAllRows(); } });
 const moveKey = (d) => {
   const items = rows[editRow].items, j = editIndex + d;
   if (editIndex < 0 || j < 0 || j >= items.length) return;
-  const [m] = items.splice(editIndex, 1); items.splice(j, 0, m); editIndex = j; saveRows(); renderRows(); toast('Verschoben');
+  const [m] = items.splice(editIndex, 1); items.splice(j, 0, m); editIndex = j; saveRows(); renderAllRows(); toast('Verschoben');
 };
 el.keyLeft.addEventListener('click', () => moveKey(-1));
 el.keyRight.addEventListener('click', () => moveKey(1));
 
-/* ----- Aufklappen: die Leiste bleibt, darueber erscheinen die weiteren Zeilen ----- */
-function applyKeysOpen() { $('#rowsTop').hidden = !(S.expanded || S.editing); }
+/* ----- Gemeinsames fuer alle Tastenleisten ----- */
+/** Tasten neu zeichnen, wenn sich etwas an der gemeinsamen Belegung aendert (jede Sitzung hat ihre eigene Leiste). */
+function renderAllRows() { for (const s of remotes()) s.renderRows(); }
+function setActOnAll(name, on) { for (const s of remotes()) s.setActOn(name, on); }
 function toggleExpanded() {
   if (S.editing) return;
-  S.expanded = !S.expanded; store.set('expanded', S.expanded); renderRows();
-}
-function setActOn(name, on) {
-  S.actOn[name] = on;
-  document.querySelectorAll(`.k[data-act="${name}"]`).forEach((b) => b.classList.toggle('on', on));
+  S.expanded = !S.expanded; store.set('expanded', S.expanded); renderAllRows();
 }
 function toggleFullscreen() {
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   else document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => toast('Vollbild nicht möglich'));
 }
-/* Aktionen, die eine Taste in der Leiste ausloesen kann (frei zuordenbar im Tasten-Editor) */
+function openClipDlg() {
+  const s = cur();
+  el.remoteClip.value = (s && s.clipText) || '';
+  $('#pullImgBtn').hidden = !!(s && s.nativeClip());
+  renderRemoteItem();
+  el.clipDlg.showModal();
+}
+/* Aktionen, die eine Taste in der Leiste ausloesen kann (frei zuordenbar im Tasten-Editor); sie bekommen die Sitzung, in deren Leiste getippt wurde */
 const ACTIONS = {
   keyboard: () => { if (kbOpen) el.kb.blur(); else { el.kb.blur(); el.kb.focus(); } },
-  zoomin: () => { setK(S.k / 1.12); rememberProfile(); },
-  zoomout: () => { setK(S.k * 1.12); rememberProfile(); },
+  zoomin: (s) => { s.setK(s.k / 1.12); s.rememberProfile(); },
+  zoomout: (s) => { s.setK(s.k * 1.12); s.rememberProfile(); },
   fullscreen: toggleFullscreen,
-  menu: () => (el.menuSheet.hidden ? openMenu() : closeMenu()),
+  menu: (s) => s.toggleMenu(),
   expand: toggleExpanded,
   photo: () => openPhotoDlg(),
-  sendfile: () => pickFile(),
   pasteimg: () => pasteImageFromClipboard(),
+  sendfile: () => pickFile(),
   clip: () => openClipDlg(),
   password: () => openPwDialog(),
+  sessions: () => Sessions.requestSwitcher(),
+  home: () => Sessions.requestHome(),
 };
 
-/* Tippen auf Dock-Knoepfe darf den Fokus (und damit die Tastatur) nicht wegnehmen */
-el.dock.addEventListener('mousedown', (e) => { if (e.target.closest('.hb, .k, .acch, .chip, button')) e.preventDefault(); });
-
 /* =====================================================================
- *  Fensterleiste und Programm-Modus (braucht den Agenten auf dem Zielrechner)
+ *  Programm starten (Fensterleiste): ein Dialog fuer alle Sitzungen, er gehoert der Sitzung, die ihn geoeffnet hat
  * ===================================================================== */
-const W = { available: false, list: [], mode: 'desktop', timer: null, lastCls: null, apps: null };
-const profiles = store.get('profiles', {});
-const defaultProfile = (cls) => (/claude/i.test(cls || '') ? 0.56 : null);   // Claude schmal: dann zeigt die App Burger-Menue statt Seitenleiste
-
-async function agent(path, method = 'GET', body = null) {
-  const r = await fetch('/api/agent' + path, { method, headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, body: body ? JSON.stringify(body) : undefined });
-  if (!r.ok) throw new Error('Agent ' + r.status);
-  return r.json();
-}
-async function startWindowBar() {
-  stopWindowBar();
-  W.available = false;
-  // Der Agent gehoert zur Maschine, neben der der Server laeuft: nur fuer Desktop-Verbindungen anbieten
-  if (S.conn && S.conn.kind === 'desktop') { try { const h = await (await fetch('/api/agent/health')).json(); W.available = !!h.available; } catch { W.available = false; } }
-  dbg('agent', { available: W.available });
-  if (S.conn && S.conn.kind === 'desktop') store.set('winbar', W.available);
-  renderWindows();
-  if (!W.available) return;
-  pollWindows(); W.timer = setInterval(pollWindows, 2000);
-}
-function stopWindowBar() { clearInterval(W.timer); W.timer = null; W.list = []; W.lastCls = null; W.candCls = null; winSig = ''; }
-async function pollWindows() {
-  if (!S.connected || !W.available || document.hidden) return;
-  try {
-    const d = await agent('/windows');
-    W.list = d.windows || []; W.mode = d.mode || 'desktop';
-    renderWindows(); applyProfile();
-  } catch { /* naechster Versuch */ }
-}
-// Ein Programm wird erst nach zwei Abfragen (4 s) in Folge als aktiv gewertet und der Wechsel der Anzeigegroesse haelt mindestens 8 s Abstand.
-// Springt der Fokus der VM sonst zwischen zwei Programmen hin und her (Meldungsfenster, Menues, Tooltips), bekaeme die VM jedes Mal eine
-// neue Aufloesung: der Bildschirm "zappelt".
-const PROFILE = { stablePolls: 2, minGap: 8000 };
-function applyProfile() {
-  if (W.mode !== 'apps') { W.lastCls = null; W.candCls = null; return; }
-  const act = W.list.find((w) => w.active); const cls = act ? act.class : null;
-  if (!cls || cls === W.lastCls) { W.candCls = null; return; }
-  if (W.candCls !== cls) { W.candCls = cls; W.candN = 1; } else W.candN += 1;
-  if (W.candN < PROFILE.stablePolls || Date.now() - (W.profileAt || 0) < PROFILE.minGap) return;
-  W.candCls = null; W.profileAt = Date.now();
-  W.lastCls = cls;
-  const k = profiles[cls] ?? defaultProfile(cls);
-  if (k && Math.abs(k - S.k) > 0.02) { setK(k, false); toast('Anzeige für ' + (act.app || cls) + ' angepasst', 1800); }
-}
-function rememberProfile() {                               // Zoom von Hand: fuer das aktive Programm merken (nur im Programm-Modus)
-  if (W.mode !== 'apps' || !W.lastCls) return;
-  profiles[W.lastCls] = S.k; store.set('profiles', profiles);
-}
-let winSig = '';
-function renderWindows() {
-  const row = $('#rowWin');
-  if (!W.available) { el.topbar.hidden = true; winSig = ''; return; }
-  // Die Leiste wird alle 2 s abgefragt. Nur neu aufbauen, wenn sich etwas geaendert hat: sonst springt sie waehrenddessen an den Anfang
-  // (Scrollstand weg), Symbole flackern und ein gerade begonnener Fingertipp trifft ein schon ersetztes Element.
-  const sig = W.mode + '|' + W.list.map((w) => [w.id, w.active ? 1 : 0, w.minimized ? 1 : 0, w.title, w.app, (w.icon || '').length].join(':')).join('|');
-  if (!el.topbar.hidden && sig === winSig) return;
-  winSig = sig;
-  const keepScroll = row.scrollLeft;
-  el.topbar.hidden = false; row.replaceChildren();
-  const mode = document.createElement('div'); mode.className = 'chip mode'; mode.setAttribute('role', 'button');
-  mode.innerHTML = ico(W.mode === 'apps' ? 'apps' : 'desktop') + `<span>${W.mode === 'apps' ? 'Apps' : 'Desktop'}</span>`;
-  mode.addEventListener('click', toggleMode); row.appendChild(mode);
-  for (const w of W.list) {
-    const c = document.createElement('div'); c.className = 'chip' + (w.active ? ' active' : '') + (w.minimized ? ' min' : ''); c.setAttribute('role', 'button');
-    const img = w.icon ? `<img alt="" src="data:image/png;base64,${w.icon}">` : '';
-    const t = document.createElement('span'); t.textContent = (w.title || w.app || '?').slice(0, 40);
-    c.innerHTML = img; c.appendChild(t);
-    let timer = null, longDone = false;
-    c.addEventListener('pointerdown', () => { longDone = false; timer = setTimeout(() => { longDone = true; openWinSheet(w); }, 480); });
-    const cancel = () => clearTimeout(timer);
-    c.addEventListener('pointerup', cancel); c.addEventListener('pointercancel', cancel); c.addEventListener('pointerleave', cancel);
-    c.addEventListener('click', () => { if (longDone) { longDone = false; return; } activateWindow(w.id, W.mode === 'apps'); });
-    row.appendChild(c);
-  }
-  const add = document.createElement('div'); add.className = 'chip add'; add.setAttribute('role', 'button'); add.innerHTML = ico('add');
-  add.addEventListener('click', openApps); row.appendChild(add);
-  row.scrollLeft = keepScroll;
-}
-async function activateWindow(id, maximize) {
-  try { await agent(`/windows/${id}/activate`, 'POST', { maximize }); setTimeout(pollWindows, 350); } catch (e) { toast('Fenster: ' + e.message); }
-}
-async function toggleMode() {
-  try { const d = await agent('/mode', 'POST', { mode: W.mode === 'apps' ? 'desktop' : 'apps' }); W.mode = d.mode; W.lastCls = null; renderWindows(); toast(W.mode === 'apps' ? 'Programm-Modus: Taskleiste der VM ausgeblendet' : 'Desktop-Modus', 2200); setTimeout(pollWindows, 500); }
-  catch (e) { toast('Modus: ' + e.message); }
-}
-function openWinSheet(w) {
-  const sh = $('#winSheet'); sh.replaceChildren();
-  const item = (ic, text, fn) => { const d = document.createElement('div'); d.className = 'mi'; d.setAttribute('role', 'menuitem'); d.innerHTML = `<span class="mic">${ico(ic)}</span><span class="mt">${text}</span>`; d.addEventListener('click', () => { closeWinSheet(); fn(); }); sh.appendChild(d); };
-  item('window', 'Nach vorn und maximieren', () => activateWindow(w.id, true));
-  item('window', 'Nach vorn (Größe lassen)', () => activateWindow(w.id, false));
-  item('minimize', 'Minimieren', async () => { try { await agent(`/windows/${w.id}/minimize`, 'POST', {}); setTimeout(pollWindows, 300); } catch (e) { toast(e.message); } });
-  item('close', 'Schließen', async () => { try { await agent(`/windows/${w.id}/close`, 'POST', {}); setTimeout(pollWindows, 500); } catch (e) { toast(e.message); } });
-  item('palette', 'Anzeigegröße für dieses Programm merken', () => { profiles[w.class] = S.k; store.set('profiles', profiles); toast('Gemerkt: ' + zoomPercent() + ' % für ' + (w.app || w.class)); });
-  sh.hidden = false; el.menuScrim.hidden = false;
-  el.menuScrim.onclick = closeWinSheet;
-}
-function closeWinSheet() { $('#winSheet').hidden = true; el.menuScrim.hidden = true; el.menuScrim.onclick = null; }
-$('#winSheet').addEventListener('mousedown', (e) => e.preventDefault());
-
-async function openApps() {
+let appsTarget = null;
+async function openApps(session) {
+  appsTarget = session;
   $('#appsDlg').showModal(); $('#appsSearch').value = '';
-  if (!W.apps) { try { W.apps = (await agent('/apps')).apps || []; } catch (e) { toast('Programme: ' + e.message); W.apps = []; } }
+  if (!session.W.apps) { try { session.W.apps = (await agent('/apps')).apps || []; } catch (e) { session.toast('Programme: ' + e.message); session.W.apps = []; } }
   renderApps('');
 }
 function renderApps(q) {
+  const s = appsTarget; if (!s) return;
   const list = $('#appsList'); list.replaceChildren();
-  const f = (W.apps || []).filter((a) => a.name.toLowerCase().includes(q.toLowerCase())).slice(0, 80);
+  const f = (s.W.apps || []).filter((a) => a.name.toLowerCase().includes(q.toLowerCase())).slice(0, 80);
   for (const a of f) {
     const d = document.createElement('div'); d.className = 'appitem'; d.setAttribute('role', 'button');
     d.innerHTML = (a.icon ? `<img alt="" src="data:image/png;base64,${a.icon}">` : '<span style="width:32px"></span>') + `<span></span>`; d.lastChild.textContent = a.name;
     d.addEventListener('click', async () => {
       $('#appsDlg').close();
-      try { await agent('/apps/launch', 'POST', { id: a.id }); toast('Starte ' + a.name + ' …', 2200); setTimeout(pollWindows, 1500); } catch (e) { toast('Start: ' + e.message); }
+      try { await agent('/apps/launch', 'POST', { id: a.id }); s.toast('Starte ' + a.name + ' …', 2200); setTimeout(() => s.pollWindows(), 1500); } catch (e) { s.toast('Start: ' + e.message); }
     });
     list.appendChild(d);
   }
   if (!f.length) list.textContent = 'Nichts gefunden.';
 }
 $('#appsSearch').addEventListener('input', (e) => renderApps(e.target.value));
-
-/* =====================================================================
- *  Groesse: Remote-Aufloesung folgt dem Fenster (Tastatur, Drehen, Zoom)
- * ===================================================================== */
-function computeRemote() {
-  const r = el.stage.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  const w = Math.max(400, Math.floor((r.width * dpr * S.k) / 4) * 4);
-  const h = Math.max(300, Math.floor((r.height * dpr * S.k) / 2) * 2);
-  return { w, h };
-}
-function fitDisplay() {
-  if (!S.display) return;
-  const rw = S.display.getWidth();
-  if (!rw) return;
-  // Das Bild der VM hat nach dem Abrunden auf Vielfache von 4 ein paar Pixel weniger als das Fenster; wuerde es darauf gestreckt, laege es um
-  // Bruchteile eines Pixels daneben und waere ueberall weich. Wo es 1:1 auf den Schirm passt (Faktor 1 / devicePixelRatio), bleibt es genau dort.
-  const dpr = window.devicePixelRatio || 1;
-  let scale = el.stage.getBoundingClientRect().width / rw;
-  if (Math.abs(scale * dpr - 1) < 0.02) scale = 1 / dpr;
-  S.display.scale(scale);
-}
-// Wann die Groesse wirklich an die VM geht, entscheidet SizeGate (layoutlog.js): nur bei echtem Unterschied (8 x 16 Geraetepixel Toleranz),
-// nicht waehrend die Tastatur faehrt, hoechstens einmal pro Sekunde und mit Notbremse (4 Aenderungen in 20 s, dann 5 s Pause).
-// Jede Aenderung baut das Bild der VM neu auf; so landet das Handy auch dann nicht in einer Dauerschleife, wenn ein Geraet Groessen
-// in schneller Folge meldet (Adressleiste, Tastatur-Animation, Systemleisten).
-function sendRemoteSize(w, h, why) {
-  S.lastSent = { w, h };
-  lay.note('send', { w, h });
-  dbg('sendSize', { w, h, k: S.k, dpr: window.devicePixelRatio, why });
-  S.client.sendSize(w, h);
-}
-function pushSize(force = false) {
-  if (!S.client || !S.connected) return;
-  // Waehrend der VM ihr erstes Bild aufbaut, keine Groessenaenderungen schicken: jede startet beim Ziel das Anzeigen neu und verzoegert das erste Bild
-  // (die Groesse steht schon im Verbindungsaufbau). Spaetestens nach 6 s geht es normal weiter.
-  if (!S.frameSeen && Date.now() - S.connectedAt < 6000) { scheduleSize(); return; }
-  const want = computeRemote();
-  const now = Date.now();
-  const d = S.gate.decide(now, want, S.lastSent, { force, holdUntil: S.sizeHoldUntil || 0 });
-  if (d.action === 'skip') return;
-  if (d.action === 'wait') {
-    if (d.why === 'storm') dbg('size-storm', { w: want.w, h: want.h, n: d.n });
-    scheduleSize(d.delay);
-    return;
-  }
-  S.gate.sent(now);
-  sendRemoteSize(want.w, want.h, force ? 'force' : 'fit');
-}
-function scheduleSize(delay = 450) { clearTimeout(S.resizeTimer); S.resizeTimer = setTimeout(() => { pushSize(); fitDisplay(); }, delay); }
-let stageW = 0, stageH = 0;
-new ResizeObserver(() => {
-  fitDisplay();
-  const r = el.stage.getBoundingClientRect();
-  if (Math.abs(r.width - stageW) < 1 && Math.abs(r.height - stageH) < 1) return;    // nur ein Rundungs- oder Startsignal: keine neue Groesse
-  stageW = r.width; stageH = r.height;
-  lay.note('stage', { w: Math.round(r.width), h: Math.round(r.height) });
-  lay.layout('stage');
-  scheduleSize();
-}).observe(el.stage);
-
-const zoomPercent = () => Math.round(100 / S.k);
-function showZoomPop() {                                   // Zoomstufe nur kurz einblenden
-  el.zoomPop.textContent = zoomPercent() + ' %'; el.zoomPop.classList.add('show');
-  clearTimeout(S.zoomTimer); S.zoomTimer = setTimeout(() => el.zoomPop.classList.remove('show'), 900);
-}
-function setK(k, announce = true) {
-  S.k = clamp(k, 0.35, 1.8); store.set('k', S.k);
-  if (announce) showZoomPop();
-  scheduleSize();
-}
-
-/* =====================================================================
- *  Verbindung
- * ===================================================================== */
-function teardown() {
-  // Erst den alten Client abkoppeln, dann trennen: sein "getrennt"-Ereignis kommt sofort und wuerde sonst (S.client waere noch er selbst)
-  // einen neuen Wiederholungs-Timer setzen, der die frische Verbindung nach 1,5/3/4,5 s wieder abschiesst.
-  const old = S.client;
-  S.client = null; S.tunnel = null; S.display = null; S.mouse = null; S.connected = false;
-  try { old && old.disconnect(); } catch { /* egal */ }
-  clearTimeout(S.retryTimer); clearTimeout(S.connectTimer); stopWindowBar(); el.topbar.hidden = true;
-  el.display.replaceChildren();
-  resetMods();
-}
-function showOverlay(msg, canRetry = true) {
-  el.overlayMsg.textContent = msg; el.spinner.hidden = true; el.overlay.hidden = false; el.reconnectBtn.hidden = !canRetry; el.toLoginBtn.hidden = false;
-}
-function showBusy(msg) { // Fortschritt mit Animation, ohne Knoepfe
-  el.overlayMsg.textContent = msg; el.spinner.hidden = false; el.overlay.hidden = false; el.reconnectBtn.hidden = true; el.toLoginBtn.hidden = true;
-}
-/** Verstaendliche Texte zu den Statuscodes, die guacd mit einem Fehler schickt (Guacamole-Protokoll). */
-const ERROR_TEXT = {
-  513: 'Der Server ist gerade ausgelastet.', 514: 'Das Ziel antwortet nicht (Zeitüberschreitung).', 515: 'Die Verbindung zum Ziel ist fehlgeschlagen.',
-  519: 'Das Ziel wurde nicht gefunden.', 520: 'Das Ziel ist nicht erreichbar.', 769: 'Anmeldung am Ziel abgelehnt. Bitte Benutzername und Passwort prüfen.',
-  777: 'Die Sitzung wurde in einem anderen Fenster oder auf einem anderen Gerät übernommen.',
-};
-let leaveHandler = () => {};
-/** Verbindung beenden und zur Startseite (die Seite zeigt die Meldung). reason: 'auth' = Sitzung der App ist abgelaufen. */
-function leave(msg, reason = '') {
-  S.intentional = true; teardown(); S.password = null; S.everConnected = false;
-  el.remote.hidden = true; el.overlay.hidden = true; el.spinner.hidden = true;
-  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-  leaveHandler(msg || '', reason);
-}
 
 /* Mauszeiger der VM auswerten: ist es der Text-Zeiger (I-Balken)? Zeigerbilder sind oft 32x32 mit viel Rand,
    deshalb zaehlt nur das Rechteck um die sichtbaren Pixel. I-Balken: schmal und hoch, Hotspot in der Mitte. Pfeil/Hand: Hotspot an der Ecke. */
@@ -728,359 +392,1020 @@ function cursorInfo(canvas, hx, hy) {
   const ibeam = bw >= 2 && bh >= 10 && bw / bh <= 0.65 && rx >= 0.2 && rx <= 0.8 && ry >= 0.2 && ry <= 0.8;
   return { w, h, bw, bh, hx, hy, ibeam, sig: `${w}x${h}:${bw}x${bh}@${hx},${hy}` };
 }
-
-/* Der Stream kam nicht zustande (es wurde nie ein Bild gezeichnet): einmal mit Guacamole neu verbinden, statt einen Fehler zu zeigen.
-   Gilt bis die Verbindung verlassen wird. Keine Ausweichung bei Fehlern, die Guacamole genauso haette (Anmeldung abgelehnt, uebernommen, zu viele). */
-function fallBackFromStream(client, err) {
-  if (!(client instanceof StreamClient)) return false;
-  if (client.drawn) S.streamWorked = true;
-  if (S.streamWorked || S.forceGuac || S.intentional || S.client !== client) return false;
-  if (err && [513, 769, 777].includes(err.code)) return false;
-  S.forceGuac = true;
-  dbg('stream-fallback', { code: err ? err.code : 0, message: err && err.message ? String(err.message).slice(0, 80) : '' });
-  toast('Der schnelle Stream geht hier nicht, verbinde mit Guacamole …', 3200);
-  teardown();                       // den Stream sofort abkoppeln: seine spaeteren Ereignisse zaehlen nicht mehr
-  setTimeout(connect, 0);
-  return true;
-}
-
-async function connect() {
-  S.intentional = false; S.fatal = false; S.connectStarted = Date.now();
-  teardown();
-  el.remote.hidden = false;
-  showBusy(S.everConnected ? 'Verbinde neu …' : 'Verbinde …');
-  // Hatte der letzte Desktop eine Fensterleiste, den Platz dafuer schon jetzt freihalten: sonst schrumpft die Stage kurz nach dem Verbinden
-  // und die VM bekommt gleich nach dem Start eine zweite Groesse.
-  el.topbar.hidden = !(S.conn.kind === 'desktop' && store.get('winbar', false));
-  await sleep(30); // Layout setzen, damit die Stage-Groesse stimmt
-  // Eine noch offene Tastatur (Fokus aus der vorigen Sitzung) darf die Groesse nicht bestimmen: sonst bekommt die VM ein flaches Bild
-  if (kbFocused()) el.kb.blur();
-  for (let i = 0; i < 12 && kbOpen; i++) await sleep(50);
-  const { w, h } = computeRemote();
-  // Welche Engine: der Test-Schalter pd.engine (localStorage, JSON) hat Vorrang vor der Wahl der Verbindung; der eigene Stream (H.264 im Browser)
-  // nur fuer Desktops und nur, wenn der Browser ihn dekodieren kann; sonst Guacamole (auch nach einem misslungenen Stream, siehe fallBackFromStream)
-  const choice = S.forceGuac ? 'guac' : store.get('engine', null) || S.conn.engine || 'guac';
-  const wantStream = S.conn.kind === 'desktop' && choice === 'stream' && await StreamClient.supported();
-  let ticket, engine = 'guac';
-  try {
-    const resp = await fetch('/api/remote/ticket', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, signal: AbortSignal.timeout(10000),
-      body: JSON.stringify({ connection: S.conn.id, password: S.password || undefined, width: w, height: h, dpi: 96, engine: wantStream ? 'stream' : 'guac' }) });
-    const data = await resp.json().catch(() => ({}));
-    if (resp.status === 401) return leave('Die Sitzung ist abgelaufen. Bitte neu anmelden.', 'auth');
-    if (!resp.ok) throw new Error(data.error || 'Fehler ' + resp.status);
-    ticket = data.ticket; engine = data.engine || 'guac';
-  } catch (e) {
-    const msg = e.name === 'TimeoutError' || e.name === 'TypeError' ? 'Keine Verbindung zum Server. Netz prüfen.' : e.message;
-    if (!S.everConnected) return leave(msg);
-    return showOverlay(msg);
-  }
-
-  const wsBase = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
-  const isStream = engine === 'stream';
-  const tunnel = isStream ? null : new Guacamole.WebSocketTunnel(wsBase + '/api/remote/ws');
-  const client = isStream ? new StreamClient(wsBase + '/api/remote/screen') : new Guacamole.Client(tunnel);
-  S.engine = engine;
-  const display = client.getDisplay();
-  S.tunnel = tunnel; S.client = client; S.display = display; S.lastSent = { w, h }; S.gate = new SizeGate(); S.sizeHoldUntil = 0;
-  lay.note('conn', { engine });
-  el.display.appendChild(display.getElement());
-  display.onresize = () => { fitDisplay(); const w = display.getWidth(), h = display.getHeight(); lay.note('remote', { w, h }); dbg('remote-size', { w, h }); };
-  // Textfeld-Erkennung: Der Mauszeiger der VM wird zum "I-Balken" (schmal, hoch, Hotspot mittig)
-  display.oncursor = (canvas, hx, hy) => {
-    const c = cursorInfo(canvas, hx, hy);
-    if (c.sig !== S.cursor.sig && cursorLogN++ < 40) dbg('cursor', { w: c.w, h: c.h, bw: c.bw, bh: c.bh, hx: c.hx, hy: c.hy, ibeam: c.ibeam });
-    S.cursor = c;
-  };
-
-  client.onstatechange = (st) => {
-    if (S.client !== client) return;
-    if (st === 3) { // verbunden
-      clearTimeout(S.connectTimer);
-      S.connected = true; S.everConnected = true; S.connectedAt = Date.now(); S.frameSeen = false; startWindowBar(); fitDisplay(); pushSize(); waitForFrame(client); focusKbForHardware();
-      if (isStream) setTimeout(() => { if (S.client === client && !client.drawn) fallBackFromStream(client); }, 10000);   // Groesse gemeldet, aber nie ein Bild: der Dekodierer geht nicht
-      // Die Zaehler der Wiederholung gelten erst als zurueckgesetzt, wenn die Verbindung wirklich haelt (sonst endlos: verbunden, sofort getrennt, neu ...)
-      setTimeout(() => { if (S.client === client && S.connected) { S.firstLogin = false; S.retry = 0; } }, 12000);
-    } else if (st === 5) { // getrennt
-      S.connected = false;
-      if (!client.closing && fallBackFromStream(client)) return;   // ohne Fehlermeldung getrennt, bevor ein Bild kam
-      if (S.intentional || S.fatal) return;
-      if (!S.everConnected) return; // Fehler wird von onerror gemeldet
-      // sofort nach dem Anmelden getrennt = xrdp hat das Passwort abgelehnt: nicht wiederholen
-      if (S.firstLogin && Date.now() - S.connectedAt < 12000) return leave('Anmeldung fehlgeschlagen. Bitte Passwort prüfen.');
-      scheduleReconnect();
-    }
-  };
-  client.onerror = (err) => {
-    if (S.client !== client) return;
-    // guacd meldet meist nur "Aborted. See logs."; der Statuscode sagt mehr
-    if (fallBackFromStream(client, err)) return;
-    const known = ERROR_TEXT[err && err.code];
-    const msg = known || ((err && err.message) ? err.message : 'Verbindungsfehler');
-    S.connected = false;
-    if (err && err.code === 777) { S.fatal = true; clearTimeout(S.retryTimer); clearTimeout(S.connectTimer); return showOverlay(msg); }   // anderswo uebernommen: nicht zurueckholen, sonst streiten sich zwei Fenster
-    if (!S.everConnected) leave(known || 'Verbindung nicht möglich: ' + msg);
-    else if (S.firstLogin && Date.now() - S.connectedAt < 12000) leave('Anmeldung fehlgeschlagen. Bitte Passwort prüfen.');
-    else showOverlay(msg);
-  };
-  if (tunnel) tunnel.onerror = (st) => { if (S.client === client && !S.everConnected) leave('Keine Verbindung zum Server: ' + (st && st.message ? st.message : '')); };
-  client.onclipboard = (stream, mimetype) => {
-    if (!/^text\//.test(mimetype)) return;
-    const reader = new Guacamole.StringReader(stream);
-    let data = '';
-    reader.ontext = (t) => { data += t; };
-    reader.onend = () => {
-      el.remoteClip.value = data;
-      // Strg+C / Strg+X in der VM: Text gleich in die Zwischenablage dieses Browsers legen (braucht HTTPS oder localhost und eine eben erfolgte Eingabe)
-      if (navigator.clipboard && navigator.clipboard.writeText && document.hasFocus()) navigator.clipboard.writeText(data).then(() => toast('Kopiert', 1200), () => toast('Text aus der VM kopiert (Symbol Zwischenablage)', 2200));
-      else toast('Text aus der VM kopiert (Symbol Zwischenablage)', 2200);
-    };
-  };
-
-  // Bilder und Dateien: der eigene Stream meldet sie selbst; bei Guacamole holt der Knopf im Dialog das Bild ueber den Helfer
-  if (client.nativeClipboard) {
-    client.onclipimage = (format, bytes) => onRemoteImage(format, bytes);
-    client.onclipfiles = (batch, files) => onRemoteFiles(batch, files);
-    client.onclipresult = (r) => { if (r.text) toast(r.text, 3600); };
-  }
-
-  setupMouse(client, display);
-  client.connect('ticket=' + encodeURIComponent(ticket));
-  // kommt innerhalb von 20 s keine Verbindung zustande: nicht ewig "Verbinde ..." zeigen
-  clearTimeout(S.connectTimer);
-  S.connectTimer = setTimeout(() => {
-    if (S.client !== client || S.connected) return;
-    if (fallBackFromStream(client)) return;
-    S.fatal = true; try { client.disconnect(); } catch { /* egal */ }
-    showOverlay('Die Verbindung kommt nicht zustande. Netz prüfen und „Neu verbinden“ tippen.');
-  }, 20000);
-}
-
-/* Nach dem Verbinden bleibt die Ladeanzeige stehen, bis wirklich ein Bild da ist (sonst ist alles schwarz).
-   Kommt keins, fordert eine kleine Groessenaenderung vom Server ein neues Vollbild an. */
-function nudgeSize(delta = 2) {
-  if (!S.client || !S.connected) return;
-  const { w, h } = computeRemote();
-  sendRemoteSize(w, h - delta, 'nudge');
-  setTimeout(() => { if (S.client && S.connected) sendRemoteSize(w, h, 'nudge'); }, 350);
-}
-function waitForFrame(client) {
-  const started = Date.now();
-  let nudges = 0, probes = 0, sizedAt = 0, released = false;
-  showBusy('Bild wird geladen …');
-  const probe = document.createElement('canvas'); probe.width = probe.height = 8;
-  const pc = probe.getContext('2d', { willReadFrequently: true });
-  let seen = { w: 0, h: 0, max: 0 };
-  const hasContent = () => {
-    try {
-      const cv = S.display.flatten();                       // alle Ebenen zusammengesetzt (die Standardebene allein kann leer sein)
-      seen = { w: cv.width, h: cv.height, max: 0 };
-      if (!cv.width || !cv.height) return false;
-      pc.clearRect(0, 0, 8, 8); pc.drawImage(cv, 0, 0, 8, 8);
-      const d = pc.getImageData(0, 0, 8, 8).data;
-      for (let i = 0; i < d.length; i += 4) seen.max = Math.max(seen.max, d[i], d[i + 1], d[i + 2]);
-      return seen.max > 10;
-    } catch { return true; }                                // Pruefung nicht moeglich: nicht blockieren
-  };
-  // Die Ladeanzeige geht weg, sobald die VM eine Bildgroesse gemeldet hat (oder nach 4 s): Bedienung und Tastenleiste sollen
-  // nicht auf ein "nicht schwarzes" Bild warten. Die Anstupser laufen danach unsichtbar weiter, bis Inhalt da ist.
-  const release = (why) => { if (released) return; released = true; dbg('overlay-weg', { ms: Date.now() - started, why }); el.overlay.hidden = true; el.spinner.hidden = true; };
-  const tick = () => {
-    if (S.client !== client || !S.connected) return;
-    const age = Date.now() - started;
-    const ok = hasContent();
-    if (seen.w > 0 && !sizedAt) sizedAt = Date.now();
-    if (probes++ % 4 === 0 && probes < 120) dbg('frameprobe', { ms: age, nudges, ...seen });
-    if (sizedAt || age > 4000) release(sizedAt ? 'groesse' : 'zeit');
-    if (ok) S.frameSeen = true;
-    if (ok || age > 25000) { S.frameSeen = true; dbg('firstframe', { ms: age, nudges, ok, ...seen }); release('bild'); return; }
-    // Anstupsen (die VM zeichnet nach einer echten Groessenaenderung alles neu) erst, wenn es eine Bildgroesse gibt:
-    // vorher geht die Aenderung ins Leere, weil die VM noch gar nicht verbunden ist
-    if (sizedAt && S.engine !== 'stream') {
-      const since = Date.now() - sizedAt;
-      // erst warten (das Ziel braucht beim Wiederverbinden mehrere Sekunden), dann hoechstens zwei sanfte Anstupser
-      if (nudges === 0 && since > 8000) { nudges = 1; nudgeSize(2); }
-      else if (nudges === 1 && since > 16000) { nudges = 2; nudgeSize(64); }
-    }
-    setTimeout(tick, 250);
-  };
-  tick();
-}
-
-function scheduleReconnect() {
-  if (S.retry >= 3) { showOverlay('Verbindung getrennt. Läuft die Sitzung noch in einem anderen Fenster oder auf einem anderen Gerät?'); return; }
-  S.retry += 1;
-  const wait = 1500 * S.retry;
-  showBusy(`Verbindung getrennt – neuer Versuch in ${Math.round(wait / 1000)} s …`);
-  clearTimeout(S.retryTimer);
-  S.retryTimer = setTimeout(() => { if (!S.intentional && hasCredentials()) connect(); }, wait);
-}
-
-const hasCredentials = () => !!(S.password || (S.conn && S.conn.stored));   // Passwort im Speicher des Browsers oder auf dem Server gespeichert
-el.reconnectBtn.addEventListener('click', () => { S.retry = 0; if (hasCredentials()) connect(); else leave(); });
-el.toLoginBtn.addEventListener('click', () => leave());
-
-/* =====================================================================
- *  Maus (Desktop-Browser) und Touch (Handy)
- * ===================================================================== */
-function remoteXY(cx, cy) {
-  const r = el.display.getBoundingClientRect();
-  const s = S.display ? S.display.getScale() : 1;
-  return { x: Math.round((cx - r.left) / s), y: Math.round((cy - r.top) / s) };
-}
-function mouseSend(x, y, l = false, m = false, r = false, up = false, down = false) {
-  if (S.client) S.client.sendMouseState(new Guacamole.Mouse.State(x, y, l, m, r, up, down));
-}
-
-function setupMouse(client, display) {
-  // echte Maus (nur Desktop-Browser); Touch laeuft ueber die eigene Gestenlogik
-  const mouse = new Guacamole.Mouse(el.touch);
-  S.mouse = mouse;
-  const fwd = (state) => {
-    if (S.client !== client) return;
-    const s = display.getScale() || 1;
-    client.sendMouseState(new Guacamole.Mouse.State(state.x / s, state.y / s, state.left, state.middle, state.right, state.up, state.down));
-  };
-  mouse.onmousedown = mouse.onmouseup = mouse.onmousemove = fwd;
-  mouse.onmouseout = () => {};
-  display.showCursor(true);
-}
-
-const G = { pts: new Map(), mode: 'idle', timer: null, sx: 0, sy: 0, st: 0, lx: 0, ly: 0, d0: 0, k0: 0, mid0: null, midLast: null,
-  decided: null, scrollAcc: 0, pressed: false, px: 0, py: 0, newK: 0, moved: false };
-
 let tapLogN = 0;
 const dist2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const mid2 = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 
-async function clickAt(x, y, button = 'left') {
-  mouseSend(x, y);
-  await sleep(10);
-  mouseSend(x, y, button === 'left', false, button === 'right');
-  await sleep(35);
-  mouseSend(x, y, false, false, false);
-  consumeOnce();
+/* =====================================================================
+ *  RemoteSession: eine Fernsteuer-Sitzung (Vertrag: docs/SESSIONS.md, Basisklasse in sessions.js)
+ * ===================================================================== */
+const profiles = store.get('profiles', {});                   // Anzeigegroesse je Programm (Klasse), nur im Programm-Modus
+const defaultProfile = (cls) => (/claude/i.test(cls || '') ? 0.56 : null);   // Claude schmal: dann zeigt die App Burger-Menue statt Seitenleiste
+const PROFILE = { stablePolls: 2, minGap: 8000 };
+/** Verstaendliche Texte zu den Statuscodes, die guacd (oder der Stream-Server) mit einem Fehler schickt (Guacamole-Protokoll). */
+const ERROR_TEXT = {
+  513: 'Der Server ist gerade ausgelastet.', 514: 'Das Ziel antwortet nicht (Zeitüberschreitung).', 515: 'Die Verbindung zum Ziel ist fehlgeschlagen.',
+  519: 'Das Ziel wurde nicht gefunden.', 520: 'Das Ziel ist nicht erreichbar.', 769: 'Anmeldung am Ziel abgelehnt. Bitte Benutzername und Passwort prüfen.',
+  777: 'Die Sitzung wurde in einem anderen Fenster oder auf einem anderen Gerät übernommen.',
+  797: null,        // zu viele Sitzungen: der Server schickt den Text selbst ("Es sind schon 8 Sitzungen offen ...")
+};
+
+async function agent(path, method = 'GET', body = null) {
+  const r = await fetch('/api/agent' + path, { method, headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, body: body ? JSON.stringify(body) : undefined });
+  if (!r.ok) throw new Error('Agent ' + r.status);
+  return r.json();
 }
-function padPoint() {
-  if (!G.px && !G.py && S.display) { G.px = S.display.getWidth() / 2; G.py = S.display.getHeight() / 2; }
-  return { x: G.px, y: G.py };
-}
 
-el.touch.addEventListener('touchstart', (e) => {
-  e.preventDefault();
-  for (const t of e.changedTouches) G.pts.set(t.identifier, { x: t.clientX, y: t.clientY });
-  const pts = [...G.pts.values()];
-  if (pts.length === 1) {
-    G.mode = 'pending'; G.sx = pts[0].x; G.sy = pts[0].y; G.lx = pts[0].x; G.ly = pts[0].y; G.st = Date.now(); G.moved = false;
-    clearTimeout(G.timer);
-    if (S.touchMode !== 'pad') { const q0 = remoteXY(pts[0].x, pts[0].y); mouseSend(q0.x, q0.y); } // Zeiger vorab hinbewegen: Cursorform (Textfeld?) aktualisiert sich
-    G.timer = setTimeout(() => { if (G.mode === 'pending') { G.mode = 'long'; if (navigator.vibrate) navigator.vibrate(15); } }, 520);
-  } else if (pts.length === 2) {
-    clearTimeout(G.timer);
-    if (G.pressed) { const p = remoteXY(G.lx, G.ly); mouseSend(p.x, p.y); G.pressed = false; }
-    G.mode = 'two'; G.d0 = dist2(pts[0], pts[1]); G.k0 = S.k; G.newK = S.k;
-    G.mid0 = mid2(pts[0], pts[1]); G.midLast = G.mid0; G.decided = null; G.scrollAcc = 0; G.moved = false; G.st = Date.now();
+export class RemoteSession extends Session {
+  constructor(conn, opts = {}) {
+    super({ id: opts.sid, conn, title: opts.title });
+    this.password = opts.password || null;         // nur im Arbeitsspeicher dieser Seite
+    this.client = null; this.tunnel = null; this.display = null; this.mouse = null;
+    this.connected = false; this.everConnected = false; this.intentional = false; this.fatal = false; this.disposed = false;
+    this.firstLogin = true; this.forceGuac = false; this.streamWorked = false; this.engine = 'guac';
+    this.gen = 0;                                  // zaehlt jeden Verbindungsversuch: spaete Antworten eines alten Versuchs werden verworfen
+    this.k = clamp(store.get('k.' + conn.id, store.get('k', pcDefaultK())), 0.35, 1.8);   // Remote-Pixel pro Handy-Pixel (kleiner = Inhalt groesser), je Verbindung gemerkt
+    this.lastSent = { w: 0, h: 0 }; this.gate = new SizeGate();
+    this.retry = 0; this.retryTimer = null; this.resizeTimer = null; this.connectTimer = null; this.toastTimer = null; this.zoomTimer = null;
+    this.connectedAt = 0; this.connectStarted = 0; this.frameSeen = false;
+    this.cursor = { ibeam: false };
+    this.mods = { ctrl: 'off', alt: 'off', shift: 'off', super: 'off' };
+    this.keyChain = Promise.resolve();
+    this.actOn = {};
+    this.clipText = '';
+    this.xferAbort = null; this.xferCancelExtra = null; this.remoteItem = { image: null, imageUrl: null, files: null };
+    this.counts = { instr: 0 };                    // Zaehler fuer Tests (Anweisungen von guacd)
+    this.stageW = 0; this.stageH = 0; this.lastStage = null;
+    this.W = { available: false, list: [], mode: 'desktop', timer: null, lastCls: null, candCls: null, candN: 0, profileAt: 0, apps: null };
+    this.winSig = '';
+    this.G = { pts: new Map(), mode: 'idle', timer: null, sx: 0, sy: 0, st: 0, lx: 0, ly: 0, d0: 0, k0: 0, mid0: null, midLast: null,
+      decided: null, scrollAcc: 0, pressed: false, px: 0, py: 0, newK: 0, moved: false };
+    this.buildDom();
+    this.wireTouch();
+    this.wireUi();
+    this.wireDrop();
+    this.setState('disconnected', 'Noch nicht verbunden');
   }
-}, { passive: false });
 
-el.touch.addEventListener('touchmove', (e) => {
-  e.preventDefault();
-  for (const t of e.changedTouches) if (G.pts.has(t.identifier)) G.pts.set(t.identifier, { x: t.clientX, y: t.clientY });
-  const pts = [...G.pts.values()];
-  if (pts.length === 1 && (G.mode === 'pending' || G.mode === 'long' || G.mode === 'drag' || G.mode === 'pad')) {
-    const p = pts[0];
-    const moved = Math.hypot(p.x - G.sx, p.y - G.sy);
-    if (G.mode === 'pending' && moved > 10) {
-      clearTimeout(G.timer);
-      if (S.touchMode === 'pad') { G.mode = 'pad'; } else { G.mode = 'drag'; const s0 = remoteXY(G.sx, G.sy); mouseSend(s0.x, s0.y); mouseSend(s0.x, s0.y, true); G.pressed = true; }
-    } else if (G.mode === 'long' && moved > 10) {
-      G.mode = 'drag';
-      if (S.touchMode === 'pad') { const q = padPoint(); mouseSend(q.x, q.y, true); } else { const s0 = remoteXY(G.sx, G.sy); mouseSend(s0.x, s0.y); mouseSend(s0.x, s0.y, true); }
-      G.pressed = true;
-    }
-    if (G.mode === 'drag' || G.mode === 'pad') {
-      G.moved = true;
-      if (S.touchMode === 'pad') {
-        const s = S.display ? S.display.getScale() : 1;
-        padPoint();
-        G.px += ((p.x - G.lx) / s) * 1.6; G.py += ((p.y - G.ly) / s) * 1.6;
-        G.px = clamp(G.px, 0, S.display ? S.display.getWidth() : 0); G.py = clamp(G.py, 0, S.display ? S.display.getHeight() : 0);
-        mouseSend(G.px, G.py, G.pressed);
-      } else {
-        const q = remoteXY(p.x, p.y); mouseSend(q.x, q.y, true);
-      }
-    }
-    G.lx = p.x; G.ly = p.y;
-  } else if (pts.length === 2 && G.mode === 'two') {
-    const d = dist2(pts[0], pts[1]); const m = mid2(pts[0], pts[1]);
-    if (!G.decided) {
-      if (Math.abs(d - G.d0) > 28) G.decided = 'pinch';
-      else if (Math.hypot(m.x - G.mid0.x, m.y - G.mid0.y) > 18) G.decided = 'scroll';
-    }
-    if (G.decided) G.moved = true;
-    if (G.decided === 'pinch' && d > 10) {
-      G.newK = clamp(G.k0 * (G.d0 / d), 0.35, 1.8);
-      toast('Anzeige ' + Math.round(100 / G.newK) + ' %', 600);
-    } else if (G.decided === 'scroll') {
-      const dy = m.y - G.midLast.y; G.midLast = m; G.scrollAcc += dy;
-      const q = remoteXY(m.x, m.y);
-      while (Math.abs(G.scrollAcc) >= 34) {
-        const down = G.scrollAcc < 0; // Finger nach oben = nach unten scrollen
-        mouseSend(q.x, q.y, false, false, false, !down, down);
-        mouseSend(q.x, q.y, false, false, false, false, false);
-        G.scrollAcc += down ? 34 : -34;
-      }
-    }
+  /* ---------- Aufbau der Ansicht aus der Vorlage ---------- */
+  buildDom() {
+    const root = $('#svTemplate').content.firstElementChild.cloneNode(true);
+    const q = (c) => root.querySelector('.' + c);
+    this.element = root;
+    this.el = {
+      topbar: q('sv-topbar'), rowWin: q('sv-rowWin'), winSheet: q('sv-winSheet'), stage: q('sv-stage'), display: q('sv-display'), touch: q('sv-touch'),
+      toast: q('sv-toast'), zoomPop: q('sv-zoom'), overlay: q('sv-overlay'), overlayMsg: q('sv-overlayMsg'), spinner: q('sv-spinner'),
+      reconnectBtn: q('sv-reconnect'), closeBtn: q('sv-close'), scrim: q('sv-scrim'), dock: q('sv-dock'), menu: q('sv-menu'),
+      rowsTop: q('sv-rowsTop'), rowsBottom: q('sv-rowsBottom'), xfer: q('sv-xfer'), xferText: q('sv-xferText'), xferCancel: q('sv-xferCancel'),
+    };
+    renderIcons(root);
+    this.lay = new LayoutLog({ emit: (evt, d) => this.dbg(evt, d), parts: { app: $('#app'), stage: this.el.stage, topbar: this.el.topbar, dock: this.el.dock }, state: () => ({ kbOpen }), visible: LAYDEBUG });
+    this.ro = new ResizeObserver(() => this.onStageResize());
+    this.ro.observe(this.el.stage);
+    this.updateMenuLabels();
+    this.renderRows();
   }
-}, { passive: false });
 
-async function endTouch(e) {
-  e.preventDefault();
-  const before = G.pts.size;
-  for (const t of e.changedTouches) G.pts.delete(t.identifier);
-  if (before === 1 && G.pts.size === 0) {
-    clearTimeout(G.timer);
-    const dur = Date.now() - G.st;
-    if (G.mode === 'pending' && dur < 380) {
-      // Tippen auf ein Textfeld (Zeiger ist ein I-Balken): Tastatur gleich in der Geste oeffnen
-      if (tapLogN++ < 40) dbg('tap', { ibeam: S.cursor.ibeam, kb: kbOpen, auto: S.autoKb, cur: S.cursor.sig || '' });
-      if (S.autoKb && S.cursor.ibeam && !kbOpen) { dbg('autokb', { when: 'tap' }); el.kb.blur(); el.kb.focus(); }
-      if (S.touchMode === 'pad') { const q = padPoint(); await clickAt(q.x, q.y, 'left'); }
-      else { const q = remoteXY(G.sx, G.sy); await clickAt(q.x, q.y, 'left'); }
-      // Zeigerform kommt erst nach der Mausbewegung an. Electron-Programme wie Claude liefern den I-Balken erst nach rund einer
-      // Sekunde, deshalb ein Zeitfenster statt einer einzelnen Pruefung.
-      const t0 = Date.now();
-      const poll = () => {
-        if (!S.autoKb || !S.connected || kbOpen || Date.now() - t0 > 1600) return;
-        if (S.cursor.ibeam) { dbg('autokb', { when: 'late', ms: Date.now() - t0 }); el.kb.focus(); return; }
-        setTimeout(poll, 100);
+  wireUi() {
+    const e = this.el;
+    // Tippen auf Dock-Knoepfe darf den Fokus (und damit die Tastatur) nicht wegnehmen
+    e.dock.addEventListener('mousedown', (ev) => { if (ev.target.closest('.hb, .k, .acch, .chip, button')) ev.preventDefault(); });
+    e.winSheet.addEventListener('mousedown', (ev) => ev.preventDefault());
+    // weder Fenster noch Hintergrund duerfen den Fokus nehmen: die Tastatur bleibt offen
+    e.menu.addEventListener('mousedown', (ev) => ev.preventDefault());
+    e.scrim.addEventListener('mousedown', (ev) => ev.preventDefault());
+    e.scrim.addEventListener('click', () => { this.closeMenu(); this.closeWinSheet(); });
+    e.menu.addEventListener('click', (ev) => this.onMenuClick(ev));
+    e.reconnectBtn.addEventListener('click', () => { this.retry = 0; if (this.hasCredentials()) this.start(); else this.requestClose(); });
+    e.closeBtn.addEventListener('click', () => this.requestClose());
+    // Desktop-Browser (Maus, echte Tastatur): ein Klick ins Bild holt die Sitzung nach vorn und gibt ihr die Tasten
+    e.touch.addEventListener('mousedown', () => { if (cur() !== this) Sessions.activate(this.id); focusKbForHardware(); });
+  }
+
+  dbg(evt, data = {}) { dbg(evt, data); }
+  q(sel) { return this.element.querySelector(sel); }
+  toast(msg, ms = 1400, onTap = null) {
+    const t = this.el.toast;
+    t.textContent = msg; t.classList.add('show');
+    t.classList.toggle('tap', !!onTap); t.onclick = onTap ? () => { t.classList.remove('show'); onTap(); } : null;
+    clearTimeout(this.toastTimer); this.toastTimer = setTimeout(() => this.el.toast.classList.remove('show'), ms);
+  }
+  hasCredentials() { return !!(this.password || this.conn.stored); }   // Passwort im Speicher des Browsers oder auf dem Server gespeichert
+  /** Gibt es eine andere offene Sitzung zum selben Desktop-Ziel (Adresse, Port, Benutzer)? Ein RDP-Ziel gibt je Benutzer nur einen Desktop her:
+      die zweite Verbindung uebernimmt ihn, die erste reisst ab. Ein Abriss mit so einer Schwestersitzung ist daher meist eine Uebernahme, kein Fehler. */
+  hasSibling() { return this.kind === 'desktop' && !!this.conn.target && Sessions.list().some((s) => s !== this && s.kind === 'desktop' && s.conn.target === this.conn.target); }
+  takenBySibling() {
+    this.fatal = true; this.connected = false; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer);
+    this.setState('taken', 'Übernommen');
+    this.showOverlay('Eine andere Sitzung zu diesem Ziel hat den Desktop übernommen: ein RDP-Ziel gibt je Benutzer nur einen Desktop her. „Neu verbinden“ holt ihn hierher zurück (dann reißt die andere ab).');
+  }
+
+  /* ---------- Vertrag: einhaengen, sichtbar, Fokus, aufraeumen ---------- */
+  mount(container) { container.appendChild(this.element); }
+  unmount() { this.element.remove(); }
+  resize() { this.scheduleSize(60); this.fitDisplay(); }
+  focus() { focusKbForHardware(); }
+  blur() { if (cur() === this && kbFocused()) el.kb.blur(); }
+  /** Im Hintergrund (nicht sichtbar): Ansicht aus, keine Groessenmeldungen, Fensterleiste ruht, der Stream pausiert (Server kodiert nicht, Browser dekodiert nicht). */
+  setVisible(on) {
+    on = !!on;
+    this.visible = on; this.element.hidden = !on;
+    this.applyPause();
+    if (on) {
+      this.fitDisplay(); this.scheduleSize(80); if (this.W.available) this.pollWindows(); this.refreshAll();
+      if (cur() === this && prevValue) { setKbVal(''); prevValue = ''; }       // Text, der fuer die vorige Sitzung im Eingabefeld stand, nicht in diese uebertragen
+    }
+    else { this.closeMenu(); this.closeWinSheet(); }
+  }
+  applyPause() { if (this.client instanceof StreamClient) this.client.setPaused(!this.visible || document.hidden); }
+  refreshAll() { this.updateMenuLabels(); this.renderRows(); }
+  dispose() {
+    this.disposed = true; this.intentional = true;
+    this.teardown();
+    this.ro.disconnect(); this.lay.dispose();
+    clearTimeout(this.toastTimer); clearTimeout(this.zoomTimer);
+    this.password = null;
+    this.unmount();
+  }
+  disconnect() { this.intentional = true; this.teardown(); this.setState('disconnected', 'Getrennt'); }
+  /** Seite war im Hintergrund oder gesperrt (Handy): die Verbindung ist danach meist tot, das Bild aber noch da. Beim Zurueckkommen neu verbinden. */
+  onPageVisible(away) {
+    this.applyPause();
+    if (!this.hasCredentials() || this.intentional || !this.everConnected || this.fatal) return;
+    if (this.client && !this.connected && Date.now() - this.connectStarted < 10000) return;   // es wird gerade verbunden: nicht noch einmal von vorn
+    if (!this.connected || away > 4000) { this.retry = 0; this.start(); }
+  }
+
+  /* ---------- Ueberlagerung (Verbinden, Fehler) ---------- */
+  showOverlay(msg, canRetry = true) {
+    const e = this.el; e.overlayMsg.textContent = msg; e.spinner.hidden = true; e.overlay.hidden = false; e.reconnectBtn.hidden = !canRetry; e.closeBtn.hidden = false;
+  }
+  showBusy(msg) { // Fortschritt mit Animation, ohne Knoepfe
+    const e = this.el; e.overlayMsg.textContent = msg; e.spinner.hidden = false; e.overlay.hidden = false; e.reconnectBtn.hidden = true; e.closeBtn.hidden = true;
+  }
+
+  /* =====================================================================
+   *  Verbindung
+   * ===================================================================== */
+  /** Vertrag: startet die Verbindung (ein neues Passwort ersetzt das alte). Fehler zeigt die Sitzung selbst, hier gibt es keine Ausnahme. */
+  async connect(password) {
+    if (password) this.password = password;
+    this.retry = 0; this.everConnected = false; this.firstLogin = true; this.forceGuac = false; this.streamWorked = false;
+    return this.start();
+  }
+
+  teardown() {
+    // Erst den alten Client abkoppeln, dann trennen: sein "getrennt"-Ereignis kommt sofort und wuerde sonst (this.client waere noch er selbst)
+    // einen neuen Wiederholungs-Timer setzen, der die frische Verbindung nach 1,5/3/4,5 s wieder abschiesst.
+    this.gen++;
+    const old = this.client;
+    this.client = null; this.tunnel = null; this.display = null; this.mouse = null; this.connected = false;
+    try { old && old.disconnect(); } catch { /* egal */ }
+    clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); clearTimeout(this.resizeTimer);
+    this.stopWindowBar(); this.el.topbar.hidden = true;
+    this.el.display.replaceChildren();
+    this.resetMods();
+  }
+
+  /** Der Stream kam nicht zustande (es wurde nie ein Bild gezeichnet): einmal mit Guacamole neu verbinden, statt einen Fehler zu zeigen.
+      Gilt bis die Verbindung verlassen wird. Keine Ausweichung bei Fehlern, die Guacamole genauso haette (Anmeldung abgelehnt, uebernommen, zu viele). */
+  fallBackFromStream(client, err) {
+    if (!(client instanceof StreamClient)) return false;
+    if (client.drawn) this.streamWorked = true;
+    if (this.streamWorked || this.forceGuac || this.intentional || this.client !== client) return false;
+    if (err && [513, 769, 777, 797].includes(err.code)) return false;
+    this.forceGuac = true;
+    this.dbg('stream-fallback', { code: err ? err.code : 0, message: err && err.message ? String(err.message).slice(0, 80) : '' });
+    this.toast('Der schnelle Stream geht hier nicht, verbinde mit Guacamole …', 3200);
+    this.teardown();                       // den Stream sofort abkoppeln: seine spaeteren Ereignisse zaehlen nicht mehr
+    setTimeout(() => { if (!this.disposed) this.start(); }, 0);
+    return true;
+  }
+
+  async start() {
+    this.intentional = false; this.fatal = false; this.connectStarted = Date.now();
+    this.teardown();
+    const gen = this.gen;
+    const stale = () => gen !== this.gen || this.disposed;
+    this.setState(this.everConnected ? 'reconnecting' : 'connecting', this.everConnected ? 'Verbinde neu …' : 'Verbinde …');
+    this.showBusy(this.everConnected ? 'Verbinde neu …' : 'Verbinde …');
+    // Hatte der letzte Desktop dieser Verbindung eine Fensterleiste, den Platz dafuer schon jetzt freihalten: sonst schrumpft die Stage kurz nach dem Verbinden
+    // und die VM bekommt gleich nach dem Start eine zweite Groesse.
+    this.el.topbar.hidden = !(this.conn.kind === 'desktop' && store.get('winbar.' + this.conn.id, store.get('winbar', false)));
+    await sleep(30); // Layout setzen, damit die Stage-Groesse stimmt
+    if (stale()) return;
+    // Eine noch offene Tastatur (Fokus aus der vorigen Sitzung) darf die Groesse nicht bestimmen: sonst bekommt die VM ein flaches Bild
+    const mine = cur() === this;
+    if (mine && kbFocused()) el.kb.blur();
+    for (let i = 0; i < 12 && kbOpen && mine; i++) await sleep(50);
+    if (stale()) return;
+    const { w, h } = this.computeRemote();
+    // Welche Engine: der Test-Schalter pd.engine (localStorage, JSON) hat Vorrang vor der Wahl der Verbindung; der eigene Stream (H.264 im Browser)
+    // nur fuer Desktops und nur, wenn der Browser ihn dekodieren kann; sonst Guacamole (auch nach einem misslungenen Stream, siehe fallBackFromStream)
+    const choice = this.forceGuac ? 'guac' : store.get('engine', null) || this.conn.engine || 'guac';
+    const wantStream = this.conn.kind === 'desktop' && choice === 'stream' && await StreamClient.supported();
+    if (stale()) return;
+    let ticket, engine = 'guac';
+    try {
+      const resp = await fetch('/api/remote/ticket', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, signal: AbortSignal.timeout(10000),
+        body: JSON.stringify({ connection: this.conn.id, sid: this.id, password: this.password || undefined, width: w, height: h, dpi: 96, engine: wantStream ? 'stream' : 'guac' }) });
+      const data = await resp.json().catch(() => ({}));
+      if (stale()) return;
+      if (resp.status === 401) return this.requestClose('Die Sitzung ist abgelaufen. Bitte neu anmelden.', 'auth');
+      if (!resp.ok) throw new Error(data.error || 'Fehler ' + resp.status);
+      ticket = data.ticket; engine = data.engine || 'guac';
+    } catch (e) {
+      if (stale()) return;
+      const msg = e.name === 'TimeoutError' || e.name === 'TypeError' ? 'Keine Verbindung zum Server. Netz prüfen.' : e.message;
+      if (!this.everConnected) return this.requestClose(msg);
+      this.setState('error', 'Fehler');
+      return this.showOverlay(msg);
+    }
+
+    const wsBase = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+    const isStream = engine === 'stream';
+    const tunnel = isStream ? null : new Guacamole.WebSocketTunnel(wsBase + '/api/remote/ws');
+    const client = isStream ? new StreamClient(wsBase + '/api/remote/screen') : new Guacamole.Client(tunnel);
+    this.engine = engine;
+    const display = client.getDisplay();
+    this.tunnel = tunnel; this.client = client; this.display = display; this.lastSent = { w, h }; this.gate = new SizeGate();
+    this.lay.note('conn', { engine });
+    this.el.display.appendChild(display.getElement());
+    display.onresize = () => { this.fitDisplay(); const dw = display.getWidth(), dh = display.getHeight(); this.lay.note('remote', { w: dw, h: dh }); this.dbg('remote-size', { w: dw, h: dh }); };
+    // Textfeld-Erkennung: Der Mauszeiger der VM wird zum "I-Balken" (schmal, hoch, Hotspot mittig)
+    display.oncursor = (canvas, hx, hy) => {
+      const c = cursorInfo(canvas, hx, hy);
+      if (c.sig !== this.cursor.sig && cursorLogN++ < 40) this.dbg('cursor', { w: c.w, h: c.h, bw: c.bw, bh: c.bh, hx: c.hx, hy: c.hy, ibeam: c.ibeam });
+      this.cursor = c;
+    };
+    if (tunnel) { const inner = tunnel.oninstruction; tunnel.oninstruction = (o, p) => { this.counts.instr++; inner(o, p); }; }   // nur zaehlen (Tests)
+
+    client.onstatechange = (st) => {
+      if (this.client !== client) return;
+      if (st === 3) { // verbunden
+        clearTimeout(this.connectTimer);
+        this.connected = true; this.everConnected = true; this.connectedAt = Date.now(); this.frameSeen = false;
+        this.setState('connected', 'Verbunden');
+        if (this.hasSibling()) this.toast('Hinweis: Eine andere Sitzung läuft zum selben Ziel und Benutzer. Ein RDP-Ziel gibt je Benutzer nur einen Desktop her, die Sitzungen übernehmen ihn gegenseitig.', 6000);
+        this.startWindowBar(); this.fitDisplay(); this.pushSize(); this.waitForFrame(client); this.applyPause();
+        if (cur() === this) focusKbForHardware();
+        if (isStream) setTimeout(() => { if (this.client === client && !client.drawn) this.fallBackFromStream(client); }, 10000);   // Groesse gemeldet, aber nie ein Bild: der Dekodierer geht nicht
+        // Die Zaehler der Wiederholung gelten erst als zurueckgesetzt, wenn die Verbindung wirklich haelt (sonst endlos: verbunden, sofort getrennt, neu ...)
+        setTimeout(() => { if (this.client === client && this.connected) { this.firstLogin = false; this.retry = 0; } }, 12000);
+      } else if (st === 5) { // getrennt
+        this.connected = false;
+        if (!client.closing && this.fallBackFromStream(client)) return;   // ohne Fehlermeldung getrennt, bevor ein Bild kam
+        if (this.intentional || this.fatal) return;
+        if (!this.everConnected) return; // Fehler wird von onerror gemeldet
+        if (this.hasSibling()) return this.takenBySibling();
+        // sofort nach dem Anmelden getrennt = xrdp hat das Passwort abgelehnt: nicht wiederholen
+        if (this.firstLogin && Date.now() - this.connectedAt < 12000) return this.requestClose('Anmeldung fehlgeschlagen. Bitte Passwort prüfen.');
+        this.scheduleReconnect();
+      }
+    };
+    client.onerror = (err) => {
+      if (this.client !== client) return;
+      // guacd meldet meist nur "Aborted. See logs."; der Statuscode sagt mehr
+      if (this.fallBackFromStream(client, err)) return;
+      const code = err && err.code;
+      const known = ERROR_TEXT[code];
+      const msg = known || ((err && err.message) ? err.message : 'Verbindungsfehler');
+      this.connected = false;
+      if (code === 777) { this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); this.setState('taken', 'Übernommen'); return this.showOverlay(msg); }   // anderswo uebernommen: nicht zurueckholen, sonst streiten sich zwei Fenster
+      if (code === 797) { this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); return this.requestClose(msg); }   // Obergrenze der Sitzungen: Meldung des Servers, Sitzung zu
+      if (!this.everConnected) this.requestClose(known || 'Verbindung nicht möglich: ' + msg);
+      else if (this.hasSibling()) this.takenBySibling();
+      else if (this.firstLogin && Date.now() - this.connectedAt < 12000) this.requestClose('Anmeldung fehlgeschlagen. Bitte Passwort prüfen.');
+      else { this.setState('error', 'Fehler'); this.showOverlay(msg); }
+    };
+    if (tunnel) tunnel.onerror = (st) => {
+      if (this.client !== client) return;
+      if (!this.everConnected) return this.requestClose('Keine Verbindung zum Server: ' + (st && st.message ? st.message : ''));
+      // Die Leitung riss ab (Netz weg), ohne dass guacd etwas gemeldet hat: nur diese Sitzung verbindet neu, die anderen laufen weiter
+      if (this.connected && !this.intentional && !this.fatal) { this.connected = false; this.scheduleReconnect(); }
+    };
+    client.onclipboard = (stream, mimetype) => {
+      if (!/^text\//.test(mimetype)) return;
+      const reader = new Guacamole.StringReader(stream);
+      let data = '';
+      reader.ontext = (t) => { data += t; };
+      reader.onend = () => {
+        this.clipText = data;
+        if (cur() === this) el.remoteClip.value = data;
+        // Strg+C / Strg+X in der VM: Text gleich in die Zwischenablage dieses Browsers legen (braucht HTTPS oder localhost und eine eben erfolgte Eingabe).
+        // Nur fuer die aktive Sitzung: eine im Hintergrund darf die Zwischenablage nicht ueberschreiben.
+        if (cur() !== this) return;
+        if (navigator.clipboard && navigator.clipboard.writeText && document.hasFocus()) navigator.clipboard.writeText(data).then(() => this.toast('Kopiert', 1200), () => this.toast('Text aus der VM kopiert (Symbol Zwischenablage)', 2200));
+        else this.toast('Text aus der VM kopiert (Symbol Zwischenablage)', 2200);
       };
-      setTimeout(poll, 120);
-    } else if (G.mode === 'long') {
-      if (S.touchMode === 'pad') { const q = padPoint(); await clickAt(q.x, q.y, 'right'); }
-      else { const q = remoteXY(G.sx, G.sy); await clickAt(q.x, q.y, 'right'); }
-    } else if (G.mode === 'drag' || G.mode === 'pad') {
-      if (G.pressed) {
-        if (S.touchMode === 'pad') mouseSend(G.px, G.py, false); else { const q = remoteXY(G.lx, G.ly); mouseSend(q.x, q.y, false); }
-        G.pressed = false; consumeOnce();
+    };
+
+    // Bilder und Dateien: der eigene Stream meldet sie selbst; bei Guacamole holt der Knopf im Dialog das Bild ueber den Helfer
+    if (client.nativeClipboard) {
+      client.onclipimage = (format, bytes) => this.onRemoteImage(format, bytes);
+      client.onclipfiles = (batch, files) => this.onRemoteFiles(batch, files);
+      client.onclipresult = (r) => { if (r.text) this.toast(r.text, 3600); };
+    }
+
+    this.setupMouse(client, display);
+    client.connect('ticket=' + encodeURIComponent(ticket));
+    // kommt innerhalb von 20 s keine Verbindung zustande: nicht ewig "Verbinde ..." zeigen
+    clearTimeout(this.connectTimer);
+    this.connectTimer = setTimeout(() => {
+      if (this.client !== client || this.connected) return;
+      if (this.fallBackFromStream(client)) return;
+      this.fatal = true; try { client.disconnect(); } catch { /* egal */ }
+      this.setState('error', 'Keine Verbindung');
+      this.showOverlay('Die Verbindung kommt nicht zustande. Netz prüfen und „Neu verbinden“ tippen.');
+    }, 20000);
+  }
+
+  /* Nach dem Verbinden bleibt die Ladeanzeige stehen, bis wirklich ein Bild da ist (sonst ist alles schwarz).
+     Kommt keins, fordert eine kleine Groessenaenderung vom Server ein neues Vollbild an. */
+  nudgeSize(delta = 2) {
+    if (!this.client || !this.connected) return;
+    const { w, h } = this.computeRemote();
+    this.sendRemoteSize(w, h - delta, 'nudge');
+    setTimeout(() => { if (this.client && this.connected) this.sendRemoteSize(w, h, 'nudge'); }, 350);
+  }
+  waitForFrame(client) {
+    const started = Date.now();
+    let nudges = 0, probes = 0, sizedAt = 0, released = false;
+    this.showBusy('Bild wird geladen …');
+    const probe = document.createElement('canvas'); probe.width = probe.height = 8;
+    const pc = probe.getContext('2d', { willReadFrequently: true });
+    let seen = { w: 0, h: 0, max: 0 };
+    const hasContent = () => {
+      try {
+        const cv = this.display.flatten();                       // alle Ebenen zusammengesetzt (die Standardebene allein kann leer sein)
+        seen = { w: cv.width, h: cv.height, max: 0 };
+        if (!cv.width || !cv.height) return false;
+        pc.clearRect(0, 0, 8, 8); pc.drawImage(cv, 0, 0, 8, 8);
+        const d = pc.getImageData(0, 0, 8, 8).data;
+        for (let i = 0; i < d.length; i += 4) seen.max = Math.max(seen.max, d[i], d[i + 1], d[i + 2]);
+        return seen.max > 10;
+      } catch { return true; }                                // Pruefung nicht moeglich: nicht blockieren
+    };
+    // Die Ladeanzeige geht weg, sobald die VM eine Bildgroesse gemeldet hat (oder nach 4 s): Bedienung und Tastenleiste sollen
+    // nicht auf ein "nicht schwarzes" Bild warten. Die Anstupser laufen danach unsichtbar weiter, bis Inhalt da ist.
+    const release = (why) => { if (released) return; released = true; this.dbg('overlay-weg', { ms: Date.now() - started, why }); this.el.overlay.hidden = true; this.el.spinner.hidden = true; };
+    const tick = () => {
+      if (this.client !== client || !this.connected) return;
+      const age = Date.now() - started;
+      const ok = hasContent();
+      if (seen.w > 0 && !sizedAt) sizedAt = Date.now();
+      if (probes++ % 4 === 0 && probes < 120) this.dbg('frameprobe', { ms: age, nudges, ...seen });
+      if (sizedAt || age > 4000) release(sizedAt ? 'groesse' : 'zeit');
+      if (ok) this.frameSeen = true;
+      if (ok || age > 25000) { this.frameSeen = true; this.dbg('firstframe', { ms: age, nudges, ok, ...seen }); release('bild'); return; }
+      // Anstupsen (die VM zeichnet nach einer echten Groessenaenderung alles neu) erst, wenn es eine Bildgroesse gibt:
+      // vorher geht die Aenderung ins Leere, weil die VM noch gar nicht verbunden ist
+      if (sizedAt && this.engine !== 'stream') {
+        const since = Date.now() - sizedAt;
+        // erst warten (das Ziel braucht beim Wiederverbinden mehrere Sekunden), dann hoechstens zwei sanfte Anstupser
+        if (nudges === 0 && since > 8000) { nudges = 1; this.nudgeSize(2); }
+        else if (nudges === 1 && since > 16000) { nudges = 2; this.nudgeSize(64); }
+      }
+      setTimeout(tick, 250);
+    };
+    tick();
+  }
+
+  scheduleReconnect() {
+    if (this.retry >= 3) { this.setState('disconnected', 'Getrennt'); this.showOverlay('Verbindung getrennt. Läuft die Sitzung noch in einem anderen Fenster oder auf einem anderen Gerät?'); return; }
+    this.retry += 1;
+    const wait = 1500 * this.retry;
+    this.setState('reconnecting', 'Verbindung getrennt, neuer Versuch …');
+    this.showBusy(`Verbindung getrennt – neuer Versuch in ${Math.round(wait / 1000)} s …`);
+    clearTimeout(this.retryTimer);
+    this.retryTimer = setTimeout(() => { if (!this.intentional && !this.disposed && this.hasCredentials()) this.start(); }, wait);
+  }
+
+  /* =====================================================================
+   *  Groesse: Remote-Aufloesung folgt dem Fenster (Tastatur, Drehen, Zoom)
+   * ===================================================================== */
+  /** Die Bildflaeche; ist die Sitzung gerade versteckt (Groesse 0), die zuletzt gemessene, damit eine Sitzung im Hintergrund nicht winzig verbindet. */
+  stageSize() {
+    const r = this.el.stage.getBoundingClientRect();
+    if (r.width >= 50 && r.height >= 50) return { w: r.width, h: r.height };
+    return this.lastStage || lastStageSize;
+  }
+  computeRemote() {
+    const r = this.stageSize();
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.max(400, Math.floor((r.w * dpr * this.k) / 4) * 4);
+    const h = Math.max(300, Math.floor((r.h * dpr * this.k) / 2) * 2);
+    return { w, h };
+  }
+  fitDisplay() {
+    if (!this.display) return;
+    const rw = this.display.getWidth();
+    if (!rw) return;
+    const r = this.el.stage.getBoundingClientRect();
+    if (r.width < 50) return;                       // versteckt: nichts zu skalieren
+    // Das Bild der VM hat nach dem Abrunden auf Vielfache von 4 ein paar Pixel weniger als das Fenster; wuerde es darauf gestreckt, laege es um
+    // Bruchteile eines Pixels daneben und waere ueberall weich. Wo es 1:1 auf den Schirm passt (Faktor 1 / devicePixelRatio), bleibt es genau dort.
+    const dpr = window.devicePixelRatio || 1;
+    let scale = r.width / rw;
+    if (Math.abs(scale * dpr - 1) < 0.02) scale = 1 / dpr;
+    this.display.scale(scale);
+  }
+  // Wann die Groesse wirklich an die VM geht, entscheidet SizeGate (layoutlog.js): nur bei echtem Unterschied (8 x 16 Geraetepixel Toleranz),
+  // nicht waehrend die Tastatur faehrt, hoechstens einmal pro Sekunde und mit Notbremse (4 Aenderungen in 20 s, dann 5 s Pause).
+  // Jede Aenderung baut das Bild der VM neu auf; so landet das Handy auch dann nicht in einer Dauerschleife, wenn ein Geraet Groessen
+  // in schneller Folge meldet (Adressleiste, Tastatur-Animation, Systemleisten). Eine versteckte Sitzung meldet gar keine Groesse.
+  sendRemoteSize(w, h, why) {
+    this.lastSent = { w, h };
+    this.lay.note('send', { w, h });
+    this.dbg('sendSize', { w, h, k: this.k, dpr: window.devicePixelRatio, why });
+    this.client.sendSize(w, h);
+  }
+  pushSize(force = false) {
+    if (!this.client || !this.connected || !this.visible) return;
+    // Waehrend der VM ihr erstes Bild aufbaut, keine Groessenaenderungen schicken: jede startet beim Ziel das Anzeigen neu und verzoegert das erste Bild
+    // (die Groesse steht schon im Verbindungsaufbau). Spaetestens nach 6 s geht es normal weiter.
+    if (!this.frameSeen && Date.now() - this.connectedAt < 6000) { this.scheduleSize(); return; }
+    const want = this.computeRemote();
+    const now = Date.now();
+    const d = this.gate.decide(now, want, this.lastSent, { force, holdUntil: S.sizeHoldUntil || 0 });
+    if (d.action === 'skip') return;
+    if (d.action === 'wait') {
+      if (d.why === 'storm') this.dbg('size-storm', { w: want.w, h: want.h, n: d.n });
+      this.scheduleSize(d.delay);
+      return;
+    }
+    this.gate.sent(now);
+    this.sendRemoteSize(want.w, want.h, force ? 'force' : 'fit');
+  }
+  scheduleSize(delay = 450) { clearTimeout(this.resizeTimer); this.resizeTimer = setTimeout(() => { this.pushSize(); this.fitDisplay(); }, delay); }
+  onStageResize() {
+    this.fitDisplay();
+    const r = this.el.stage.getBoundingClientRect();
+    if (r.width < 50 || r.height < 50) return;                                      // versteckt (display: none) oder noch nicht eingehaengt: keine neue Groesse
+    this.lastStage = { w: r.width, h: r.height }; lastStageSize = this.lastStage;
+    if (Math.abs(r.width - this.stageW) < 1 && Math.abs(r.height - this.stageH) < 1) return;    // nur ein Rundungs- oder Startsignal: keine neue Groesse
+    this.stageW = r.width; this.stageH = r.height;
+    this.lay.note('stage', { w: Math.round(r.width), h: Math.round(r.height) });
+    this.lay.layout('stage');
+    this.scheduleSize();
+  }
+
+  zoomPercent() { return Math.round(100 / this.k); }
+  showZoomPop() {                                   // Zoomstufe nur kurz einblenden
+    this.el.zoomPop.textContent = this.zoomPercent() + ' %'; this.el.zoomPop.classList.add('show');
+    clearTimeout(this.zoomTimer); this.zoomTimer = setTimeout(() => this.el.zoomPop.classList.remove('show'), 900);
+  }
+  setK(k, announce = true) {
+    this.k = clamp(k, 0.35, 1.8); store.set('k.' + this.conn.id, this.k);          // je Verbindung gemerkt
+    if (announce) this.showZoomPop();
+    this.scheduleSize();
+  }
+
+  /* =====================================================================
+   *  Fensterleiste und Programm-Modus (braucht den Agenten auf dem Zielrechner)
+   * ===================================================================== */
+  async startWindowBar() {
+    this.stopWindowBar();
+    const gen = this.gen, W = this.W;
+    W.available = false;
+    // Der Agent gehoert zur Maschine, neben der der Server laeuft: nur fuer Desktop-Verbindungen anbieten
+    if (this.conn.kind === 'desktop') { try { const h = await (await fetch('/api/agent/health')).json(); W.available = !!h.available; } catch { W.available = false; } }
+    if (gen !== this.gen || this.disposed) return;
+    this.dbg('agent', { available: W.available });
+    if (this.conn.kind === 'desktop') store.set('winbar.' + this.conn.id, W.available);
+    this.renderWindows();
+    if (!W.available) return;
+    this.pollWindows(); W.timer = setInterval(() => this.pollWindows(), 2000);
+  }
+  stopWindowBar() { const W = this.W; clearInterval(W.timer); W.timer = null; W.list = []; W.lastCls = null; W.candCls = null; this.winSig = ''; }
+  async pollWindows() {
+    const W = this.W;
+    if (!this.connected || !W.available || document.hidden || !this.visible) return;     // im Hintergrund wird nicht abgefragt
+    const gen = this.gen;
+    try {
+      const d = await agent('/windows');
+      if (gen !== this.gen) return;
+      W.list = d.windows || []; W.mode = d.mode || 'desktop';
+      this.renderWindows(); this.applyProfile();
+    } catch { /* naechster Versuch */ }
+  }
+  // Ein Programm wird erst nach zwei Abfragen (4 s) in Folge als aktiv gewertet und der Wechsel der Anzeigegroesse haelt mindestens 8 s Abstand.
+  // Springt der Fokus der VM sonst zwischen zwei Programmen hin und her (Meldungsfenster, Menues, Tooltips), bekaeme die VM jedes Mal eine
+  // neue Aufloesung: der Bildschirm "zappelt".
+  applyProfile() {
+    const W = this.W;
+    if (W.mode !== 'apps') { W.lastCls = null; W.candCls = null; return; }
+    const act = W.list.find((w) => w.active); const cls = act ? act.class : null;
+    if (!cls || cls === W.lastCls) { W.candCls = null; return; }
+    if (W.candCls !== cls) { W.candCls = cls; W.candN = 1; } else W.candN += 1;
+    if (W.candN < PROFILE.stablePolls || Date.now() - (W.profileAt || 0) < PROFILE.minGap) return;
+    W.candCls = null; W.profileAt = Date.now();
+    W.lastCls = cls;
+    const k = profiles[cls] ?? defaultProfile(cls);
+    if (k && Math.abs(k - this.k) > 0.02) { this.setK(k, false); this.toast('Anzeige für ' + (act.app || cls) + ' angepasst', 1800); }
+  }
+  rememberProfile() {                               // Zoom von Hand: fuer das aktive Programm merken (nur im Programm-Modus)
+    if (this.W.mode !== 'apps' || !this.W.lastCls) return;
+    profiles[this.W.lastCls] = this.k; store.set('profiles', profiles);
+  }
+  renderWindows() {
+    const W = this.W, row = this.el.rowWin, topbar = this.el.topbar;
+    if (!W.available) { topbar.hidden = true; this.winSig = ''; return; }
+    // Die Leiste wird alle 2 s abgefragt. Nur neu aufbauen, wenn sich etwas geaendert hat: sonst springt sie waehrenddessen an den Anfang
+    // (Scrollstand weg), Symbole flackern und ein gerade begonnener Fingertipp trifft ein schon ersetztes Element.
+    const sig = W.mode + '|' + W.list.map((w) => [w.id, w.active ? 1 : 0, w.minimized ? 1 : 0, w.title, w.app, (w.icon || '').length].join(':')).join('|');
+    if (!topbar.hidden && sig === this.winSig) return;
+    this.winSig = sig;
+    const keepScroll = row.scrollLeft;
+    topbar.hidden = false; row.replaceChildren();
+    const mode = document.createElement('div'); mode.className = 'chip mode'; mode.setAttribute('role', 'button');
+    mode.innerHTML = ico(W.mode === 'apps' ? 'apps' : 'desktop') + `<span>${W.mode === 'apps' ? 'Apps' : 'Desktop'}</span>`;
+    mode.addEventListener('click', () => this.toggleMode()); row.appendChild(mode);
+    for (const w of W.list) {
+      const c = document.createElement('div'); c.className = 'chip' + (w.active ? ' active' : '') + (w.minimized ? ' min' : ''); c.setAttribute('role', 'button');
+      const img = w.icon ? `<img alt="" src="data:image/png;base64,${w.icon}">` : '';
+      const t = document.createElement('span'); t.textContent = (w.title || w.app || '?').slice(0, 40);
+      c.innerHTML = img; c.appendChild(t);
+      let timer = null, longDone = false;
+      c.addEventListener('pointerdown', () => { longDone = false; timer = setTimeout(() => { longDone = true; this.openWinSheet(w); }, 480); });
+      const cancel = () => clearTimeout(timer);
+      c.addEventListener('pointerup', cancel); c.addEventListener('pointercancel', cancel); c.addEventListener('pointerleave', cancel);
+      c.addEventListener('click', () => { if (longDone) { longDone = false; return; } this.activateWindow(w.id, W.mode === 'apps'); });
+      row.appendChild(c);
+    }
+    const add = document.createElement('div'); add.className = 'chip add'; add.setAttribute('role', 'button'); add.innerHTML = ico('add');
+    add.addEventListener('click', () => openApps(this)); row.appendChild(add);
+    row.scrollLeft = keepScroll;
+  }
+  async activateWindow(id, maximize) {
+    try { await agent(`/windows/${id}/activate`, 'POST', { maximize }); setTimeout(() => this.pollWindows(), 350); } catch (e) { this.toast('Fenster: ' + e.message); }
+  }
+  async toggleMode() {
+    const W = this.W;
+    try { const d = await agent('/mode', 'POST', { mode: W.mode === 'apps' ? 'desktop' : 'apps' }); W.mode = d.mode; W.lastCls = null; this.renderWindows(); this.toast(W.mode === 'apps' ? 'Programm-Modus: Taskleiste der VM ausgeblendet' : 'Desktop-Modus', 2200); setTimeout(() => this.pollWindows(), 500); }
+    catch (e) { this.toast('Modus: ' + e.message); }
+  }
+  openWinSheet(w) {
+    const sh = this.el.winSheet; sh.replaceChildren();
+    const item = (ic, text, fn) => { const d = document.createElement('div'); d.className = 'mi'; d.setAttribute('role', 'menuitem'); d.innerHTML = `<span class="mic">${ico(ic)}</span><span class="mt">${text}</span>`; d.addEventListener('click', () => { this.closeWinSheet(); fn(); }); sh.appendChild(d); };
+    item('window', 'Nach vorn und maximieren', () => this.activateWindow(w.id, true));
+    item('window', 'Nach vorn (Größe lassen)', () => this.activateWindow(w.id, false));
+    item('minimize', 'Minimieren', async () => { try { await agent(`/windows/${w.id}/minimize`, 'POST', {}); setTimeout(() => this.pollWindows(), 300); } catch (e) { this.toast(e.message); } });
+    item('close', 'Schließen', async () => { try { await agent(`/windows/${w.id}/close`, 'POST', {}); setTimeout(() => this.pollWindows(), 500); } catch (e) { this.toast(e.message); } });
+    item('palette', 'Anzeigegröße für dieses Programm merken', () => { profiles[w.class] = this.k; store.set('profiles', profiles); this.toast('Gemerkt: ' + this.zoomPercent() + ' % für ' + (w.app || w.class)); });
+    sh.hidden = false; this.el.scrim.hidden = false;
+  }
+  closeWinSheet() { this.el.winSheet.hidden = true; if (this.el.menu.hidden) this.el.scrim.hidden = true; }
+
+  /* =====================================================================
+   *  Tasten dieser Sitzung: Umschalter, Warteschlange, Leiste
+   * ===================================================================== */
+  kdown(s) { return this.client && this.client.sendKeyEvent(1, s); }
+  kup(s) { return this.client && this.client.sendKeyEvent(0, s); }
+  setMod(name, mode) {
+    const prev = this.mods[name];
+    if (prev === mode) return;
+    if (prev === 'off') this.kdown(MODSYM[name]);
+    if (mode === 'off') this.kup(MODSYM[name]);
+    this.mods[name] = mode;
+    this.refreshModButtons();
+  }
+  cycleMod(name) { this.setMod(name, this.mods[name] === 'off' ? 'once' : this.mods[name] === 'once' ? 'lock' : 'off'); }
+  consumeOnce() { for (const n of Object.keys(this.mods)) if (this.mods[n] === 'once') this.setMod(n, 'off'); }
+  resetMods() { for (const n of Object.keys(this.mods)) this.mods[n] = 'off'; this.refreshModButtons(); }
+  // Alle Tasten laufen strikt nacheinander durch eine Warteschlange (sonst vertauscht sich die Reihenfolge,
+  // zum Beispiel bei "Backspace x3, dann neues Wort" nach einer Autokorrektur). Jede Sitzung hat ihre eigene.
+  enqueue(fn) { this.keyChain = this.keyChain.then(fn).catch(() => {}); return this.keyChain; }
+  sendChord(syms, gap = 12) {
+    return this.enqueue(async () => {
+      for (const s of syms) { this.kdown(s); await sleep(gap); }
+      for (const s of [...syms].reverse()) { this.kup(s); await sleep(gap); }
+      this.consumeOnce();
+    });
+  }
+  tapKey(sym) { return this.enqueue(async () => { this.kdown(sym); await sleep(8); this.kup(sym); this.consumeOnce(); }); }
+  typeText(str) {
+    return this.enqueue(async () => {
+      for (const ch of str) {
+        const sym = charKeysym(ch);
+        this.kdown(sym); await sleep(6); this.kup(sym); await sleep(4);
+        this.consumeOnce();
+      }
+    });
+  }
+  // Text in die Zwischenablage der VM legen und danach die Einfuege-Taste druecken (die Pause laesst die Zwischenablage-Meldung ankommen)
+  pasteToRemote(txt, keys) {
+    const stream = this.client.createClipboardStream('text/plain');
+    const w = new Guacamole.StringWriter(stream); w.sendText(txt); w.sendEnd();
+    this.enqueue(async () => { await sleep(180); });
+    this.sendChord(keys, 8);
+  }
+  refreshModButtons() {
+    this.element.querySelectorAll('.sv-rowsTop .k[data-mod], .sv-rowsBottom .k[data-mod]').forEach((b) => {
+      const m = this.mods[b.dataset.mod];
+      b.classList.toggle('mod-once', m === 'once');
+      b.classList.toggle('mod-lock', m === 'lock');
+    });
+  }
+  async activateKey(def) {
+    try {
+      if (def.type === 'mod') {
+        const name = MODNAME[String(def.value).toLowerCase()];
+        if (!name) throw new Error('Unbekannter Umschalter');
+        this.cycleMod(name);
+      } else if (def.type === 'text') {
+        await this.typeText(def.value || '');
+      } else if (def.type === 'action') {
+        const f = ACTIONS[String(def.value).toLowerCase()];
+        if (!f) throw new Error('Unbekannte Aktion');
+        f(this);
+      } else {
+        await this.sendChord(parseChord(def.value));
+      }
+    } catch (e) { this.toast(e.message); }
+  }
+
+  keyEl(def, r, i) {
+    const b = document.createElement('div');
+    b.setAttribute('role', 'button'); b.className = 'k' + (S.editing ? ' edit' : '');
+    const isIcon = String(def.label).startsWith(':');
+    let icon = isIcon ? def.label.slice(1) : '';
+    if (def.type === 'action') {
+      const act = String(def.value).toLowerCase();
+      b.dataset.act = act;
+      if (act === 'expand') icon = S.expanded ? 'expand_more' : 'expand_less';   // Pfeil zeigt, was der naechste Tipp tut
+      if (this.actOn[act]) b.classList.add('on');
+      if (act === 'sessions' && Sessions.count > 1) b.dataset.badge = String(Sessions.count);
+    }
+    if (isIcon && ICONS[icon]) { b.innerHTML = ico(icon); b.classList.add('ic'); } else b.textContent = def.label;
+    b.dataset.r = String(r); b.dataset.i = String(i);
+    if (def.type === 'mod') b.dataset.mod = MODNAME[String(def.value).toLowerCase()] || '';
+    b.addEventListener('click', () => {
+      if (suppressClick) { suppressClick = false; return; }
+      if (S.editing) openKeyEditor(r, i); else this.activateKey(def);
+    });
+    if (S.editing) enableDrag(b);
+    return b;
+  }
+  addRow(row, r, label, bar) {
+    const wrap = document.createElement('div');
+    wrap.className = 'row ' + (bar ? 'bar' : 'grp') + (S.editing ? ' editing' : '');
+    const rk = document.createElement('div'); rk.className = 'rk'; rk.dataset.r = String(r);
+    if (label && !bar) { const t = document.createElement('div'); t.className = 'gt'; t.textContent = row.title; rk.appendChild(t); }
+    row.items.forEach((def, i) => rk.appendChild(this.keyEl(def, r, i)));
+    if (S.editing) {
+      const add = document.createElement('div'); add.setAttribute('role', 'button'); add.className = 'k add'; add.innerHTML = ico('add') + '<span>Taste</span>';
+      add.addEventListener('click', () => openKeyEditor(r, -1)); rk.appendChild(add);
+      if (bar || r === rows.length - 1) {
+        const done = document.createElement('div'); done.setAttribute('role', 'button'); done.className = 'k'; done.textContent = 'Fertig';
+        done.addEventListener('click', () => { S.editing = false; renderAllRows(); toast('Tasten gespeichert'); }); rk.appendChild(done);
       }
     }
-    G.mode = 'idle';
-  } else if (G.mode === 'two' && G.pts.size === 0) {
-    const dur = Date.now() - G.st;
-    if (!G.decided && !G.moved && dur < 350) { // Zwei-Finger-Tipp = Rechtsklick
-      const q = S.touchMode === 'pad' ? padPoint() : remoteXY(G.midLast.x, G.midLast.y); await clickAt(q.x, q.y, 'right');
-    } else if (G.decided === 'pinch' && Math.abs(G.newK - G.k0) > 0.01) {
-      setK(G.newK, false); showZoomPop(); rememberProfile();
+    wrap.append(rk);
+    return wrap;
+  }
+  /* Oben: Akkordeon aus drei schmalen Koepfen (nur Symbol und Pfeil) und darunter die Tasten der geoeffneten Gruppe. Beim Bearbeiten sind alle Gruppen offen. */
+  renderRows() {
+    const top = this.el.rowsTop, bottom = this.el.rowsBottom;
+    top.replaceChildren(); bottom.replaceChildren();
+    const groups = rows.map((row, r) => ({ row, r })).filter((g) => !g.row.fixed);
+    if (S.group && !groups.some((g) => g.row.id === S.group)) S.group = groups[0].row.id;
+    if (!S.editing) {
+      const heads = document.createElement('div'); heads.className = 'acc'; heads.setAttribute('role', 'tablist');
+      for (const { row } of groups) {
+        const open = row.id === S.group;
+        const h = document.createElement('div'); h.setAttribute('role', 'tab'); h.className = 'acch' + (open ? ' sel' : ''); h.setAttribute('aria-label', row.title); h.setAttribute('aria-expanded', open ? 'true' : 'false');
+        h.innerHTML = ico(row.icon || 'apps') + ico(open ? 'expand_less' : 'expand_more');
+        h.addEventListener('click', () => { S.group = open ? '' : row.id; store.set('group', S.group); renderAllRows(); });
+        heads.appendChild(h);
+      }
+      top.appendChild(heads);
     }
-    G.mode = 'idle';
-  } else if (G.pts.size === 0) { G.mode = 'idle'; }
+    for (const { row, r } of groups) if (S.editing || row.id === S.group) top.appendChild(this.addRow(row, r, S.editing, false));
+    rows.forEach((row, r) => { if (row.fixed) bottom.appendChild(this.addRow(row, r, false, true)); });
+    this.applyKeysOpen(); this.refreshModButtons();
+  }
+  /* Aufklappen: die Leiste bleibt, darueber erscheinen die weiteren Zeilen */
+  applyKeysOpen() { this.el.rowsTop.hidden = !(S.expanded || S.editing); }
+  setActOn(name, on) {
+    this.actOn[name] = on;
+    this.el.dock.querySelectorAll(`.k[data-act="${name}"]`).forEach((b) => b.classList.toggle('on', on));
+  }
+
+  /* =====================================================================
+   *  Menue dieser Sitzung (kein Dialog, damit die Tastatur offen bleibt)
+   * ===================================================================== */
+  updateMenuLabels() {
+    const set = (c, t) => { const n = this.el.menu.querySelector(c); if (n) n.textContent = t; };
+    set('.mv-kb', S.kbMode === 'rich' ? 'mit Bildern' : S.kbMode === 'normal' ? 'mit Vorschlägen' : 'ohne Vorschläge');
+    set('.mv-touch', S.touchMode === 'direct' ? 'Tippen = Klick' : 'Touchpad');
+    set('.mv-autokb', S.autoKb ? 'an' : 'aus');
+    set('.mv-autopaste', S.autoPaste ? 'an' : 'aus');
+    set('.mv-count', String(Sessions.count));
+  }
+  openMenu() { applyKbMode(); this.updateMenuLabels(); this.el.menu.hidden = false; this.el.scrim.hidden = false; this.setActOn('menu', true); }
+  closeMenu() { this.el.menu.hidden = true; if (this.el.winSheet.hidden) this.el.scrim.hidden = true; this.setActOn('menu', false); }
+  toggleMenu() { if (this.el.menu.hidden) this.openMenu(); else this.closeMenu(); }
+  onMenuClick(e) {
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (!act) return;
+    if (['kbMode', 'autoKb', 'touchMode', 'autoPaste'].includes(act)) {
+      if (act === 'kbMode') S.kbMode = S.kbMode === 'rich' ? 'normal' : S.kbMode === 'normal' ? 'direct' : 'rich';
+      if (act === 'autoKb') S.autoKb = !S.autoKb;
+      if (act === 'autoPaste') S.autoPaste = !S.autoPaste;
+      if (act === 'touchMode') S.touchMode = S.touchMode === 'direct' ? 'pad' : 'direct';
+      applyKbMode(); return;
+    }
+    this.closeMenu();
+    if (act === 'reconnect') { this.retry = 0; if (this.hasCredentials()) this.start(); }
+    else if (act === 'switcher') Sessions.requestSwitcher();
+    else if (act === 'home') Sessions.requestHome();
+    else if (act === 'extra') Sessions.open(this.conn, { password: this.password, extra: true });
+    else if (act === 'editKeys') { S.editing = true; renderAllRows(); toast('Taste antippen = bearbeiten, gedrückt halten = verschieben (auch in andere Zeilen)', 3600); }
+    else if (act === 'resetKeys') { if (confirm('Sondertasten auf Standard zurücksetzen?')) { rows = clone(DEFAULT_ROWS); saveRows(); renderAllRows(); } }
+    else if (act === 'password') openPwDialog();
+    else if (act === 'theme') openThemeDialog();
+    else if (act === 'install') installApp();
+    else if (act === 'logout') this.requestClose();
+  }
+
+  /* =====================================================================
+   *  Maus (Desktop-Browser) und Touch (Handy)
+   * ===================================================================== */
+  remoteXY(cx, cy) {
+    const r = this.el.display.getBoundingClientRect();
+    const s = this.display ? this.display.getScale() : 1;
+    return { x: Math.round((cx - r.left) / s), y: Math.round((cy - r.top) / s) };
+  }
+  mouseSend(x, y, l = false, m = false, r = false, up = false, down = false) {
+    if (this.client) this.client.sendMouseState(new Guacamole.Mouse.State(x, y, l, m, r, up, down));
+  }
+  setupMouse(client, display) {
+    // echte Maus (nur Desktop-Browser); Touch laeuft ueber die eigene Gestenlogik
+    const mouse = new Guacamole.Mouse(this.el.touch);
+    this.mouse = mouse;
+    const fwd = (state) => {
+      if (this.client !== client) return;
+      const s = display.getScale() || 1;
+      client.sendMouseState(new Guacamole.Mouse.State(state.x / s, state.y / s, state.left, state.middle, state.right, state.up, state.down));
+    };
+    mouse.onmousedown = mouse.onmouseup = mouse.onmousemove = fwd;
+    mouse.onmouseout = () => {};
+    display.showCursor(true);
+  }
+  async clickAt(x, y, button = 'left') {
+    this.mouseSend(x, y);
+    await sleep(10);
+    this.mouseSend(x, y, button === 'left', false, button === 'right');
+    await sleep(35);
+    this.mouseSend(x, y, false, false, false);
+    this.consumeOnce();
+  }
+  padPoint() {
+    const G = this.G;
+    if (!G.px && !G.py && this.display) { G.px = this.display.getWidth() / 2; G.py = this.display.getHeight() / 2; }
+    return { x: G.px, y: G.py };
+  }
+
+
+  /* =====================================================================
+   *  Bilder und Dateien in der Zwischenablage (Entwurf: docs/CLIPBOARD.md), je Sitzung
+   *  Eigener Stream: Bild (BMP) und Dateien gehen ueber den Stream, die VM meldet Bilder und Dateien selbst.
+   *  Guacamole: Bild ueber den Foto-Helfer (uploadPhoto), eine Datei ueber /api/upload-file, ein Bild der VM holt der Knopf im Dialog.
+   * ===================================================================== */
+  nativeClip() { return !!(this.client && this.client.nativeClipboard); }
+  showXfer(text, cancel) {
+    this.el.xferText.textContent = text; this.el.xfer.hidden = false;
+    if (cancel !== undefined) this.xferCancelExtra = cancel;
+  }
+  hideXfer() { this.el.xfer.hidden = true; this.xferAbort = null; this.xferCancelExtra = null; }
+
+  /* Vom Browser an die VM. Ein einzelnes Bild wird wie ein kopiertes Bild behandelt (und mit Strg+V eingefuegt, wenn das eingeschaltet ist), alles
+     andere sind Dateien. Gibt true zurueck, wenn etwas angekommen ist. */
+  async sendToRemote(list) {
+    if (!this.connected || !this.client) { this.toast('Nicht verbunden'); return false; }
+    if (this.xferAbort) { this.toast('Es läuft schon eine Übertragung.', 2400); return false; }
+    const files = list.filter((f) => f && f.size !== undefined);
+    if (!files.length) return false;
+    if (files.length === 1 && /^image\//.test(files[0].type)) return this.sendImage(files[0]);
+    if (files.length > LIMITS.files) { this.toast(`Zu viele Dateien (höchstens ${LIMITS.files}).`, 3600); return false; }
+    if (files.some((f) => f.size === 0)) { this.toast('Die Datei ist leer.', 3000); return false; }
+    const big = files.find((f) => f.size > LIMITS.fileBytes);
+    if (big || files.reduce((n, f) => n + f.size, 0) > LIMITS.fileBytes) { this.toast(`Datei zu groß (höchstens ${LIMITS.fileBytes / 1048576} MB).`, 3600); return false; }
+    if (!this.nativeClip() && files.length > 1) { this.toast('Mit dieser Bildübertragung geht nur eine Datei auf einmal.', 3800); return false; }
+
+    const ctl = this.xferAbort = new AbortController();
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i], label = files.length > 1 ? ` (${i + 1}/${files.length})` : '';
+        const progress = (done, total) => this.showXfer(`Sende ${f.name}${label} … ${Math.round(100 * done / total)} %`, null);
+        this.showXfer(`Sende ${f.name}${label} …`, null);
+        let r;
+        if (this.nativeClip()) r = await this.client.sendTransfer(2, f, f.name, i, files.length, progress, ctl.signal);
+        else {
+          const x = await xhrUpload('/api/upload-file', { 'X-JulOS': '1', 'X-File-Name': encodeURIComponent(f.name), 'Content-Type': 'application/octet-stream' }, f, progress, ctl.signal);
+          r = { code: x.status === 200 ? 0 : 4, text: (x.body && x.body.error) || 'Fehler ' + x.status };
+        }
+        if (ctl.signal.aborted) return false;
+        if (r.code !== 0) { this.toast(r.text || 'Senden fehlgeschlagen', 4200); this.dbg('file-error', { c: r.code }); return false; }
+      }
+    } catch (e) { if (!ctl.signal.aborted) this.toast('Senden: ' + e.message, 4200); return false; }
+    finally { this.hideXfer(); }
+    this.dbg('file-sent', { n: files.length, kb: Math.round(files.reduce((n, f) => n + f.size, 0) / 1024) });
+    this.toast(files.length > 1 ? 'Dateien liegen in der Zwischenablage der VM – dort einfügen (Strg+V)' : 'Datei liegt in der Zwischenablage der VM – dort einfügen (Strg+V)', 4200);
+    return true;
+  }
+
+  async sendImage(file) {
+    if (file.size > LIMITS.imageBytes) { this.toast(`Bild zu groß (höchstens ${LIMITS.imageBytes / 1048576} MB).`, 3600); return false; }
+    if (!this.nativeClip()) { await uploadPhoto(file); return true; }
+    const ctl = this.xferAbort = new AbortController();
+    try {
+      this.showXfer('Bild wird umgewandelt …', null);
+      const { blob } = await bmpFromImage(file);
+      this.showXfer('Bild wird gesendet …', null);
+      const r = await this.client.sendTransfer(1, blob, '', 0, 1, (d, t) => this.showXfer(`Bild wird gesendet … ${Math.round(100 * d / t)} %`, null), ctl.signal);
+      if (ctl.signal.aborted) return false;
+      if (r.code !== 0) { this.toast(r.text || 'Senden fehlgeschlagen', 4200); return false; }
+    } catch (e) { if (!ctl.signal.aborted) this.toast('Bild: ' + e.message, 4200); return false; }
+    finally { this.hideXfer(); }
+    this.dbg('image-sent', { kb: Math.round(file.size / 1024), auto: S.autoPaste });
+    if (S.autoPaste) { await sleep(250); await this.sendChord([KS.ctrl, charKeysym('v')]); this.toast('Bild eingefügt (Strg+V)'); }
+    else this.toast('Bild liegt in der Zwischenablage der VM – dort Strg+V', 3500);
+    return true;
+  }
+
+  /* Von der VM an den Browser: das Neueste dieser Sitzung steht im Dialog "Text senden" (renderRemoteItem) */
+  async showRemoteImage(png, how) {
+    this.remoteItem.image = png; this.remoteItem.files = null; if (cur() === this) renderRemoteItem();
+    // Ohne Fokus oder ohne frische Eingabe verweigert der Browser das Schreiben: dann wartet das Bild im Dialog
+    if (cur() === this && document.hasFocus()) {
+      try { await copyImageToLocal(png); this.toast('Bild aus der VM kopiert', 2200); this.dbg('remote-image', { kb: Math.round(png.size / 1024), how, copied: true }); return; } catch { /* Dialog */ }
+    }
+    this.dbg('remote-image', { kb: Math.round(png.size / 1024), how, copied: false });
+    this.toast('Bild aus der VM – tippen zum Kopieren', 6000, () => { Sessions.activate(this.id); openClipDlg(); });
+  }
+  async onRemoteImage(format, bytes) {
+    try { await this.showRemoteImage(await pngFromBytes(bytes, format), 'push'); } catch (e) { this.toast('Bild aus der VM nicht lesbar: ' + e.message, 3600); }
+  }
+  onRemoteFiles(batch, list) {
+    if (!list.length) { this.remoteItem.files = null; if (cur() === this) renderRemoteItem(); return; }
+    this.remoteItem.files = { batch, list }; this.remoteItem.image = null; if (cur() === this) renderRemoteItem();
+    this.toast((list.length === 1 ? 'Datei aus der VM: ' + list[0].name : list.length + ' Dateien aus der VM') + ' – tippen zum Laden', 6000, () => { Sessions.activate(this.id); openClipDlg(); });
+  }
+  async downloadRemoteFile(batch, index, name) {
+    if (!this.client || !this.client.fetchFile) return;
+    this.showXfer(`Lade ${name} …`, () => this.client.cancelFetch && this.client.cancelFetch(batch));
+    this.xferAbort = new AbortController();
+    try {
+      const blob = await this.client.fetchFile(batch, index, (n) => this.showXfer(`Lade ${name} … ${fmtSize(n)}`));
+      saveBlob(blob, name); this.toast('Gespeichert: ' + name, 3000);
+    } catch (e) { this.toast(e.message || 'Download fehlgeschlagen', 4200); }
+    finally { this.hideXfer(); }
+  }
+  /* Ablegen von Dateien auf das Bild dieser Sitzung */
+  wireDrop() {
+    const st = this.el.stage; let depth = 0;
+    const hasFiles = (e) => e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
+    st.addEventListener('dragenter', (e) => { if (!hasFiles(e)) return; e.preventDefault(); depth++; st.classList.add('dropping'); });
+    st.addEventListener('dragover', (e) => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+    st.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; st.classList.remove('dropping'); } });
+    st.addEventListener('drop', async (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault(); depth = 0; st.classList.remove('dropping');
+      const { files, skipped } = filesFromTransfer(e.dataTransfer);
+      if (skipped.length) this.toast('Ordner werden nicht übertragen: ' + skipped.slice(0, 2).join(', '), 3200);
+      if (files.length) { try { await this.sendToRemote(files); } catch (err) { this.toast('Senden: ' + err.message, 4200); } }
+    });
+    this.el.xferCancel.addEventListener('click', () => { if (this.xferAbort) this.xferAbort.abort(); if (this.xferCancelExtra) this.xferCancelExtra(); this.hideXfer(); this.toast('Abgebrochen'); });
+  }
+
+  /* ---------- Touch-Gesten (je Sitzung, auf deren Touch-Ebene) ---------- */
+  wireTouch() {
+    const G = this.G, touch = this.el.touch;
+    touch.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      for (const t of e.changedTouches) G.pts.set(t.identifier, { x: t.clientX, y: t.clientY });
+      const pts = [...G.pts.values()];
+      if (pts.length === 1) {
+        G.mode = 'pending'; G.sx = pts[0].x; G.sy = pts[0].y; G.lx = pts[0].x; G.ly = pts[0].y; G.st = Date.now(); G.moved = false;
+        clearTimeout(G.timer);
+        if (S.touchMode !== 'pad') { const q0 = this.remoteXY(pts[0].x, pts[0].y); this.mouseSend(q0.x, q0.y); } // Zeiger vorab hinbewegen: Cursorform (Textfeld?) aktualisiert sich
+        G.timer = setTimeout(() => { if (G.mode === 'pending') { G.mode = 'long'; if (navigator.vibrate) navigator.vibrate(15); } }, 520);
+      } else if (pts.length === 2) {
+        clearTimeout(G.timer);
+        if (G.pressed) { const p = this.remoteXY(G.lx, G.ly); this.mouseSend(p.x, p.y); G.pressed = false; }
+        G.mode = 'two'; G.d0 = dist2(pts[0], pts[1]); G.k0 = this.k; G.newK = this.k;
+        G.mid0 = mid2(pts[0], pts[1]); G.midLast = G.mid0; G.decided = null; G.scrollAcc = 0; G.moved = false; G.st = Date.now();
+      }
+    }, { passive: false });
+
+    touch.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      for (const t of e.changedTouches) if (G.pts.has(t.identifier)) G.pts.set(t.identifier, { x: t.clientX, y: t.clientY });
+      const pts = [...G.pts.values()];
+      if (pts.length === 1 && (G.mode === 'pending' || G.mode === 'long' || G.mode === 'drag' || G.mode === 'pad')) {
+        const p = pts[0];
+        const moved = Math.hypot(p.x - G.sx, p.y - G.sy);
+        if (G.mode === 'pending' && moved > 10) {
+          clearTimeout(G.timer);
+          if (S.touchMode === 'pad') { G.mode = 'pad'; } else { G.mode = 'drag'; const s0 = this.remoteXY(G.sx, G.sy); this.mouseSend(s0.x, s0.y); this.mouseSend(s0.x, s0.y, true); G.pressed = true; }
+        } else if (G.mode === 'long' && moved > 10) {
+          G.mode = 'drag';
+          if (S.touchMode === 'pad') { const q = this.padPoint(); this.mouseSend(q.x, q.y, true); } else { const s0 = this.remoteXY(G.sx, G.sy); this.mouseSend(s0.x, s0.y); this.mouseSend(s0.x, s0.y, true); }
+          G.pressed = true;
+        }
+        if (G.mode === 'drag' || G.mode === 'pad') {
+          G.moved = true;
+          if (S.touchMode === 'pad') {
+            const s = this.display ? this.display.getScale() : 1;
+            this.padPoint();
+            G.px += ((p.x - G.lx) / s) * 1.6; G.py += ((p.y - G.ly) / s) * 1.6;
+            G.px = clamp(G.px, 0, this.display ? this.display.getWidth() : 0); G.py = clamp(G.py, 0, this.display ? this.display.getHeight() : 0);
+            this.mouseSend(G.px, G.py, G.pressed);
+          } else {
+            const q = this.remoteXY(p.x, p.y); this.mouseSend(q.x, q.y, true);
+          }
+        }
+        G.lx = p.x; G.ly = p.y;
+      } else if (pts.length === 2 && G.mode === 'two') {
+        const d = dist2(pts[0], pts[1]); const m = mid2(pts[0], pts[1]);
+        if (!G.decided) {
+          if (Math.abs(d - G.d0) > 28) G.decided = 'pinch';
+          else if (Math.hypot(m.x - G.mid0.x, m.y - G.mid0.y) > 18) G.decided = 'scroll';
+        }
+        if (G.decided) G.moved = true;
+        if (G.decided === 'pinch' && d > 10) {
+          G.newK = clamp(G.k0 * (G.d0 / d), 0.35, 1.8);
+          this.toast('Anzeige ' + Math.round(100 / G.newK) + ' %', 600);
+        } else if (G.decided === 'scroll') {
+          const dy = m.y - G.midLast.y; G.midLast = m; G.scrollAcc += dy;
+          const q = this.remoteXY(m.x, m.y);
+          while (Math.abs(G.scrollAcc) >= 34) {
+            const down = G.scrollAcc < 0; // Finger nach oben = nach unten scrollen
+            this.mouseSend(q.x, q.y, false, false, false, !down, down);
+            this.mouseSend(q.x, q.y, false, false, false, false, false);
+            G.scrollAcc += down ? 34 : -34;
+          }
+        }
+      }
+    }, { passive: false });
+
+    const endTouch = async (e) => {
+      e.preventDefault();
+      const before = G.pts.size;
+      for (const t of e.changedTouches) G.pts.delete(t.identifier);
+      if (before === 1 && G.pts.size === 0) {
+        clearTimeout(G.timer);
+        const dur = Date.now() - G.st;
+        if (G.mode === 'pending' && dur < 380) {
+          // Tippen auf ein Textfeld (Zeiger ist ein I-Balken): Tastatur gleich in der Geste oeffnen
+          if (tapLogN++ < 40) this.dbg('tap', { ibeam: this.cursor.ibeam, kb: kbOpen, auto: S.autoKb, cur: this.cursor.sig || '' });
+          if (S.autoKb && this.cursor.ibeam && !kbOpen) { this.dbg('autokb', { when: 'tap' }); el.kb.blur(); el.kb.focus(); }
+          if (S.touchMode === 'pad') { const q = this.padPoint(); await this.clickAt(q.x, q.y, 'left'); }
+          else { const q = this.remoteXY(G.sx, G.sy); await this.clickAt(q.x, q.y, 'left'); }
+          // Zeigerform kommt erst nach der Mausbewegung an. Electron-Programme wie Claude liefern den I-Balken erst nach rund einer
+          // Sekunde, deshalb ein Zeitfenster statt einer einzelnen Pruefung.
+          const t0 = Date.now();
+          const poll = () => {
+            if (!S.autoKb || !this.connected || kbOpen || Date.now() - t0 > 1600) return;
+            if (this.cursor.ibeam) { this.dbg('autokb', { when: 'late', ms: Date.now() - t0 }); el.kb.focus(); return; }
+            setTimeout(poll, 100);
+          };
+          setTimeout(poll, 120);
+        } else if (G.mode === 'long') {
+          if (S.touchMode === 'pad') { const q = this.padPoint(); await this.clickAt(q.x, q.y, 'right'); }
+          else { const q = this.remoteXY(G.sx, G.sy); await this.clickAt(q.x, q.y, 'right'); }
+        } else if (G.mode === 'drag' || G.mode === 'pad') {
+          if (G.pressed) {
+            if (S.touchMode === 'pad') this.mouseSend(G.px, G.py, false); else { const q = this.remoteXY(G.lx, G.ly); this.mouseSend(q.x, q.y, false); }
+            G.pressed = false; this.consumeOnce();
+          }
+        }
+        G.mode = 'idle';
+      } else if (G.mode === 'two' && G.pts.size === 0) {
+        const dur = Date.now() - G.st;
+        if (!G.decided && !G.moved && dur < 350) { // Zwei-Finger-Tipp = Rechtsklick
+          const q = S.touchMode === 'pad' ? this.padPoint() : this.remoteXY(G.midLast.x, G.midLast.y); await this.clickAt(q.x, q.y, 'right');
+        } else if (G.decided === 'pinch' && Math.abs(G.newK - G.k0) > 0.01) {
+          this.setK(G.newK, false); this.showZoomPop(); this.rememberProfile();
+        }
+        G.mode = 'idle';
+      } else if (G.pts.size === 0) { G.mode = 'idle'; }
+    };
+    touch.addEventListener('contextmenu', (e) => e.preventDefault());
+    touch.addEventListener('touchend', endTouch, { passive: false });
+    touch.addEventListener('touchcancel', endTouch, { passive: false });
+  }
 }
-el.touch.addEventListener('contextmenu', (e) => e.preventDefault());
-el.touch.addEventListener('touchend', endTouch, { passive: false });
-el.touch.addEventListener('touchcancel', endTouch, { passive: false });
+
+/** Fabriken: Desktop und Terminal laufen heute beide ueber diese Klasse (SSH ueber guacd); das native Terminal ersetzt 'terminal' spaeter. */
+Sessions.registerFactory('desktop', (conn, o) => new RemoteSession(conn, o));
+Sessions.registerFactory('terminal', (conn, o) => new RemoteSession(conn, o));
 
 /* =====================================================================
- *  Tastatur (Android): ohne Autokorrektur, mit Sondertasten-Unterstuetzung
+ *  Tastatur (Android): ohne Autokorrektur, mit Sondertasten-Unterstuetzung.
+ *  Das unsichtbare Eingabefeld gibt es nur einmal; was darin passiert, geht an die aktive Sitzung (Sessions.active).
  * ===================================================================== */
 let lastNamedAt = 0;
 let prevValue = '';
@@ -1095,10 +1420,7 @@ function applyKbMode() {
   el.kb = S.kbMode === 'rich' ? el.kbRich : el.kbInput;
   if (S.kbMode !== 'rich') { const t = S.kbMode === 'direct' ? 'password' : 'text'; if (el.kbInput.type !== t) el.kbInput.type = t; }
   setKbVal(''); prevValue = '';
-  el.kbModeLabel.textContent = S.kbMode === 'rich' ? 'mit Bildern' : S.kbMode === 'normal' ? 'mit Vorschlägen' : 'ohne Vorschläge';
-  el.touchModeLabel.textContent = S.touchMode === 'direct' ? 'Tippen = Klick' : 'Touchpad';
-  el.autoKbLabel.textContent = S.autoKb ? 'an' : 'aus';
-  el.autoPasteLabel.textContent = S.autoPaste ? 'an' : 'aus';
+  for (const s of remotes()) s.updateMenuLabels();
   store.set('autoPaste', S.autoPaste); store.set('autoKb', S.autoKb);
   store.set('kbMode2', S.kbMode); store.set('touchMode', S.touchMode);
 }
@@ -1118,17 +1440,11 @@ function onKbPaste(e) {
   const dt = e.clipboardData;
   if (dt && dt.files && dt.files.length) { e.preventDefault(); handleKbFiles(dt.files); return; }
   const txt = dt && dt.getData('text/plain');
-  if (!txt) return;
+  const s = cur();
+  if (!txt || !s) return;
   e.preventDefault();
-  if (Date.now() - pasteKeyAt < 800 && S.client) { pasteToRemote(txt, pasteKeys); return; }   // Strg+V: wie am echten Rechner einfuegen
-  typeText(txt);                                           // Einfuegen ueber das Menue der Bildschirmtastatur: Text direkt eintippen
-}
-// Text in die Zwischenablage der VM legen und danach die Einfuege-Taste druecken (die Pause laesst die Zwischenablage-Meldung ankommen)
-function pasteToRemote(txt, keys) {
-  const stream = S.client.createClipboardStream('text/plain');
-  const w = new Guacamole.StringWriter(stream); w.sendText(txt); w.sendEnd();
-  enqueue(async () => { await sleep(180); });
-  sendChord(keys, 8);
+  if (Date.now() - pasteKeyAt < 800 && s.client) { s.pasteToRemote(txt, pasteKeys); return; }   // Strg+V: wie am echten Rechner einfuegen
+  s.typeText(txt);                                         // Einfuegen ueber das Menue der Bildschirmtastatur: Text direkt eintippen
 }
 function onKbBeforeInput(e) {
   if (kbEvCount++ < 60) dbg('beforeinput', { it: e.inputType, comp: e.isComposing, len: (e.data || '').length, files: (e.dataTransfer && e.dataTransfer.files ? e.dataTransfer.files.length : 0), mode: S.kbMode });
@@ -1136,19 +1452,20 @@ function onKbBeforeInput(e) {
   if (files && files.length) { e.preventDefault(); handleKbFiles(files); }
 }
 function syncDiff() {
-  if (!S.connected) return;
+  const s = cur();
+  if (!s || !s.connected) return;
   if (!keyOwner()) { setKbVal(''); prevValue = ''; return; }   // Desktop-Layout: ein anderes Fenster hat die Tasten, nichts an die VM senden
-  const cur = kbVal();
-  const a = [...prevValue], b = [...cur];
+  const v = kbVal();
+  const a = [...prevValue], b = [...v];
   let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
-  for (let n = 0; n < a.length - i; n++) tapKey(KS.backspace);
-  const add = b.slice(i).join(''); if (add) typeText(add);
-  prevValue = cur;
+  for (let n = 0; n < a.length - i; n++) s.tapKey(KS.backspace);
+  const add = b.slice(i).join(''); if (add) s.typeText(add);
+  prevValue = v;
   if (b.length > 300) { setKbVal(''); prevValue = ''; }
 }
 let kbEvCount = 0;
 // Umschalter, die an der echten Tastatur gerade gehalten werden (ohne die, die schon ueber die Leiste gedrueckt sind)
-function heldModifiers(e) {
+function heldModifiers(e, mods) {
   const m = [];
   if (e.ctrlKey && mods.ctrl === 'off') m.push(KS.ctrl);
   if (e.altKey && mods.alt === 'off') m.push(KS.alt);
@@ -1159,10 +1476,11 @@ function heldModifiers(e) {
 let pasteKeyAt = 0, pasteKeys = [];   // Einfuegen per Tastatur: Zeitpunkt und die danach an die VM zu sendende Kombination
 function onKbKeydown(e) {
   if (kbEvCount++ < 60) dbg('keydown', { key: e.key.length === 1 ? 'char' : e.key, code: e.keyCode, comp: e.isComposing });
-  if (!S.connected || !keyOwner()) return;
+  const s = cur();
+  if (!s || !s.connected || !keyOwner()) return;
   // AltGr (auf Windows als Strg+Alt gemeldet) erzeugt Zeichen wie @ und {: die kommen ueber das Eingabefeld, nicht als Kombination
   const altGr = e.getModifierState && e.getModifierState('AltGraph');
-  const held = altGr ? [] : heldModifiers(e);
+  const held = altGr ? [] : heldModifiers(e, s.mods);
   // Einfuegen (Strg+V, Strg+Umschalt+V, Umschalt+Einfg): die Tastenkombination nicht abfangen, der Browser meldet dann das paste-Ereignis
   // mit dem Text der lokalen Zwischenablage; onKbPaste legt ihn in die Zwischenablage der VM und sendet danach die Kombination
   if (!altGr && ((e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'v') || (e.shiftKey && !e.ctrlKey && !e.altKey && e.key === 'Insert'))) {
@@ -1174,13 +1492,13 @@ function onKbKeydown(e) {
     e.preventDefault(); lastNamedAt = Date.now();
     if (e.key === 'Enter' || e.key === 'Tab' || (e.key === 'Backspace' && held.length)) { setKbVal(''); prevValue = ''; }
     // mit gehaltenem Shift/Strg/Alt als Kombination, sonst geht Umschalt+Pfeil (Markieren), Strg+Pfeil (Wortsprung) usw. verloren
-    if (held.length) sendChord([...held, NAMED[e.key]], 3); else tapKey(NAMED[e.key]);
+    if (held.length) s.sendChord([...held, NAMED[e.key]], 3); else s.tapKey(NAMED[e.key]);
     return;
   }
   // Hardware-Tastatur mit Strg/Alt: als Kombination weitergeben (Umschalt bleibt erhalten, Strg+Umschalt+C)
   if ((e.ctrlKey || e.altKey || e.metaKey) && !altGr && e.key.length === 1) {
     e.preventDefault();
-    sendChord([...held, charKeysym(e.key.toLowerCase())], 3);
+    s.sendChord([...held, charKeysym(e.key.toLowerCase())], 3);
   }
 }
 function wireKb(node) {
@@ -1190,20 +1508,22 @@ function wireKb(node) {
   node.addEventListener('drop', (e) => { if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) { e.preventDefault(); handleKbFiles(e.dataTransfer.files); } });
   node.addEventListener('compositionend', () => syncDiff());
   node.addEventListener('input', () => syncDiff());
-  node.addEventListener('blur', () => { if (!HW_KB) holdSize(); setActOn('keyboard', kbOpen); if (node === el.kb) { setKbVal(''); prevValue = ''; } dbg('kbblur', {}); keyFocusHook(); });
-  node.addEventListener('focus', () => { if (!HW_KB) holdSize(); setActOn('keyboard', true); dbg('kbfocus', { mode: S.kbMode }); keyFocusHook(); });
+  node.addEventListener('blur', () => { if (!HW_KB) holdSize(); setActOnAll('keyboard', kbOpen); if (node === el.kb) { setKbVal(''); prevValue = ''; } dbg('kbblur', {}); keyFocusHook(); });
+  node.addEventListener('focus', () => { if (!HW_KB) holdSize(); setActOnAll('keyboard', true); dbg('kbfocus', { mode: S.kbMode }); keyFocusHook(); });
 }
 wireKb(el.kbInput); wireKb(el.kbRich);
 
 // Desktop-Browser (Maus, echte Tastatur): Tasten gehen ohne Umweg ueber den Tastatur-Knopf an die Fernsteuerung.
 // Das versteckte Eingabefeld bekommt den Fokus beim Verbinden, bei jedem Klick ins Bild und bei der ersten Taste, die sonst ins Leere ginge.
+// Es gehoert immer der aktiven Sitzung: am Desktop ist das das Fenster, das den Fokus hat.
 const HW_KB = matchMedia('(pointer: fine) and (hover: hover)').matches || location.search.includes('hwkb');   // ?hwkb: nur zum Testen
 // Wer bekommt die Tasten? Auf dem Handy immer die Fernsteuerung. Im Desktop-Layout nur, solange ein Fernfenster das aktive Fenster ist:
 // desktop.js meldet das ueber remoteApi.setKeyOwner (Menue oder Launcher offen, anderes Fenster vorn: nein).
 let keyOwner = () => true, keyFocusHook = () => {};
 function focusKbForHardware() {
-  if (!HW_KB || !S.connected || !keyOwner() || kbFocused()) return;
-  if (document.querySelector('dialog[open]') || !el.menuSheet.hidden) return;
+  const s = cur();
+  if (!HW_KB || !s || !s.connected || !s.visible || !keyOwner() || kbFocused()) return;
+  if (document.querySelector('dialog[open]') || !s.el.menu.hidden) return;
   try { el.kb.focus({ preventScroll: true }); } catch { el.kb.focus(); }
 }
 /** Ein echtes Texteingabefeld (Eingabe, Auswahl, Textbereich, bearbeitbarer Inhalt)? Knoepfe und Haken zaehlen nicht. */
@@ -1215,9 +1535,9 @@ function isTextField(a) {
   return false;
 }
 if (HW_KB) {
-  el.touch.addEventListener('mousedown', () => focusKbForHardware());
   window.addEventListener('keydown', (e) => {
-    if (!S.connected || !keyOwner()) return;
+    const s = cur();
+    if (!s || !s.connected || !keyOwner()) return;
     if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta' || e.key === 'AltGraph') return;
     if (document.querySelector('dialog[open]')) return;
     const a = document.activeElement;
@@ -1242,39 +1562,15 @@ new MutationObserver((list) => {
 }).observe(el.kbRich, { childList: true, subtree: true });
 
 /* =====================================================================
- *  Menue, Vollbild, Text senden / Zwischenablage
+ *  Dialoge: Text senden / Zwischenablage (gelten fuer die aktive Sitzung)
  * ===================================================================== */
-function openMenu() { applyKbMode(); el.menuSheet.hidden = false; el.menuScrim.hidden = false; setActOn('menu', true); }
-function closeMenu() { el.menuSheet.hidden = true; el.menuScrim.hidden = true; setActOn('menu', false); }
-el.menuScrim.addEventListener('click', closeMenu);
-// weder Fenster noch Hintergrund duerfen den Fokus nehmen: die Tastatur bleibt offen
-el.menuSheet.addEventListener('mousedown', (e) => e.preventDefault());
-el.menuScrim.addEventListener('mousedown', (e) => e.preventDefault());
-el.menuSheet.addEventListener('click', (e) => {
-  const act = e.target.closest('[data-act]')?.dataset.act;
-  if (!act) return;
-  if (['kbMode', 'autoKb', 'touchMode', 'autoPaste'].includes(act)) {
-    if (act === 'kbMode') S.kbMode = S.kbMode === 'rich' ? 'normal' : S.kbMode === 'normal' ? 'direct' : 'rich';
-    if (act === 'autoKb') S.autoKb = !S.autoKb;
-    if (act === 'autoPaste') S.autoPaste = !S.autoPaste;
-    if (act === 'touchMode') S.touchMode = S.touchMode === 'direct' ? 'pad' : 'direct';
-    applyKbMode(); return;
-  }
-  closeMenu();
-  if (act === 'reconnect') { S.retry = 0; if (hasCredentials()) connect(); }
-  else if (act === 'editKeys') { S.editing = true; renderRows(); applyKeysOpen(); toast('Taste antippen = bearbeiten, gedrückt halten = verschieben (auch in andere Zeilen)', 3600); }
-  else if (act === 'resetKeys') { if (confirm('Sondertasten auf Standard zurücksetzen?')) { rows = clone(DEFAULT_ROWS); saveRows(); renderRows(); applyKeysOpen(); } }
-  else if (act === 'password') openPwDialog();
-  else if (act === 'theme') openThemeDialog();
-  else if (act === 'install') installApp();
-  else if (act === 'logout') leave();
-});
 document.querySelectorAll('dialog [data-act="close"]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
 
-el.typeBtn.addEventListener('click', async () => { const t = el.sendText.value; el.clipDlg.close(); if (t) { await sleep(150); await typeText(t); toast('Eingetippt'); } });
+el.typeBtn.addEventListener('click', async () => { const t = el.sendText.value; el.clipDlg.close(); const s = cur(); if (t && s) { await sleep(150); await s.typeText(t); toast('Eingetippt'); } });
 el.pasteBtn.addEventListener('click', () => {
-  if (!S.client || !el.sendText.value) return;
-  const stream = S.client.createClipboardStream('text/plain');
+  const s = cur();
+  if (!s || !s.client || !el.sendText.value) return;
+  const stream = s.client.createClipboardStream('text/plain');
   const w = new Guacamole.StringWriter(stream); w.sendText(el.sendText.value); w.sendEnd();
   toast('In die Zwischenablage der VM gelegt (dort Strg+V)', 2200);
 });
@@ -1282,6 +1578,55 @@ el.copyBtn.addEventListener('click', async () => {
   const t = el.remoteClip.value;
   try { await navigator.clipboard.writeText(t); toast('Kopiert'); }
   catch { el.remoteClip.focus(); el.remoteClip.select(); try { document.execCommand('copy'); toast('Kopiert'); } catch { toast('Bitte Text markieren und kopieren'); } }
+});
+
+/* ----- Datei senden und Bilder/Dateien aus der VM: der Dialog gehoert der aktiven Sitzung ----- */
+const fileInput = $('#fileInput');
+const sendToRemote = (list) => { const s = cur(); if (!s) { toast('Nicht verbunden'); return Promise.resolve(false); } return s.sendToRemote(list); };
+function pickFile() { fileInput.value = ''; fileInput.click(); }
+fileInput.addEventListener('change', async () => {
+  const files = [...(fileInput.files || [])];
+  if (files.length) try { await sendToRemote(files); } catch (e) { toast('Senden: ' + e.message, 4200); }
+});
+$('#sendFileBtn').addEventListener('click', () => { el.clipDlg.close(); pickFile(); });
+
+const itemBox = $('#remoteItem'), itemImg = $('#remoteImg'), itemFiles = $('#remoteFiles'), itemImgRow = $('#remoteImgRow');
+function renderRemoteItem() {
+  const s = cur(), item = s ? s.remoteItem : { image: null, files: null };
+  itemBox.hidden = !(item.image || item.files);
+  itemImg.hidden = itemImgRow.hidden = !item.image;
+  if (item.image) { if (item.imageUrl) URL.revokeObjectURL(item.imageUrl); item.imageUrl = URL.createObjectURL(item.image); itemImg.src = item.imageUrl; }
+  itemFiles.hidden = !item.files; itemFiles.textContent = '';
+  if (item.files) {
+    for (const [i, f] of item.files.list.entries()) {
+      const li = document.createElement('li'), nm = document.createElement('span'), sz = document.createElement('span'), b = document.createElement('button');
+      nm.className = 'nm'; nm.textContent = f.name; sz.className = 'sz'; sz.textContent = fmtSize(f.size);
+      b.type = 'button'; b.textContent = 'Laden'; b.className = 'ghost';
+      b.addEventListener('click', () => s.downloadRemoteFile(item.files.batch, i, f.name));
+      li.append(nm, sz, b); itemFiles.append(li);
+    }
+  }
+}
+async function copyImageToLocal(blob) {
+  if (!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem)) throw new Error('Kopieren ist hier nicht möglich (HTTPS nötig)');
+  await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+}
+$('#imgCopyBtn').addEventListener('click', async () => {
+  const s = cur(); if (!s || !s.remoteItem.image) return;
+  try { await copyImageToLocal(s.remoteItem.image); toast('Bild kopiert'); } catch (e) { toast(e.message || 'Kopieren nicht erlaubt, bitte Speichern', 3600); }
+});
+$('#imgSaveBtn').addEventListener('click', () => { const s = cur(); if (s && s.remoteItem.image) saveBlob(s.remoteItem.image, 'bild-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '') + '.png'); });
+// Guacamole meldet Bilder nicht von selbst: der Helfer in der VM-Sitzung liest sie auf Wunsch aus der Zwischenablage
+$('#pullImgBtn').addEventListener('click', async () => {
+  const s = cur(); if (!s) return;
+  s.showXfer('Hole das Bild aus der VM …', null);
+  try {
+    const r = await fetch('/api/clipboard/pull', { method: 'POST', headers: { 'X-JulOS': '1' } });
+    if (r.status === 204) { toast('In der Zwischenablage der VM liegt kein Bild', 3200); return; }
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'Fehler ' + r.status); }
+    await s.showRemoteImage(await r.blob(), 'pull');
+  } catch (e) { toast('Bild holen: ' + e.message, 4200); }
+  finally { s.hideXfer(); }
 });
 
 /* =====================================================================
@@ -1377,7 +1722,6 @@ el.seedInput.addEventListener('input', () => { S.seed = el.seedInput.value; stor
 el.schemeSel.addEventListener('change', () => { S.scheme = el.schemeSel.value; store.set('scheme', S.scheme); applyTheme(); });
 /** Fuer die Handy-Oberflaeche (mobile.js): Farbe und Hell/Dunkel setzen, speichern und anwenden. */
 export function setTheme({ seed, scheme }) { if (seed) { S.seed = seed; store.set('seed', seed); } if (scheme) { S.scheme = scheme; store.set('scheme', scheme); } applyTheme(); }
-
 /* =====================================================================
  *  Foto einfuegen: hochladen, Helfer legt es in die Zwischenablage der VM-Sitzung, dann Strg+V
  * ===================================================================== */
@@ -1446,7 +1790,8 @@ el.photoInput.addEventListener('change', async () => {
   try { await uploadPhoto(f); } catch (e) { toast('Foto: ' + e.message, 4200); dbg('photo-error', { m: String(e.message).slice(0, 20) }); }
 });
 async function uploadPhoto(file) {
-  if (!S.connected) throw new Error('nicht verbunden');
+  const s = cur();
+  if (!s || !s.connected) throw new Error('nicht verbunden');
   toast('Foto wird vorbereitet …', 6000);
   let blob = file;
   if (!(file.type === 'image/png' && file.size < 5e6) && file.type !== 'image/gif') {
@@ -1462,181 +1807,9 @@ async function uploadPhoto(file) {
   const r = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': blob.type || 'image/jpeg', 'X-JulOS': '1' }, body: blob });
   if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'Fehler ' + r.status); }
   dbg('photo', { kb: Math.round(blob.size / 1024), auto: S.autoPaste });
-  if (S.autoPaste) { await sleep(250); await sendChord([KS.ctrl, charKeysym('v')]); toast('Foto eingefügt (Strg+V)'); }
+  if (S.autoPaste) { await sleep(250); await s.sendChord([KS.ctrl, charKeysym('v')]); toast('Foto eingefügt (Strg+V)'); }
   else toast('Foto liegt in der Zwischenablage der VM – dort Strg+V', 3500);
 }
-
-/* =====================================================================
- *  Bilder und Dateien in der Zwischenablage (Entwurf: docs/CLIPBOARD.md)
- *  Eigener Stream: Bild (BMP) und Dateien gehen ueber den Stream, die VM meldet Bilder und Dateien selbst.
- *  Guacamole: Bild ueber den Foto-Helfer (uploadPhoto), eine Datei ueber /api/upload-file, ein Bild der VM holt der Knopf im Dialog.
- * ===================================================================== */
-const xferBar = $('#xferBar'), xferText = $('#xferText'), fileInput = $('#fileInput');
-let xferAbort = null, xferCancelExtra = null;
-const nativeClip = () => !!(S.client && S.client.nativeClipboard);
-
-function showXfer(text, cancel) {
-  xferText.textContent = text; xferBar.hidden = false;
-  if (cancel !== undefined) xferCancelExtra = cancel;
-}
-function hideXfer() { xferBar.hidden = true; xferAbort = null; xferCancelExtra = null; }
-$('#xferCancel').addEventListener('click', () => { if (xferAbort) xferAbort.abort(); if (xferCancelExtra) xferCancelExtra(); hideXfer(); toast('Abgebrochen'); });
-
-function pickFile() { fileInput.value = ''; fileInput.click(); }
-fileInput.addEventListener('change', async () => {
-  const files = [...(fileInput.files || [])];
-  if (files.length) try { await sendToRemote(files); } catch (e) { toast('Senden: ' + e.message, 4200); }
-});
-$('#sendFileBtn').addEventListener('click', () => { el.clipDlg.close(); pickFile(); });
-
-/* Vom Browser an die VM. Ein einzelnes Bild wird wie ein kopiertes Bild behandelt (und mit Strg+V eingefuegt, wenn das eingeschaltet ist), alles
-   andere sind Dateien. Gibt true zurueck, wenn etwas angekommen ist. */
-async function sendToRemote(list) {
-  if (!S.connected || !S.client) { toast('Nicht verbunden'); return false; }
-  if (xferAbort) { toast('Es läuft schon eine Übertragung.', 2400); return false; }
-  const files = list.filter((f) => f && f.size !== undefined);
-  if (!files.length) return false;
-  if (files.length === 1 && /^image\//.test(files[0].type)) return sendImage(files[0]);
-  if (files.length > LIMITS.files) { toast(`Zu viele Dateien (höchstens ${LIMITS.files}).`, 3600); return false; }
-  if (files.some((f) => f.size === 0)) { toast('Die Datei ist leer.', 3000); return false; }
-  const big = files.find((f) => f.size > LIMITS.fileBytes);
-  if (big || files.reduce((n, f) => n + f.size, 0) > LIMITS.fileBytes) { toast(`Datei zu groß (höchstens ${LIMITS.fileBytes / 1048576} MB).`, 3600); return false; }
-  if (!nativeClip() && files.length > 1) { toast('Mit dieser Bildübertragung geht nur eine Datei auf einmal.', 3800); return false; }
-
-  const ctl = xferAbort = new AbortController();
-  try {
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i], label = files.length > 1 ? ` (${i + 1}/${files.length})` : '';
-      const progress = (done, total) => showXfer(`Sende ${f.name}${label} … ${Math.round(100 * done / total)} %`, null);
-      showXfer(`Sende ${f.name}${label} …`, null);
-      let r;
-      if (nativeClip()) r = await S.client.sendTransfer(2, f, f.name, i, files.length, progress, ctl.signal);
-      else {
-        const x = await xhrUpload('/api/upload-file', { 'X-JulOS': '1', 'X-File-Name': encodeURIComponent(f.name), 'Content-Type': 'application/octet-stream' }, f, progress, ctl.signal);
-        r = { code: x.status === 200 ? 0 : 4, text: (x.body && x.body.error) || 'Fehler ' + x.status };
-      }
-      if (ctl.signal.aborted) return false;
-      if (r.code !== 0) { toast(r.text || 'Senden fehlgeschlagen', 4200); dbg('file-error', { c: r.code }); return false; }
-    }
-  } catch (e) { if (!ctl.signal.aborted) toast('Senden: ' + e.message, 4200); return false; }
-  finally { hideXfer(); }
-  dbg('file-sent', { n: files.length, kb: Math.round(files.reduce((n, f) => n + f.size, 0) / 1024) });
-  toast(files.length > 1 ? 'Dateien liegen in der Zwischenablage der VM – dort einfügen (Strg+V)' : 'Datei liegt in der Zwischenablage der VM – dort einfügen (Strg+V)', 4200);
-  return true;
-}
-
-async function sendImage(file) {
-  if (file.size > LIMITS.imageBytes) { toast(`Bild zu groß (höchstens ${LIMITS.imageBytes / 1048576} MB).`, 3600); return false; }
-  if (!nativeClip()) { await uploadPhoto(file); return true; }
-  const ctl = xferAbort = new AbortController();
-  try {
-    showXfer('Bild wird umgewandelt …', null);
-    const { blob } = await bmpFromImage(file);
-    showXfer('Bild wird gesendet …', null);
-    const r = await S.client.sendTransfer(1, blob, '', 0, 1, (d, t) => showXfer(`Bild wird gesendet … ${Math.round(100 * d / t)} %`, null), ctl.signal);
-    if (ctl.signal.aborted) return false;
-    if (r.code !== 0) { toast(r.text || 'Senden fehlgeschlagen', 4200); return false; }
-  } catch (e) { if (!ctl.signal.aborted) toast('Bild: ' + e.message, 4200); return false; }
-  finally { hideXfer(); }
-  dbg('image-sent', { kb: Math.round(file.size / 1024), auto: S.autoPaste });
-  if (S.autoPaste) { await sleep(250); await sendChord([KS.ctrl, charKeysym('v')]); toast('Bild eingefügt (Strg+V)'); }
-  else toast('Bild liegt in der Zwischenablage der VM – dort Strg+V', 3500);
-  return true;
-}
-
-/* Ablegen von Dateien auf das Bild */
-const stageEl = el.stage;
-let dragDepth = 0;
-const hasFiles = (e) => e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
-stageEl.addEventListener('dragenter', (e) => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; stageEl.classList.add('dropping'); });
-stageEl.addEventListener('dragover', (e) => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
-stageEl.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; stageEl.classList.remove('dropping'); } });
-stageEl.addEventListener('drop', async (e) => {
-  if (!hasFiles(e)) return;
-  e.preventDefault(); dragDepth = 0; stageEl.classList.remove('dropping');
-  const { files, skipped } = filesFromTransfer(e.dataTransfer);
-  if (skipped.length) toast('Ordner werden nicht übertragen: ' + skipped.slice(0, 2).join(', '), 3200);
-  if (files.length) { try { await sendToRemote(files); } catch (err) { toast('Senden: ' + err.message, 4200); } }
-});
-
-/* Von der VM an den Browser */
-const remoteItem = { image: null, imageUrl: null, files: null };
-const itemBox = $('#remoteItem'), itemImg = $('#remoteImg'), itemFiles = $('#remoteFiles'), itemImgRow = $('#remoteImgRow');
-
-function openClipDlg() {
-  $('#pullImgBtn').hidden = nativeClip();
-  el.clipDlg.showModal();
-}
-
-function renderRemoteItem() {
-  itemBox.hidden = !(remoteItem.image || remoteItem.files);
-  itemImg.hidden = itemImgRow.hidden = !remoteItem.image;
-  if (remoteItem.image) { if (remoteItem.imageUrl) URL.revokeObjectURL(remoteItem.imageUrl); remoteItem.imageUrl = URL.createObjectURL(remoteItem.image); itemImg.src = remoteItem.imageUrl; }
-  itemFiles.hidden = !remoteItem.files; itemFiles.textContent = '';
-  if (remoteItem.files) {
-    for (const [i, f] of remoteItem.files.list.entries()) {
-      const li = document.createElement('li'), nm = document.createElement('span'), sz = document.createElement('span'), b = document.createElement('button');
-      nm.className = 'nm'; nm.textContent = f.name; sz.className = 'sz'; sz.textContent = fmtSize(f.size);
-      b.type = 'button'; b.textContent = 'Laden'; b.className = 'ghost';
-      b.addEventListener('click', () => downloadRemoteFile(remoteItem.files.batch, i, f.name));
-      li.append(nm, sz, b); itemFiles.append(li);
-    }
-  }
-}
-
-async function copyImageToLocal(blob) {
-  if (!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem)) throw new Error('Kopieren ist hier nicht möglich (HTTPS nötig)');
-  await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-}
-
-async function showRemoteImage(png, how) {
-  remoteItem.image = png; remoteItem.files = null; renderRemoteItem();
-  // Ohne Fokus oder ohne frische Eingabe verweigert der Browser das Schreiben: dann wartet das Bild im Dialog
-  if (document.hasFocus()) {
-    try { await copyImageToLocal(png); toast('Bild aus der VM kopiert', 2200); dbg('remote-image', { kb: Math.round(png.size / 1024), how, copied: true }); return; } catch { /* Dialog */ }
-  }
-  dbg('remote-image', { kb: Math.round(png.size / 1024), how, copied: false });
-  toast('Bild aus der VM – tippen zum Kopieren', 6000, () => openClipDlg());
-}
-
-async function onRemoteImage(format, bytes) {
-  try { await showRemoteImage(await pngFromBytes(bytes, format), 'push'); } catch (e) { toast('Bild aus der VM nicht lesbar: ' + e.message, 3600); }
-}
-
-function onRemoteFiles(batch, list) {
-  if (!list.length) { remoteItem.files = null; renderRemoteItem(); return; }
-  remoteItem.files = { batch, list }; remoteItem.image = null; renderRemoteItem();
-  toast((list.length === 1 ? 'Datei aus der VM: ' + list[0].name : list.length + ' Dateien aus der VM') + ' – tippen zum Laden', 6000, () => openClipDlg());
-}
-
-async function downloadRemoteFile(batch, index, name) {
-  if (!S.client || !S.client.fetchFile) return;
-  showXfer(`Lade ${name} …`, () => S.client.cancelFetch && S.client.cancelFetch(batch));
-  xferAbort = new AbortController();
-  try {
-    const blob = await S.client.fetchFile(batch, index, (n) => showXfer(`Lade ${name} … ${fmtSize(n)}`));
-    saveBlob(blob, name); toast('Gespeichert: ' + name, 3000);
-  } catch (e) { toast(e.message || 'Download fehlgeschlagen', 4200); }
-  finally { hideXfer(); }
-}
-
-$('#imgCopyBtn').addEventListener('click', async () => {
-  try { await copyImageToLocal(remoteItem.image); toast('Bild kopiert'); } catch (e) { toast(e.message || 'Kopieren nicht erlaubt, bitte Speichern', 3600); }
-});
-$('#imgSaveBtn').addEventListener('click', () => { if (remoteItem.image) saveBlob(remoteItem.image, 'bild-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '') + '.png'); });
-
-// Guacamole meldet Bilder nicht von selbst: der Helfer in der VM-Sitzung liest sie auf Wunsch aus der Zwischenablage
-$('#pullImgBtn').addEventListener('click', async () => {
-  showXfer('Hole das Bild aus der VM …', null);
-  try {
-    const r = await fetch('/api/clipboard/pull', { method: 'POST', headers: { 'X-JulOS': '1' } });
-    if (r.status === 204) { toast('In der Zwischenablage der VM liegt kein Bild', 3200); return; }
-    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'Fehler ' + r.status); }
-    await showRemoteImage(await r.blob(), 'pull');
-  } catch (e) { toast('Bild holen: ' + e.message, 4200); }
-  finally { hideXfer(); }
-});
-
 /* =====================================================================
  *  Passwort per Passwortmanager (Bitwarden) holen und in die VM tippen
  * ===================================================================== */
@@ -1649,8 +1822,9 @@ async function typePw(both) {
   if (!p) { toast('Kein Passwort im Feld'); return; }
   el.pwUser.value = ''; el.pwPass.value = ''; el.pwDlg.close();
   await sleep(250);
-  if (both) { if (u) { await typeText(u); await tapKey(KS.tab); } await typeText(p); await tapKey(KS.enter); }
-  else await typeText(p);
+  const s = cur(); if (!s) return;
+  if (both) { if (u) { await s.typeText(u); await s.tapKey(KS.tab); } await s.typeText(p); await s.tapKey(KS.enter); }
+  else await s.typeText(p);
   toast('Eingetippt');
 }
 el.pwTypePass.addEventListener('click', () => typePw(false));
@@ -1660,21 +1834,19 @@ el.pwDlg.addEventListener('close', () => { el.pwUser.value = ''; el.pwPass.value
 /* =====================================================================
  *  Start
  * ===================================================================== */
-window.addEventListener('beforeunload', () => { try { S.client && S.client.disconnect(); } catch { /* egal */ } });
+window.addEventListener('beforeunload', () => { for (const s of Sessions.list()) { try { s.disconnect(); } catch { /* egal */ } } });
 // Handy gesperrt oder App im Hintergrund: die Verbindung ist danach meist tot, das Bild aber noch da. Beim Zurueckkommen sofort neu verbinden
-// (nach laengerer Pause) oder, wenn schon getrennt, ebenfalls. Kurzes Wegwischen (unter 4 s) laesst die Verbindung in Ruhe.
+// (nach laengerer Pause) oder, wenn schon getrennt, ebenfalls. Kurzes Wegwischen (unter 4 s) laesst die Verbindung in Ruhe. Gilt je Sitzung.
 let hiddenAt = 0;
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { hiddenAt = Date.now(); return; }
+  if (document.hidden) { hiddenAt = Date.now(); for (const s of remotes()) s.applyPause(); return; }
   const away = hiddenAt ? Date.now() - hiddenAt : 0;
   hiddenAt = 0;
-  if (!hasCredentials() || S.intentional || !S.everConnected || S.fatal) return;
-  if (S.client && !S.connected && Date.now() - S.connectStarted < 10000) return;   // es wird gerade verbunden: nicht noch einmal von vorn
-  if (!S.connected || away > 4000) { S.retry = 0; connect(); }
+  for (const s of remotes()) s.onPageVisible(away);
 });
 
 (async function init() {
-  renderIcons(); applyTheme(); applyKbMode(); applyKeysOpen(); renderKeys();
+  renderIcons(); applyTheme(); applyKbMode();
 })();
 
 
@@ -1689,7 +1861,7 @@ document.addEventListener('pointerdown', (e) => {
 }, { passive: true });
 
 // nur mit ?debug in der Adresse: Zugriff fuer Tests
-if (location.search.includes('debug')) window.__pd = { W, S, rows: () => rows, renderWindows, renderRows, mods, cursorInfo, openPhotoDlg, sendToRemote, handleKbFiles };
+if (location.search.includes('debug')) window.__pd = { Sessions, S, rows: () => rows, remotes, cur, cursorInfo, openPhotoDlg, ico, sendToRemote, handleKbFiles };
 
 /* ---------- PWA: Service Worker und Installation ---------- */
 let installEvent = null;
@@ -1703,46 +1875,36 @@ async function installApp() {
 }
 if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
-
-/* =====================================================================
- *  Schnittstelle zur Startseite (shell.js)
- * ===================================================================== */
-/** Startet die Verbindung. conn = {id, name, kind}; das Passwort bleibt nur im Arbeitsspeicher dieser Seite. */
-export function openRemote(conn, password) {
-  S.conn = conn; S.password = password; S.retry = 0; S.everConnected = false; S.firstLogin = true; S.forceGuac = false; S.streamWorked = false;
-  return connect();
-}
-/** Wird mit (Meldung, Grund) gerufen, wenn die Verbindung beendet wird und die Startseite wieder dran ist. */
-export function setLeaveHandler(fn) { leaveHandler = fn; }
-export function disconnectRemote() { if (S.client || !el.remote.hidden) leave(); }
-
 /* =====================================================================
  *  Haken fuer die Desktop-Oberflaeche (desktop.js): dieselben Aktionen wie die Tastenleiste, nur ohne die Leiste.
- *  Auf dem PC steht die Leiste nicht unten; ihre Funktionen kommen als Menues in die obere Leiste. Hier wird nichts neu geschrieben.
+ *  Auf dem PC steht die Leiste nicht unten; ihre Funktionen kommen als Menues in die obere Leiste. Alles wirkt auf die aktive Sitzung.
  * ===================================================================== */
+const none = { off: 'off' };
 export const remoteApi = {
   /** Tasten senden, zum Beispiel 'esc', 'ctrl+alt+delete', 'f5' (die Schreibweise der Tasten-Editoren) */
-  keys: (chord) => activateKey({ type: 'chord', value: chord }),
+  keys: (chord) => cur() && cur().activateKey({ type: 'chord', value: chord }),
   /** Umschalter Strg/Alt/Shift/Super: Zustand 'off' | 'once' | 'lock' und Weiterschalten wie die Taste in der Leiste */
-  mod: (name) => mods[name], cycleMod,
+  mod: (name) => (cur() ? cur().mods[name] : none.off),
+  cycleMod: (name) => cur() && cur().cycleMod(name),
   /** Eine der frei belegbaren Gruppen ('keys', 'combos', 'funcs') samt Index fuer den Editor */
   group: (id) => { const r = rows.findIndex((x) => x.id === id); return r < 0 ? null : { index: r, title: rows[r].title, items: rows[r].items }; },
-  press: (def) => activateKey(def),
+  press: (def) => cur() && cur().activateKey(def),
   editKey: (r, i) => openKeyEditor(r, i),
-  resetKeys: () => { if (confirm('Sondertasten auf Standard zurücksetzen?')) { rows = clone(DEFAULT_ROWS); saveRows(); renderRows(); } },
+  resetKeys: () => { if (confirm('Sondertasten auf Standard zurücksetzen?')) { rows = clone(DEFAULT_ROWS); saveRows(); renderAllRows(); } },
   /** Ansicht */
-  zoomPercent: () => zoomPercent(),
-  setZoomPercent: (p) => { setK(100 / p); rememberProfile(); },
-  zoomIn: () => ACTIONS.zoomin(), zoomOut: () => ACTIONS.zoomout(),
-  fit: () => { pushSize(true); fitDisplay(); },
+  zoomPercent: () => (cur() ? cur().zoomPercent() : 100),
+  setZoomPercent: (p) => { const s = cur(); if (s) { s.setK(100 / p); s.rememberProfile(); } },
+  zoomIn: () => ACTIONS.zoomin(cur()), zoomOut: () => ACTIONS.zoomout(cur()),
+  fit: () => { const s = cur(); if (s) { s.pushSize(true); s.fitDisplay(); } },
   /** Fenster der VM (Agent): Zustand, aktualisieren, Fenster nach vorn, Modus wechseln, Programm starten */
-  windows: () => ({ available: W.available, mode: W.mode, list: W.list }),
-  refreshWindows: () => pollWindows(),
-  activateWindow: (id) => activateWindow(id, W.mode === 'apps'),
-  toggleMode, openApps,
+  windows: () => { const s = cur(); return s ? { available: s.W.available, mode: s.W.mode, list: s.W.list } : { available: false, mode: 'desktop', list: [] }; },
+  refreshWindows: () => cur() && cur().pollWindows(),
+  activateWindow: (id) => { const s = cur(); return s && s.activateWindow(id, s.W.mode === 'apps'); },
+  toggleMode: () => cur() && cur().toggleMode(),
+  openApps: () => cur() && openApps(cur()),
   /** Sonstiges */
-  reconnect: () => { S.retry = 0; if (hasCredentials()) connect(); },
-  action: (name) => ACTIONS[name] && ACTIONS[name](),
+  reconnect: () => { const s = cur(); if (s) { s.retry = 0; if (s.hasCredentials()) s.start(); } },
+  action: (name) => ACTIONS[name] && ACTIONS[name](cur()),
   focus: () => focusKbForHardware(),
   /** Desktop-Layout: wer die Tasten bekommt (Funktion liefert true/false), den Fokus vom Tastaturfeld nehmen, hat das Tastaturfeld den Fokus */
   setKeyOwner: (fn, onFocusChange) => { keyOwner = fn; if (onFocusChange) keyFocusHook = onFocusChange; },

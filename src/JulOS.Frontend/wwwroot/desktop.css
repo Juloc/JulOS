@@ -88,11 +88,11 @@ html.desktop body { background: #d9d4f2; }
 /* Sitzungsfenster: die Fernsteuerung (#remote) wird hierher verschoben */
 .dk-win.dk-session { background: rgba(255, 255, 255, .78); }
 .dk-win.dk-session .dk-wb { background: #000; }
-html.desktop #remote { flex: 1; min-height: 0; }
-html.desktop #remote #rowsTop { display: none; }
+html.desktop .sv { flex: 1; min-height: 0; }
+html.desktop .sv .sv-rowsTop { display: none; }
 /* Die Tastenleiste und die Fensterleiste der VM stehen nicht mehr im Fenster: ihre Funktionen sind Menues in der oberen Leiste (desktop-remote.js) */
-html.desktop #remote #dock, html.desktop #remote #topbar { display: none !important; }
-html.desktop #remote #overlay .box { border-radius: 20px; background: rgba(255, 255, 255, .94); }
+html.desktop .sv .sv-dock, html.desktop .sv .sv-topbar { display: none !important; }
+html.desktop .sv .sv-overlay .box { border-radius: 20px; background: rgba(255, 255, 255, .94); }
 
 /* ---------- Home-Fenster ---------- */
 .dk-home { flex: 1; min-height: 0; display: grid; grid-template-columns: 200px 1fr; }
@@ -277,7 +277,7 @@ html.desktop #remote #overlay .box { border-radius: 20px; background: rgba(255, 
 .dk-keys svg.dk-i { width: 14px; height: 14px; }
 .dk-keys.on { color: #3a29b8; background: rgba(106, 88, 230, .16); font-weight: 600; }
 .dk-win.keys { box-shadow: 0 0 0 2px rgba(106, 88, 230, .6), var(--dk-shadow); }
-.dk-win.keys .dk-wh .dk-wt span::after { content: "Tastatur"; margin-left: 9px; padding: 2px 7px; border-radius: 99px; font-size: 10.5px; font-weight: 600; background: rgba(106, 88, 230, .16); color: #3a29b8; vertical-align: 1px; }
+.dk-win.keys .dk-wh .dk-wt span:last-child::after { content: "Tastatur"; margin-left: 9px; padding: 2px 7px; border-radius: 99px; font-size: 10.5px; font-weight: 600; background: rgba(106, 88, 230, .16); color: #3a29b8; vertical-align: 1px; }
 
 /* Ueber JulOS */
 .dk-about { padding: 20px 26px 18px; text-align: center; }
@@ -289,3 +289,12 @@ html.desktop #remote #overlay .box { border-radius: 20px; background: rgba(255, 
 .dk-ab-row b { font-weight: 500; text-align: right; overflow-wrap: anywhere; }
 .dk-ab-links { display: flex; gap: 18px; justify-content: center; margin: 12px 0 0; font-size: 13px; }
 .dk-ab-links a { color: inherit; text-decoration: underline; }
+
+
+/* ---------- Mehrere Sitzungen: Zustandspunkt in der Titelleiste, Menueintraege nur fuers Handy ausblenden ---------- */
+.dk-sdot { width: 9px; height: 9px; flex: 0 0 9px; border-radius: 50%; background: #9aa0b8; }
+.dk-sdot.ok { background: #2fb872; }
+.dk-sdot.busy { background: #f0a020; animation: dk-pulse 1.2s ease-in-out infinite; }
+.dk-sdot.bad { background: #e5484d; }
+@keyframes dk-pulse { 50% { opacity: .35; } }
+html.desktop .sv .sv-menu [data-only="phone"] { display: none; }

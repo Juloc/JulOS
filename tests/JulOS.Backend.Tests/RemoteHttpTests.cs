@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
+using JulOS.Integrations;
 using JulOS.Integrations.Guacamole;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -121,6 +122,46 @@ public sealed class RemoteHttpTests
         // dasselbe Ticket ein zweites Mal: abgelehnt
         var again = await Assert.ThrowsAnyAsync<Exception>(() => OpenAsync(app, ticket, cookie));
         Assert.Contains("403", again.ToString());
+    }
+
+    private static async Task<string> SidTicketAsync(HttpClient c, string cookie, Guid connection, string sid)
+    {
+        var r = await c.SendAsync(Post("/api/remote/ticket", new { connection, password = "geheim", width = 856, height = 1448, sid }, cookie));
+        Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        return JsonDocument.Parse(await r.Content.ReadAsStringAsync()).RootElement.GetProperty("ticket").GetString()!;
+    }
+
+    [Fact]
+    public async Task Several_sessions_to_one_target_run_side_by_side_a_reload_replaces_only_itself_and_the_limit_is_per_user()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var guacd = new FakeGuacd { AcceptMany = true };
+        await using var app = new Server(db, $"127.0.0.1:{guacd.Port}", configure: s => s.AddSingleton(new SessionRegistry(2)));
+        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (cookie, userId) = await SignedInAsync(app, c, db);
+        var connection = await new ConnectionStore(db.Data).CreateAsync(userId, "Test", "desktop", "ziel", 3389, "tester");
+
+        using var one = await OpenAsync(app, await SidTicketAsync(c, cookie, connection.Id, "sitzung-eins"), cookie);
+        Assert.StartsWith("0.,", await ReadAsync(one));
+        using var two = await OpenAsync(app, await SidTicketAsync(c, cookie, connection.Id, "sitzung-zwei"), cookie);
+        Assert.StartsWith("0.,", await ReadAsync(two));          // zwei Sitzungen zum selben Ziel: keine loest die andere ab
+
+        // dritte: Obergrenze (hier 2), mit Meldung im Klartext
+        using var three = await OpenAsync(app, await SidTicketAsync(c, cookie, connection.Id, "sitzung-drei"), cookie);
+        await ReadAsync(three);
+        var refused = await ReadAsync(three);
+        Assert.Contains("Es sind schon 2 Sitzungen offen", refused);
+        Assert.EndsWith(",3.797;", refused);
+
+        // Neuladen der ersten Sitzung (gleiche Kennung): loest nur die erste ab, trotz Obergrenze
+        using var oneAgain = await OpenAsync(app, await SidTicketAsync(c, cookie, connection.Id, "sitzung-eins"), cookie);
+        Assert.StartsWith("0.,", await ReadAsync(oneAgain));
+        var told = await ReadAsync(one);
+        Assert.Contains("3.777", told);
+        Assert.Equal(WebSocketState.Open, two.State);            // die zweite Sitzung ist unberuehrt
+
+        await oneAgain.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+        await two.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
     }
 
     [Fact]

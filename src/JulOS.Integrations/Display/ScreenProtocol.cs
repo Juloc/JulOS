@@ -33,6 +33,7 @@ namespace JulOS.Integrations.Display;
 ///  13 Senden Abbruch nummer(4)
 ///  14 Datei holen    stapel(4) nummer(1)
 ///  15 Holen Abbruch  stapel(4)
+///  16 Pause          an(1: 1 = die Ansicht ist im Hintergrund, es werden keine Bilder kodiert; 0 = weiter)
 /// </summary>
 public static class ScreenProtocol
 {
@@ -41,7 +42,7 @@ public static class ScreenProtocol
     public const byte FromBrowserAck = 1, FromBrowserMove = 2, FromBrowserButton = 3, FromBrowserWheel = 4, FromBrowserKey = 5,
         FromBrowserUnicode = 6, FromBrowserResize = 7, FromBrowserKeyFrame = 8, FromBrowserClipboard = 9,
         FromBrowserSendBegin = 10, FromBrowserSendChunk = 11, FromBrowserSendEnd = 12, FromBrowserSendCancel = 13,
-        FromBrowserFileRequest = 14, FromBrowserFileCancel = 15;
+        FromBrowserFileRequest = 14, FromBrowserFileCancel = 15, FromBrowserPause = 16;
 
     /// <summary>Nachrichten, die laenger als eine Eingabe sein duerfen (Text, Dateiname, Stueck einer Datei).</summary>
     public static bool MayBeLong(byte type) => type is FromBrowserClipboard or FromBrowserSendBegin or FromBrowserSendChunk;

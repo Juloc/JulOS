@@ -27,18 +27,25 @@ export class SizeCounter {
 
 /**
  * Entscheidet, ob eine neue Remote-Groesse jetzt gesendet wird. Jede Aenderung baut das Bild der VM neu auf, deshalb:
- * nur bei echtem Unterschied (Toleranz), nicht waehrend die Tastatur ein- oder ausfaehrt (hold), mit Mindestabstand
+ * nur bei echtem Unterschied (Toleranz), erst wenn die gewuenschte Groesse settleMs lang gleich geblieben ist (Entprellung: Tastatur-Animation,
+ * Adressleiste, Drehen), nicht waehrend die Tastatur ein- oder ausfaehrt (hold), mit Mindestabstand
  * und mit einer Notbremse gegen Rueckkopplung (hoechstens stormMax in stormWindow, danach stormPause Ruhe).
  */
 export class SizeGate {
-  constructor({ tolW = 8, tolH = 16, minGap = 1000, stormMax = 6, stormWindow = 20000, stormPause = 4000 } = {}) {
-    Object.assign(this, { tolW, tolH, minGap, stormMax, stormWindow, stormPause });
-    this.times = []; this.lastSendAt = -Infinity;
+  constructor({ tolW = 8, tolH = 16, minGap = 1000, stormMax = 6, stormWindow = 20000, stormPause = 4000, settleMs = 0 } = {}) {
+    Object.assign(this, { tolW, tolH, minGap, stormMax, stormWindow, stormPause, settleMs });
+    this.times = []; this.lastSendAt = -Infinity; this.pend = null;
   }
+  #near(a, b) { return Math.abs(a.w - b.w) <= this.tolW && Math.abs(a.h - b.h) <= this.tolH; }
+  /** Meldet die gerade gewuenschte Groesse (bei jedem Wechsel der Flaeche); aendert sie sich, laeuft die Entprellung von vorn. */
+  observe(now, want) { if (!this.pend || !this.#near(want, this.pend)) this.pend = { w: want.w, h: want.h, since: now }; }
   /** want/last = {w,h} in Geraetepixeln. Antwort: {action:'send'} | {action:'skip',why} | {action:'wait',why,delay}. */
   decide(now, want, last, { force = false, holdUntil = 0 } = {}) {
     if (force) return { action: 'send' };
-    if (Math.abs(want.w - last.w) <= this.tolW && Math.abs(want.h - last.h) <= this.tolH) return { action: 'skip', why: 'tol' };
+    if (this.#near(want, last)) { this.pend = null; return { action: 'skip', why: 'tol' }; }
+    this.observe(now, want);
+    const stable = now - this.pend.since;
+    if (stable < this.settleMs) return { action: 'wait', why: 'settle', delay: this.settleMs - stable + 20 };
     if (holdUntil > now) return { action: 'wait', why: 'hold', delay: holdUntil - now + 30 };
     const since = now - this.lastSendAt;
     if (since < this.minGap) return { action: 'wait', why: 'gap', delay: this.minGap - since + 20 };
@@ -46,7 +53,7 @@ export class SizeGate {
     if (this.times.length >= this.stormMax) return { action: 'wait', why: 'storm', delay: this.stormPause, n: this.times.length };
     return { action: 'send' };
   }
-  sent(now) { this.times.push(now); this.lastSendAt = now; }
+  sent(now) { this.times.push(now); this.lastSendAt = now; this.pend = null; }
 }
 
 /** Beobachtet das Layout und schreibt Messwerte; Anzeige auf dem Bild und dichte Protokollierung nur mit ?debug. */

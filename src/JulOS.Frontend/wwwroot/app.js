@@ -3,6 +3,7 @@ import { MouseInput, mouseState } from './mouse.js';
 import { Resume } from './resume.js';
 import { StreamAudio } from './stream-audio.js';
 import { SizeGate, LayoutLog } from './layoutlog.js';
+import { KB_SETTLE_MS, StageBase, effectiveStage, panOffset, panDrag, normalizeKbMode, nextKbMode, kbModeLabel } from './kbpan.js';
 import { Session, Sessions } from './sessions.js';
 import { LIMITS, fmtSize, bmpFromImage, pngFromBytes, filesFromTransfer, saveBlob } from './clip.js';
 
@@ -79,6 +80,7 @@ const el = {
 
 const S = {
   kbMode: store.get('kbMode2', 'rich'),       // 'rich' (Bilder aus der Tastatur) | 'normal' (mit Vorschlaegen) | 'direct' (ohne Vorschlaege)
+  kbResize: normalizeKbMode(store.get('kbResize', 'pan')),   // Bildschirmtastatur auf: 'pan' (Bild verschieben, Aufloesung bleibt) | 'follow' (Aufloesung folgt der Flaeche), siehe kbpan.js
   touchMode: store.get('touchMode', 'direct'),// 'direct' (Tippen = Klick an der Stelle) | 'pad' (Touchpad)
   sizeHoldUntil: 0,                           // solange die Bildschirmtastatur faehrt, geht keine neue Groesse an die VMs (gilt fuer alle Sitzungen)
   expanded: store.get('expanded', false), group: store.get('group', 'keys'), editing: false,
@@ -135,8 +137,9 @@ const LAYDEBUG = (() => {
   try { if (/[?&]debug\b/.test(location.search)) sessionStorage.setItem('pd.laydebug', '1'); return sessionStorage.getItem('pd.laydebug') === '1'; } catch { return /[?&]debug\b/.test(location.search); }
 })();
 const kbFocused = () => document.activeElement === el.kbInput || document.activeElement === el.kbRich;
-// Waehrend die Tastatur ein- oder ausfaehrt, wird keine neue Remote-Groesse gesendet (die Ansicht ruckelt sonst durch mehrere Zwischengroessen)
-const KB_HOLD_MS = 600;
+// Waehrend die Tastatur ein- oder ausfaehrt, wird keine neue Remote-Groesse gesendet (die Ansicht ruckelt sonst durch mehrere Zwischengroessen);
+// dieselbe kurze Frist wie die Entprellung im SizeGate
+const KB_HOLD_MS = KB_SETTLE_MS;
 function holdSize(ms = KB_HOLD_MS) { S.sizeHoldUntil = Math.max(S.sizeHoldUntil || 0, Date.now() + ms); }
 let vpFrame = 0;
 function layoutViewport(why = 'vv') {
@@ -156,6 +159,7 @@ function applyViewport(why) {
   if (open !== kbOpen) {
     kbOpen = open; root.classList.toggle('kb-open', open);
     holdSize();
+    for (const s of remotes()) s.applyPan();     // Bild verschieben (Modus 'pan'): sofort die Stelle mit dem Fokus sichtbar halten
     // Tastatur per Zurueck-Geste geschlossen, Feld hat aber noch den Fokus: Fokus loesen, damit der Zustand stimmt
     if (!open && kbFocused()) el.kb.blur();
     setActOnAll('keyboard', open);
@@ -437,7 +441,7 @@ export class RemoteSession extends Session {
     this.resume = new Resume();                    // Sitzungserhalt des Streams: Token, Zeitfenster, Versuche (siehe resume.js)
     this.gen = 0;                                  // zaehlt jeden Verbindungsversuch: spaete Antworten eines alten Versuchs werden verworfen
     this.k = clamp(store.get('k.' + conn.id, store.get('k', pcDefaultK())), 0.35, 1.8);   // Remote-Pixel pro Handy-Pixel (kleiner = Inhalt groesser), je Verbindung gemerkt
-    this.lastSent = { w: 0, h: 0 }; this.gate = new SizeGate();
+    this.lastSent = { w: 0, h: 0 }; this.gate = new SizeGate({ settleMs: KB_SETTLE_MS });
     this.retry = 0; this.retryTimer = null; this.resizeTimer = null; this.connectTimer = null; this.toastTimer = null; this.zoomTimer = null;
     this.connectedAt = 0; this.connectStarted = 0; this.frameSeen = false;
     this.cursor = { ibeam: false };
@@ -447,6 +451,8 @@ export class RemoteSession extends Session {
     this.clipText = '';
     this.xferAbort = null; this.xferCancelExtra = null; this.remoteItem = { image: null, imageUrl: null, files: null };
     this.stageW = 0; this.stageH = 0; this.lastStage = null;
+    this.stageBase = new StageBase();              // Bildflaeche ohne Tastatur (Modus 'pan')
+    this.panY = 0; this.focusY = null;             // Verschiebung des Bildes nach oben und Stelle mit dem Fokus (Pixel der VM), nur mit offener Tastatur im Modus 'pan'
     this.W = { available: false, list: [], mode: 'desktop', timer: null, lastCls: null, candCls: null, candN: 0, profileAt: 0, apps: null };
     this.winSig = '';
     this.G = { pts: new Map(), mode: 'idle', timer: null, sx: 0, sy: 0, st: 0, lx: 0, ly: 0, d0: 0, k0: 0, mid0: null, midLast: null,
@@ -715,7 +721,7 @@ export class RemoteSession extends Session {
       setTimeout(() => { if (!this.disposed && !this.intentional) this.start(); }, 0);
     };
     const display = client.getDisplay();
-    this.client = client; this.display = display; this.lastSent = { w, h }; this.gate = new SizeGate();
+    this.client = client; this.display = display; this.lastSent = { w, h }; this.gate = new SizeGate({ settleMs: KB_SETTLE_MS });
     this.lay.note('conn', { engine: 'stream' });
     this.el.display.appendChild(display.getElement());
     display.onresize = () => { this.fitDisplay(); const dw = display.getWidth(), dh = display.getHeight(); this.lay.note('remote', { w: dw, h: dh }); this.dbg('remote-size', { w: dw, h: dh }); };
@@ -861,7 +867,7 @@ export class RemoteSession extends Session {
     return this.lastStage || lastStageSize;
   }
   computeRemote() {
-    const r = this.stageSize();
+    const r = effectiveStage(S.kbResize, kbOpen, this.stageSize(), this.stageBase.size());
     const dpr = window.devicePixelRatio || 1;
     const w = Math.max(400, Math.floor((r.w * dpr * this.k) / 4) * 4);
     const h = Math.max(300, Math.floor((r.h * dpr * this.k) / 2) * 2);
@@ -879,6 +885,22 @@ export class RemoteSession extends Session {
     let scale = r.width / rw;
     if (Math.abs(scale * dpr - 1) < 0.02) scale = 1 / dpr;
     this.display.scale(scale);
+    this.applyPan();
+  }
+  /** Modus 'pan': die Tastatur verkleinert nur die Flaeche, das Bild behaelt seine Groesse und wird verschoben (Stelle des letzten Tippens bleibt sichtbar). */
+  panMax() {
+    if (S.kbResize !== 'pan' || !kbOpen || !this.display) return 0;
+    const r = this.el.stage.getBoundingClientRect();
+    return Math.max(0, this.display.getHeight() * this.display.getScale() - r.height);
+  }
+  applyPan() {
+    const max = this.panMax();
+    if (max <= 0) this.panY = 0;
+    else {
+      const s = this.display.getScale();
+      this.panY = panOffset({ contentH: this.display.getHeight() * s, viewH: this.el.stage.getBoundingClientRect().height, focusY: this.focusY === null ? null : this.focusY * s, current: this.panY });
+    }
+    this.el.display.style.transform = this.panY ? `translateY(${-this.panY}px)` : '';
   }
   // Wann die Groesse wirklich an die VM geht, entscheidet SizeGate (layoutlog.js): nur bei echtem Unterschied (8 x 16 Geraetepixel Toleranz),
   // nicht waehrend die Tastatur faehrt, hoechstens einmal pro Sekunde und mit Notbremse (4 Aenderungen in 20 s, dann 5 s Pause).
@@ -907,12 +929,16 @@ export class RemoteSession extends Session {
     this.gate.sent(now);
     this.sendRemoteSize(want.w, want.h, force ? 'force' : 'fit');
   }
-  scheduleSize(delay = 450) { clearTimeout(this.resizeTimer); this.resizeTimer = setTimeout(() => { this.pushSize(); this.fitDisplay(); }, delay); }
+  scheduleSize(delay = KB_SETTLE_MS) {
+    if (this.client) this.gate.observe(Date.now(), this.computeRemote());      // die Entprellung laeuft ab der letzten Aenderung der gewuenschten Groesse
+    clearTimeout(this.resizeTimer); this.resizeTimer = setTimeout(() => { this.pushSize(); this.fitDisplay(); }, delay); }
   onStageResize() {
     this.fitDisplay();
     const r = this.el.stage.getBoundingClientRect();
     if (r.width < 50 || r.height < 50) return;                                      // versteckt (display: none) oder noch nicht eingehaengt: keine neue Groesse
     this.lastStage = { w: r.width, h: r.height }; lastStageSize = this.lastStage;
+    this.stageBase.note(r.width, r.height, { kbOpen, holding: (S.sizeHoldUntil || 0) > Date.now() });
+    this.applyPan();
     if (Math.abs(r.width - this.stageW) < 1 && Math.abs(r.height - this.stageH) < 1) return;    // nur ein Rundungs- oder Startsignal: keine neue Groesse
     this.stageW = r.width; this.stageH = r.height;
     this.lay.note('stage', { w: Math.round(r.width), h: Math.round(r.height) });
@@ -1167,6 +1193,7 @@ export class RemoteSession extends Session {
   updateMenuLabels() {
     const set = (c, t) => { const n = this.el.menu.querySelector(c); if (n) n.textContent = t; };
     set('.mv-kb', S.kbMode === 'rich' ? 'mit Bildern' : S.kbMode === 'normal' ? 'mit Vorschlägen' : 'ohne Vorschläge');
+    set('.mv-kbresize', kbModeLabel(S.kbResize));
     set('.mv-touch', S.touchMode === 'direct' ? 'Tippen = Klick' : 'Touchpad');
     set('.mv-autokb', S.autoKb ? 'an' : 'aus');
     set('.mv-autopaste', S.autoPaste ? 'an' : 'aus');
@@ -1180,6 +1207,12 @@ export class RemoteSession extends Session {
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (!act) return;
     if (['sound', 'volume', 'mic'].includes(act)) { this.audioAction(act); return; }
+    if (act === 'kbResize') {
+      S.kbResize = nextKbMode(S.kbResize); store.set('kbResize', S.kbResize);
+      for (const s of remotes()) { s.updateMenuLabels(); s.applyPan(); s.scheduleSize(); }
+      toast(S.kbResize === 'pan' ? 'Bild wird verschoben, die Auflösung bleibt' : 'Auflösung folgt der Tastatur', 2200);
+      return;
+    }
     if (['kbMode', 'autoKb', 'touchMode', 'autoPaste'].includes(act)) {
       if (act === 'kbMode') S.kbMode = S.kbMode === 'rich' ? 'normal' : S.kbMode === 'normal' ? 'direct' : 'rich';
       if (act === 'autoKb') S.autoKb = !S.autoKb;
@@ -1225,6 +1258,7 @@ export class RemoteSession extends Session {
     display.showCursor(true);
   }
   async clickAt(x, y, button = 'left') {
+    this.focusY = y; this.applyPan();                // hier wird gleich getippt: im Modus 'pan' soll diese Stelle sichtbar bleiben
     this.mouseSend(x, y);
     await sleep(10);
     this.mouseSend(x, y, button === 'left', false, button === 'right');
@@ -1401,7 +1435,10 @@ export class RemoteSession extends Session {
           G.newK = clamp(G.k0 * (G.d0 / d), 0.35, 1.8);
           this.toast('Anzeige ' + Math.round(100 / G.newK) + ' %', 600);
         } else if (G.decided === 'scroll') {
-          const dy = m.y - G.midLast.y; G.midLast = m; G.scrollAcc += dy;
+          let dy = m.y - G.midLast.y; G.midLast = m;
+          const max = this.panMax();
+          if (max > 0) { const p = panDrag(this.panY, max, dy); this.panY = p.offset; dy = p.rest; this.el.display.style.transform = this.panY ? `translateY(${-this.panY}px)` : ''; }   // Bild verschieben, erst der Rest scrollt die VM
+          G.scrollAcc += dy;
           const q = this.remoteXY(m.x, m.y);
           while (Math.abs(G.scrollAcc) >= 34) {
             const down = G.scrollAcc < 0; // Finger nach oben = nach unten scrollen

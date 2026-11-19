@@ -74,7 +74,7 @@ class StreamDisplay {
     this.cursorCanvas = document.createElement('canvas');
     this.cursorCanvas.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none;display:none;';
     this.element.append(this.canvas, this.overlay, this.cursorCanvas);
-    this.width = 0; this.height = 0; this.scaleValue = 1;
+    this.width = 0; this.height = 0; this.scaleValue = 1; this.drawnOnce = false;
     this.cursorHot = { x: 0, y: 0 }; this.pointer = { x: 0, y: 0 }; this.cursorShown = false; this.softCursor = false;
     this.onresize = null; this.oncursor = null;
   }
@@ -109,8 +109,12 @@ class StreamDisplay {
 
   resize(w, h) {
     if (w === this.width && h === this.height) return;
+    // Ein Canvas wird beim Aendern der Groesse leer. Das alte Bild bleibt gestreckt stehen, bis das erste Bild in der neuen Groesse da ist (kein Schwarzbild).
+    let old = null;
+    if (this.width && this.drawnOnce) { old = document.createElement('canvas'); old.width = this.canvas.width; old.height = this.canvas.height; old.getContext('2d').drawImage(this.canvas, 0, 0); }
     this.width = w; this.height = h;
     this.canvas.width = w; this.canvas.height = h;
+    if (old) this.ctx.drawImage(old, 0, 0, old.width, old.height, 0, 0, w, h);
     this.overlay.width = w; this.overlay.height = h; this.overlayEpoch++;
     if (this.onresize) this.onresize(w, h);
   }
@@ -471,6 +475,7 @@ export class StreamClient {
         const sequence = frame.timestamp;
         if (frame.displayWidth !== g.width || frame.displayHeight !== g.height) g.resize(frame.displayWidth, frame.displayHeight);
         g.ctx.drawImage(frame, 0, 0);
+        g.drawnOnce = true;
         frame.close();
         this.drawn = true;
         this.output = sequence; this.activityAt = performance.now();

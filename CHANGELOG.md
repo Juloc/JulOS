@@ -4,6 +4,11 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [0.10.3] - 2026-11-19
+
+### Behoben
+- Backup: Mit dem Image-Stack (nur `backup:/backup` als benanntes Volume) gehörte der Backup-Ordner `root` und der Server durfte nicht hineinschreiben; „Über JulOS“ zeigte „Fehlgeschlagen: In den Backup-Ordner /backup darf der Server nicht schreiben“, es entstand kein Backup. Das Image legt `/backup` jetzt wie `/data` für den Benutzer des Servers an, ein neues oder leeres Volume übernimmt den Besitzer beim ersten Start. Ein Volume mit Dateien von `root` muss einmal `chown` bekommen (siehe [docs/BACKUP.md](docs/BACKUP.md)).
+
 ## [0.10.2] - 2026-11-19
 
 ### Behoben

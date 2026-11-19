@@ -36,8 +36,8 @@ WORKDIR /app
 COPY --from=build /app .
 ARG BUILD_DATE=
 ENV ASPNETCORE_HTTP_PORTS=8080 JULOS_DATA=/data JULOS_BUILD_DATE=${BUILD_DATE}
-# Datenordner (Schluessel fuer gespeicherte Passwoerter): gehoert dem Benutzer des Servers, damit ein neues Volume ihn uebernimmt
-RUN mkdir /data && chown $APP_UID /data
+# Datenordner (Schluessel fuer gespeicherte Passwoerter) und Backup-Ordner: gehoeren dem Benutzer des Servers, damit ein neues oder leeres Volume ihn uebernimmt
+RUN mkdir /data /backup && chown $APP_UID /data /backup
 USER $APP_UID
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "JulOS.dll"]

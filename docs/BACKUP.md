@@ -179,3 +179,15 @@ Then sign in as before (same password and authenticator): accounts, sessions, co
 `deploy/dev/test.sh` runs `BackupTests`: dump, a fresh database, restore, login with password and authenticator code, and decrypting a stored password with the backed-up key.
 `BackupCopyTests` covers the second target: folder copy (atomic, retention, failure and catch-up) and SFTP against the throw-away SSH target of the test stack (password and key login, host key remembered and checked).
 Do the same by hand once on a spare PostgreSQL before you need it. A backup nobody has restored is only a hope.
+
+## The server may not write into the backup folder
+
+Status "Fehlgeschlagen: In den Backup-Ordner /backup darf der Server nicht schreiben" means the folder is owned by someone else than the server user. With the published image
+the folder `/backup` exists in the image for the server user (since 0.10.3), so a new or **empty** named volume takes that owner at its first start. A volume that already
+holds files from `root` (or a bind-mounted host folder) needs the owner once, from the host:
+
+```sh
+docker run --rm -v <volume or host folder>:/backup --user 0:0 --entrypoint chown <image> <server uid>:<server gid> /backup
+```
+
+(`<server uid>` is `APP_UID` of the image, 1654 for the standard .NET images; the compose files of this repository use `JULOS_UID`/`JULOS_GID` instead.) The status turns green after the next run at the configured time.

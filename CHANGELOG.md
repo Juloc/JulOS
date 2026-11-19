@@ -14,6 +14,10 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 ### Neu
 - Tägliches Backup: der Server schreibt die Datenbank (komprimiert) und eine Kopie des Schlüssels für gespeicherte Passwörter als getrennte Dateien in einen Backup-Ordner (`/backup`, im Compose-Beispiel `~/julos-backup`), mit Aufbewahrung (Standard 14 Tage), Uhrzeit und Schalter per Umgebungsvariable (`JULOS_BACKUP`, `JULOS_BACKUP_TIME`, `JULOS_BACKUP_KEEP_DAYS`, `JULOS_BACKUP_KEY`). Ohne eingebundenen Ordner wird nichts geschrieben, sondern laut gewarnt. Kein zusätzlicher Container.
 - Wiederherstellung auf der Konsole: `dotnet JulOS.dll backup restore DATEI --key SCHLÜSSELDATEI` (alles oder nichts, prüft am Ende, dass sich gespeicherte Passwörter entschlüsseln lassen); `backup create` sichert sofort. „Über JulOS“ zeigt das letzte Backup mit Zeit und Größe. Anleitung: [docs/BACKUP.md](docs/BACKUP.md).
+## [Unreleased]
+
+### Geändert
+- Entwicklung: `deploy/dev/e2e.sh` startet einen eigenen Test-Stack und prüft in einem echten Browser (Playwright in Docker, Chromium) sechs Abläufe: Ersteinrichtung und Anmeldung, Verbindungen anlegen, RDP-Stream mit Bild, Klick und Tastatur im Ziel, SSH-Terminal, Handy- und Desktop-Oberfläche ohne Konsolenfehler. Beschreibung in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md), optionaler Schritt vor dem Tag in [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [0.4.0] - 2026-11-19
 

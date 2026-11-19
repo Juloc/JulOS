@@ -284,7 +284,7 @@ uninstall_desktop() {
   say "Removing the JulOS desktop agent of $DESK_USER."
   agent_py=$APP_DIR/julos-agent.py
   if [ -f "$agent_py" ] && [ -n "$PYTHON" ]; then
-    act "stop the agent and remove its autostart entry or user service, files, configuration, token and log (julos-agent.py uninstall)" as_user env HOME="$DESK_HOME" "$PYTHON" "$agent_py" uninstall --yes
+    act "stop the agent and remove its autostart entry or user service, files, configuration, token and log (julos-agent.py uninstall)" as_user env -u XDG_CONFIG_HOME -u XDG_STATE_HOME HOME="$DESK_HOME" "$PYTHON" "$agent_py" uninstall --yes
   else
     for f in "$DESK_CONFIG_DIR/autostart/julos-agent.desktop" "$DESK_CONFIG_DIR/autostart/julos-clip.desktop"; do
       [ ! -e "$f" ] || act "remove $f" rm -f "$f"
@@ -732,7 +732,7 @@ write_user_file() {   # dest, content on stdin: as the user, atomic
 }
 
 stop_old_agent() {
-  as_user env HOME="$RUN_HOME" "$PYTHON" "$APP_DIR/julos-agent.py" stop >/dev/null 2>&1 || true
+  as_user env -u XDG_CONFIG_HOME -u XDG_STATE_HOME HOME="$RUN_HOME" "$PYTHON" "$APP_DIR/julos-agent.py" stop >/dev/null 2>&1 || true
   for name in julos-agent julos-clip; do      # older installations without a pid file, and the clipboard helper, by the exact path of this installation
     for p in $(ps -eo pid,user,args | awk -v u="$RUN_USER" -v n="python3 $APP_DIR/$name.py" '$2 == u && index($0, n) { print $1 }'); do kill "$p" 2>/dev/null || true; done
   done
@@ -779,7 +779,7 @@ install_desktop_start() {
   [ "$use_unit" = 1 ] || start_in_session
   start_clip_helper
   sleep 2
-  as_user env HOME="$RUN_HOME" "$PYTHON" "$APP_DIR/julos-agent.py" status || true
+  as_user env -u XDG_CONFIG_HOME -u XDG_STATE_HOME HOME="$RUN_HOME" "$PYTHON" "$APP_DIR/julos-agent.py" status || true
 }
 
 # The agent has to start inside the graphical session: it needs DISPLAY. sudo usually keeps DISPLAY and XAUTHORITY; without them it starts at the next login.
@@ -795,13 +795,13 @@ start_in_session() {
   doing "start the agent in the session $disp"
   xa=${XAUTHORITY:-$RUN_HOME/.Xauthority}
   # shellcheck disable=SC2016  # the single-quoted script is run by the user's own sh: $HOME and "$@" are meant to expand there
-  as_user env HOME="$RUN_HOME" DISPLAY="$disp" XAUTHORITY="$xa" sh -c 'cd "$HOME" && (setsid nohup "$@" >/dev/null 2>&1 </dev/null &)' sh "$PYTHON" "$APP_DIR/julos-agent.py" --desktop
+  as_user env -u XDG_CONFIG_HOME -u XDG_STATE_HOME HOME="$RUN_HOME" DISPLAY="$disp" XAUTHORITY="$xa" sh -c 'cd "$HOME" && (setsid nohup "$@" >/dev/null 2>&1 </dev/null &)' sh "$PYTHON" "$APP_DIR/julos-agent.py" --desktop
 }
 start_clip_helper() {
   [ -f "$APP_DIR/julos-clip.py" ] || return 0
   disp=$(display_for_start) || return 0
   # shellcheck disable=SC2016  # as above
-  as_user env HOME="$RUN_HOME" DISPLAY="$disp" XAUTHORITY="${XAUTHORITY:-$RUN_HOME/.Xauthority}" sh -c 'cd "$HOME" && (setsid nohup "$@" >"$HOME/.local/state/julos/clip.log" 2>&1 </dev/null &)' sh "$PYTHON" "$APP_DIR/julos-clip.py"
+  as_user env -u XDG_CONFIG_HOME -u XDG_STATE_HOME HOME="$RUN_HOME" DISPLAY="$disp" XAUTHORITY="${XAUTHORITY:-$RUN_HOME/.Xauthority}" sh -c 'cd "$HOME" && (setsid nohup "$@" >"$HOME/.local/state/julos/clip.log" 2>&1 </dev/null &)' sh "$PYTHON" "$APP_DIR/julos-clip.py"
 }
 
 # Docker for a desktop: the agent is the user's own process, so it can use the Docker socket only when the user is in the group "docker". Group membership is the user's decision.

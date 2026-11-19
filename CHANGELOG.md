@@ -4,6 +4,18 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Neu
+- **Ein Agent pro Rechner, der alles kann** (Agent 0.7.0, [docs/HOST-AGENT.md](docs/HOST-AGENT.md), Abschnitt „One agent per machine“): der Desktop-Agent beantwortet jetzt zusätzlich alle `/v1/host/*`-Anfragen des Host-Modus (Systemwerte, Updates, Festplatten, Dienste, Docker, bestätigte Aktionen, Jobs) mit denselben Prüfungen und demselben Code wie der Host-Modus (lokale Rechte-Datei `/etc/julos-agent/permissions`, Root-Helfer, Pfade, Validierung). Eine Maschine mit Desktop (zum Beispiel die Dev-VM) zeigt damit Updates und erlaubt Aktionen, ohne zweiten Agenten. Der Agent läuft dort weiter als Benutzerprozess in der Sitzung: kein root, kein sudo. Der Host-Modus für Server ohne Desktop bleibt unverändert.
+- **`hello` nennt die Fähigkeiten ausdrücklich**: `caps` mit `desktop`, `host` und den Lese-Fähigkeiten `sysinfo`, `updates`, `services`, `docker`, dazu `allow` (die Wörter der lokalen Rechte-Datei); die Plattform bleibt `linux-x11` bzw. `linux-host`. Der Server richtet sich nach den Wörtern, nicht nach dem Plattformnamen, und ergänzt sie für ältere Agenten.
+- **Alter Desktop-Agent bleibt gültig**: `GET /api/hosts` hat im Agenten das neue Feld `hostSupport` (`yes`, `update`, `none`, `unknown`); ein Desktop-Agent 0.5.x/0.6.0 zeigt `update` („liefert noch keine Systemwerte“, kein Fehler, die Statusabfragen antworten `unsupported`). Das Selbst-Update auf 0.7.0 ersetzt nur die Agent-Datei und schaltet nie ein Wort ein.
+- **Ein Installer für alles: `tools/install-agent.sh`** (ausgeliefert unter `/agent-files/install-agent.sh`, SHA-256 in `SHA256SUMS`): `curl -fsSL <Server>/agent-files/install-agent.sh -o julos-install-agent.sh && sudo sh julos-install-agent.sh --server <Server> --code CODE [--allow updates,logs,services,docker,reboot] [--docker-group] [--allow-http] [--dry-run] [--uninstall]`. Er erkennt selbst „Desktop“ (grafische Sitzung des `sudo`-Aufrufers und GTK/Wnck: Agent als dieser Benutzer, Autostart oder `--systemd`-Benutzerdienst) oder „Host“ (wie bisher, eigener Benutzer `julos-agent`); `--desktop` und `--host` erzwingen es. Eine vorhandene Installation entscheidet zuerst und wird ohne neuen Code aktualisiert (ein Desktop-Agent dort, wo er schon liegt). Rechte-Datei root-eigen und leer ohne `--allow`, Root-Helfer nur bei einem Wort, das root braucht (Socket nur für den Benutzer des Agenten), Prüfsumme und TLS-Pflicht, nie ein Passwort, nie ein Standardwort; `--docker-group` ändert beim Desktop keine Gruppen. Zwei Agenten auf einer Maschine lehnt der Installer ab.
+- `install-host-agent.sh` und `install-linux-agent.sh` bleiben als dünne Aufrufer: kurzer Hinweis, Weiterleitung an `install-agent.sh` mit `--host` bzw. `--desktop`, damit bestehende Befehle nicht brechen.
+
+### Sicherheit
+- Der Desktop-Agent beherrscht jetzt Eingaben in die Sitzung **und** (mit Wörtern) Aktionen auf dem Rechner: ein Wort in der Rechte-Datei gilt für jedes Programm dieses Benutzers (der Socket des Root-Helfers gehört dem Benutzer, Modus 0600). Standard bleibt kein Wort; für Desktops sind `updates,logs` die maßvolle Wahl. Siehe [docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md), F-05.
+
 ## [0.13.2] - 2026-11-20
 
 ### Sicherheit

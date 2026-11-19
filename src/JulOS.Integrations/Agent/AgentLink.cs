@@ -45,7 +45,8 @@ public sealed class AgentLink
     public string? Platform { get; private set; }
     public string? Hostname { get; private set; }
     public string? Os { get; private set; }
-    /// <summary>Was der Agent kann (nur bekannte Namen, siehe <see cref="AgentLabels.Caps"/>): leer fuer Desktop-Agenten, bei einem Host-Agenten zum Beispiel sysinfo, updates.</summary>
+    /// <summary>Was der Agent kann (nur bekannte Namen, siehe <see cref="AgentLabels.Caps"/>): "desktop" (Fenster, Programme, Zwischenablage), "host" (beantwortet die Host-Anfragen) und die Host-Faehigkeiten sysinfo, updates, services, docker.
+    /// Seit Agent 0.7.0 kann ein Desktop-Agent beides; aeltere Agenten werden aus ihrer Plattform und ihren Faehigkeiten ergaenzt (siehe <see cref="AgentLabels.NormalizeCaps"/>), ein alter Desktop-Agent bleibt bei "desktop".</summary>
     public IReadOnlyList<string> Caps { get; private set; } = [];
     /// <summary>Aktionsarten, die der Agent lokal erlaubt (hello "allow", siehe <see cref="AgentLabels.Rights"/>); Stufe 3.</summary>
     public IReadOnlyList<string> Allow { get; private set; } = [];
@@ -85,7 +86,7 @@ public sealed class AgentLink
             platform = root.TryGetProperty("platform", out var p) && p.ValueKind == JsonValueKind.String ? AgentLabels.Clean(p.GetString()) : null;
             hostname = root.TryGetProperty("hostname", out var hn) && hn.ValueKind == JsonValueKind.String ? AgentLabels.CleanText(hn.GetString()) : null;
             os = root.TryGetProperty("os", out var o) && o.ValueKind == JsonValueKind.String ? AgentLabels.CleanText(o.GetString()) : null;
-            caps = AgentLabels.Words(root, "caps", AgentLabels.Caps);
+            caps = AgentLabels.NormalizeCaps(platform, AgentLabels.Words(root, "caps", AgentLabels.Caps));
             allow = AgentLabels.Words(root, "allow", AgentLabels.Rights);
         }
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
@@ -391,8 +392,38 @@ internal sealed record AgentHello(AgentInfo Info, bool Accepted)
 
 public static class AgentLabels
 {
-    /// <summary>Die Faehigkeiten, die ein Host-Agent melden darf (docs/HOST-AGENT.md). Andere Woerter im hello werden verworfen.</summary>
-    public static readonly string[] Caps = ["sysinfo", "updates", "services", "docker"];
+    /// <summary>Die Faehigkeiten, die ein Agent melden darf (docs/HOST-AGENT.md): "desktop" und "host" sind die zwei Gruppen, die anderen vier die Lese-Faehigkeiten der Host-Gruppe. Andere Woerter im hello werden verworfen.</summary>
+    public static readonly string[] Caps = ["desktop", "host", "sysinfo", "updates", "services", "docker"];
+
+    /// <summary>Die Lese-Faehigkeiten der Host-Gruppe (je ein fester Pfad /v1/host/...).</summary>
+    public static readonly string[] HostCaps = ["sysinfo", "updates", "services", "docker"];
+
+    /// <summary>Ab dieser Version meldet ein Desktop-Agent die Host-Faehigkeiten selbst (sonst "liefert noch keine Systemwerte": <see cref="HostSupport"/> sagt "update").</summary>
+    public static readonly Version MinDesktopHostVersion = new(0, 7, 0);
+
+    /// <summary>
+    /// Ergaenzt die gemeldeten Woerter fuer Agenten vor 0.7.0, damit die Oberflaeche einheitlich nach Woertern fragen kann: "host", sobald eine Lese-Faehigkeit da ist (ein Host-Agent 0.5/0.6),
+    /// "desktop", wenn die Plattform keinen Host-Agenten ohne Desktop meint (ein alter Desktop-Agent meldet gar keine Woerter). Die Reihenfolge ist die von <see cref="Caps"/>.
+    /// </summary>
+    public static IReadOnlyList<string> NormalizeCaps(string? platform, IReadOnlyList<string> reported)
+    {
+        var set = new HashSet<string>(reported, StringComparer.Ordinal);
+        if (set.Overlaps(HostCaps)) set.Add("host");
+        if (KindOf(platform) == "desktop") set.Add("desktop");
+        return [.. Caps.Where(set.Contains)];
+    }
+
+    /// <summary>
+    /// Kann der Agent dieses Hosts die Host-Funktionen (Systemwerte, Updates, Aktionen)? "yes": er hat "host" gemeldet; "update": ein Desktop-Agent vor 0.7.0 (bringt sich per Selbst-Update auf den Stand, ohne dass dabei ein Recht entsteht);
+    /// "none": verbunden und neu genug, meldet aber nichts davon (kein Linux); "unknown": nicht verbunden, der Stand ist nicht bekannt. <paramref name="liveCaps"/> ist null, solange der Agent nicht verbunden ist.
+    /// </summary>
+    public static string HostSupport(string? platform, string? version, IReadOnlyCollection<string>? liveCaps)
+    {
+        if (liveCaps is not null && liveCaps.Contains("host")) return "yes";
+        var old = KindOf(platform) == "desktop" && AgentLinks.TryParseVersion(version) is { } v && v < MinDesktopHostVersion;
+        if (old) return "update";
+        return liveCaps is null ? "unknown" : "none";
+    }
 
     /// <summary>Die lokalen Rechte (Aktionsarten), die ein Agent melden darf (dieselben Woerter wie AgentControl.Rights).</summary>
     public static readonly string[] Rights = ["updates", "reboot", "services", "docker", "logs"];

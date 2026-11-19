@@ -31,6 +31,14 @@ test('Tasten erscheinen nur, wenn Stufe am Server UND lokale Erlaubnis des Agent
   assert.ok(hasActionAgent(host()) && !hasActionAgent(host({ kind: 'desktop' })) && !hasActionAgent(host({ version: '0.5.0' })));
 });
 
+test('Ein Desktop-Agent 0.7.0 mit dem Wort host bekommt dieselben Aktionen wie ein Host-Agent (ein Agent, zwei Faehigkeitsgruppen)', () => {
+  const unified = host({ kind: 'desktop', version: '0.7.0', caps: ['desktop', 'host', 'sysinfo', 'updates', 'services', 'docker'] });
+  assert.ok(canAct(unified, 'updates') && canAct(unified, 'reboot') && hasActionAgent(unified));
+  assert.ok(!canAct(host({ ...unified.agent, allow: ['updates'], kind: 'desktop' }), 'reboot'));           // zweiter Schluessel gilt weiter
+  assert.ok(!canAct(host({ kind: 'desktop', version: '0.7.0', caps: ['desktop'] }), 'updates'));           // ohne "host" nichts
+  assert.ok(!hasActionAgent(host({ kind: 'desktop', version: '0.6.0', caps: [] })));                       // alter Desktop-Agent
+});
+
 test('Text der Bestaetigung nennt Host, Aktion und Ziel', () => {
   const conf = { token: 't', expiresIn: 60, action: 'service.restart', target: 'nginx.service', targetName: 'nginx.service', host: 'Server', warnings: [] };
   const m = confirmModel(conf);

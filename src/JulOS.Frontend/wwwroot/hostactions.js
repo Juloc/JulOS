@@ -34,14 +34,17 @@ const versionOk = (v) => {
   return true;
 };
 
+/** Kann der Agent die Host-Anfragen beantworten? Ein Host-Agent (kind host) und seit Agent 0.7.0 auch ein Desktop-Agent, der das Wort "host" meldet (ein Agent, zwei Faehigkeitsgruppen). */
+const answersHostRequests = (a) => a.kind === 'host' || (Array.isArray(a.caps) && a.caps.includes('host'));
+
 /** Zeigt die Oberflaeche diese Aktionsart fuer den Host an? Nur ein verbundener Host-Agent ab 0.6.0, dessen Stufe am Server UND dessen lokale Erlaubnis sie nennen, und nicht pausiert. */
 export function canAct(host, right, paused = false) {
   const a = host && host.agent;
-  return !!(a && a.online && a.kind === 'host' && !paused && versionOk(a.version) && (LEVEL_RIGHTS[a.control] || []).includes(right) && Array.isArray(a.allow) && a.allow.includes(right));
+  return !!(a && a.online && answersHostRequests(a) && !paused && versionOk(a.version) && (LEVEL_RIGHTS[a.control] || []).includes(right) && Array.isArray(a.allow) && a.allow.includes(right));
 }
 
 /** Gibt es fuer diesen Host etwas zu schalten (Stufe, lokale Erlaubnis)? Fuer den Abschnitt "Aktionen" */
-export const hasActionAgent = (host) => !!(host && host.agent && host.agent.kind === 'host' && versionOk(host.agent.version));
+export const hasActionAgent = (host) => !!(host && host.agent && answersHostRequests(host.agent) && versionOk(host.agent.version));
 
 /* ---------- die Bestaetigung ---------- */
 /** Ziel zum Anzeigen: "alle Updates", der Name des Containers, der Dienst, das Paket; '' ohne Ziel */

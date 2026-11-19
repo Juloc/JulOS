@@ -1,0 +1,16 @@
+# GPU-Kodierung (VAAPI) fuer den Server: als Zusatzdatei zu docker-compose.yml oder docker-compose.image.yml, siehe docs/ENCODERS.md
+#   docker compose -f docker-compose.yml -f deploy/gpu/compose.gpu.yaml up -d
+# Vorher auf dem Docker-Host pruefen:   ls -l /dev/dri   und   stat -c '%G (gid %g)' /dev/dri/renderD128
+# RENDER_GID in .env setzen (die Gruppen-ID des Render-Knotens, zum Beispiel 105). Danach im Container:
+#   docker exec <julos-container> dotnet JulOS.dll diag encoders
+name: julos
+
+services:
+  julos:
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${RENDER_GID:?RENDER_GID in .env setzen: stat -c %g /dev/dri/renderD128}"
+    environment:
+      JULOS_ENCODER: "${JULOS_ENCODER:-auto}"     # auto, software oder vaapi
+      JULOS_CODEC: "${JULOS_CODEC:-auto}"         # auto, h264 oder h265

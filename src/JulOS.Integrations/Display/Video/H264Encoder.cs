@@ -65,7 +65,7 @@ internal sealed record H264EncoderOptions
 // the caller should wait before a picture in which that much is new.
 //
 // One encoder is used by one thread at a time; any number of encoders work side by side.
-public sealed unsafe class H264Encoder : IDisposable
+public sealed unsafe class H264Encoder : IVideoEncoder
 {
     // The smallest side OpenH264 takes.
     public const int MinSize = 16;
@@ -167,6 +167,17 @@ public sealed unsafe class H264Encoder : IDisposable
     public int Width { get; }
 
     public int Height { get; }
+
+    public VideoCodec Codec => VideoCodec.H264;
+
+    public string Name => "OpenH264 " + (LibraryVersion ?? "?");
+
+    public bool IsHardware => false;
+
+    public int KilobitsPerSecond => _kilobitsPerSecond;
+
+    // The rate controller was built for one ceiling; the software encoder keeps it.
+    public bool TrySetBitrate(int kilobitsPerSecond) => false;
 
     // True when the picture the viewer has is as sharp as this encoder makes it: encoding the same frame
     // once more would change nothing. After a change or a key frame it is false until the picture has been

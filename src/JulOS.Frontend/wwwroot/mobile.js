@@ -447,7 +447,7 @@ async function loadAbout() {
     const built = a.built ? new Date(a.built).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : '';
     const row = (k, v, extra = '') => `<div class="setrow line"><div class="lab">${k}<small>${esc(v)}</small></div>${extra}</div>`;
     box.innerHTML = row('Version', `JulOS ${a.version}`) + (a.commit || built ? row('Build', [a.commit, built].filter(Boolean).join(' · ')) : '')
-      + row('Bildübertragung', a.engines.stream ? 'Stream (H.264) und Guacamole' : 'Guacamole (Stream nicht verfügbar)')
+      + row('Bildübertragung', a.engines.stream ? `Stream (${a.engines.encoder || 'H.264'}) und Guacamole` : 'Guacamole (Stream nicht verfügbar)')
       + `<div style="padding:4px 12px 10px;display:flex;gap:8px"><a class="mb m3-btn tonal block m3-state" href="/licenses.txt" target="_blank" rel="noopener">Lizenzen</a><a class="mb m3-btn tonal block m3-state" href="${esc(a.repository)}" target="_blank" rel="noopener">Quelltext</a></div>`;
   } catch (e) { box.innerHTML = `<p class="empty-hint">${esc(e.message)}</p>`; }
 }

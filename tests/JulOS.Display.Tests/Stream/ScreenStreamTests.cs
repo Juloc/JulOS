@@ -1,4 +1,5 @@
 using JulOS.Integrations.Display.Rdp;
+using JulOS.Integrations.Display.Video;
 
 namespace JulOS.Integrations.Display.Tests;
 
@@ -107,6 +108,122 @@ public sealed class ScreenStreamTests
 
         var key = await NextAsync<ScreenPicture>(stream, cts.Token, p => p.IsKey);
         Assert.Equal(7, key.Data[4] & 0x1f);
+        await cts.CancelAsync();
+        await run;
+    }
+
+    // A "GPU" that is only there to be told about: it can encode what it is asked for (fake bytes) or fail, and counts its calls.
+    private sealed class FakeGpu(VideoCodecs codecs, bool failOnEncode = false) : IEncoderBackend
+    {
+        public int Created { get; private set; }
+
+        public int Encoded { get; set; }
+
+        public string Name => "Fake GPU";
+
+        public bool IsHardware => true;
+
+        public VideoCodecs Codecs => codecs;
+
+        public bool CheckAvailable(out string? reason)
+        {
+            reason = null;
+            return true;
+        }
+
+        public IVideoEncoder Create(EncoderRequest request, VideoCodec codec)
+        {
+            Created++;
+            return new FakeGpuEncoder(this, request, codec, failOnEncode);
+        }
+    }
+
+    private sealed class FakeGpuEncoder(FakeGpu owner, EncoderRequest request, VideoCodec codec, bool fail) : IVideoEncoder
+    {
+        public VideoCodec Codec => codec;
+
+        public string Name => "Fake GPU";
+
+        public bool IsHardware => true;
+
+        public int Width => request.Width;
+
+        public int Height => request.Height;
+
+        public int KilobitsPerSecond => request.KilobitsPerSecond;
+
+        public bool IsSharp => true;
+
+        public int SuggestedInterval(long changedPixels) => 0;
+
+        public ReadOnlyMemory<byte> Encode(I420Frame frame, bool forceKey, out bool isKey)
+        {
+            owner.Encoded++;
+            if (fail)
+            {
+                throw new InvalidOperationException("the device is gone");
+            }
+
+            isKey = true;
+            return codec == VideoCodec.Hevc ? new byte[] { 0, 0, 0, 1, 0x40, 0x01, 1, 2, 3 } : new byte[] { 0, 0, 0, 1, 0x67, 1, 2, 3 };
+        }
+
+        public bool TrySetBitrate(int kilobitsPerSecond) => true;
+
+        public void Dispose()
+        {
+        }
+    }
+
+    [Fact]
+    public async Task A_gpu_that_fails_in_the_middle_of_the_session_hands_over_to_the_software_encoder_with_a_key_frame()
+    {
+        var host = Host();
+        var gpu = new FakeGpu(VideoCodecs.H264, failOnEncode: true);
+        var selector = new EncoderSelector([gpu, new SoftwareBackend()], new EncoderSettings(EncoderMode.Auto));
+        await using var stream = new ScreenStream(Options(host, 1280, 720), 16_000, null, selector);
+        using var cts = new CancellationTokenSource(Wait);
+        var run = stream.RunAsync(cts.Token);
+        await NextAsync<ScreenSize>(stream, cts.Token);
+
+        var first = await NextAsync<ScreenEncoderInfo>(stream, cts.Token);
+        Assert.True(first.Hardware);
+        var second = await NextAsync<ScreenEncoderInfo>(stream, cts.Token, i => !i.Hardware);       // after the failure
+        Assert.Equal(VideoCodec.H264, second.Codec);
+        Assert.StartsWith("OpenH264", second.Name);
+        var picture = await NextAsync<ScreenPicture>(stream, cts.Token);
+        Assert.True(picture.IsKey);
+        Assert.Equal(VideoCodec.H264, picture.Codec);
+        Assert.Equal(7, picture.Data[4] & 0x1F);
+        Assert.True(gpu.Encoded >= 1);
+        await cts.CancelAsync();
+        await run;
+    }
+
+    [Fact]
+    public async Task Hevc_goes_to_a_browser_that_can_and_the_stream_goes_back_to_h264_when_the_browser_says_so()
+    {
+        var host = Host();
+        var gpu = new FakeGpu(VideoCodecs.H264 | VideoCodecs.Hevc);
+        var selector = new EncoderSelector([gpu, new SoftwareBackend()], new EncoderSettings(EncoderMode.Auto));
+        await using var stream = new ScreenStream(Options(host, 1280, 720), 16_000, null, selector, VideoCodecs.H264 | VideoCodecs.Hevc);
+        using var cts = new CancellationTokenSource(Wait);
+        var run = stream.RunAsync(cts.Token);
+        await NextAsync<ScreenSize>(stream, cts.Token);
+
+        var info = await NextAsync<ScreenEncoderInfo>(stream, cts.Token);
+        Assert.Equal(VideoCodec.Hevc, info.Codec);
+        var hevc = await NextAsync<ScreenPicture>(stream, cts.Token);
+        Assert.Equal(VideoCodec.Hevc, hevc.Codec);
+        Assert.True(hevc.IsKey);
+        stream.Acknowledge(hevc.Sequence);
+
+        // the browser's HEVC decoder failed: H.264 only from now on
+        stream.SetClientCodecs(VideoCodecs.H264);
+        var back = await NextAsync<ScreenEncoderInfo>(stream, cts.Token, i => i.Codec == VideoCodec.H264);
+        Assert.Equal(VideoCodec.H264, back.Codec);
+        var key = await NextAsync<ScreenPicture>(stream, cts.Token, p => p.Codec == VideoCodec.H264);
+        Assert.True(key.IsKey);
         await cts.CancelAsync();
         await run;
     }

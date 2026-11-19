@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using JulOS.Integrations.Display.Video;
 
 namespace JulOS.Integrations.Display;
 
@@ -7,7 +8,7 @@ namespace JulOS.Integrations.Display;
 /// Text, ohne JSON, ein Byte Art davor.
 ///
 /// Server an Browser:
-///   1 Bild       flags(1: Bit0 = Schluesselbild) folge(4) H.264 Annex B ...
+///   1 Bild       flags(1: Bit0 = Schluesselbild, Bit1 = H.265 statt H.264) folge(4) Annex B ...   (Schluesselbild: mit Parametersaetzen davor, H.265 mit VPS, SPS, PPS; der Browser liest den Codec-Text daraus)
 ///   2 Zeiger     art(1: 0 Form, 1 versteckt, 2 Standard) hotX(2) hotY(2) breite(2) hoehe(2) RGBA ...
 ///   3 Groesse    breite(2) hoehe(2)
 ///   4 Fehler     code(2) UTF-8-Text ...            (Codes wie bei Guacamole: 769 Anmeldung abgelehnt, 515 Verbindung misslungen ...)
@@ -19,6 +20,7 @@ namespace JulOS.Integrations.Display;
 ///   8 Dateien        stapel(4) anzahl(1) dann je Datei groesse(8, -1 unbekannt) namenlaenge(2) Name (UTF-8)   (anzahl 0: Auswahl weg)
 ///   9 Dateistueck    stapel(4) nummer(1) flags(1: Bit0 letztes, Bit1 gescheitert) Bytes ...   (bei Scheitern der Grund als Text)
 ///  10 Ergebnis       nummer(4) code(1: 0 ok, 1 zu gross, 2 nicht erlaubt, 3 keine Zwischenablage in der VM, 4 sonst) Text ...
+///  30 Kodierer      codec(1: 1 H.264, 2 H.265) flags(1: Bit0 = GPU) Name (UTF-8) ...   (nach jedem Neuaufbau des Kodierers; nur zum Anzeigen)
 /// Browser an Server:
 ///   1 Bestaetigung   folge(4)   (alle Bilder bis zu dieser Folgenummer sind dekodiert oder verworfen; ohne Nummer: ein Bild)
 ///   2 Maus bewegt    x(2) y(2)
@@ -39,15 +41,17 @@ namespace JulOS.Integrations.Display;
 ///  14 Datei holen    stapel(4) nummer(1)
 ///  15 Holen Abbruch  stapel(4)
 ///  16 Pause          an(1: 1 = die Ansicht ist im Hintergrund, es werden keine Bilder kodiert; 0 = weiter)
+///  30 Codecs         menge(1: Bit0 H.264, Bit1 H.265)   (was der Dekodierer kann; beim Verbinden steht dasselbe in der Adresse als codecs=, und noch einmal
+///                                                        mit nur H.264, wenn der H.265-Dekodierer nicht geht: der Server wechselt dann mit einem Schluesselbild)
 /// </summary>
 public static class ScreenProtocol
 {
     public const byte ToBrowserPicture = 1, ToBrowserCursor = 2, ToBrowserSize = 3, ToBrowserError = 4, ToBrowserTaken = 5, ToBrowserClipboard = 6,
-        ToBrowserImage = 7, ToBrowserFiles = 8, ToBrowserFileChunk = 9, ToBrowserResult = 10;
+        ToBrowserImage = 7, ToBrowserFiles = 8, ToBrowserFileChunk = 9, ToBrowserResult = 10, ToBrowserEncoder = 30;
     public const byte FromBrowserAck = 1, FromBrowserMove = 2, FromBrowserButton = 3, FromBrowserWheel = 4, FromBrowserKey = 5,
         FromBrowserUnicode = 6, FromBrowserResize = 7, FromBrowserKeyFrame = 8, FromBrowserClipboard = 9,
         FromBrowserSendBegin = 10, FromBrowserSendChunk = 11, FromBrowserSendEnd = 12, FromBrowserSendCancel = 13,
-        FromBrowserFileRequest = 14, FromBrowserFileCancel = 15, FromBrowserPause = 16;
+        FromBrowserFileRequest = 14, FromBrowserFileCancel = 15, FromBrowserPause = 16, FromBrowserCodecs = 30;
 
     /// <summary>Nachrichten, die laenger als eine Eingabe sein duerfen (Text, Dateiname, Stueck einer Datei).</summary>
     public static bool MayBeLong(byte type) => type is FromBrowserClipboard or FromBrowserSendBegin or FromBrowserSendChunk or FromBrowserMicrophone;
@@ -64,10 +68,12 @@ public static class ScreenProtocol
     public const int PictureHeader = 6;
     public const int CursorHeader = 10;
 
-    public static int WritePicture(Span<byte> target, int sequence, bool isKey, ReadOnlySpan<byte> data)
+    public const byte PictureKey = 1, PictureHevc = 2;
+
+    public static int WritePicture(Span<byte> target, int sequence, bool isKey, ReadOnlySpan<byte> data, VideoCodec codec = VideoCodec.H264)
     {
         target[0] = ToBrowserPicture;
-        target[1] = isKey ? (byte)1 : (byte)0;
+        target[1] = (byte)((isKey ? PictureKey : 0) | (codec == VideoCodec.Hevc ? PictureHevc : 0));
         BinaryPrimitives.WriteInt32BigEndian(target[2..], sequence);
         data.CopyTo(target[PictureHeader..]);
         return PictureHeader + data.Length;
@@ -187,4 +193,19 @@ public static class ScreenProtocol
     }
 
     public static byte[] Taken() => [ToBrowserTaken];
+
+    public static byte[] Encoder(VideoCodec codec, bool hardware, string name)
+    {
+        var text = System.Text.Encoding.UTF8.GetBytes(name.Length > 120 ? name[..120] : name);
+        var result = new byte[3 + text.Length];
+        result[0] = ToBrowserEncoder;
+        result[1] = (byte)codec;
+        result[2] = hardware ? (byte)1 : (byte)0;
+        text.CopyTo(result, 3);
+        return result;
+    }
+
+    /// <summary>Die Codecs aus der Adresse des WebSockets (codecs=Zahl); fehlt sie oder ist sie Unsinn, gilt nur H.264.</summary>
+    public static VideoCodecs ParseCodecs(string? value) =>
+        byte.TryParse(value, out var number) && (number & 3) != 0 ? (VideoCodecs)(number & 3) : VideoCodecs.H264;
 }

@@ -4,6 +4,11 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Neu
+- Einrichtung von Claude Code und Codex auf den eigenen Rechnern: Skript `tools/julos-setup-ai-cli.sh` (Trockenlauf als Standard, `--yes` führt aus; prüft Summe und Signatur, richtet `PATH` für Login-Shells und einen tmux-Block für Programm-Sitzungen ein, schreibt nie Anmeldedaten), Anforderungen, Anmeldung ohne Browser und Berechtigungen in `docs/AI-CLI-SETUP.md`, Geräte-Checkliste in `docs/AI-CLI-DEVICES.md`. Der Plan für „KI-Werkzeuge“ in JulOS ist dort beschrieben, noch nicht gebaut.
+
 ## [0.10.0] - 2026-11-19
 
 ### Neu

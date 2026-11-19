@@ -4,15 +4,20 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
-## [Unreleased]
+## [0.3.0] - 2026-11-19
 
 ### Neu
-- Der Agent meldet sich von der Ziel-Maschine aus beim Server (WebSocket über HTTPS, ausgehend): Fensterleiste, Programmstart sowie Foto-, Datei- und Zwischenablage-Übertragung gehen jetzt auch, wenn der Server auf einem anderen Rechner läuft.
-- „Agent einrichten“ und „Agent entfernen“ im Verbindungsdialog: einmaliger Code (10 Minuten) und fertige Befehle für das Ziel; Status je Verbindung (verbunden, getrennt, Version).
-- Der Agent bleibt eine einzige Python-Datei ohne Zusatzpakete; der Unix-Socket-Weg für denselben Rechner funktioniert weiter.
+- Ton aus der VM im Browser und Mikrofon zur VM (Bildstrom-Engine): Ton nur von der gerade aktiven Sitzung, Mikrofon nur auf Knopfdruck mit Browser-Berechtigung und deutlicher Anzeige, höchstens eine Sitzung nimmt auf.
+- Der Agent meldet sich von der Ziel-Maschine aus beim Server (WebSocket über HTTPS, ausgehend): Fensterleiste, Programmstart sowie Foto-, Datei- und Zwischenablage-Übertragung gehen jetzt auch, wenn der Server auf einem anderen Rechner läuft (zum Beispiel auf Cubi).
+- „Agent einrichten“ und „Agent entfernen“ im Verbindungsdialog: einmaliger Code (10 Minuten) und fertige Befehle für das Ziel; Status je Verbindung (verbunden, getrennt, Version). Der Agent bleibt eine einzige Python-Datei ohne Zusatzpakete; der Unix-Socket-Weg für denselben Rechner funktioniert weiter.
+- Der Bildstrom kann auf einer Grafikkarte kodiert werden (VAAPI, zum Beispiel Intel QuickSync), wenn der Container `/dev/dri` sieht; sonst und bei jedem Fehler kodiert wie bisher die CPU (H.264). Dazu ein optionaler H.265-Strom, wenn Browser und Grafikkarte ihn können (`JULOS_ENCODER`, `JULOS_CODEC`); Prüfung mit `dotnet JulOS.dll diag encoders`, Anleitung in [docs/ENCODERS.md](docs/ENCODERS.md). Auf einer echten Grafikkarte noch nicht erprobt.
+- Sicherheits-Review mit Bericht in [docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md).
 
 ### Geändert
 - Die Aufrufe der App an Agent, Foto-Upload, Datei-Upload und „Bild aus der VM holen“ nennen die Verbindung (`?c=`); ohne Angabe gilt wie bisher der lokale Socket.
+
+### Sicherheit
+- Anmeldesperre auch für IPv6 pro Netz, Obergrenze für gleichzeitige Anmeldeversuche, begrenzte Größe von API-Anfragen, Grenzen für Uploads und die Dateisuche, Kontingent für Dateien, sichere Downloads (keine Named Pipes), Warnung beim Start ohne Schlüssel für gespeicherte Passwörter.
 
 ## [0.2.0] - 2026-11-19
 
@@ -25,10 +30,6 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 ### Geändert
 - Wird dasselbe RDP-Ziel ein zweites Mal geöffnet, zeigt die ältere Sitzung „übernommen“ statt eines falschen Anmeldefehlers.
 - Die Fernsteuerung in `app.js` ist in Sitzungsobjekte aufgeteilt (`sessions.js`).
-## [Unveröffentlicht]
-
-### Neu
-- Der Bildstrom kann auf einer Grafikkarte kodiert werden (VAAPI, zum Beispiel Intel QuickSync), wenn der Container `/dev/dri` sieht; sonst und bei jedem Fehler kodiert wie bisher die CPU (H.264). Dazu ein optionaler H.265-Strom, wenn Browser und Grafikkarte ihn können. `JULOS_ENCODER` (auto, software, vaapi) und `JULOS_CODEC` (auto, h264, h265); Prüfung auf dem Server mit `dotnet JulOS.dll diag encoders`, Anleitung in [docs/ENCODERS.md](docs/ENCODERS.md). Auf einer echten Grafikkarte noch nicht erprobt.
 
 ## [0.1.0] - 2026-11-19
 
@@ -47,5 +48,6 @@ Erste Version unter eigener Zählung (davor gab es Vorabversionen `1.0.0-beta.1`
 - Der Bildstrom konnte nach einigen hundert Bildern stehen bleiben; Bestätigungen laufen jetzt über Folgenummern, dazu ein Wachhund.
 - Am PC wird das Bild 1:1 gezeichnet statt hochskaliert (schärfer).
 
+[0.3.0]: https://github.com/Juloc/JulOS/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Juloc/JulOS/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Juloc/JulOS/releases/tag/v0.1.0

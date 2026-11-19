@@ -181,12 +181,14 @@ public sealed class ModuleTests : IDisposable
     }
 
     [Fact]
-    public void Control_is_not_built_yet_and_counts_as_read()
+    public void Control_exists_only_where_it_is_built_and_elsewhere_counts_as_read()
     {
-        var s = Settings(("JULOS_CADDY", "control"), ("JULOS_DDNS", "READ"));
-        Assert.Equal(ModuleMode.Read, s.Caddy.Mode);
+        var s = Settings(("JULOS_CADDY", "control"), ("JULOS_DDNS", "READ"), ("JULOS_SERVICES", "control"));
+        Assert.Equal(ModuleMode.Read, s.Caddy.Mode);      // Caddy schreibt nicht (nur als Entwurf dokumentiert)
         Assert.Equal(ModuleMode.Read, s.Ddns.Mode);
-        Assert.Contains("Schreiben gibt es in dieser Version nicht", Assert.Single(s.Warnings));
+        Assert.Equal(ModuleMode.Control, s.Services.Mode);
+        Assert.Contains("Schreiben gibt es hier nicht", Assert.Single(s.Warnings));
+        Assert.Equal(ModuleMode.Off, Settings().Services.Mode);
     }
 
     [Fact]

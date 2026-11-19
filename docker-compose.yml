@@ -52,6 +52,8 @@ services:
       JULOS_BACKUP_SFTP_PASSWORD_FILE: "${JULOS_BACKUP_SFTP_PASSWORD_FILE:-}"
       JULOS_BACKUP_SFTP_HOST_KEY: "${JULOS_BACKUP_SFTP_HOST_KEY:-}"
       # optional, nur lesen, standardmaessig aus (docs/MODULES.md): Caddy (Domains und Ziele) und DDNS (Adresse und Namen)
+      JULOS_SERVICES: "${JULOS_SERVICES:-off}"
+      JULOS_SERVICES_HOSTS: "${JULOS_SERVICES_HOSTS:-}"
       JULOS_CADDY: "${JULOS_CADDY:-off}"
       JULOS_CADDYFILE: "${JULOS_CADDYFILE:-}"
       JULOS_CADDY_ADMIN_URL: "${JULOS_CADDY_ADMIN_URL:-}"

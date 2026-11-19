@@ -2,16 +2,19 @@ namespace JulOS.Backend.Modules;
 
 /// <summary>
 /// Alle Einstellungen der Module an einer Stelle (aus der Umgebung des Servers). Standard: alles aus.
-/// JULOS_CADDY / JULOS_DDNS = off|read|control; JULOS_CADDYFILE, JULOS_CADDY_ADMIN_URL;
+/// JULOS_SERVICES / JULOS_CADDY / JULOS_DDNS = off|read|control; JULOS_SERVICES_HOSTS; JULOS_CADDYFILE, JULOS_CADDY_ADMIN_URL;
 /// JULOS_DDNS_HOSTS, JULOS_DDNS_FRITZBOX_URL, JULOS_DDNS_IP_URL, JULOS_DDNS_CACHE_SECONDS. Ungueltige Werte werden mit einer Meldung verworfen.
 /// </summary>
-public sealed record ModuleSettings(CaddyOptions Caddy, DdnsOptions Ddns, string[] Warnings)
+public sealed record ServiceOptions(ModuleMode Mode, string? HostList);
+
+public sealed record ModuleSettings(CaddyOptions Caddy, DdnsOptions Ddns, ServiceOptions Services, string[] Warnings)
 {
     public static ModuleSettings From(Func<string, string?> get)
     {
         var w = new List<string>();
-        var caddyMode = ModuleModes.Parse("JULOS_CADDY", get("JULOS_CADDY"), w);
-        var ddnsMode = ModuleModes.Parse("JULOS_DDNS", get("JULOS_DDNS"), w);
+        var servicesMode = ModuleModes.Parse("JULOS_SERVICES", get("JULOS_SERVICES"), w);
+        var caddyMode = ModuleModes.Parse("JULOS_CADDY", get("JULOS_CADDY"), w, controlExists: false);
+        var ddnsMode = ModuleModes.Parse("JULOS_DDNS", get("JULOS_DDNS"), w, controlExists: false);
 
         // Warnungen zu Einstellungen eines ausgeschalteten Moduls waeren nur Laerm
         var caddyWarnings = new List<string>();
@@ -30,6 +33,7 @@ public sealed record ModuleSettings(CaddyOptions Caddy, DdnsOptions Ddns, string
         return new ModuleSettings(
             new CaddyOptions(caddyMode, string.IsNullOrEmpty(caddyfile) ? null : caddyfile, admin),
             new DdnsOptions(ddnsMode, hosts, lookup, router, cache),
+            new ServiceOptions(servicesMode, string.IsNullOrWhiteSpace(get("JULOS_SERVICES_HOSTS")) ? get("JULOS_ALLOWED_HOSTS") : get("JULOS_SERVICES_HOSTS")),
             [.. w]);
     }
 }

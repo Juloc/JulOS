@@ -8,7 +8,7 @@ using JulOS.Frontend.Auth;
 namespace JulOS.Frontend.Modules;
 
 /// <summary>
-/// Module Caddy und DDNS, erste Stufe: nur lesen, standardmaessig aus (siehe docs/MODULES.md). Jeder Weg braucht eine Sitzung (ApiGuard);
+/// Module Caddy, DDNS und Dienste: standardmaessig aus (siehe docs/MODULES.md). Jeder Weg braucht eine Sitzung (ApiGuard);
 /// ist der Schalter des Moduls aus, antwortet sein Weg 404. Die Wege nehmen keine Eingaben an: was geprueft wird, steht in den Einstellungen des Servers.
 /// </summary>
 internal static class ModuleEndpoints
@@ -28,6 +28,7 @@ internal static class ModuleEndpoints
     {
         var settings = ModuleSettings.From(k => config[k]);
         services.AddSingleton(settings);
+        services.AddServices();
         services.AddSingleton(new CaddyModule(settings.Caddy));
         services.AddSingleton(sp =>
         {
@@ -45,7 +46,9 @@ internal static class ModuleEndpoints
 
         // Welche Module eingeschaltet sind (die Oberflaeche zeigt nur diese); verraet keine Einstellung ausser dem Schalter
         app.MapGet("/api/modules", (ModuleSettings s) => Results.Json(
-            new ModulesResponse(Mode(s.Caddy.Mode), Mode(s.Ddns.Mode)), AppJson.Default.ModulesResponse));
+            new ModulesResponse(Mode(s.Caddy.Mode), Mode(s.Ddns.Mode), Mode(s.Services.Mode)), AppJson.Default.ModulesResponse));
+
+        app.MapServices();
 
         app.MapGet("/api/modules/caddy/routes", async (HttpContext ctx, HitCounter hits, CaddyModule caddy, CancellationToken ct) =>
         {
@@ -69,7 +72,7 @@ internal static class ModuleEndpoints
         });
     }
 
-    private static string Mode(ModuleMode m) => m == ModuleMode.Off ? "off" : "read";
+    private static string Mode(ModuleMode m) => ModuleModes.Name(m);
 }
 
-internal sealed record ModulesResponse(string Caddy, string Ddns);
+internal sealed record ModulesResponse(string Caddy, string Ddns, string Services);

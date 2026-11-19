@@ -1,13 +1,18 @@
 // Module Caddy und DDNS (modules.js): was die Oberflaeche aus den Antworten des Servers macht.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadModules, routeParts, reachMap, reachText, reachClass, ddnsStateLabel, ddnsHeadline, ago, sourceLabel } from '../../src/JulOS.Frontend/wwwroot/modules.js';
+import { TEMPLATES, templateById, fromTemplate, originOf, stateClass, stateText, errorText, msText, fmtMetric, fmtBytes, svcIcon, ICON_KEYS, loadModules, anyModule, routeParts, reachMap, reachText, reachClass, ddnsStateLabel, ddnsHeadline, ago, sourceLabel } from '../../src/JulOS.Frontend/wwwroot/modules.js';
 
 test('modules: only what the server switched on is shown, every error means off', async () => {
-  assert.deepEqual(await loadModules(async () => ({ caddy: 'read', ddns: 'off' })), { caddy: true, ddns: false });
-  assert.deepEqual(await loadModules(async () => ({ caddy: 'off', ddns: 'off' })), { caddy: false, ddns: false });
-  assert.deepEqual(await loadModules(async () => { throw Object.assign(new Error('Nicht angemeldet.'), { status: 401 }); }), { caddy: false, ddns: false });
-  assert.deepEqual(await loadModules(async () => null), { caddy: false, ddns: false });
+  const off = { caddy: false, ddns: false, services: false, modes: { caddy: 'off', ddns: 'off', services: 'off' } };
+  assert.deepEqual(await loadModules(async () => ({ caddy: 'read', ddns: 'off', services: 'control' })),
+    { caddy: true, ddns: false, services: true, modes: { caddy: 'read', ddns: 'off', services: 'control' } });
+  assert.deepEqual(await loadModules(async () => ({ caddy: 'off', ddns: 'off' })), off);          // ein Server ohne das Modul Dienste
+  assert.deepEqual(await loadModules(async () => ({ caddy: 'write', ddns: 5, services: 'off' })), off);   // unbekannte Werte gelten als aus
+  assert.deepEqual(await loadModules(async () => { throw Object.assign(new Error('Nicht angemeldet.'), { status: 401 }); }), off);
+  assert.deepEqual(await loadModules(async () => null), off);
+  assert.equal(anyModule(off), false);
+  assert.equal(anyModule({ ...off, services: true }), true);
 });
 
 test('routes: domain, path and target as text', () => {
@@ -47,4 +52,60 @@ test('time and source labels', () => {
   assert.equal(ago('2026-11-19T11:55:00Z', now), 'vor 5 min');
   assert.equal(ago('2026-11-19T09:00:00Z', now), 'vor 3 h');
   assert.equal(sourceLabel('caddyfile'), 'Caddyfile');
+});
+
+test('services: templates build the addresses from the origin of the service', () => {
+  assert.deepEqual(TEMPLATES.map((x) => x.id), ['jularr', 'jularr-library', 'caddyui', 'http']);
+  const j = fromTemplate(templateById('jularr'), 'http://192.0.2.10:8080/irgendwas?x=1');
+  assert.equal(j.openUrl, 'http://192.0.2.10:8080/');
+  assert.equal(j.healthUrl, 'http://192.0.2.10:8080/health/ready');
+  assert.equal(j.metricsUrl, 'http://192.0.2.10:8080/api/v1/admin/activity/summary');
+  assert.equal(j.headerName, 'Authorization');
+  assert.deepEqual(j.metrics.map((m) => [m.path, m.format]), [['activeCount', 'plain'], ['bytesPerSecond', 'rate'], ['importCount', 'plain'], ['errorCount', 'plain']]);
+  assert.equal(j.metrics[0].label, 'Aktive Downloads');
+  const g = fromTemplate(templateById('http'), 'https://nas.lan');
+  assert.equal(g.healthUrl, 'https://nas.lan/');
+  assert.equal(g.metricsUrl, '');
+  assert.equal(fromTemplate(templateById('http'), 'kein url').healthUrl, '');
+  assert.equal(originOf('ftp://x'), '');
+  assert.equal(templateById('gibt-es-nicht'), null);
+});
+
+test('services: state, error and response time texts', () => {
+  assert.deepEqual([stateClass({ state: 'up' }), stateClass({ state: 'down' }), stateClass({ state: 'unknown' }), stateClass(undefined)], ['ok', 'bad', 'idle', 'idle']);
+  assert.equal(stateText({ state: 'up' }), 'läuft');
+  assert.equal(stateText(undefined), 'unbekannt');
+  assert.equal(errorText({ error: 'status', httpStatus: 503 }), 'Fehlerstatus (503)');
+  assert.equal(errorText({ error: 'timeout' }), 'Zeitüberschreitung');
+  assert.equal(errorText({ error: 'etwas-neues' }), '');
+  assert.equal(errorText({}), '');
+  assert.equal(msText({ ms: 12 }), '12 ms');
+  assert.equal(msText({ ms: 0 }), '0 ms');
+  assert.equal(msText({}), '');
+});
+
+test('services: figures are shown by their format and a missing value is a dash', () => {
+  assert.equal(fmtMetric({ number: 3, format: 'plain', unit: '' }), '3');
+  assert.equal(fmtMetric({ number: 3, format: 'plain', unit: 'Stk' }), '3 Stk');
+  assert.equal(fmtMetric({ number: 1048576, format: 'rate' }), '1,0 MB/s');
+  assert.equal(fmtMetric({ number: 1536, format: 'bytes' }), '1,5 KB');
+  assert.equal(fmtMetric({ number: 42.5, format: 'percent' }), '42,5 %');
+  assert.equal(fmtMetric({ text: 'ok', unit: '' }), 'ok');
+  assert.equal(fmtMetric({ format: 'plain' }), '–');
+  assert.equal(fmtMetric(undefined), '–');
+  assert.equal(fmtBytes(512), '512 B');
+  assert.equal(fmtBytes(5 * 1024 ** 3), '5,0 GB');
+});
+
+test('services: every icon the server allows has a drawing, unknown names fall back to the globe', () => {
+  assert.equal(ICON_KEYS.length, 12);
+  for (const k of ICON_KEYS) assert.match(svcIcon(k), /<svg class="wd-i"[^>]*>.+<\/svg>/);
+  assert.equal(svcIcon('gibt-es-nicht'), svcIcon('globe'));
+});
+
+test('services: the icons of the interface are the ones the server accepts', async () => {
+  const fs = await import('node:fs');
+  const cs = fs.readFileSync(new URL('../../src/JulOS.Backend/Modules/ServiceRules.cs', import.meta.url), 'utf8');
+  const server = /Icons = \[(.*?)\]/.exec(cs)[1].split(',').map((x) => x.trim().replace(/"/g, ''));
+  assert.deepEqual([...ICON_KEYS].sort(), server.sort());
 });

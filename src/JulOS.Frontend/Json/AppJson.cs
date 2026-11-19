@@ -78,4 +78,10 @@ namespace JulOS.Frontend;
 [JsonSerializable(typeof(CaddyListing))]
 [JsonSerializable(typeof(CaddyReachability))]
 [JsonSerializable(typeof(DdnsStatus))]
+[JsonSerializable(typeof(ServiceRecord))]
+[JsonSerializable(typeof(ServiceMetric))]
+[JsonSerializable(typeof(ServiceStatus))]
+[JsonSerializable(typeof(ServicesResponse))]
+[JsonSerializable(typeof(ServiceStatusesResponse))]
+[JsonSerializable(typeof(ServiceRequest))]
 internal sealed partial class AppJson : JsonSerializerContext;

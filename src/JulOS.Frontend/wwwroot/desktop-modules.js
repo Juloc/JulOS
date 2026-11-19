@@ -7,6 +7,7 @@
 import { routeParts, sourceLabel, reachMap, reachText, reachClass, ddnsStateLabel, ddnsStateClass, ddnsHeadline, ago } from './modules.js';
 import { t, tp } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
+import { mountWidgets } from './widgets.js';
 
 const text = (tag, cls, content) => { const e = document.createElement(tag); if (cls) e.className = cls; e.textContent = content; return e; };
 
@@ -117,4 +118,17 @@ export function mountDdns(body, { el, btn, ic, api }) {
   reload.addEventListener('click', load);
   load();
   return { reload: load };
+}
+
+/** Dienste-Widgets: das Raster aus widgets.js im Fenster (Schreiben nur, wenn der Server "control" meldet). */
+export function mountServices(body, { el, api }) {
+  body.innerHTML = '';
+  const root = el('div', 'dk-mod dk-wd');
+  body.appendChild(root);
+  const w = mountWidgets(root, { api, mobile: false });
+  return { reload: w.reload };
+}
+
+export function mountModule(id, body, deps) {
+  return id === 'caddy' ? mountCaddy(body, deps) : id === 'widgets' ? mountServices(body, deps) : mountDdns(body, deps);
 }

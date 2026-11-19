@@ -172,7 +172,7 @@ export function setShown(on) {
     clearTimeout(overviewTimer);
   }
 }
-export function reset() { mods = { caddy: false, ddns: false }; modsLoaded = false; overview = null; overviewOk = null; user = ''; current = 'home'; view.q = ''; view.kind = 'all'; setShown(false); if (root) { root.hidden = true; root.removeAttribute('style'); } }
+export function reset() { mods = { caddy: false, ddns: false, services: false }; modsLoaded = false; overview = null; overviewOk = null; user = ''; current = 'home'; view.q = ''; view.kind = 'all'; setShown(false); if (root) { root.hidden = true; root.removeAttribute('style'); } }
 
 export function userChanged(name, message) {
   user = name;
@@ -349,6 +349,7 @@ function buildServicesPage() {
     <div class="chips" role="group" aria-label="${esc(t('mobile.folders'))}" id="mFolderChips" hidden></div>
     <div class="chips" role="group" aria-label="${esc(t('mobile.chooseHost'))}" id="mHostChips" hidden></div>
     <div id="mGrid"></div>
+    <div id="mWidgets"></div>
     <div id="mMods"></div>
     <div class="m3-sec">${icon('bolt')}<span>${t('mobile.quickActions')}</span></div>
     <div class="quick" id="mQuick"></div>`;
@@ -390,11 +391,16 @@ function renderServices() {
     <button type="button" class="mb m3-btn tonal m3-state" data-act="folders">${folderIconSvg('folder')}${t('mobile.folders')}</button>`;
 }
 /* Module Caddy und DDNS (nur lesen): Karten nur, wenn der Server sie eingeschaltet hat (GET /api/modules); Details im Sheet, siehe mobile-modules.js */
-let mods = { caddy: false, ddns: false }, modsLoaded = false;
+let mods = { caddy: false, ddns: false, services: false }, modsLoaded = false;
 async function renderModules() {
   const box = $('#mMods'); if (!box) return;
   if (!modsLoaded) { modsLoaded = true; mods = await import('./modules.js').then((m) => m.loadModules(ctx.api)); }
-  if (mods.caddy || mods.ddns) (await import('./mobile-modules.js')).renderCards(box, mods, { icon, esc, api: ctx.api }); else box.replaceChildren();
+  const mm = (mods.caddy || mods.ddns || mods.services) ? await import('./mobile-modules.js') : null;
+  if (mods.caddy || mods.ddns) mm.renderCards(box, mods, { icon, esc, api: ctx.api }); else box.replaceChildren();
+  // Dienste-Widgets: einmal einhaengen (sie halten sich selbst aktuell), nicht bei jedem Neuzeichnen der Seite
+  const wbox = $('#mWidgets');
+  if (wbox && mods.services && !wbox.querySelector('.wd-grid')) mm.mountServices(wbox, { api: ctx.api, wireSheet, icon, esc });
+  else if (wbox && !mods.services) wbox.replaceChildren();
 }
 function renderGrid() {
   const list = filtered();

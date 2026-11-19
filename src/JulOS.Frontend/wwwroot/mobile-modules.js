@@ -3,6 +3,7 @@
  * mindestens ein Modul eingeschaltet hat. deps: { icon, esc, api, wireSheet, app }
  * ===================================================================== */
 import { t, tk, tp } from './i18n.js';
+import { mountWidgets } from './widgets.js';
 import { routeParts, sourceLabel, reachMap, reachText, reachClass, ddnsStateLabel, ddnsStateClass, ddnsHeadline, ago } from './modules.js';
 
 const META = {
@@ -75,4 +76,10 @@ export async function openSheet(kind, deps) {
   dlg.onclick = (e) => { const b = e.target.closest('[data-a]'); if (!b) return; draw(b.dataset.a === 'check'); };
   if (!dlg.open) dlg.showModal();
   await draw(false);
+}
+
+/** Dienste-Widgets auf der Dienste-Seite: Ueberschrift und das Raster aus widgets.js. */
+export function mountServices(box, { api, wireSheet, icon, esc }) {
+  box.innerHTML = `<div class="m3-sec">${icon('apps')}<span>${esc(t('mobile.widgets'))}</span></div><div class="wd-host"></div>`;
+  return mountWidgets(box.querySelector('.wd-host'), { api, mobile: true, wireSheet });
 }

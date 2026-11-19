@@ -60,3 +60,19 @@ internal sealed class TestTime(DateTimeOffset start) : TimeProvider
     public override DateTimeOffset GetUtcNow() => _now;
     public void Advance(TimeSpan by) => _now += by;
 }
+
+/// <summary>Ein Fake-Dienst als Handler: antwortet je Adresse (Host, Pfad und Query) mit Status und Text, merkt sich jede Anfrage samt Kopfzeilen.</summary>
+internal sealed class FakeServiceWeb(Dictionary<string, (HttpStatusCode Status, string Body)> routes) : HttpMessageHandler
+{
+    public List<(string Url, Dictionary<string, string> Headers)> Requests { get; } = [];
+    public Exception? Throw { get; set; }
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        var headers = request.Headers.ToDictionary(h => h.Key, h => string.Join(",", h.Value), StringComparer.OrdinalIgnoreCase);
+        lock (Requests) Requests.Add((request.RequestUri!.ToString(), headers));
+        if (Throw is not null) throw Throw;
+        if (!routes.TryGetValue(request.RequestUri!.ToString(), out var r)) r = (HttpStatusCode.NotFound, "");
+        return Task.FromResult(new HttpResponseMessage(r.Status) { Content = new StringContent(r.Body, Encoding.UTF8, "application/json") });
+    }
+}

@@ -4,6 +4,11 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unreleased]
+
+### Geändert
+- Entwicklung: `deploy/dev/e2e.sh` startet einen eigenen Test-Stack und prüft in einem echten Browser (Playwright in Docker, Chromium) sechs Abläufe: Ersteinrichtung und Anmeldung, Verbindungen anlegen, RDP-Stream mit Bild, Klick und Tastatur im Ziel, SSH-Terminal, Handy- und Desktop-Oberfläche ohne Konsolenfehler. Beschreibung in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md), optionaler Schritt vor dem Tag in [docs/RELEASING.md](docs/RELEASING.md).
+
 ## [0.4.0] - 2026-11-19
 
 ### Neu

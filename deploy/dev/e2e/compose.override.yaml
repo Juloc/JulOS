@@ -1,0 +1,21 @@
+# Zusatz zu deploy/dev/compose.yaml fuer die Browser-Tests (deploy/dev/e2e.sh): dieselben Dienste, aber nichts auf dem Host veroeffentlicht
+# (kein Port-Streit mit der Test-Instanz oder den Instanzen anderer Sitzungen), dazu der Runner. Der Runner teilt das Netz des Servers:
+# fuer den Browser ist der Server dann "localhost" und damit ein sicherer Kontext (HTTPS-Funktionen, WebCodecs wie am Handy).
+services:
+  postgres: { ports: !reset [] }
+  guacd: { ports: !reset [] }
+  julos: { ports: !reset [] }
+  test-ssh: { ports: !reset [] }
+
+  e2e:
+    profiles: [e2e]
+    build: ./e2e
+    network_mode: "service:julos"
+    user: "${E2E_UID:-1000}:${E2E_GID:-1000}"
+    environment:
+      HOME: /tmp
+      E2E_SSH_PASSWORD: ${DEV_TARGET_PASSWORD}
+    volumes:
+      - ./e2e/playwright.config.mjs:/opt/e2e/playwright.config.mjs:ro
+      - ./e2e/tests:/opt/e2e/tests:ro
+      - ${E2E_OUT:?mit deploy/dev/e2e.sh starten}:/out

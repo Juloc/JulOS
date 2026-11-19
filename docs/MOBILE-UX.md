@@ -1,57 +1,62 @@
-# Phone interface: what is hard to understand, and the plan
+# Phone interface: what was hard to understand, what was done
 
-Status: a first audit of the phone shell (375 to 430 px wide, `?phone`) on 2026-11-19 after the user said it is "not understandable and hard to use". It lists what was
-seen on each page, a proposal, and open questions. Nothing is built yet; the order of work is in [INTEGRATIONS.md](INTEGRATIONS.md) next to the other milestones.
+Status 2026-11-19: the audit and the plan were turned into six small steps (one commit each, see the end). The phone shell (`?phone`, 375 to 430 px) and, where the same parts apply,
+the desktop window share one set of building blocks, one structure for settings and plainer texts. What was **not** checked on a real phone is listed at the end.
 
-## What was seen
+The building blocks are shown on a living page: `docs/ui-kit.html` (it loads the app's own stylesheets, light and dark, seed colour switch). Open it locally:
 
-**Home**
-- A "Server" card with CPU, RAM and storage (storage shows a dash) repeats on the Server page; it takes a third of the screen before the user reaches a connection.
-- Favourite tiles are small, the names are cut or wrapped ("Claude auf DEV-VM"), a key symbol on each tile is not explained (it means "password stored").
+```bash
+python3 -m http.server 8123 --bind 127.0.0.1
+# then http://127.0.0.1:8123/docs/ui-kit.html in the repo root
+```
 
-**Services page (shows the connections)**
-- Three rows of filter chips (kind with a count that can be 0, folder, host) sit above the tiles; on a phone they are more than the tiles themselves.
-- Two tiles with nearly the same name are indistinguishable ("Codex auf DEV-VM", "Codex auf dev-desktop"); the host is not shown on the tile.
-- "Quick actions" mixes unlike things in one grid: a primary "New connection", "Last: ...", "Open SSH", "Claude Code", "Codex", "Quick Connect", "Folders".
-- The floating "Add" button duplicates "New connection" and covers the last row of tiles.
-- Naming clash: the page is called "Dienste" ("your desktops and terminals") while the new Services module (widgets) will also be called Dienste.
+Screenshots before and after each step are in [mobile-ux-screens/](mobile-ux-screens/) (412 x 915 phone, 1280 x 800 desktop, light and dark; file names start with the step number, `0-before-*` is the state before).
 
-**Server page**: the first card repeats the header; storage shows a dash; the host card lists every connection as wrapping chips, including connections that belong to another machine (a data mistake the page makes visible but does not explain).
+## What was seen (the audit)
 
-**Monitoring page**: an empty placeholder ("coming soon") occupies one of five main navigation slots.
+- **Everywhere:** no common rhythm (cards, tiles, chips and buttons in many shapes, sizes and spacings), icon-only buttons without a label, jargon ("stream", "host key", "agent"), several entry points
+  for the same action, error texts that say what is wrong but not what to do next.
+- **Home:** a server card with CPU, RAM and storage took a third of the screen; favourite tiles were small with cut names; a key symbol on each tile was not explained.
+- **Services page (the connections):** three rows of filter chips, two tiles with the same name could not be told apart, a mixed grid of "quick actions", a floating button that duplicated "New connection" and covered the last row;
+  the name clashed with the Services module (widgets).
+- **Monitoring:** an empty placeholder in one of five navigation slots. **Profile:** one long flat list with a raw backup error text and jargon values.
+- **Terminal (program sessions):** about fourteen tiny key buttons, a second row of icon-only buttons, copy and paste without labels, no hint how to sign in to Claude or Codex.
 
-**Profile page**: one long flat list; the backup line shows a raw technical error text; "Image transfer: Stream (H.264 on the CPU)" and "Build: <hash>" are jargon for most readers; there is a setting to hide pages without data instead of hiding them by default.
+## What was done (the six steps)
 
-**Terminal (program sessions)**: a row of about fourteen tiny key buttons, an input bar, and below a second row of icon-only buttons (keyboard, full screen, more); copy and paste icons have no label; the first-use path (what to do when `claude` asks to log in) is not shown.
+1. **Component sheet** (`docs/ui-kit.html`, `m3.css`). Spacing steps (4, 8, 12, 16, 24), one card and tile radius, page header, section with one line of help, rows (label, explanation, **one** control),
+   tiles, buttons (filled, tonal, text), chips, switch row, empty state, message (info, ok, warning, error, with "Details"), sheet, navigation bar, main row, danger area. Colours only from the theme variables.
+   Contrast was checked by a script (visible texts against the composed background, light and dark): no text under 4.5:1 except disabled controls. Buttons, chips, icon buttons, segments, avatar and keys are 44 px high.
+2. **Settings as groups** (`settings.js`; phone: Profil, desktop: Einstellungen). Konto, Darstellung, Verbindungen, Terminal und Programme, Zwischenablage und Ton, Backup, Über JulOS und Diagnose, and **Abmelden** alone at the end.
+   Both surfaces render the same description (order, titles, help, rows), `tests/frontend/settings.test.mjs` pins it. The backup shows a short sentence with the next step ("Der Backup-Ordner gehört nicht dem Server-Benutzer. Prüfe die Rechte …"),
+   the raw server text only behind "Details". Build, image transfer and network tools moved to the about group. The switch "show pages without data" is gone.
+3. **Verbindungen page** (was Dienste; the module of service widgets keeps the name Dienste). One search row with a **Filter** button; the sheet has kind, folder and host; set filters show as chips that remove themselves.
+   Tiles in two columns show icon, name (two lines), status dot and host; equal names get the host, kind or address appended (`conn-names.js`). One main button "Neue Verbindung" (page header, or inside the empty state); no floating button,
+   no second quick-action grid. Monitoring is not in the navigation; "Server" is called **Hosts** and only shows with load data or hosts. The key symbol is text ("Passwort gespeichert") in the tile menu.
+4. **Start page.** Greeting, the big **Weiter** row (last used connection with host and time; without a connection the main action "Neue Verbindung"), open sessions, favourites in two columns, **Programme** (Claude Code and Codex, one tap),
+   activities and a one-line server row that leads to Hosts.
+5. **Terminal.** Row 1: at most six keys with short labels plus **Mehr**; the sheet **Mehr Tasten** lists all keys with their names and the tools as labelled buttons. Row 2: input, **Einfügen**, new line, **Senden**. For Claude and Codex a card explains the sign-in once;
+   **Adresse öffnen** opens the last https address in the terminal (only on tap). The generic key bar no longer repeats Esc/Ctrl/Tab in terminals and every icon key has a name. Details: [CLI-SESSIONS.md](CLI-SESSIONS.md).
+6. **Words.** One sentence with the next step is added to known server errors (`NEXT_STEP` in `i18n-errors.js`, German and English); "Host-Schlüssel" is "Erkennungsschlüssel des Rechners", "Quick Connect" is "Schnell verbinden", errors during a session say "Neu verbinden".
+   Every icon button has an `aria-label` and tooltip (checked on all phone pages and desktop views). All texts go through the i18n module.
 
-**Everywhere**: icon-only buttons without a label, jargon ("stream", "host key"), several entry points for the same action, error texts that say what is wrong but not what to do next.
+## Decisions and open items
 
-## Proposal (small steps, each testable on a phone)
+- **Zwischenablage und Ton** has no real settings (the checks live in the session dialogs), so the group has two explanatory rows without a control instead of invented switches.
+- **Left alone on purpose** (another change works there): the host card and host dialog, "Agent" wording and the updates display, and [HOSTS.md](HOSTS.md) which still says "Server" for the phone page. "Agent" is still not explained for readers.
+- Server texts stay German and unchanged (the test compares them with the source); the next step is added in the browser. "Host-Schlüssel nicht vertraut." therefore still shows the old word in German.
+- Desktop windows other than Einstellungen and the connections list (Dateien, System, module windows) were only checked, not redesigned. The desktop has no component sheet of its own: its parts (`dk-card`, `dk-row`, `dk-btn`, `dk-srow`) follow the same structure with the `--dk-*` variables.
+- Not done: Hosts page redesign (see INTEGRATIONS.md, M6), icons that hint at "rights" beyond the key, a font-size setting for the whole interface.
 
-1. **Navigation:** four tabs, Start, Connections, Hosts, Profile. Hide Monitoring until it has data. Rename the current "Dienste" page to "Connections"; the widget module keeps the name "Services".
-2. **Start:** one primary action ("New connection"), a large "Continue" row (last used, with the host name), favourites in two columns with a two-line label and the host as a second line; the key symbol becomes a text hint in the tile menu.
-3. **Connections:** one search field and one "Filter" sheet (kind, folder, host) instead of three chip rows; the list grouped by host; a tile shows icon, name, host line and a status dot; duplicate names get the host appended automatically.
-4. **Terminal:** one compact key row with short text labels and a "more keys" sheet; a clear first-use hint for program sessions (login steps, where to paste the code); labelled copy and paste.
-5. **Hosts:** one card per machine with status, agent version, what is installed (Claude, Codex, tmux) and what needs attention (updates, backup); the actions of that machine on the card (see INTEGRATIONS.md, M6).
-6. **Messages:** every error shows a short sentence and a next step ("Backup folder is not writable: ask the server admin to run ..."); technical details behind a "Details" link.
-7. **Empty states** explain the next step in one line with a button; no placeholder pages in the main navigation.
-8. **Test on a real phone** (see [PHONE-TEST.md](PHONE-TEST.md)); screenshots before and after for each step.
+## Not verified (no real device)
 
-## The user's answer (2026-11-19)
+Everything was checked in the browser pane at 412 x 915 and 1280 x 800 (Chromium, emulated touch size, light and dark), plus script checks for contrast, tap size and names. **Not verified:** real Android Chrome (keyboard behaviour of the input bar,
+long press for the tile menu, safe areas, the animation of sheets), real Windows Brave, screen reader output, one-hand reach. See [PHONE-TEST.md](PHONE-TEST.md) and the list below.
 
-Main complaint: the interface as a whole feels random (no consistent look and rhythm between pages), and the settings are not clearly structured or well formatted.
-Devices: Android Chrome and a Windows PC with Brave (so the desktop layout counts as much as the phone shell).
+### To look at on the phone
 
-Consequences for the plan, to be placed before step 2 above:
-
-- **A. One design pass instead of page-by-page fixes:** a short component sheet (headings, section cards, list rows, tiles, buttons, chips, switches, empty states, messages) with fixed
-  spacing, type sizes, radii and colours taken from the theme variables (the dark and light sets of `THEME.md`), then every page uses only those parts. Review by screenshots of every
-  page before and after, on Android Chrome size and on the desktop layout.
-- **B. Settings rebuilt as a structured page:** groups with a title and one line of help ("Account", "Appearance", "Connections", "Terminal and programs", "Clipboard and sound",
-  "Backup and security", "About"); every row has a label, a short explanation and one control (switch, choice, button); technical values (build, encoder, host keys) move to
-  an "About and diagnostics" group; destructive actions are last and separated; the same structure in the desktop settings window.
-- **C. Hide what has no content:** pages without data (Monitoring) are not shown until they have something to show.
-
-## Open questions
-
-Which pages should be done first after the design pass (Home, Connections, Settings, Terminal)? A real Android screenshot of the worst page would help to calibrate.
+- Start: is "Weiter" the first thing you want to tap? Does a long press on a tile open the menu (and does it say "Passwort gespeichert" for stored passwords)?
+- Verbindungen: search field and Filter side by side; the filter sheet; two tiles with the same name; the main button at the top right.
+- Profil: the groups, the colour row (7 circles on one line), the backup note under "Backup", "Abmelden" at the end.
+- Terminal with Claude or Codex: the card at the first start, "Adresse öffnen" (opens the sign-in page), "Einfügen" then "Senden" for the code; "Mehr" and the sheet above the keyboard; keys reachable with the thumb.
+- Dark mode and large system font size on every page.

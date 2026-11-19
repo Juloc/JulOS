@@ -26,7 +26,7 @@ In JulOS:
   Passwort** und bekannter Host-Schlüssel werden vom Server übernommen, ohne dass sie je zum Browser gehen), die Original-Verbindung bleibt.
   Dasselbe Ziel darf beliebig viele Kacheln haben: eine Verbindung ist ein Ziel plus ein Programm (und liegt wie jede Verbindung auf einem Host,
   siehe [HOSTS.md](HOSTS.md)).
-- **Ein-Tipp-Start:** Auf der Dienste-Seite am Handy gibt es die Knöpfe „Claude Code“ und „Codex“, am Desktop stehen sie im Dock, im
+- **Ein-Tipp-Start:** Auf der Startseite am Handy gibt es unter „Programme“ die Kacheln „Claude Code“ und „Codex“ (auch unter Profil, Terminal und Programme), am Desktop stehen sie im Dock, im
   Launcher, im Menü „Apps“ und in den Schnellaktionen. Gibt es genau eine passende Kachel, öffnet der Tipp sie. Gibt es mehrere, wählst du.
   Gibt es keine, aber eine Terminal-Verbindung, legt der Tipp die Kachel aus dieser an (der Name steht danach in der Liste) und startet sie.
 - **Von Hand:** Verbindung anlegen oder bearbeiten, Art „Terminal (SSH)“, dann die Felder unten.

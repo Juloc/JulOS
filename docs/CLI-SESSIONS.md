@@ -16,6 +16,9 @@ Auf dem Zielrechner (dem, zu dem die SSH-Verbindung geht):
    (siehe „Wie der Start geprüft wird“). Üblich ist `~/.local/bin`, das `~/.profile` auf den meisten Systemen aufnimmt.
 2. Optional `tmux` installieren, wenn die Arbeit ein Abreißen der Verbindung überstehen soll (siehe unten).
 
+Das Skript `tools/julos-setup-ai-cli.sh` erledigt beides (Trockenlauf ist der Standard, `--yes` führt aus); Voraussetzungen, Anmeldung ohne Browser,
+Berechtigungen und die Geräte-Checkliste stehen in [AI-CLI-SETUP.md](AI-CLI-SETUP.md) (Englisch) und [AI-CLI-DEVICES.md](AI-CLI-DEVICES.md).
+
 In JulOS:
 
 - **Eine Kachel aus einer vorhandenen Terminal-Verbindung:** Verbindung bearbeiten (Stift) und „Kachel „Claude“ anlegen“ oder

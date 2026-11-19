@@ -21,6 +21,7 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 - Der Worklet zählt die ausgegebenen Samples (`played`), damit Tests und die Diagnose belegen, dass wirklich gespielt wird.
 - Browser-Tests 13 bis 15 in echtem Chromium mit Ersatz-Mikrofon: Ton aus dem Desktop kommt an und wird gespielt (Pegel, Samples), Hintergrund-Sitzung bekommt nichts; Mikrofon im Menü einschalten, im Desktop nimmt ein Programm den Testton auf; verweigertes Mikrofon zeigt die Anleitung. Der Hilfsdienst im Test-Desktop kann Ton spielen und aufnehmen.
 - Doku: [docs/AUDIO.md](docs/AUDIO.md) (was jede Seite braucht, Prüfliste für die echte VM, Grenzen), Abschnitt „If the display tests are red“ in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): ein älteres Test-Ziel ohne PipeWire, `xclip` und `/dev/fuse` machte drei Display-Tests rot, obwohl der Code stimmt (frisch gebaut sind sie grün). Der Service Worker hält `audiodiag.js` bereit (Version pd-v53).
+- Einrichtung von Claude Code und Codex auf den eigenen Rechnern: Skript `tools/julos-setup-ai-cli.sh` (Trockenlauf als Standard, `--yes` führt aus; prüft Summe und Signatur, richtet `PATH` für Login-Shells und einen tmux-Block für Programm-Sitzungen ein, schreibt nie Anmeldedaten), Anforderungen, Anmeldung ohne Browser und Berechtigungen in `docs/AI-CLI-SETUP.md`, Geräte-Checkliste in `docs/AI-CLI-DEVICES.md`. Der Plan für „KI-Werkzeuge“ in JulOS ist dort beschrieben, noch nicht gebaut.
 
 ## [0.10.0] - 2026-11-19
 

@@ -7,6 +7,8 @@
  * window.__julosPopouts, den das Fenster beim Laden von window.opener liest (gleiche Herkunft; das Token steht nie in einer Adresse).
  * ===================================================================== */
 
+import { t } from './i18n.js';
+
 export const REGISTRY = '__julosPopouts';
 
 /** Nur auf grossen Bildschirmen mit Maus (wie die Desktop-Oberflaeche): das Fenster braucht Platz und Tastatur. */
@@ -32,9 +34,9 @@ export function canPopOut(session) {
  * der Browser das Fenster). extra: weitere Angaben fuer das Fenster ({ perf: Statusleiste an }). back() wird gerufen, wenn das Fenster zu ist oder die Sitzung zurueck will (einmal).
  */
 export function openPopout(session, back, extra = {}, host = globalThis) {
-  if (!canPopOut(session)) return { ok: false, reason: 'Die Sitzung muss erst verbunden sein und ein Bild zeigen.' };
+  if (!canPopOut(session)) return { ok: false, reason: t('popout.errNotReady') };
   const win = host.open(popoutUrl(session.conn.id, session.id), 'julos-popout-' + session.id, popoutFeatures(host.screen));
-  if (!win) return { ok: false, reason: 'Der Browser hat das Fenster blockiert. Bitte Pop-ups für diese Seite erlauben.' };
+  if (!win) return { ok: false, reason: t('popout.errBlocked') };
   let done = false, timer = 0;
   const finish = () => { if (done) return; done = true; clearInterval(timer); delete host[REGISTRY]?.[session.id]; back(); };
   host[REGISTRY] = host[REGISTRY] || {};

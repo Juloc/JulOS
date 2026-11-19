@@ -47,14 +47,15 @@ Before, the phone kept favourites and use counts only in `localStorage` of that 
 
 ## Settings per user on the server
 
-The button layout of the remote view and the theme colour are saved per user, so a second device looks the same.
+The button layout of the remote view, the theme colour and the interface language are saved per user, so a second device looks the same.
 
-- Table `user_settings (user_id, key, value jsonb)`; the keys are `keybar` and `theme` only (`SettingsRules`). `GET /api/settings`, `PUT /api/settings/{key}` with
+- Table `user_settings (user_id, key, value jsonb)`; the keys are `keybar`, `theme` and `lang` only (`SettingsRules`). `GET /api/settings`, `PUT /api/settings/{key}` with
   `{ value }`, `DELETE /api/settings/{key}` (reset to the defaults). The server **checks and rewrites** every value: unknown fields are dropped, lengths and counts are limited
   (12 rows, 60 keys per row, label 24, value 200 characters), colours must be `system` or `#rrggbb`.
 - **keybar:** the rows with their keys (selection and order). Each key has an optional `scope`: `both` (default), `desktop` or `terminal`; a session only shows the keys of its
   own kind (all keys are shown while editing).
 - **theme:** `{ seed, scheme }` (colour and light, dark or automatic).
+- **lang:** `{ lang }` with `de`, `en` or `system` (interface language, see [DEVELOPMENT.md](DEVELOPMENT.md#languages)); any other value is rejected.
 - **Local cache and fallback (`prefs.js`):** the page keeps its copy in `localStorage` as before and uses it at once, so the layout is there without waiting and when the server
   cannot be reached. After sign-in it asks the server: a value saved there wins and refreshes the local copy; when the server has none yet, the local one is uploaded (first
   call). A change is applied locally first and pushed after a short delay; if the push fails it is retried at the next start (a "pending" mark in `localStorage`).

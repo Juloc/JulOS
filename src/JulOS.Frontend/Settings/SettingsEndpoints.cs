@@ -9,7 +9,7 @@ namespace JulOS.Frontend.Settings;
 internal sealed record SettingsResponse(Dictionary<string, JsonElement> Settings);
 internal sealed record SettingRequest(JsonElement? Value);
 
-/// <summary>Einstellungen je Benutzer auf dem Server (Tastenleiste, Themenfarbe), damit sie auf jedem Geraet gelten. Die Seite haelt eine lokale Kopie als Rueckfall.</summary>
+/// <summary>Einstellungen je Benutzer auf dem Server (Tastenleiste, Themenfarbe, Sprache), damit sie auf jedem Geraet gelten. Die Seite haelt eine lokale Kopie als Rueckfall.</summary>
 internal static class SettingsEndpoints
 {
     private static IResult Error(int status, string message) =>

@@ -1,10 +1,12 @@
-import { remoteApi, getScheme, setTheme } from './app.js';
+import { remoteApi, getScheme, setTheme, setLanguage } from './app.js';
 import { SCHEMES } from './scheme.js';
 import { Sessions } from './sessions.js';
 import { looksLikeAddress } from './quick.js';
 import { filterByFolder, groupByFolder, recentList, folderIconSvg, folderName, setFavorite } from './folders.js';
-import { remoteMenuNames, remoteMenuItems, sessionMenu } from './desktop-remote.js';
+import { remoteMenuNames, remoteMenuItems, remoteMenuLabel, sessionMenu } from './desktop-remote.js';
 import { serviceState, connectionState, dotClass, stateText, groupConnections, hostDetail, agentSummary, servicesSummary } from './hosts.js';
+import { t, tk, fmtNumber, fmtDate, fmtTime, fmtDay, getPref, LANG_CHOICES } from './i18n.js';
+import { serverMsg } from './i18n-errors.js';
 
 /* =====================================================================
  * Desktop-Oberflaeche (breite Bildschirme mit Maus): Menueleiste, Dock, Launcher, Home-Fenster und ein Fenster
@@ -81,16 +83,16 @@ const LOGO = `<svg viewBox="0 0 32 32" aria-hidden="true">
 
 /* Programme: Farben, Symbole, Ziele. soon = gibt es noch keinen Server-Teil dafuer (siehe docs/IDEAS.md). mod = nur sichtbar, wenn der Server das Modul eingeschaltet hat (docs/MODULES.md). */
 const APPS = [
-  { id: 'home', name: 'Start', ic: 'home', g: ['#7b78ee', '#5160e6'] },
-  { id: 'desktop', name: 'Desktop', sub: 'RDP', ic: 'monitor', g: ['#3a99dc', '#2f5fe0'] },
-  { id: 'terminal', name: 'Terminal', sub: 'SSH', ic: 'terminal', g: ['#5b6275', '#2c3142'] },
-  { id: 'settings', name: 'Einstellungen', ic: 'sliders', g: ['#7d849f', '#555b78'] },
-  { id: 'files', name: 'Dateien', ic: 'folder', g: ['#c28418', '#a86408'] },
-  { id: 'hosts', name: 'Hosts', sub: 'Rechner und Server', ic: 'server', g: ['#2fa08c', '#1c7a70'] },
+  { id: 'home', name: t('desktop.start'), ic: 'home', g: ['#7b78ee', '#5160e6'] },
+  { id: 'desktop', name: t('desktop.desktop'), sub: 'RDP', ic: 'monitor', g: ['#3a99dc', '#2f5fe0'] },
+  { id: 'terminal', name: t('desktop.terminal'), sub: 'SSH', ic: 'terminal', g: ['#5b6275', '#2c3142'] },
+  { id: 'settings', name: t('desktop.settings'), ic: 'sliders', g: ['#7d849f', '#555b78'] },
+  { id: 'files', name: t('desktop.files'), ic: 'folder', g: ['#c28418', '#a86408'] },
+  { id: 'hosts', name: t('desktop.hosts'), sub: t('desktop.hostsSub'), ic: 'server', g: ['#2fa08c', '#1c7a70'] },
   { id: 'docker', name: 'Docker', ic: 'box', g: ['#3a95e0', '#1f69bf'], soon: true },
-  { id: 'caddy', name: 'Caddy', sub: 'Domains', ic: 'globe', g: ['#1fa06a', '#12804f'], mod: 'caddy' },
-  { id: 'ddns', name: 'DDNS', sub: 'Adresse', ic: 'cloud', g: ['#3f8fe0', '#2d66cc'], mod: 'ddns' },
-  { id: 'monitor', name: 'Monitor', ic: 'activity', g: ['#cf5fae', '#8c45d6'] },
+  { id: 'caddy', name: 'Caddy', sub: t('desktop.caddySub'), ic: 'globe', g: ['#1fa06a', '#12804f'], mod: 'caddy' },
+  { id: 'ddns', name: 'DDNS', sub: t('desktop.ddnsSub'), ic: 'cloud', g: ['#3f8fe0', '#2d66cc'], mod: 'ddns' },
+  { id: 'monitor', name: t('desktop.monitor'), ic: 'activity', g: ['#cf5fae', '#8c45d6'] },
 ];
 const appById = (id) => APPS.find((a) => a.id === id);
 let modules = { caddy: false, ddns: false };   // vom Server (GET /api/modules), nach der Anmeldung geladen
@@ -229,11 +231,11 @@ function createWindow(opts) {
   const e = el('div', 'dk-win ' + (opts.cls || ''));
   e.dataset.win = opts.id; e.setAttribute('role', 'dialog'); e.setAttribute('aria-label', opts.title);
   const head = el('div', 'dk-wh');
-  const title = el('div', 'dk-wt', (opts.icon || '') + '<span></span>'); title.lastElementChild.textContent = opts.title;
+  const title = el('div', 'dk-wt', (opts.icon || '') + '<span></span>'); title.lastElementChild.textContent = opts.title; title.lastElementChild.dataset.keysLabel = t('desktop.keysBadge');   // Marke "Tastatur" am Fensterrand (desktop.css: content: attr)
   head.appendChild(title);
   const extra = el('div', 'dk-wx'); if (opts.head) extra.appendChild(opts.head); head.appendChild(extra);
   const ctl = el('div', 'dk-wc');
-  const bMin = btn('', ic('minus'), 'Minimieren'), bMax = btn('', ic('square'), 'Maximieren'), bCl = btn('dk-cl', ic('x'), 'Schließen');
+  const bMin = btn('', ic('minus'), t('desktop.minimize')), bMax = btn('', ic('square'), t('desktop.maximize')), bCl = btn('dk-cl', ic('x'), t('common.close'));
   ctl.append(bMin, bMax, bCl); head.appendChild(ctl);
   const body = el('div', 'dk-wb');
   e.append(head, body);
@@ -276,7 +278,7 @@ function minimizeWin(w) {
 function restoreWin(w) { w.minimized = false; w.el.classList.remove('min'); if (w.opts.onVisible) w.opts.onVisible(true); focusWin(w); renderDock(); }
 function toggleMax(w) {
   w.maximized = !w.maximized; w.el.classList.toggle('max', w.maximized);
-  w.bMax.innerHTML = ic(w.maximized ? 'restore' : 'square'); w.bMax.setAttribute('aria-label', w.maximized ? 'Wiederherstellen' : 'Maximieren');
+  w.bMax.innerHTML = ic(w.maximized ? 'restore' : 'square'); w.bMax.setAttribute('aria-label', w.maximized ? t('desktop.restore') : t('desktop.maximize'));
 }
 function closeWin(w) {
   if (!wins.has(w.id)) return;
@@ -335,71 +337,73 @@ window.addEventListener('resize', () => {
 /* =====================================================================
  *  Menueleiste
  * ===================================================================== */
+/** Die Schluessel von MENUS sind nur Kennungen (data-menu); angezeigt wird die Beschriftung daraus */
+const MENU_LABELS = { Desktop: tk('desktop.desktop'), Hosts: tk('desktop.hosts'), Dateien: tk('desktop.files'), Apps: tk('desktop.apps'), System: tk('desktop.system'), Hilfe: tk('desktop.help') };
 const MENUS = () => ({
   Desktop: [
-    { label: 'Start öffnen', icon: 'home', run: () => openHome() },
-    { label: 'Alle Fenster minimieren', icon: 'minus', run: () => wins.forEach(minimizeWin) },
-    { label: 'Alle Fenster anzeigen', icon: 'restore', run: () => wins.forEach((w) => w.minimized && restoreWin(w)) },
-    { label: 'Sitzungen nebeneinander', icon: 'grid', run: () => tileSessions(), disabled: sessWins.size < 2 },
-    { label: 'Sitzungen überlappend', icon: 'restore', run: () => cascadeSessions(), disabled: sessWins.size < 2 },
+    { label: t('desktop.openStart'), icon: 'home', run: () => openHome() },
+    { label: t('desktop.minimizeAll'), icon: 'minus', run: () => wins.forEach(minimizeWin) },
+    { label: t('desktop.showAll'), icon: 'restore', run: () => wins.forEach((w) => w.minimized && restoreWin(w)) },
+    { label: t('desktop.sessionsSideBySide'), icon: 'grid', run: () => tileSessions(), disabled: sessWins.size < 2 },
+    { label: t('desktop.sessionsOverlap'), icon: 'restore', run: () => cascadeSessions(), disabled: sessWins.size < 2 },
     { sep: true },
-    { label: 'Neue Verbindung …', icon: 'plus', run: () => ctx.add() },
-    { label: 'Quick Connect …', icon: 'monitor', run: () => ctx.quick() },
+    { label: t('desktop.newConnectionDots'), icon: 'plus', run: () => ctx.add() },
+    { label: t('desktop.quickConnectDots'), icon: 'monitor', run: () => ctx.quick() },
   ],
   Hosts: [
-    ...ctx.state.hosts.map((h) => ({ label: h.name, icon: 'server', hint: h.online ? 'online' : 'offline', run: () => openHome('hosts') })),
+    ...ctx.state.hosts.map((h) => ({ label: h.name, icon: 'server', hint: stateText(!!h.online), run: () => openHome('hosts') })),
     ...(ctx.state.hosts.length ? [{ sep: true }] : []),
-    { label: 'Hosts verwalten', icon: 'server', run: () => openHome('hosts') },
-    { label: 'Neuer Host …', icon: 'plus', run: () => ctx.addHost() },
+    { label: t('desktop.manageHosts'), icon: 'server', run: () => openHome('hosts') },
+    { label: t('desktop.newHostDots'), icon: 'plus', run: () => ctx.addHost() },
   ],
   Dateien: [
-    { label: 'Dateien öffnen', icon: 'folder', run: () => openFiles() },
-    { label: 'Suchen …', icon: 'search', run: () => openFiles('', true) },
+    { label: t('desktop.openFiles'), icon: 'folder', run: () => openFiles() },
+    { label: t('desktop.searchDots'), icon: 'search', run: () => openFiles('', true) },
   ],
   Apps: [
-    { label: 'Launcher öffnen', icon: 'grid', run: () => openLauncher() },
+    { label: t('desktop.openLauncher'), icon: 'grid', run: () => openLauncher() },
     { sep: true },
-    { label: 'Desktop verbinden …', icon: 'monitor', run: () => pickConnection('desktop', $('[data-menu="Apps"]', root)) },
-    { label: 'Terminal verbinden …', icon: 'terminal', run: () => pickConnection('terminal', $('[data-menu="Apps"]', root)) },
+    { label: t('desktop.connectDesktopDots'), icon: 'monitor', run: () => pickConnection('desktop', $('[data-menu="Apps"]', root)) },
+    { label: t('desktop.connectTerminalDots'), icon: 'terminal', run: () => pickConnection('terminal', $('[data-menu="Apps"]', root)) },
     { sep: true },
     ...shownApps().filter((a) => a.mod).map((a) => ({ label: a.name, icon: a.ic, run: () => runApp(a.id) })),
-    ...APPS.filter((a) => a.soon).map((a) => ({ label: a.name, icon: a.ic, hint: 'bald verfügbar', disabled: true })),
+    ...APPS.filter((a) => a.soon).map((a) => ({ label: a.name, icon: a.ic, hint: t('desktop.soonAvail'), disabled: true })),
   ],
   System: [
-    { label: 'Passwort und Authenticator …', icon: 'key', run: () => ctx.account() },
-    { label: 'Geräte und Sitzungen …', icon: 'shield', run: () => ctx.devices() },
-    { label: 'Einstellungen', icon: 'sliders', run: () => openHome('einstellungen') },
-    { label: 'System-Übersicht', icon: 'activity', run: () => openHome('system') },
-    { label: 'Netzwerkwerkzeuge …', icon: 'globe', run: () => ctx.nettools() },
+    { label: t('desktop.accountDots'), icon: 'key', run: () => ctx.account() },
+    { label: t('desktop.devicesDots'), icon: 'shield', run: () => ctx.devices() },
+    { label: t('desktop.settings'), icon: 'sliders', run: () => openHome('einstellungen') },
+    { label: t('desktop.systemOverview'), icon: 'activity', run: () => openHome('system') },
+    { label: t('desktop.nettoolsDots'), icon: 'globe', run: () => ctx.nettools() },
     { sep: true },
-    { label: 'Abmelden', icon: 'power', run: () => ctx.signOut() },
+    { label: t('desktop.signOut'), icon: 'power', run: () => ctx.signOut() },
   ],
   Hilfe: [
-    { label: 'Über JulOS', icon: 'info', run: () => openAbout() },
-    { label: 'Lizenzen', icon: 'info', run: () => window.open('/licenses.txt', '_blank', 'noopener') },
+    { label: t('desktop.aboutJulos'), icon: 'info', run: () => openAbout() },
+    { label: t('desktop.licenses'), icon: 'info', run: () => window.open('/licenses.txt', '_blank', 'noopener') },
     { sep: true },
-    { label: 'Quelltext und Dokumentation', icon: 'info', run: () => window.open('https://github.com/Juloc/JulOS', '_blank', 'noopener') },
+    { label: t('desktop.sourceAndDocs'), icon: 'info', run: () => window.open('https://github.com/Juloc/JulOS', '_blank', 'noopener') },
   ],
 });
 
 function buildBar() {
   const bar = el('header', 'dk-bar');
-  const logo = btn('dk-logo', LOGO + '<span>JulOS</span>', 'Start öffnen'); logo.addEventListener('click', () => openHome());
+  const logo = btn('dk-logo', LOGO + '<span>JulOS</span>', t('desktop.openStart')); logo.addEventListener('click', () => openHome());
   bar.appendChild(logo);
   const menus = el('div', 'dk-menus'); menus.id = 'dkMenus';
   bar.appendChild(menus);
   bar.appendChild(el('div', 'dk-sp'));
   const sess = btn('dk-ic dk-sess', '<span></span>'); sess.hidden = true; sess.id = 'dkSess'; sess.addEventListener('click', () => sessionMenu2(sess));
-  const search = btn('dk-ic', ic('search'), 'Suchen'); search.dataset.launcher = '1'; search.addEventListener('click', () => (launcher ? closeLauncher() : openLauncher()));
+  const search = btn('dk-ic', ic('search'), t('common.search')); search.dataset.launcher = '1'; search.addEventListener('click', () => (launcher ? closeLauncher() : openLauncher()));
   const clock = el('div', 'dk-clock'); clock.id = 'dkClock';
-  const user = btn('dk-ic', '<span class="dk-avatar"></span>', 'Konto'); user.id = 'dkUser';
+  const user = btn('dk-ic', '<span class="dk-avatar"></span>', t('desktop.account')); user.id = 'dkUser';
   user.addEventListener('click', () => showMenu(user, [
     { cap: ctx.state.user || '' },
-    { label: 'Passwort und Authenticator …', icon: 'key', run: () => ctx.account() },
-    { label: 'Geräte und Sitzungen …', icon: 'shield', run: () => ctx.devices() },
-    { label: 'Einstellungen', icon: 'sliders', run: () => openHome('einstellungen') },
+    { label: t('desktop.accountDots'), icon: 'key', run: () => ctx.account() },
+    { label: t('desktop.devicesDots'), icon: 'shield', run: () => ctx.devices() },
+    { label: t('desktop.settings'), icon: 'sliders', run: () => openHome('einstellungen') },
     { sep: true },
-    { label: 'Abmelden', icon: 'power', run: () => ctx.signOut() },
+    { label: t('desktop.signOut'), icon: 'power', run: () => ctx.signOut() },
   ]));
   const keys = el('div', 'dk-keys', ic('keyboard') + '<span></span>'); keys.id = 'dkKeys'; keys.hidden = true;
   bar.append(keys, sess, search, clock, user);
@@ -425,8 +429,8 @@ function markKeys() {
   for (const o of wins.values()) o.el.classList.toggle('keys', o === w && has);
   const k = $('#dkKeys', root); if (!k) return;
   k.hidden = !w; k.classList.toggle('on', has);
-  k.querySelector('span').textContent = has ? 'Tastatur → ' + ((Sessions.active && Sessions.active.title) || 'Sitzung') : 'Tastatur → keins';
-  k.title = has ? 'Alle Tasten gehen an das Fernfenster.' : 'Die Tasten gehen an kein Fernfenster. Klicke das Fernfenster an (oder wähle es im Dock).';
+  k.querySelector('span').textContent = has ? t('desktop.keyboardTo', { title: (Sessions.active && Sessions.active.title) || t('desktop.session') }) : t('desktop.keyboardNone');
+  k.title = has ? t('desktop.keysToRemote') : t('desktop.keysToNone');
 }
 
 /** Das Fernfenster ist vorn und sichtbar: dann zeigt die Leiste seine Menues statt der normalen (wie das Programm-Menue am Mac) */
@@ -440,7 +444,7 @@ const remoteDeps = {
   fullscreen: () => {
     const w = activeW(); if (!w) return;
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-    else w.el.requestFullscreen({ navigationUI: 'hide' }).catch(() => notify('Vollbild geht hier nicht.'));
+    else w.el.requestFullscreen({ navigationUI: 'hide' }).catch(() => notify(t('desktop.fullscreenFail')));
   },
   end: () => { const w = activeW(); if (w) closeWin(w); },
 };
@@ -454,16 +458,16 @@ function renderMenus() {
   const key = remote ? 'r:' + Sessions.active.id + ':' + sc.kind + ':' + Sessions.active.title : 'n';
   if (key === barKey) return;
   barKey = key; closeMenu(); box.replaceChildren();
-  const add = (name, cls, items) => {
-    const b = btn('dk-mi' + (cls ? ' ' + cls : ''), ''); b.textContent = name; b.dataset.menu = name;
+  const add = (name, cls, items, label = name) => {
+    const b = btn('dk-mi' + (cls ? ' ' + cls : ''), ''); b.textContent = label; b.dataset.menu = name;
     const open = async () => { const list = await items(); if (barKey === key) showMenu(b, list); };
     b.addEventListener('click', () => (menuOwner === b ? closeMenu() : open()));
     b.addEventListener('mouseenter', () => { if (menuEl && menuOwner && menuOwner !== b) open(); });   // wie in einer Menueleiste: bei offenem Menue wechselt Darueberfahren
     box.appendChild(b);
   };
-  if (!remote) { const menus = MENUS(); for (const name of Object.keys(menus)) add(name, '', () => MENUS()[name]); return; }
+  if (!remote) { const menus = MENUS(); for (const name of Object.keys(menus)) add(name, '', () => MENUS()[name], t(MENU_LABELS[name])); return; }
   add(Sessions.active.title, 'dk-appname', () => afterRemote(sessionMenu(remoteDeps)));
-  for (const name of remoteMenuNames(sc.kind)) add(name, '', () => afterRemote(remoteMenuItems(name, remoteDeps)));
+  for (const name of remoteMenuNames(sc.kind)) add(name, '', () => afterRemote(remoteMenuItems(name, remoteDeps)), remoteMenuLabel(name));
 }
 function renderBar() {
   renderMenus();
@@ -471,31 +475,31 @@ function renderBar() {
   const s = $('#dkSess', root); if (!s) return;
   const n = sessWins.size, a = Sessions.active;
   s.hidden = !n;
-  if (n) s.querySelector('span').textContent = n === 1 ? (a ? a.title : 'Sitzung') : `${n} Sitzungen`;
+  if (n) s.querySelector('span').textContent = n === 1 ? (a ? a.title : t('desktop.session')) : t('desktop.sessionsN', { n });
 }
 /** Menue der offenen Sitzungen (Menueleiste): wechseln, anordnen */
 function sessionMenu2(anchor) {
-  const items = [{ cap: 'Offene Sitzungen' }];
+  const items = [{ cap: t('desktop.openSessions') }];
   for (const w of sessWins.values()) {
     const s = w.session;
     items.push({ label: s.title, icon: s.kind === 'terminal' ? 'terminal' : 'monitor', hint: s.stateText, run: () => { w.minimized ? restoreWin(w) : focusWin(w); } });
   }
-  items.push({ sep: true }, { label: 'Nebeneinander anordnen', icon: 'grid', run: () => tileSessions(), disabled: sessWins.size < 2 }, { label: 'Überlappend anordnen', icon: 'restore', run: () => cascadeSessions(), disabled: sessWins.size < 2 });
+  items.push({ sep: true }, { label: t('desktop.arrangeSideBySide'), icon: 'grid', run: () => tileSessions(), disabled: sessWins.size < 2 }, { label: t('desktop.arrangeOverlap'), icon: 'restore', run: () => cascadeSessions(), disabled: sessWins.size < 2 });
   showMenu(anchor, items);
 }
-const fmtClock = () => new Date().toLocaleString('de-DE', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+const fmtClock = () => fmtDate(new Date(), { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 function tickClock() {
   const c = $('#dkClock', root); if (c) c.textContent = fmtClock();
   const d = new Date();
-  for (const t of root.querySelectorAll('.dk-hero-time')) t.textContent = d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
-  for (const t of root.querySelectorAll('.dk-hero-date')) t.textContent = d.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
+  for (const el0 of root.querySelectorAll('.dk-hero-time')) el0.textContent = fmtTime(d);
+  for (const el0 of root.querySelectorAll('.dk-hero-date')) el0.textContent = fmtDay(d, { weekday: 'long', day: 'numeric', month: 'long' });
 }
 
 /* =====================================================================
  *  Dock
  * ===================================================================== */
 function buildDock() {
-  const dock = el('nav', 'dk-dock'); dock.setAttribute('aria-label', 'Dock');
+  const dock = el('nav', 'dk-dock'); dock.setAttribute('aria-label', t('desktop.dock'));
   const item = (id, name, a, extra) => {
     const b = btn('dk-di', `${ic(a.ic)}<span class="dk-dot"></span><span class="dk-tip"></span>`, name);
     b.querySelector('.dk-tip').textContent = name; b.dataset.dock = id; b.style.setProperty('--g1', a.g[0]); b.style.setProperty('--g2', a.g[1]);
@@ -504,16 +508,16 @@ function buildDock() {
     return b;
   };
   dock.append(
-    item('launcher', 'Launcher', { ic: 'grid', g: ['#8f6af0', '#6a58e6'] }, true),
-    item('home', 'Start', appById('home')),
-    item('files', 'Dateien', appById('files')),
-    item('hosts', 'Hosts', appById('hosts')),
+    item('launcher', t('desktop.launcher'), { ic: 'grid', g: ['#8f6af0', '#6a58e6'] }, true),
+    item('home', t('desktop.start'), appById('home')),
+    item('files', t('desktop.files'), appById('files')),
+    item('hosts', t('desktop.hosts'), appById('hosts')),
     el('div', 'dk-dsep'),
-    item('desktop', 'Desktop (RDP)', appById('desktop')),
-    item('terminal', 'Terminal (SSH)', appById('terminal')),
+    item('desktop', t('desktop.desktopRdp'), appById('desktop')),
+    item('terminal', t('desktop.terminalSsh'), appById('terminal')),
     modDock(item),
     el('div', 'dk-dsep'),
-    item('settings', 'Einstellungen', appById('settings')),
+    item('settings', t('desktop.settings'), appById('settings')),
   );
   dock.addEventListener('contextmenu', (e) => { e.preventDefault(); dockMenu(dock); });
   dock.addEventListener('focusin', showDock);
@@ -553,7 +557,7 @@ function renderDock() {
 
 
 /* ---------- Dock: drei Modi (localStorage "pd.dockMode"): auto = erscheint am unteren Rand (Standard), always = immer sichtbar, toggle = per Knopf einklappbar ---------- */
-const DOCK_MODES = [['auto', 'Automatisch ausblenden'], ['always', 'Immer sichtbar'], ['toggle', 'Einklappbar per Knopf']];
+const DOCK_MODES = [['auto', t('desktop.dockAuto')], ['always', t('desktop.dockAlways')], ['toggle', t('desktop.dockToggle')]];
 const EDGE_PX = 6, EDGE_DWELL = 300, HIDE_DELAY = 700;
 let dockMode = 'auto', dockCollapsed = false, dockShown = false, edgeTimer = null, hideTimer = null;
 function readDockMode() { try { const v = JSON.parse(localStorage.getItem('pd.dockMode')); return DOCK_MODES.some((m) => m[0] === v) ? v : 'auto'; } catch { return 'auto'; } }
@@ -564,7 +568,7 @@ function applyDock() {
   const away = dockMode === 'auto' ? !dockShown : dockMode === 'toggle' && dockCollapsed;
   dock.classList.toggle('away', away);
   knob.hidden = dockMode !== 'toggle'; knob.classList.toggle('closed', dockCollapsed);
-  knob.setAttribute('aria-label', dockCollapsed ? 'Dock ausklappen' : 'Dock einklappen'); knob.setAttribute('aria-expanded', dockCollapsed ? 'false' : 'true');
+  knob.setAttribute('aria-label', dockCollapsed ? t('desktop.dockExpand') : t('desktop.dockCollapse')); knob.setAttribute('aria-expanded', dockCollapsed ? 'false' : 'true');
   root.style.setProperty('--dk-reserve', (dockMode === 'auto' ? 0 : dockReserve()) + 'px');
   root.dataset.dock = dockMode;
 }
@@ -573,7 +577,7 @@ function setDockMode(m, quiet) {
   try { localStorage.setItem('pd.dockMode', JSON.stringify(m)); } catch { /* egal */ }
   dockMode = m; dockShown = m !== 'auto'; clearTimeout(edgeTimer); clearTimeout(hideTimer); edgeTimer = hideTimer = null;
   applyDock(); renderHome_ifOpen();
-  if (!quiet && m === 'auto') notify('Der Dock erscheint, wenn du die Maus an den unteren Bildschirmrand hältst.', 4200);
+  if (!quiet && m === 'auto') notify(t('desktop.dockHint'), 4200);
 }
 function showDock() { if (dockMode === 'auto' && !dockShown) { dockShown = true; applyDock(); } }
 function hideDock() {
@@ -597,13 +601,13 @@ function wireDockHover() {
   document.documentElement.addEventListener('mouseleave', () => { clearTimeout(edgeTimer); edgeTimer = null; if (dockShown && !hideTimer) hideTimer = setTimeout(hideDock, HIDE_DELAY); });
 }
 function dockMenu(anchor) {
-  const items = [{ cap: 'Dock' }, ...DOCK_MODES.map(([id, label]) => ({ label, icon: id === dockMode ? 'check' : 'blank', run: () => setDockMode(id) }))];
-  if (dockMode === 'toggle') items.push({ sep: true }, { label: dockCollapsed ? 'Ausklappen' : 'Einklappen', icon: 'blank', run: toggleDockCollapsed });
+  const items = [{ cap: t('desktop.dock') }, ...DOCK_MODES.map(([id, label]) => ({ label, icon: id === dockMode ? 'check' : 'blank', run: () => setDockMode(id) }))];
+  if (dockMode === 'toggle') items.push({ sep: true }, { label: dockCollapsed ? t('desktop.expand') : t('desktop.collapse'), icon: 'blank', run: toggleDockCollapsed });
   showMenu(anchor, items, 'above');
 }
 function toggleDockCollapsed() { dockCollapsed = !dockCollapsed; ls.set('dockCollapsed', dockCollapsed); applyDock(); }
 function buildKnob() {
-  const k = btn('dk-knob', ic('chev'), 'Dock einklappen'); k.hidden = true;
+  const k = btn('dk-knob', ic('chev'), t('desktop.dockCollapse')); k.hidden = true;
   k.addEventListener('click', toggleDockCollapsed);
   k.addEventListener('contextmenu', (e) => { e.preventDefault(); dockMenu(k); });
   return k;
@@ -612,26 +616,26 @@ function buildKnob() {
 /** Startet ein Programm: Fenster oeffnen oder nach vorn holen, Verbindung waehlen */
 function runApp(id, anchor) {
   const a = appById(id);
-  if (a && a.soon) return notify(`${a.name} kommt später – dafür gibt es noch keinen Server-Teil.`);
+  if (a && a.soon) return notify(t('desktop.comingLater', { name: a.name }));
   if (id === 'home') return openHome();
   if (id === 'settings') return openHome('einstellungen');
   if (id === 'monitor') return openHome('system');
   if (id === 'files') return openFiles();
   if (id === 'hosts') return openHome('hosts');
-  if (a && a.mod) return modules[a.mod] ? openModule(id) : notify(`${a.name} ist auf diesem Server nicht eingeschaltet.`);
+  if (a && a.mod) return modules[a.mod] ? openModule(id) : notify(t('desktop.moduleOff', { name: a.name }));
   if (id === 'desktop' || id === 'terminal') return pickConnection(id, anchor);
 }
 
 /** Verbindung fuer Desktop oder Terminal waehlen: eine = direkt, mehrere = Menue, keine = neue anlegen */
 function pickConnection(kind, anchor) {
-  const label = kind === 'desktop' ? 'Desktop' : 'Terminal';
+  const label = kind === 'desktop' ? t('desktop.desktop') : t('desktop.terminal');
   const list = ctx.state.connections.filter((c) => c.kind === kind);
   const running = [...sessWins.values()].filter((w) => w.session.kind === kind);
   if (running.length && list.length <= 1) { const w = running.find((x) => x.session === Sessions.active) || running[0]; w.minimized ? restoreWin(w) : focusWin(w); return; }
-  if (!list.length) { notify(`Noch keine ${label}-Verbindung. Lege zuerst eine an.`); return ctx.add(); }
+  if (!list.length) { notify(t('desktop.noConnKind', { kind: label })); return ctx.add(); }
   if (list.length === 1) return ctx.connect(list[0]);
-  showMenu(anchor, [{ cap: label + ' verbinden mit' }, ...list.map((c) => ({ label: c.name, icon: kind === 'terminal' ? 'terminal' : 'monitor', hint: Sessions.find(c.id).length ? `${Sessions.find(c.id).length} offen` : c.host, run: () => ctx.connect(c) })),
-    ...(list.some((c) => Sessions.find(c.id).length) ? [{ sep: true }, { cap: 'Weitere Sitzung zu' }, ...list.filter((c) => Sessions.find(c.id).length).map((c) => ({ label: c.name, icon: 'plus', run: () => ctx.connect(c, { extra: true }) }))] : [])],
+  showMenu(anchor, [{ cap: t('desktop.connectKindTo', { kind: label }) }, ...list.map((c) => ({ label: c.name, icon: kind === 'terminal' ? 'terminal' : 'monitor', hint: Sessions.find(c.id).length ? t('desktop.nOpen', { n: Sessions.find(c.id).length }) : c.host, run: () => ctx.connect(c) })),
+    ...(list.some((c) => Sessions.find(c.id).length) ? [{ sep: true }, { cap: t('desktop.anotherSessionTo') }, ...list.filter((c) => Sessions.find(c.id).length).map((c) => ({ label: c.name, icon: 'plus', run: () => ctx.connect(c, { extra: true }) }))] : [])],
     anchor.classList.contains('dk-di') ? 'above' : 'below');
 }
 
@@ -642,11 +646,11 @@ let launcher = null;
 function closeLauncher() { launcher?.remove(); launcher = null; syncKeys(); }
 function openLauncher() {
   closeMenu(); closeLauncher();
-  const L = el('div', 'dk-launch'); L.setAttribute('role', 'dialog'); L.setAttribute('aria-label', 'JulOS Launcher');
-  L.innerHTML = `<h2>${LOGO}<span>JulOS Launcher</span></h2>
-    <label class="dk-q">${ic('search')}<input type="text" placeholder="Programme und Verbindungen suchen …" autocomplete="off" spellcheck="false"></label>
+  const L = el('div', 'dk-launch'); L.setAttribute('role', 'dialog'); L.setAttribute('aria-label', t('desktop.launcherTitle'));
+  L.innerHTML = `<h2>${LOGO}<span>${t('desktop.launcherTitle')}</span></h2>
+    <label class="dk-q">${ic('search')}<input type="text" placeholder="${t('desktop.searchPlaceholder')}" autocomplete="off" spellcheck="false"></label>
     <div class="dk-res"></div>
-    <div class="dk-foot"><button type="button" class="dk-b" data-f="signout" aria-label="Abmelden" title="Abmelden">${ic('power')}</button><button type="button" class="dk-b" data-f="devices" aria-label="Geräte und Sitzungen" title="Geräte und Sitzungen">${ic('user')}</button></div>`;
+    <div class="dk-foot"><button type="button" class="dk-b" data-f="signout" aria-label="${t('desktop.signOut')}" title="${t('desktop.signOut')}">${ic('power')}</button><button type="button" class="dk-b" data-f="devices" aria-label="${t('desktop.devices')}" title="${t('desktop.devices')}">${ic('user')}</button></div>`;
   root.appendChild(L); launcher = L; syncKeys();
   const input = $('input', L), res = $('.dk-res', L);
   let sel = 0, hits = [];
@@ -656,21 +660,21 @@ function openLauncher() {
     if (!q) {
       const g = el('div', 'dk-grid'); hits = [];
       for (const a of shownApps()) {
-        const b = btn('dk-app', tile(a.g, a.ic) + '<span class="dk-n"></span>' + (a.soon ? '<span class="dk-tag">bald</span>' : '')); b.querySelector('.dk-n').textContent = a.name;
-        if (a.soon) { b.setAttribute('aria-disabled', 'true'); b.title = 'Bald verfügbar'; }
+        const b = btn('dk-app', tile(a.g, a.ic) + '<span class="dk-n"></span>' + (a.soon ? `<span class="dk-tag">${t('desktop.soon')}</span>` : '')); b.querySelector('.dk-n').textContent = a.name;
+        if (a.soon) { b.setAttribute('aria-disabled', 'true'); b.title = t('desktop.soonTitle'); }
         b.addEventListener('click', () => { closeLauncher(); runApp(a.id, b); });
         g.appendChild(b);
       }
       res.appendChild(g); return;
     }
     hits = [
-      ...shownApps().filter((a) => a.name.toLowerCase().includes(q) || (a.sub || '').toLowerCase().includes(q)).map((a) => ({ name: a.name, sub: a.soon ? 'bald verfügbar' : a.sub || 'Programm', g: a.g, ic: a.ic, soon: a.soon, run: (anchor) => runApp(a.id, anchor) })),
-      ...ctx.state.connections.filter((c) => (c.name + ' ' + c.host).toLowerCase().includes(q)).map((c) => ({ name: c.name, sub: c.kind === 'terminal' ? 'Terminal' : 'Desktop', g: appById(c.kind).g, ic: appById(c.kind).ic, run: () => ctx.connect(c) })),
+      ...shownApps().filter((a) => a.name.toLowerCase().includes(q) || (a.sub || '').toLowerCase().includes(q)).map((a) => ({ name: a.name, sub: a.soon ? t('desktop.soonAvail') : a.sub || t('desktop.program'), g: a.g, ic: a.ic, soon: a.soon, run: (anchor) => runApp(a.id, anchor) })),
+      ...ctx.state.connections.filter((c) => (c.name + ' ' + c.host).toLowerCase().includes(q)).map((c) => ({ name: c.name, sub: c.kind === 'terminal' ? t('desktop.terminal') : t('desktop.desktop'), g: appById(c.kind).g, ic: appById(c.kind).ic, run: () => ctx.connect(c) })),
       // Sieht die Eingabe nach einer Adresse aus: Quick Connect ohne Speichern anbieten
-      ...(looksLikeAddress(input.value) ? [{ name: 'Quick Connect zu ' + input.value.trim(), sub: 'ohne Speichern', g: appById('desktop').g, ic: 'plus', run: () => ctx.quick(input.value) }] : []),
+      ...(looksLikeAddress(input.value) ? [{ name: t('desktop.quickConnectTo', { address: input.value.trim() }), sub: t('desktop.withoutSaving'), g: appById('desktop').g, ic: 'plus', run: () => ctx.quick(input.value) }] : []),
     ];
     sel = clamp(sel, 0, Math.max(0, hits.length - 1));
-    if (!hits.length) { res.appendChild(el('div', 'dk-none')).textContent = 'Nichts gefunden.'; return; }
+    if (!hits.length) { res.appendChild(el('div', 'dk-none')).textContent = t('desktop.nothingFound'); return; }
     const l = el('div', 'dk-sl');
     hits.forEach((h, i) => {
       const b = btn(i === sel ? 'sel' : '', tile(h.g, h.ic) + '<span></span><i></i>'); b.querySelector('span:not(.dk-ti)').textContent = h.name; b.querySelector('i').textContent = h.sub;
@@ -696,32 +700,32 @@ function openLauncher() {
  *  Home-Fenster
  * ===================================================================== */
 const NAV = [
-  { id: 'start', name: 'Start', ic: 'home' }, { id: 'apps', name: 'Apps', ic: 'grid' }, { id: 'dienste', name: 'Dienste', ic: 'monitor' }, { id: 'hosts', name: 'Hosts', ic: 'server' },
-  { id: 'dateien', name: 'Dateien', ic: 'folder' }, { id: 'system', name: 'System', ic: 'activity' }, { id: 'einstellungen', name: 'Einstellungen', ic: 'sliders' },
+  { id: 'start', name: t('desktop.start'), ic: 'home' }, { id: 'apps', name: t('desktop.apps'), ic: 'grid' }, { id: 'dienste', name: t('desktop.services'), ic: 'monitor' }, { id: 'hosts', name: t('desktop.hosts'), ic: 'server' },
+  { id: 'dateien', name: t('desktop.files'), ic: 'folder' }, { id: 'system', name: t('desktop.system'), ic: 'activity' }, { id: 'einstellungen', name: t('desktop.settings'), ic: 'sliders' },
 ];
 const nav = { view: 'start', back: [], fwd: [] };
-const greeting = () => { const h = new Date().getHours(); return h < 5 ? 'Gute Nacht' : h < 11 ? 'Guten Morgen' : h < 17 ? 'Guten Tag' : h < 22 ? 'Guten Abend' : 'Gute Nacht'; };
+const greeting = () => { const h = new Date().getHours(); return h < 5 ? t('desktop.greetNight') : h < 11 ? t('desktop.greetMorning') : h < 17 ? t('desktop.greetDay') : h < 22 ? t('desktop.greetEvening') : t('desktop.greetNight'); };
 
 function openHome(view) {
   let w = wins.get('home');
   if (!w) {
     const head = el('div', 'dk-wx');
     head.style.flex = '1';
-    const back = btn('dk-nv', ic('left'), 'Zurück'), fwd = btn('dk-nv', ic('right'), 'Vorwärts');
+    const back = btn('dk-nv', ic('left'), t('common.back')), fwd = btn('dk-nv', ic('right'), t('desktop.forward'));
     back.dataset.nv = 'back'; fwd.dataset.nv = 'fwd';
-    const find = btn('dk-find', ic('search') + '<span>Programme und Verbindungen suchen …</span>', 'Suchen'); find.dataset.launcher = '1';
+    const find = btn('dk-find', ic('search') + `<span>${t('desktop.searchPlaceholder')}</span>`, t('common.search')); find.dataset.launcher = '1';
     find.addEventListener('click', () => openLauncher());
     head.append(back, fwd, find);
     back.addEventListener('click', () => { if (nav.back.length) { nav.fwd.push(nav.view); nav.view = nav.back.pop(); renderHome(); } });
     fwd.addEventListener('click', () => { if (nav.fwd.length) { nav.back.push(nav.view); nav.view = nav.fwd.pop(); renderHome(); } });
-    w = createWindow({ id: 'home', title: 'Start', icon: `<span class="dk-ti" style="--g1:#7b78ee;--g2:#5160e6;width:22px;height:22px;border-radius:7px">${ic('home')}</span>`,
+    w = createWindow({ id: 'home', title: t('desktop.start'), icon: `<span class="dk-ti" style="--g1:#7b78ee;--g2:#5160e6;width:22px;height:22px;border-radius:7px">${ic('home')}</span>`,
       rect: defaultRect('home', 960, 640, -30, 0), minW: 640, minH: 420, head, onClose: () => { stopOverview(); nav.view = 'start'; nav.back = []; nav.fwd = []; } });
     w.head.querySelector('.dk-wt').style.minWidth = '60px';
-    w.body.innerHTML = '<div class="dk-home"><nav class="dk-side" aria-label="Bereiche"></nav><div class="dk-main"></div></div>';
+    w.body.innerHTML = `<div class="dk-home"><nav class="dk-side" aria-label="${t('desktop.areas')}"></nav><div class="dk-main"></div></div>`;
     w.side = $('.dk-side', w.body); w.main = $('.dk-main', w.body);
     w.side.addEventListener('click', (e) => {
       const b = e.target.closest('[data-nav]'); if (!b) return;
-      if (b.getAttribute('aria-disabled') === 'true') return notify(`${b.dataset.name} kommt später – dafür gibt es noch keinen Server-Teil.`);
+      if (b.getAttribute('aria-disabled') === 'true') return notify(t('desktop.comingLater', { name: b.dataset.name }));
       if (b.dataset.nav === 'dateien') return openFiles();
       goto(b.dataset.nav);
     });
@@ -741,7 +745,7 @@ function renderHome() {
   w.side.replaceChildren();
   NAV.forEach((n, i) => {
     if (n.id === 'dateien') w.side.appendChild(document.createElement('hr'));
-    const b = btn('dk-nav' + (n.id === nav.view ? ' sel' : ''), ic(n.ic) + '<span></span>' + (n.soon ? '<span class="dk-tag">bald</span>' : '')); b.querySelector('span').textContent = n.name;
+    const b = btn('dk-nav' + (n.id === nav.view ? ' sel' : ''), ic(n.ic) + '<span></span>' + (n.soon ? `<span class="dk-tag">${t('desktop.soon')}</span>` : '')); b.querySelector('span').textContent = n.name;
     b.dataset.nav = n.id; b.dataset.name = n.name; if (n.soon) b.setAttribute('aria-disabled', 'true');
     w.side.appendChild(b);
   });
@@ -756,42 +760,42 @@ function renderHome() {
 const connTile = (c) => {
   const n = Sessions.find(c.id).length, open = n > 0;
   const a = appById(c.kind);
-  return `<button type="button" class="dk-b dk-tile" data-conn="${ctx.esc(c.id)}">${tile(a.g, a.ic)}<span class="dk-tt"><b><span class="dk-sd ${dotClass(connectionState(ctx.state.hosts, c))}" title="${stateText(connectionState(ctx.state.hosts, c))}"></span>${ctx.esc(c.name)}</b><i class="${open ? 'on' : ''}">${open ? (n > 1 ? n + ' Sitzungen offen' : 'Sitzung offen') : (c.kind === 'terminal' ? 'Terminal' : 'Desktop') + ' · ' + ctx.esc(c.host)}</i></span></button>`;
+  return `<button type="button" class="dk-b dk-tile" data-conn="${ctx.esc(c.id)}">${tile(a.g, a.ic)}<span class="dk-tt"><b><span class="dk-sd ${dotClass(connectionState(ctx.state.hosts, c))}" title="${stateText(connectionState(ctx.state.hosts, c))}"></span>${ctx.esc(c.name)}</b><i class="${open ? 'on' : ''}">${open ? (n > 1 ? t('desktop.sessionsNOpen', { n }) : t('desktop.sessionOpen')) : (c.kind === 'terminal' ? t('desktop.terminal') : t('desktop.desktop')) + ' · ' + ctx.esc(c.host)}</i></span></button>`;
 };
 function renderStart(m) {
   const conns = [...ctx.state.connections.filter((c) => c.favorite), ...ctx.state.connections.filter((c) => !c.favorite)];     // Favoriten (vom Server) zuerst
   const recent = recentList(ctx.state.connections, 4);
   m.innerHTML = `
     <section class="dk-hero"><div class="dk-wp">${scene(false)}</div>
-      <div class="dk-hi"><h2>${greeting()}</h2><p>Dein Server-Arbeitsplatz an einem Ort.</p></div>
+      <div class="dk-hi"><h2>${greeting()}</h2><p>${t('desktop.tagline')}</p></div>
       <div class="dk-hd"><span class="dk-hero-date"></span><b class="dk-hero-time"></b></div></section>
-    <h3>Deine Dienste <button type="button" class="dk-b dk-more" data-go="dienste">Alle Dienste ›</button></h3>
-    <div class="dk-tiles">${conns.map(connTile).join('')}<button type="button" class="dk-b dk-tile add" data-act="add"><span class="dk-ti" style="--g1:#7b78ee;--g2:#5160e6;box-shadow:none">${ic('plus')}</span><span class="dk-tt"><b>Verbindung</b><i>hinzufügen</i></span></button></div>
-    ${recent.length ? `<h3>Zuletzt benutzt</h3><div class="dk-tiles">${recent.map(connTile).join('')}</div>` : ''}
-    <h3>Schnellaktionen</h3>
+    <h3>${t('desktop.yourServices')} <button type="button" class="dk-b dk-more" data-go="dienste">${t('desktop.allServices')}</button></h3>
+    <div class="dk-tiles">${conns.map(connTile).join('')}<button type="button" class="dk-b dk-tile add" data-act="add"><span class="dk-ti" style="--g1:#7b78ee;--g2:#5160e6;box-shadow:none">${ic('plus')}</span><span class="dk-tt"><b>${t('desktop.tileConnection')}</b><i>${t('desktop.tileAdd')}</i></span></button></div>
+    ${recent.length ? `<h3>${t('desktop.recent')}</h3><div class="dk-tiles">${recent.map(connTile).join('')}</div>` : ''}
+    <h3>${t('desktop.quickActions')}</h3>
     <div class="dk-qa">
-      <button type="button" class="dk-b" data-act="add">${ic('plus')}<span>Neue Verbindung</span></button>
-      <button type="button" class="dk-b" data-act="quick">${ic('monitor')}<span>Quick Connect</span></button>
-      <button type="button" class="dk-b" data-act="desktop">${ic('monitor')}<span>Desktop verbinden</span></button>
-      <button type="button" class="dk-b" data-act="terminal">${ic('terminal')}<span>Terminal öffnen</span></button>
-      <button type="button" class="dk-b" data-act="devices">${ic('shield')}<span>Geräte</span></button>
-      <button type="button" class="dk-b" data-act="settings">${ic('sliders')}<span>Einstellungen</span></button>
+      <button type="button" class="dk-b" data-act="add">${ic('plus')}<span>${t('desktop.newConnection')}</span></button>
+      <button type="button" class="dk-b" data-act="quick">${ic('monitor')}<span>${t('desktop.quickConnect')}</span></button>
+      <button type="button" class="dk-b" data-act="desktop">${ic('monitor')}<span>${t('desktop.connectDesktop')}</span></button>
+      <button type="button" class="dk-b" data-act="terminal">${ic('terminal')}<span>${t('desktop.openTerminal')}</span></button>
+      <button type="button" class="dk-b" data-act="devices">${ic('shield')}<span>${t('desktop.devicesShort')}</span></button>
+      <button type="button" class="dk-b" data-act="settings">${ic('sliders')}<span>${t('desktop.settings')}</span></button>
     </div>
-    <h3>System-Übersicht <button type="button" class="dk-b dk-more" data-go="system">Monitor öffnen ›</button></h3>
+    <h3>${t('desktop.systemOverview')} <button type="button" class="dk-b dk-more" data-go="system">${t('desktop.openMonitor')}</button></h3>
     ${overviewCards()}`;
   watchOverview(m);
 }
 
 /* ---------- System-Uebersicht: echte Messwerte des Rechners, auf dem der Server laeuft (GET /api/system/overview) ---------- */
 const GIB = 1024 ** 3;
-const num = (n, d = 1) => n.toLocaleString('de-DE', { minimumFractionDigits: d, maximumFractionDigits: d });
+const num = (n, d = 1) => fmtNumber(n, d);
 const gib = (b) => num(b / GIB, b / GIB >= 100 ? 0 : 1);
 const rate = (b) => (b >= 1e6 ? num(b / 1e6) + ' MB/s' : b >= 1e3 ? num(b / 1e3, 0) + ' kB/s' : num(b, 0) + ' B/s');
-const NET_TIP = 'Netzwerk des JulOS-Containers: der Datenverkehr, den JulOS selbst verursacht (Browser, Fernsteuerung), nicht der des ganzen Rechners.';
+const NET_TIP = t('desktop.netTip');
 const pct = (a, b) => (b > 0 ? Math.round((100 * a) / b) : 0);
 function overviewCards() {
   const card = (key, icon, name, tip) => `<div class="dk-sysc" data-ov="${key}"${tip ? ` title="${tip}"` : ''}><b>${ic(icon)}${name}</b><div class="dk-sv">…</div><div class="dk-bar0"><i></i></div></div>`;
-  return `<div class="dk-sys">${card('cpu', 'cpu', 'CPU')}${card('ram', 'ram', 'RAM')}${card('disk', 'disk', 'Festplatte')}${card('net', 'network', 'Netzwerk (JulOS)', NET_TIP)}</div>`;
+  return `<div class="dk-sys">${card('cpu', 'cpu', 'CPU')}${card('ram', 'ram', 'RAM')}${card('disk', 'disk', t('desktop.disk'))}${card('net', 'network', t('desktop.networkJulos'), NET_TIP)}</div>`;
 }
 /** Setzt die Werte in die Karten (CPU, RAM, Festplatte, Netzwerk) und, falls vorhanden, in die Zeile mit Einzelheiten */
 function fillOverview(root0, o) {
@@ -802,12 +806,12 @@ function fillOverview(root0, o) {
     c.classList.toggle('off', text === '–');
   };
   if (!o) { for (const k of ['cpu', 'ram', 'disk', 'net']) set(k, '–', null); return; }
-  set('cpu', o.cpuPercent == null ? 'misst …' : Math.round(o.cpuPercent) + ' %', o.cpuPercent == null ? null : o.cpuPercent);
-  set('ram', o.memoryTotal == null ? '–' : `${gib(o.memoryUsed)} / ${gib(o.memoryTotal)} GiB (${pct(o.memoryUsed, o.memoryTotal)} %)`, o.memoryTotal == null ? null : pct(o.memoryUsed, o.memoryTotal));
-  set('disk', o.diskTotal == null ? '–' : `${gib(o.diskUsed)} / ${gib(o.diskTotal)} GiB (${pct(o.diskUsed, o.diskTotal)} %)`, o.diskTotal == null ? null : pct(o.diskUsed, o.diskTotal));
-  set('net', o.rxBytesPerSecond == null ? 'misst …' : `↓ ${rate(o.rxBytesPerSecond)}  ↑ ${rate(o.txBytesPerSecond)}`, null);
+  set('cpu', o.cpuPercent == null ? t('desktop.measuring') : t('desktop.percent', { n: Math.round(o.cpuPercent) }), o.cpuPercent == null ? null : o.cpuPercent);
+  set('ram', o.memoryTotal == null ? '–' : t('desktop.usage', { used: gib(o.memoryUsed), total: gib(o.memoryTotal), pct: pct(o.memoryUsed, o.memoryTotal) }), o.memoryTotal == null ? null : pct(o.memoryUsed, o.memoryTotal));
+  set('disk', o.diskTotal == null ? '–' : t('desktop.usage', { used: gib(o.diskUsed), total: gib(o.diskTotal), pct: pct(o.diskUsed, o.diskTotal) }), o.diskTotal == null ? null : pct(o.diskUsed, o.diskTotal));
+  set('net', o.rxBytesPerSecond == null ? t('desktop.measuring') : `↓ ${rate(o.rxBytesPerSecond)}  ↑ ${rate(o.txBytesPerSecond)}`, null);
   const d = $('[data-ov-details]', root0);
-  if (d) d.textContent = o.sampledAt ? 'Zuletzt gemessen um ' + new Date(o.sampledAt).toLocaleTimeString('de-DE') + (o.cores ? ` · ${o.cores} Prozessorkerne` : '') : '';
+  if (d) d.textContent = o.sampledAt ? (o.cores ? t('desktop.lastMeasuredCores', { time: fmtTime(o.sampledAt, {}), cores: o.cores }) : t('desktop.lastMeasured', { time: fmtTime(o.sampledAt, {}) })) : '';
 }
 let ovTimer = null;
 function stopOverview() { clearInterval(ovTimer); ovTimer = null; }
@@ -822,23 +826,23 @@ function watchOverview(m) {
   tick(); ovTimer = setInterval(tick, 3000);
 }
 function renderSystem(m) {
-  m.innerHTML = `<h3 style="margin-top:14px">System</h3>
+  m.innerHTML = `<h3 style="margin-top:14px">${t('desktop.system')}</h3>
     ${overviewCards()}
     <p class="dk-lead" data-ov-details></p>
-    <div class="dk-card" style="margin-top:14px"><h4>Was hier gemessen wird</h4>
-      <p><b>CPU und RAM:</b> der Rechner, auf dem Docker mit JulOS läuft (nicht eine Grenze des Containers).</p>
-      <p><b>Festplatte:</b> der Datenträger, auf dem der gemeinsame Ordner (Upload-Ordner) liegt.</p>
-      <p style="margin-bottom:2px"><b>Netzwerk:</b> nur der Datenverkehr des JulOS-Containers, also was Browser, Fernsteuerung und Terminal verursachen. Der Verkehr des ganzen Rechners wäre nur mit <code>network_mode: host</code> sichtbar.</p></div>`;
+    <div class="dk-card" style="margin-top:14px"><h4>${t('desktop.measuredTitle')}</h4>
+      <p><b>${t('desktop.measCpuRamLabel')}</b> ${t('desktop.measCpuRam')}</p>
+      <p><b>${t('desktop.measDiskLabel')}</b> ${t('desktop.measDisk')}</p>
+      <p style="margin-bottom:2px"><b>${t('desktop.measNetLabel')}</b> ${t('desktop.measNet', { code: '<code>network_mode: host</code>' })}</p></div>`;
   watchOverview(m);
 }
 const hostFilter = { id: '' };      // leer = alle Hosts (Auswahl in der Dienste-Ansicht, nur solange das Fenster lebt)
 const serviceRow = (c) => {
   const a = appById(c.kind), n = Sessions.find(c.id).length, open = n > 0, st = connectionState(ctx.state.hosts, c);
-  return `<div class="dk-row">${tile(a.g, a.ic)}<span class="dk-tt"><b><span class="dk-sd ${dotClass(st)}" title="${stateText(st)}"></span>${ctx.esc(c.name)}${open ? ` <span class="dk-tag">${n > 1 ? n + ' Sitzungen' : 'Sitzung offen'}</span>` : ''}</b><i>${c.kind === 'terminal' ? 'Terminal (SSH)' : 'Desktop (RDP)'} · ${ctx.esc(c.username ? c.username + '@' : '')}${ctx.esc(c.host)}:${c.port}${folderName(ctx.state.folders || [], c) ? ' · ' + ctx.esc(folderName(ctx.state.folders, c)) : ''}${c.hasPassword ? ' · Passwort gespeichert' : ''}</i></span>
-    <button type="button" class="dk-b dk-btn sq dk-star${c.favorite ? ' on' : ''}" data-fav="${ctx.esc(c.id)}" aria-pressed="${!!c.favorite}" aria-label="${c.favorite ? 'Aus den Favoriten nehmen' : 'Als Favorit anheften'}" title="${c.favorite ? 'Favorit (auf allen Geräten)' : 'Als Favorit anheften'}">${ic('star')}</button>
-    <button type="button" class="dk-b dk-btn pri" data-conn="${ctx.esc(c.id)}">${ic('play')}${open ? 'Öffnen' : 'Verbinden'}</button>
-    ${open ? `<button type="button" class="dk-b dk-btn sq" data-extra="${ctx.esc(c.id)}" aria-label="Weitere Sitzung" title="Weitere Sitzung zu diesem Ziel">${ic('plus')}</button>` : ''}
-    <button type="button" class="dk-b dk-btn sq" data-edit="${ctx.esc(c.id)}" aria-label="Bearbeiten" title="Bearbeiten">${ic('edit')}</button></div>`;
+  return `<div class="dk-row">${tile(a.g, a.ic)}<span class="dk-tt"><b><span class="dk-sd ${dotClass(st)}" title="${stateText(st)}"></span>${ctx.esc(c.name)}${open ? ` <span class="dk-tag">${n > 1 ? t('desktop.sessionsN', { n }) : t('desktop.sessionOpen')}</span>` : ''}</b><i>${c.kind === 'terminal' ? t('desktop.terminalSsh') : t('desktop.desktopRdp')} · ${ctx.esc(c.username ? c.username + '@' : '')}${ctx.esc(c.host)}:${c.port}${folderName(ctx.state.folders || [], c) ? ' · ' + ctx.esc(folderName(ctx.state.folders, c)) : ''}${c.hasPassword ? ' · ' + t('desktop.passwordSaved') : ''}</i></span>
+    <button type="button" class="dk-b dk-btn sq dk-star${c.favorite ? ' on' : ''}" data-fav="${ctx.esc(c.id)}" aria-pressed="${!!c.favorite}" aria-label="${c.favorite ? t('desktop.unfavorite') : t('desktop.pinFavorite')}" title="${c.favorite ? t('desktop.favoriteEverywhere') : t('desktop.pinFavorite')}">${ic('star')}</button>
+    <button type="button" class="dk-b dk-btn pri" data-conn="${ctx.esc(c.id)}">${ic('play')}${open ? t('desktop.open') : t('desktop.connect')}</button>
+    ${open ? `<button type="button" class="dk-b dk-btn sq" data-extra="${ctx.esc(c.id)}" aria-label="${t('desktop.anotherSession')}" title="${t('desktop.anotherSessionTarget')}">${ic('plus')}</button>` : ''}
+    <button type="button" class="dk-b dk-btn sq" data-edit="${ctx.esc(c.id)}" aria-label="${t('common.edit')}" title="${t('common.edit')}">${ic('edit')}</button></div>`;
 };
 const folderFilter = { id: 'all', by: '' };   // all | fav | recent | none | Ordner-Kennung; by: 'host' | 'folder' (leer = Ordner, wenn es welche gibt)
 function renderServices(m) {
@@ -848,59 +852,62 @@ function renderServices(m) {
   const shown = filterByFolder(conns, folderFilter.id, folders).filter((c) => !hostFilter.id || c.hostId === hostFilter.id);
   const byFolder = folders.length > 0 && folderFilter.id === 'all' && (folderFilter.by || 'folder') === 'folder';
   // Die Auswahl des Hosts gibt es erst, wenn es mehr als einen gibt; die Gruppenkoepfe zeigen den Zustand des Hosts
-  const chips = hosts.length > 1 ? `<div class="dk-chips" role="group" aria-label="Host wählen">${[{ id: '', name: 'Alle Hosts' }, ...hosts].map((h) => `<button type="button" class="dk-b dk-chip${h.id === hostFilter.id ? ' sel' : ''}" data-hostfilter="${ctx.esc(h.id)}" aria-pressed="${h.id === hostFilter.id}">${h.id ? `<span class="dk-sd ${dotClass(h.online)}"></span>` : ''}${ctx.esc(h.name)}</button>`).join('')}</div>` : '';
+  const chips = hosts.length > 1 ? `<div class="dk-chips" role="group" aria-label="${t('desktop.chooseHost')}">${[{ id: '', name: t('desktop.allHosts') }, ...hosts].map((h) => `<button type="button" class="dk-b dk-chip${h.id === hostFilter.id ? ' sel' : ''}" data-hostfilter="${ctx.esc(h.id)}" aria-pressed="${h.id === hostFilter.id}">${h.id ? `<span class="dk-sd ${dotClass(h.online)}"></span>` : ''}${ctx.esc(h.name)}</button>`).join('')}</div>` : '';
   // Ordner, Favoriten, zuletzt benutzt: die Auswahl gibt es, sobald es einen Ordner, einen Favoriten oder eine Benutzung gibt
   const fchip = (id, label, svg) => `<button type="button" class="dk-b dk-chip${folderFilter.id === id ? ' sel' : ''}" data-folderfilter="${ctx.esc(id)}" aria-pressed="${folderFilter.id === id}">${svg ? `<span class="dk-fi2">${svg}</span>` : ''}${ctx.esc(label)}</button>`;
   const fchips = folders.length || conns.some((c) => c.favorite || c.lastUsedAt)
-    ? `<div class="dk-chips" role="group" aria-label="Ordner">${fchip('all', 'Alle', '')}${fchip('fav', 'Favoriten', folderIconSvg('star'))}${fchip('recent', 'Zuletzt benutzt', '')}${folders.map((f) => fchip(f.id, f.name, folderIconSvg(f.icon))).join('')}${folders.length ? fchip('none', 'Ohne Ordner', '') : ''}`
-      + `${folders.length && hosts.length > 1 && folderFilter.id === 'all' ? `<button type="button" class="dk-b dk-chip" data-groupby="${byFolder ? 'host' : 'folder'}" title="Gruppierung wechseln">Gruppiert nach ${byFolder ? 'Ordner' : 'Host'}</button>` : ''}</div>` : '';
+    ? `<div class="dk-chips" role="group" aria-label="${t('desktop.folder')}">${fchip('all', t('desktop.all'), '')}${fchip('fav', t('desktop.favorites'), folderIconSvg('star'))}${fchip('recent', t('desktop.recent'), '')}${folders.map((f) => fchip(f.id, f.name, folderIconSvg(f.icon))).join('')}${folders.length ? fchip('none', t('desktop.noFolder'), '') : ''}`
+      + `${folders.length && hosts.length > 1 && folderFilter.id === 'all' ? `<button type="button" class="dk-b dk-chip" data-groupby="${byFolder ? 'host' : 'folder'}" title="${t('desktop.switchGrouping')}">${byFolder ? t('desktop.groupedByFolder') : t('desktop.groupedByHost')}</button>` : ''}</div>` : '';
   const heads = (g) => (byFolder
-    ? `<h4 class="dk-gh">${g.folder ? `<span class="dk-fi2">${folderIconSvg(g.folder.icon)}</span>` : ''}${ctx.esc(g.folder ? g.folder.name : 'Ohne Ordner')}</h4>`
-    : hosts.length > 1 ? `<h4 class="dk-gh"><span class="dk-sd ${dotClass(g.host && g.host.online)}"></span>${ctx.esc(g.host ? g.host.name : 'Ohne Host')} <span class="dk-sub">${g.host ? ctx.esc(stateText(g.host.online)) : ''}</span></h4>` : '');
+    ? `<h4 class="dk-gh">${g.folder ? `<span class="dk-fi2">${folderIconSvg(g.folder.icon)}</span>` : ''}${ctx.esc(g.folder ? g.folder.name : t('desktop.noFolder'))}</h4>`
+    : hosts.length > 1 ? `<h4 class="dk-gh"><span class="dk-sd ${dotClass(g.host && g.host.online)}"></span>${ctx.esc(g.host ? g.host.name : t('desktop.noHost'))} <span class="dk-sub">${g.host ? ctx.esc(stateText(g.host.online)) : ''}</span></h4>` : '');
   const groups = byFolder ? groupByFolder(folders, shown) : groupConnections(hosts, shown).filter((g) => !hostFilter.id || (g.host && g.host.id === hostFilter.id));
-  m.innerHTML = `<h3 style="margin-top:14px">Dienste <button type="button" class="dk-b dk-btn" style="margin-left:auto" data-act="folders">${ic('folder')}Ordner</button><button type="button" class="dk-b dk-btn pri" data-act="add">${ic('plus')}Verbindung hinzufügen</button></h3>
+  m.innerHTML = `<h3 style="margin-top:14px">${t('desktop.services')} <button type="button" class="dk-b dk-btn" style="margin-left:auto" data-act="folders">${ic('folder')}${t('desktop.folder')}</button><button type="button" class="dk-b dk-btn pri" data-act="add">${ic('plus')}${t('desktop.addConnection')}</button></h3>
     ${fchips}${chips}
-    ${conns.length ? '' : '<p class="dk-lead">Noch keine Verbindung. Lege den Computer an, den du steuern willst.</p>'}
+    ${conns.length ? '' : `<p class="dk-lead">${t('desktop.noConnections')}</p>`}
     ${groups.map((g) => `${heads(g)}
-      <div class="dk-list">${g.connections.map(serviceRow).join('') || '<p class="dk-lead">Keine Verbindung auf diesem Host.</p>'}</div>`).join('')}`;
+      <div class="dk-list">${g.connections.map(serviceRow).join('') || `<p class="dk-lead">${t('desktop.noConnectionsOnHost')}</p>`}</div>`).join('')}`;
 }
 
 /** Hosts: Rechner und Server mit Zustand, Agent und Diensten; hier wird auch der Agent je Host eingerichtet */
 function renderHosts(m) {
   const hosts = ctx.state.hosts;
-  m.innerHTML = `<h3 style="margin-top:14px">Hosts <button type="button" class="dk-b dk-btn pri" style="margin-left:auto" data-act="addhost">${ic('plus')}Host hinzufügen</button></h3>
-    ${hosts.length ? '' : '<p class="dk-lead">Noch kein Host. Er entsteht mit der ersten Verbindung oder über „Host hinzufügen“.</p>'}
+  m.innerHTML = `<h3 style="margin-top:14px">${t('desktop.hosts')} <button type="button" class="dk-b dk-btn pri" style="margin-left:auto" data-act="addhost">${ic('plus')}${t('desktop.addHost')}</button></h3>
+    ${hosts.length ? '' : `<p class="dk-lead">${t('desktop.noHosts')}</p>`}
     <div class="dk-list">${hosts.map((h) => `<div class="dk-card dk-host">
       <div class="dk-hh"><span class="dk-sd ${dotClass(h.online)}" title="${stateText(h.online)}"></span><b>${ctx.esc(h.name)}</b><span class="dk-tag">${stateText(h.online)}</span>
-        <button type="button" class="dk-b dk-btn" style="margin-left:auto" data-hostagent="${ctx.esc(h.id)}">${ic('download')}${h.agent ? 'Agent verwalten' : 'Agent einrichten'}</button>
-        <button type="button" class="dk-b dk-btn sq" data-hostedit="${ctx.esc(h.id)}" aria-label="Host bearbeiten" title="Host bearbeiten">${ic('edit')}</button></div>
+        <button type="button" class="dk-b dk-btn" style="margin-left:auto" data-hostagent="${ctx.esc(h.id)}">${ic('download')}${h.agent ? t('desktop.manageAgent') : t('desktop.setUpAgent')}</button>
+        <button type="button" class="dk-b dk-btn sq" data-hostedit="${ctx.esc(h.id)}" aria-label="${t('desktop.editHost')}" title="${t('desktop.editHost')}">${ic('edit')}</button></div>
       <p class="dk-hm">${ctx.esc([hostDetail(h), agentSummary(h), servicesSummary(h)].filter(Boolean).join(' · '))}</p>
       <div class="dk-svc">${h.services.map((s) => { const c = ctx.state.connections.find((x) => x.id === s.connection); return c ? `<button type="button" class="dk-b dk-chip" data-conn="${ctx.esc(c.id)}" title="${ctx.esc(c.host)}:${c.port} – ${stateText(serviceState(h, c.id))}"><span class="dk-sd ${dotClass(serviceState(h, c.id))}"></span>${ctx.esc(c.name)}</button>` : ''; }).join('')}</div></div>`).join('')}</div>`;
 }
 function renderAppsView(m) {
-  m.innerHTML = `<h3 style="margin-top:14px">Apps</h3><div class="dk-grid">${shownApps().map((a) => `<button type="button" class="dk-b dk-app" data-app="${a.id}"${a.soon ? ' aria-disabled="true" title="Bald verfügbar"' : ''}>${tile(a.g, a.ic)}<span class="dk-n">${a.name}</span>${a.soon ? '<span class="dk-tag">bald</span>' : ''}</button>`).join('')}</div>
-    <p class="dk-lead">Ausgegraute Apps brauchen noch einen Server-Teil.</p>`;
+  m.innerHTML = `<h3 style="margin-top:14px">${t('desktop.apps')}</h3><div class="dk-grid">${shownApps().map((a) => `<button type="button" class="dk-b dk-app" data-app="${a.id}"${a.soon ? ` aria-disabled="true" title="${t('desktop.soonTitle')}"` : ''}>${tile(a.g, a.ic)}<span class="dk-n">${a.name}</span>${a.soon ? `<span class="dk-tag">${t('desktop.soon')}</span>` : ''}</button>`).join('')}</div>
+    <p class="dk-lead">${t('desktop.appsGrayed')}</p>`;
 }
 function renderSettings(m) {
-  m.innerHTML = `<h3 style="margin-top:14px">Einstellungen</h3>
-    <div class="dk-card"><h4>Konto</h4><p>Angemeldet als <b>${ctx.esc(ctx.state.user || '')}</b>.</p>
-      <div class="dk-btns"><button type="button" class="dk-b dk-btn" data-act="account">${ic('key')}Passwort und Authenticator</button><button type="button" class="dk-b dk-btn" data-act="devices">${ic('shield')}Geräte und Sitzungen</button><button type="button" class="dk-b dk-btn" data-act="signout">${ic('power')}Abmelden</button></div></div>
-    <div class="dk-card"><h4>Fernsteuerung</h4><p>Solange ein Sitzungsfenster vorn ist, zeigt die obere Leiste seine Menüs: Tasten, Kombinationen (frei belegbar), Ansicht (Zoom, Vollbild) und Fenster (Programme der Ziel-Maschine). Der Name der Verbindung öffnet Neu verbinden, Text senden und Beenden.</p></div>
-    <div class="dk-card"><h4>Dock</h4><p>Wann der Dock unten zu sehen ist. Du erreichst die Wahl auch mit Rechtsklick auf den Dock.</p>
+  m.innerHTML = `<h3 style="margin-top:14px">${t('desktop.settings')}</h3>
+    <div class="dk-card"><h4>${t('desktop.account')}</h4><p>${t('desktop.signedInAs', { user: `<b>${ctx.esc(ctx.state.user || '')}</b>` })}</p>
+      <div class="dk-btns"><button type="button" class="dk-b dk-btn" data-act="account">${ic('key')}${t('desktop.passwordAuth')}</button><button type="button" class="dk-b dk-btn" data-act="devices">${ic('shield')}${t('desktop.devices')}</button><button type="button" class="dk-b dk-btn" data-act="signout">${ic('power')}${t('desktop.signOut')}</button></div></div>
+    <div class="dk-card"><h4>${t('desktop.remoteControl')}</h4><p>${t('desktop.remoteControlText')}</p></div>
+    <div class="dk-card"><h4>${t('desktop.dock')}</h4><p>${t('desktop.dockText')}</p>
       <div class="dk-btns">${DOCK_MODES.map(([id, label]) => `<button type="button" class="dk-b dk-btn${id === dockMode ? ' pri' : ''}" data-dockmode="${id}" aria-pressed="${id === dockMode}">${label}</button>`).join('')}</div></div>
-    <div class="dk-card"><h4>Darstellung</h4><p>Hell, Dunkel oder wie das System (folgt der Einstellung deines Geräts). Die Wahl gilt auf jedem Gerät, auch am Handy.</p>
-      <div class="dk-btns" role="group" aria-label="Darstellung">${SCHEMES.map(([id, label]) => `<button type="button" class="dk-b dk-btn${id === getScheme() ? ' pri' : ''}" data-scheme="${id}" aria-pressed="${id === getScheme()}">${label}</button>`).join('')}</div></div>`;
+    <div class="dk-card"><h4>${t('desktop.appearance')}</h4><p>${t('desktop.appearanceText')}</p>
+      <div class="dk-btns" role="group" aria-label="${t('desktop.appearance')}">${SCHEMES.map(([id, label]) => `<button type="button" class="dk-b dk-btn${id === getScheme() ? ' pri' : ''}" data-scheme="${id}" aria-pressed="${id === getScheme()}">${label}</button>`).join('')}</div></div>
+    <div class="dk-card"><h4>${t('lang.title')}</h4><p>${t('lang.text')}</p>
+      <div class="dk-btns" role="group" aria-label="${t('lang.title')}">${LANG_CHOICES.map(([id, label]) => `<button type="button" class="dk-b dk-btn${id === getPref() ? ' pri' : ''}" data-lang="${id}" aria-pressed="${id === getPref()}">${id === 'system' ? t('lang.system') : label}</button>`).join('')}</div></div>`;
 }
 function onMainClick(e) {
-  const t = e.target.closest('[data-conn],[data-edit],[data-extra],[data-act],[data-go],[data-app],[data-dockmode],[data-scheme],[data-hostfilter],[data-folderfilter],[data-groupby],[data-fav],[data-hostedit],[data-hostagent]'); if (!t) return;
+  const t = e.target.closest('[data-conn],[data-edit],[data-extra],[data-act],[data-go],[data-app],[data-dockmode],[data-scheme],[data-lang],[data-hostfilter],[data-folderfilter],[data-groupby],[data-fav],[data-hostedit],[data-hostagent]'); if (!t) return;
   const find = (id) => ctx.state.connections.find((c) => c.id === id);
   const host = (id) => ctx.state.hosts.find((h) => h.id === id);
-  if (t.dataset.scheme) setTheme({ scheme: t.dataset.scheme });   // das Ereignis julos:scheme (app.js) zeichnet die Einstellungen neu
+  if (t.dataset.lang) { if (t.dataset.lang !== getPref()) setLanguage(t.dataset.lang); }
+  else if (t.dataset.scheme) setTheme({ scheme: t.dataset.scheme });   // das Ereignis julos:scheme (app.js) zeichnet die Einstellungen neu
   else if (t.dataset.dockmode) setDockMode(t.dataset.dockmode);
   else if (t.dataset.hostfilter !== undefined) { hostFilter.id = t.dataset.hostfilter; renderHome(); }
   else if (t.dataset.folderfilter !== undefined) { folderFilter.id = t.dataset.folderfilter; renderHome(); }
   else if (t.dataset.groupby) { folderFilter.by = t.dataset.groupby; renderHome(); }
-  else if (t.dataset.fav) { const c = find(t.dataset.fav); c && setFavorite(ctx.api, c, !c.favorite).then(() => renderHome(), (err) => notify(err.message)); }
+  else if (t.dataset.fav) { const c = find(t.dataset.fav); c && setFavorite(ctx.api, c, !c.favorite).then(() => renderHome(), (err) => notify(serverMsg(err.message))); }
   else if (t.dataset.act === 'folders') ctx.folders();
   else if (t.dataset.hostedit || t.dataset.hostagent) { const h = host(t.dataset.hostedit || t.dataset.hostagent); h && ctx.editHost(h); }
   else if (t.dataset.act === 'addhost') ctx.addHost();
@@ -926,15 +933,15 @@ async function openFiles(path, focusSearch) {
   const old = wins.get('files');
   if (old) { old.minimized ? restoreWin(old) : focusWin(old); if (path !== undefined && old.files) old.files.go(path); if (focusSearch) $('.dk-fsearch input', old.el)?.focus(); return old; }
   const a = appById('files');
-  const w = createWindow({ id: 'files', title: 'Dateien', icon: `<span class="dk-ti" style="--g1:${a.g[0]};--g2:${a.g[1]};width:22px;height:22px;border-radius:7px">${ic(a.ic)}</span>`,
+  const w = createWindow({ id: 'files', title: t('desktop.files'), icon: `<span class="dk-ti" style="--g1:${a.g[0]};--g2:${a.g[1]};width:22px;height:22px;border-radius:7px">${ic(a.ic)}</span>`,
     rect: defaultRect('files', 860, 540, 40, 24), minW: 560, minH: 340, cls: 'dk-files' });
-  w.body.innerHTML = '<div class="dk-fempty">Lädt …</div>';
+  w.body.innerHTML = `<div class="dk-fempty">${t('common.loading')}</div>`;
   try {
     const m = await import('./desktop-files.js');
     if (!wins.has('files')) return w;   // schon wieder geschlossen
     w.files = m.mount(w.body, { el, btn, ic, api: ctx.api });
     if (focusSearch) $('.dk-fsearch input', w.el)?.focus();
-  } catch { w.body.innerHTML = '<div class="dk-fempty">Die Dateien konnten nicht geladen werden.</div>'; }
+  } catch { w.body.innerHTML = `<div class="dk-fempty">${t('desktop.filesLoadFailed')}</div>`; }
   return w;
 }
 
@@ -947,35 +954,35 @@ async function openModule(id) {
   const a = appById(id);
   const w = createWindow({ id, title: a.name, icon: `<span class="dk-ti" style="--g1:${a.g[0]};--g2:${a.g[1]};width:22px;height:22px;border-radius:7px">${ic(a.ic)}</span>`,
     rect: defaultRect(id, 680, 480, 30, 20), minW: 460, minH: 300, cls: 'dk-modwin' });
-  w.body.innerHTML = '<div class="dk-fempty">Lädt …</div>';
+  w.body.innerHTML = `<div class="dk-fempty">${t('common.loading')}</div>`;
   try {
     const m = await import('./desktop-modules.js');
     if (!wins.has(id)) return w;   // schon wieder geschlossen
     w.mod = id === 'caddy' ? m.mountCaddy(w.body, { el, btn, ic, api: ctx.api }) : m.mountDdns(w.body, { el, btn, ic, api: ctx.api });
-  } catch { w.body.innerHTML = `<div class="dk-fempty">${a.name} konnte nicht geladen werden.</div>`; }
+  } catch { w.body.innerHTML = `<div class="dk-fempty">${t('desktop.moduleLoadFailed', { name: a.name })}</div>`; }
   return w;
 }
 
 /* ---------- Ueber JulOS ---------- */
-const backupText = (b) => !b ? '' : b.state === 'ok' ? `${new Date(b.lastAt).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' })}, ${b.bytes < 1048576 ? Math.max(1, Math.round(b.bytes / 1024)) + ' KB' : (b.bytes / 1048576).toFixed(1) + ' MB'}`
-  : b.state === 'off' ? 'Aus' : b.state === 'pending' ? `Noch keins (geplant ${b.time})` : b.state === 'failed' ? `Fehlgeschlagen: ${b.message || ''}` : `Nicht eingerichtet: ${b.message || ''}`;
+const backupText = (b) => !b ? '' : b.state === 'ok' ? `${fmtDate(b.lastAt)}, ${b.bytes < 1048576 ? Math.max(1, Math.round(b.bytes / 1024)) + ' KB' : (b.bytes / 1048576).toFixed(1) + ' MB'}`
+  : b.state === 'off' ? t('desktop.backupOff') : b.state === 'pending' ? t('desktop.backupPending', { time: b.time }) : b.state === 'failed' ? t('desktop.backupFailed', { message: b.message || '' }) : t('desktop.backupNotSetUp', { message: b.message || '' });
 const copyText = (b) => { const c = b && b.copy; if (!c || c.state === 'off') return '';
-  const at = c.lastAt ? new Date(c.lastAt).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : '';
-  return c.state === 'ok' ? `OK, ${at}` : c.state === 'failed' ? `Fehler: ${c.message || ''}${at ? ` (zuletzt OK ${at})` : ''}` : 'Noch nicht kopiert'; };
+  const at = c.lastAt ? fmtDate(c.lastAt) : '';
+  return c.state === 'ok' ? t('desktop.copyOk', { at }) : c.state === 'failed' ? t('desktop.copyFailed', { message: c.message || '' }) + (at ? t('desktop.copyLastOk', { at }) : '') : t('desktop.copyNone'); };
 async function openAbout() {
   const old = wins.get('about'); if (old) return old.minimized ? restoreWin(old) : focusWin(old);
-  const w = createWindow({ id: 'about', title: 'Über JulOS', icon: LOGO, rect: defaultRect('about', 420, 460), minW: 340, minH: 340 });
+  const w = createWindow({ id: 'about', title: t('desktop.aboutJulos'), icon: LOGO, rect: defaultRect('about', 420, 460), minW: 340, minH: 340 });
   let a = null;
   try { const r = await fetch('/api/about'); if (r.ok) a = await r.json(); } catch { /* ohne Angaben */ }
   const e = ctx.esc;
   const row = (k, v) => v ? `<div class="dk-ab-row"><span>${k}</span><b>${e(v)}</b></div>` : '';
-  const built = a && a.built ? new Date(a.built).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : '';
-  const stream = a ? (a.engines.stream ? `Stream (${a.engines.encoder || 'H.264'})` : 'Nicht verfügbar') : '';
+  const built = a && a.built ? fmtDate(a.built) : '';
+  const stream = a ? (a.engines.stream ? `Stream (${a.engines.encoder || 'H.264'})` : t('desktop.notAvailable')) : '';
   w.body.innerHTML = `<div class="dk-about"><div class="dk-ab-logo">${LOGO}</div><h2>JulOS</h2>
-    <p class="dk-lead">${a ? 'Version ' + e(a.version) : 'Version unbekannt'}</p>
-    <p class="dk-lead">Dein Server-Arbeitsplatz im Browser: Desktop und Terminal deiner Rechner, an einem Ort.</p>
-    <div class="dk-ab-rows">${row('Build', a && [a.commit, built].filter(Boolean).join(' · '))}${row('Bildübertragung', stream)}${row('Letztes Backup', a && backupText(a.backup))}${row('Zweites Ziel', a && copyText(a.backup))}${row('Laufzeit', a && a.runtime)}${row('System', a && a.os)}${row('Lizenz', a && a.license + ' (siehe Lizenzen)')}</div>
-    <p class="dk-ab-links"><a href="/licenses.txt" target="_blank" rel="noopener">Lizenzen</a><a href="${a ? e(a.repository) : 'https://github.com/Juloc/JulOS'}" target="_blank" rel="noopener">Quelltext und Dokumentation</a></p></div>`;
+    <p class="dk-lead">${a ? t('desktop.version', { v: e(a.version) }) : t('desktop.versionUnknown')}</p>
+    <p class="dk-lead">${t('desktop.aboutText')}</p>
+    <div class="dk-ab-rows">${row('Build', a && [a.commit, built].filter(Boolean).join(' · '))}${row(t('desktop.aboutStream'), stream)}${row(t('desktop.aboutBackup'), a && backupText(a.backup))}${row(t('desktop.aboutBackupCopy'), a && copyText(a.backup))}${row(t('desktop.aboutRuntime'), a && a.runtime)}${row(t('desktop.system'), a && a.os)}${row(t('desktop.aboutLicense'), a && a.license + ' ' + t('desktop.seeLicenses'))}</div>
+    <p class="dk-ab-links"><a href="/licenses.txt" target="_blank" rel="noopener">${t('desktop.licenses')}</a><a href="${a ? e(a.repository) : 'https://github.com/Juloc/JulOS'}" target="_blank" rel="noopener">${t('desktop.sourceAndDocs')}</a></p></div>`;
 }
 
 /* =====================================================================
@@ -995,7 +1002,7 @@ export function sessionOpened(session, n) {
   w.session = session; sessWins.set(session.id, w);
   // Eigenes Browserfenster (Pop-out): nur Fernsteuer-Sitzungen, und dieses Layout gibt es nur auf grossen Bildschirmen mit Maus
   if (typeof session.popOut === 'function') {
-    const pop = btn('dk-po', ic('popout'), 'In eigenem Fenster öffnen'); pop.title = 'In eigenem Fenster öffnen';
+    const pop = btn('dk-po', ic('popout'), t('desktop.openOwnWindow')); pop.title = t('desktop.openOwnWindow');
     pop.addEventListener('click', (ev) => { ev.stopPropagation(); if (session.popped) session.popBack(); else session.popOut(); });
     w.head.querySelector('.dk-wc').prepend(pop);
   }

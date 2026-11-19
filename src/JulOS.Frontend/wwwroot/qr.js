@@ -1,6 +1,7 @@
 /* QR-Code im Browser erzeugen (eigene kleine Umsetzung nach ISO/IEC 18004, keine Bibliothek, kein Netz).
  * Umfang: Byte-Modus (UTF-8), Fehlerkorrektur M, Versionen 1 bis 10 (bis 213 Byte). Das reicht fuer den Authenticator-Link (otpauth://...).
  * qrMatrix(text) liefert die Module (Zeilen aus 0/1), qrSvg(text) ein fertiges SVG mit hellem Rand (ein QR-Code braucht ihn auch im dunklen Design). */
+import { t } from './i18n.js';
 
 const VERSIONS = 10;
 // Fehlerkorrektur M: Fehlerkorrektur-Woerter je Block und Anzahl der Bloecke, Index = Version
@@ -178,12 +179,12 @@ function penalty(mod, size) {
 export function qrMatrix(text) {
   const bytes = new TextEncoder().encode(String(text));
   const v = pickVersion(bytes.length);
-  if (v === null) throw new Error('Text zu lang für den QR-Code');
+  if (v === null) throw new Error(t('term.qrTooLong'));
   return build(v, codewordsFor(bytes, v)).map((row) => row.map(Number));
 }
 
 /** Fertiges SVG (heller Grund, dunkle Module, 4 Module Rand), skaliert mit der Breite des Elternelements. */
-export function qrSvg(text, { border = 4, label = 'QR-Code' } = {}) {
+export function qrSvg(text, { border = 4, label = t('term.qrLabel') } = {}) {
   const m = qrMatrix(text), n = m.length, total = n + border * 2;
   label = String(label).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
   let d = '';

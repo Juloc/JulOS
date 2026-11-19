@@ -84,6 +84,32 @@ To test a terminal change without a rebuild, mount your `wwwroot` as described a
 To connect, add a Desktop connection to `rdp-target` (login `ubuntu` / `ubuntu`) and a Terminal connection to `test-ssh` port `2222`
 (user `tester`, password `DEV_TARGET_PASSWORD` from `deploy/dev/.env`).
 
+## Languages
+
+The browser interface is available in **German (default) and English**. The choice is "Deutsch / English / System" (System follows `navigator.languages`) in the phone profile
+(Profil, Darstellung) and in the desktop settings. It is stored per user on the server (setting `lang`, value `{ "lang": "de" | "en" | "system" }`, validated in `SettingsRules`,
+saved through `prefs.js` like the theme) with a local copy in `localStorage` (`pd.lang`) as a fallback. A change reloads the page: the language is read once at start,
+so top-level constants may call `t()`. Before sign-in, `?lang=en` (or `de`, `system`) picks the language for that device. `<html lang>` follows the language; dates, times and
+numbers use `Intl` with `de-DE` or `en-GB` (`fmtDate`, `fmtTime`, `fmtDay`, `fmtNumber`, `relativeTime` in `i18n.js`).
+
+- **Module:** `wwwroot/i18n.js` (no library, no DOM needed for the functions): `t('area.key', { name: value })` replaces `{name}`; `tp('area.key', n)` picks `area.key.one` or
+  `area.key.other`; `tk('area.key')` marks a key that is resolved later (tables, lists) so the test finds it. Always write keys as string literals.
+- **Dictionaries:** `wwwroot/i18n/de.js` and `wwwroot/i18n/en.js`, flat objects `key -> text`, keys grouped by area prefix (`login.`, `mobile.`, `desktop.`, `term.`, `err.`, ...).
+  German is the fallback: a key missing in English shows the German text, a key missing everywhere shows nothing (never the raw key, and a warning goes to the console).
+- **Static HTML** (`index.html`, `popout.html`): keep the German text in the markup and add `data-i18n="key"` (text), `data-i18n-title`, `data-i18n-aria-label`,
+  `data-i18n-placeholder` or `data-i18n-alt` (attributes). `applyDom(root)` sets them; call it for a cloned `<template>` too. If the element has child elements
+  (`<label>Text <input></label>`), only its first text node is replaced.
+- **Server messages:** the server sends fixed German texts in `{"error": "..."}`. The browser translates the known ones in `wwwroot/i18n-errors.js`: `SERVER_TEXTS` (exact text -> key)
+  and `SERVER_PATTERNS` (regular expressions for texts with values). Call `serverMsg(text)` wherever a server text is shown. Unknown texts stay as they are. The server itself does not
+  change; German output is exactly as before.
+- **Adding a text:** add the key to both `de.js` and `en.js` (same `{parameters}`), use `t('key')` in the code. **Adding a language:** add `i18n/xx.js`, register it in
+  `DICTS`, `LANGS`, `LOCALES` and `LANG_CHOICES` in `i18n.js`, allow the value in `SettingsRules` (`Languages`) and add the files to the `SHELL` list in `sw.js` (and raise `VERSION`).
+- **Test:** `node --test tests/frontend` (`i18n.test.mjs`) checks that both dictionaries have the same keys and the same parameters, that every key used in the code exists,
+  that no key is unused, that the server's fixed error texts (`Error(<status>, "...")` in `src/`) are all mapped, and the fallback rules. The browser tests in `deploy/dev/e2e`
+  run in German; one flow switches to English and back.
+- **Not translated:** code comments, debug output (`?debug`, `console`), log lines, and the default key bar labels stored in saved layouts (they are shown translated while they are
+  the unchanged default). Texts that come from the target machine or from the agent are shown as received.
+
 ## Display tests against the test desktop
 
 `deploy/dev/test-display.sh` runs `tests/JulOS.Display.Tests` in an SDK container on the test network (`JULOS_DEV_NET` names another compose project's network, for example `julos-xyz_default`). The integration tests (`ScreenStreamTests`) are skipped without `JULOS_TEST_RDP_HOST`; the script sets it and also plays a tone and records the microphone in the desktop in the background, which the sound test (PCM blocks arrive, loud enough) and the microphone test (a 600 Hz tone sent as the browser would arrives in the recording) check. Close any browser tab connected to the same desktop first: a second client takes the xrdp session over.

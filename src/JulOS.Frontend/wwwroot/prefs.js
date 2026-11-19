@@ -1,5 +1,5 @@
 /* =====================================================================
- * Einstellungen je Benutzer auf dem Server (docs/FOLDERS.md): die Tastenleiste ("keybar") und die Themenfarbe ("theme").
+ * Einstellungen je Benutzer auf dem Server (docs/FOLDERS.md): die Tastenleiste ("keybar"), die Themenfarbe ("theme") und die Sprache ("lang").
  * Die Seite behaelt ihre lokale Kopie (localStorage) und nutzt sie sofort; der Server macht sie auf jedem Geraet gleich.
  *  - Eine Aenderung wird lokal gespeichert, dann mit kurzer Verzoegerung zum Server geschickt (push). Klappt das nicht, bleibt sie als "offen" vermerkt
  *    und geht beim naechsten Abgleich hinaus.
@@ -8,9 +8,10 @@
  *  - Ist der Server nicht erreichbar, bleibt alles, wie es lokal ist (Rueckfall).
  * Kein DOM, damit es sich mit node pruefen laesst.
  * ===================================================================== */
+import { t } from './i18n.js';
 
 const PENDING_KEY = 'pd.prefs.pending';
-export const PREF_KEYS = ['keybar', 'theme'];
+export const PREF_KEYS = ['keybar', 'theme', 'lang'];
 
 /** Kleiner Aufruf der API (Aenderungen tragen die Sonderkopfzeile). Wirft bei einem Fehler. */
 export async function jsonApi(path, { method = 'GET', body } = {}) {
@@ -18,12 +19,12 @@ export async function jsonApi(path, { method = 'GET', body } = {}) {
   if (method !== 'GET') headers['X-JulOS'] = '1';
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   const r = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
-  if (!r.ok) throw Object.assign(new Error('Fehler ' + r.status), { status: r.status });
+  if (!r.ok) throw Object.assign(new Error(t('term.errorStatus', { status: r.status })), { status: r.status });
   return r.status === 204 ? null : r.json();
 }
 
 /**
- * @param {{api?: Function, storage: Storage, local: () => {keybar?: object|null, theme?: object|null}, delay?: number, schedule?: Function, cancel?: Function}} o
+ * @param {{api?: Function, storage: Storage, local: () => {keybar?: object|null, theme?: object|null, lang?: object|null}, delay?: number, schedule?: Function, cancel?: Function}} o
  * local: was dieses Geraet lokal hat (null: noch nie veraendert, also nichts hochzuladen)
  */
 export function createPrefs({ api = jsonApi, storage, local, delay = 800, schedule = setTimeout, cancel = clearTimeout }) {
@@ -53,7 +54,7 @@ export function createPrefs({ api = jsonApi, storage, local, delay = 800, schedu
     reset(key) { self.push(key, null); },
 
     /**
-     * Gleicht mit dem Server ab. @returns {Promise<{keybar?: object, theme?: object}>} die Werte, die der Server hat und die diese Seite uebernehmen soll
+     * Gleicht mit dem Server ab. @returns {Promise<{keybar?: object, theme?: object, lang?: object}>} die Werte, die der Server hat und die diese Seite uebernehmen soll
      * (nichts bei Fehler, bei Offene-Aenderungen oder wenn der Server nichts hat).
      */
     async sync() {

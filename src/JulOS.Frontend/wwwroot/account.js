@@ -1,4 +1,5 @@
 import { qrSvg } from './qr.js';
+import { t } from './i18n.js';
 
 /* Konto: Passwort aendern und Authenticator (TOTP) neu einrichten. Der Dialog #accountDlg steht in index.html und gilt fuer die
  * Handy-Shell (als Sheet) und die Desktop-Oberflaeche. Jede Aenderung verlangt das aktuelle Passwort; der Server beendet danach
@@ -32,12 +33,12 @@ export function initAccount({ api, setMsg }) {
     e.preventDefault();
     const form = e.currentTarget, msg = $('#pwMsg');
     const current = $('#pwCur').value, next = $('#pwNew').value;
-    if (next !== $('#pwNew2').value) return setMsg(msg, 'Die beiden neuen Passwörter sind nicht gleich.');
+    if (next !== $('#pwNew2').value) return setMsg(msg, t('account.pwMismatch'));
     busy(form, true); setMsg(msg, '');
     try {
       await api('/api/auth/password', { method: 'POST', body: { current, next } });
       form.reset();
-      setMsg(msg, 'Passwort geändert. Alle anderen Geräte sind abgemeldet.', true);
+      setMsg(msg, t('account.pwChanged'), true);
     } catch (err) { setMsg(msg, err.message); }
     finally { busy(form, false); }
   });
@@ -51,7 +52,7 @@ export function initAccount({ api, setMsg }) {
       form.reset();
       $('#acctSecret').textContent = spaced(r.secret);
       $('#acctOtpLink').href = r.uri;
-      try { $('#acctQr').innerHTML = qrSvg(r.uri, { label: 'QR-Code für den Authenticator' }); }
+      try { $('#acctQr').innerHTML = qrSvg(r.uri, { label: t('account.qrLabel') }); }
       catch { $('#acctQr').replaceChildren(); }   // sehr langer Link: dann bleibt der Text
       show('code'); setTimeout(() => $('#totpCode').focus(), 50);
     } catch (err) { setMsg(msg, err.message); }
@@ -74,8 +75,8 @@ export function initAccount({ api, setMsg }) {
 
   $('#acctCopy').addEventListener('click', async () => {
     const msg = $('#totpDoneMsg');
-    try { await navigator.clipboard.writeText($('#acctRecovery').textContent); setMsg(msg, 'Codes kopiert.', true); }
-    catch { setMsg(msg, 'Kopieren geht hier nicht. Markiere die Codes und kopiere sie von Hand.'); }
+    try { await navigator.clipboard.writeText($('#acctRecovery').textContent); setMsg(msg, t('account.codesCopied'), true); }
+    catch { setMsg(msg, t('account.copyFailed')); }
   });
 
   return () => { reset(); dlg.showModal(); };

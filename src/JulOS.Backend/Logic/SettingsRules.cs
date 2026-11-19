@@ -6,14 +6,15 @@ using System.Text.RegularExpressions;
 namespace JulOS.Backend.Logic;
 
 /// <summary>
-/// Einstellungen, die der Server je Benutzer merkt (Tastenleiste, Themenfarbe). Es gibt nur diese Schluessel, und jeder Wert wird geprueft und neu
+/// Einstellungen, die der Server je Benutzer merkt (Tastenleiste, Themenfarbe, Sprache). Es gibt nur diese Schluessel, und jeder Wert wird geprueft und neu
 /// geschrieben: unbekannte Felder fallen weg, Laengen und Zahl der Eintraege sind begrenzt. So kann ein Browser dem Server nichts Beliebiges unterschieben.
 /// </summary>
 public static partial class SettingsRules
 {
     public const string Keybar = "keybar";
     public const string Theme = "theme";
-    public static readonly IReadOnlyList<string> Keys = [Keybar, Theme];
+    public const string Lang = "lang";
+    public static readonly IReadOnlyList<string> Keys = [Keybar, Theme, Lang];
 
     public const int MaxRows = 12, MaxItemsPerRow = 60;
 
@@ -23,6 +24,7 @@ public static partial class SettingsRules
     private static readonly string[] KeyTypes = ["chord", "mod", "text", "action"];
     private static readonly string[] Scopes = ["both", "desktop", "terminal"];
     private static readonly string[] Schemes = ["auto", "light", "dark"];
+    private static readonly string[] Languages = ["de", "en", "system"];
 
     [GeneratedRegex(@"^#[0-9a-fA-F]{6}$")] private static partial Regex HexColor();
     [GeneratedRegex(@"^[a-z0-9_\-]{1,30}$")] private static partial Regex Token();
@@ -36,6 +38,7 @@ public static partial class SettingsRules
             {
                 Keybar => (WriteKeybar(value), null),
                 Theme => (WriteTheme(value), null),
+                Lang => (WriteLang(value), null),
                 _ => (null, "Unbekannte Einstellung."),
             };
         }
@@ -62,6 +65,16 @@ public static partial class SettingsRules
         {
             w.WriteStartObject(); w.WriteString("seed", seed.ToLowerInvariant()); w.WriteString("scheme", scheme); w.WriteEndObject();
         }
+        return Encoding.UTF8.GetString(ms.ToArray());
+    }
+
+    private static string WriteLang(JsonElement v)
+    {
+        if (v.ValueKind != JsonValueKind.Object) throw new FormatException("Sprache erwartet ein Objekt.");
+        var lang = Text(v, "lang", 6);
+        if (!Languages.Contains(lang)) throw new FormatException("Sprache ungültig (de, en oder system).");
+        using var ms = new MemoryStream();
+        using (var w = new Utf8JsonWriter(ms, Plain)) { w.WriteStartObject(); w.WriteString("lang", lang); w.WriteEndObject(); }
         return Encoding.UTF8.GetString(ms.ToArray());
     }
 

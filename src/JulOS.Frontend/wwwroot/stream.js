@@ -29,6 +29,8 @@
 import { StreamAudio } from './stream-audio.js';
 import { StreamPerf, normalizeQuality, qualityOf } from './perf.js';
 import { codecMask, probeCodecs, codecStringOf, decoderConfig, CODEC_H264, CODEC_HEVC } from './codecs.js';
+import { t } from './i18n.js';
+import { serverMsg } from './i18n-errors.js';
 
 const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, image: 7, files: 8, fileState: 9, result: 10, session: 11, resumeFailed: 12, limits: 14, audio: 20, audioStatus: 21, encoder: 30, refine: 40, refineClear: 41 };
 const OUT = { ack: 1, move: 2, button: 3, wheel: 4, key: 5, unicode: 6, resize: 7, keyframe: 8, clipboard: 9,
@@ -247,7 +249,7 @@ export class StreamClient {
     window.addEventListener('blur', this.focusLost); document.addEventListener('visibilitychange', this.focusLost);
     socket.onmessage = (e) => { if (this.socket === socket) this.receive(e.data); };
     socket.onclose = () => { if (this.socket === socket) this.finish(); };
-    socket.onerror = () => { if (this.socket === socket && !this.connected && this.onerror) this.onerror({ code: 520, message: 'Keine Verbindung zum Server.' }); };
+    socket.onerror = () => { if (this.socket === socket && !this.connected && this.onerror) this.onerror({ code: 520, message: t('stream.noServer') }); };
   }
 
   // keep: nur die Leitung kappen (der Server haelt die Sitzung, ein neuer Client nimmt sie mit dem Token wieder auf); sonst "Beenden" melden
@@ -265,7 +267,7 @@ export class StreamClient {
   finish() {
     clearInterval(this.watch); this.unwatchFocus();
     this.socket = null; this.closeDecoder(); this.audio.close();
-    for (const t of this.transfers.values()) t.result({ code: 4, text: 'Verbindung beendet.' });
+    for (const tr of this.transfers.values()) tr.result({ code: 4, text: t('stream.connectionEnded') });
     if (!this.closing) this.setState(5);
   }
 
@@ -300,7 +302,7 @@ export class StreamClient {
         this.closing = true; this.setState(5);
         // 800: das Zertifikat des Ziels ist nicht das gemerkte (Text: Fingerabdruck jetzt, Zeilenumbruch, Fingerabdruck bisher); es wurde nichts gesendet
         const [fingerprint, previous] = code === 800 ? message.split('\n') : [];
-        if (this.onerror) this.onerror(code === 800 ? { code, message: 'Das Zertifikat des Ziels hat sich geändert.', fingerprint, previous } : { code, message });
+        if (this.onerror) this.onerror(code === 800 ? { code, message: t('stream.certChanged'), fingerprint, previous } : { code, message: serverMsg(message) });
         break;
       }
       case IN.session: if (this.onsession && buffer.byteLength > 3) this.onsession({ keep: v.getUint16(1), token: new TextDecoder().decode(new Uint8Array(buffer, 3)) }); break;
@@ -310,7 +312,7 @@ export class StreamClient {
         break;
       case IN.taken:
         this.closing = true;
-        if (this.onerror) this.onerror({ code: 777, message: 'Sitzung übernommen.' });
+        if (this.onerror) this.onerror({ code: 777, message: t('stream.taken') });
         this.setState(5);
         break;
       case IN.encoder:
@@ -335,9 +337,9 @@ export class StreamClient {
       case IN.fileState: this.incomingFileState(v, buffer); break;
       case IN.limits: if (buffer.byteLength >= 13) this.limits = { fileBytes: Number(v.getBigInt64(1)), files: v.getUint16(9), entries: v.getUint16(11) }; break;
       case IN.result: {
-        const id = v.getUint32(1), code = v.getUint8(5), text = new TextDecoder().decode(new Uint8Array(buffer, 6));
-        const t = this.transfers.get(id);
-        if (t) t.result({ code, text }); else if (this.onclipresult) this.onclipresult({ id, code, text });
+        const id = v.getUint32(1), code = v.getUint8(5), text = serverMsg(new TextDecoder().decode(new Uint8Array(buffer, 6)));
+        const tr = this.transfers.get(id);
+        if (tr) tr.result({ code, text }); else if (this.onclipresult) this.onclipresult({ id, code, text });
         break;
       }
       default: break;
@@ -367,7 +369,7 @@ export class StreamClient {
   incomingFileState(v, buffer) {
     if (buffer.byteLength < 22) return;
     const state = ['ready', 'running', 'done', 'failed'][v.getUint8(5)];
-    if (state && this.onfilestate) this.onfilestate({ batch: v.getUint32(1), state, done: Number(v.getBigInt64(6)), total: Number(v.getBigInt64(14)), text: new TextDecoder().decode(new Uint8Array(buffer, 22)) });
+    if (state && this.onfilestate) this.onfilestate({ batch: v.getUint32(1), state, done: Number(v.getBigInt64(6)), total: Number(v.getBigInt64(14)), text: serverMsg(new TextDecoder().decode(new Uint8Array(buffer, 22))) });
   }
 
   // Eine Datei oder einen Ordner der VM holen (path aus der zuletzt gemeldeten Liste, leer = alles). Die Antwort kommt als onfilestate: erst "ready".
@@ -386,7 +388,7 @@ export class StreamClient {
      eines Stapels (index von count), name ist ihr relativer Pfad mit /. data ist ein Blob; signal bricht ab; progress(gesendet, gesamt). Antwort: { code, text } des Servers (code 0 = angenommen). */
   async sendTransfer(kind, data, name, index, count, progress, signal) {
     const socket = this.socket;
-    if (!socket || socket.readyState !== 1) return { code: 4, text: 'Keine Verbindung.' };
+    if (!socket || socket.readyState !== 1) return { code: 4, text: t('stream.noConnection') };
     const id = this.nextTransfer++;
     const nameBytes = new TextEncoder().encode(name || '').slice(0, 1200);
     const total = data ? data.size : 0;
@@ -402,10 +404,10 @@ export class StreamClient {
         // ein Fehler gleich nach dem Anfang (zu gross, nicht erlaubt ...) beendet das Senden, ohne die Daten noch zu schicken
         if ((at / CHUNK) % 4 === 0) await new Promise((r) => setTimeout(r, 0));   // dem Socket Luft lassen: eine Antwort des Servers (Fehler) kommt nur zwischen den Stuecken an
         if (early) return early;
-        if (signal && signal.aborted) { this.send(control(OUT.sendCancel)); return { code: 4, text: 'Abgebrochen.' }; }
+        if (signal && signal.aborted) { this.send(control(OUT.sendCancel)); return { code: 4, text: t('stream.cancelled') }; }
         while (socket.bufferedAmount > BUFFER_HIGH) {
           await new Promise((r) => setTimeout(r, 20));
-          if (this.socket !== socket) return { code: 4, text: 'Keine Verbindung.' };
+          if (this.socket !== socket) return { code: 4, text: t('stream.noConnection') };
         }
         const part = new Uint8Array(await data.slice(at, at + CHUNK).arrayBuffer());
         const m = new Uint8Array(5 + part.length); m[0] = OUT.sendChunk; new DataView(m.buffer).setUint32(1, id); m.set(part, 5);
@@ -414,7 +416,7 @@ export class StreamClient {
       }
       if (early) return early;
       this.send(control(OUT.sendEnd));
-      let timer; const silent = new Promise((r) => { timer = setTimeout(() => r({ code: 4, text: 'Die VM antwortet nicht.' }), 20000); });
+      let timer; const silent = new Promise((r) => { timer = setTimeout(() => r({ code: 4, text: t('stream.vmSilent') }), 20000); });
       try { return await Promise.race([answer, silent]); } finally { clearTimeout(timer); }
     } finally { this.transfers.delete(id); }
   }
@@ -471,7 +473,7 @@ export class StreamClient {
       this.send1(OUT.end);                          // die Sitzung ist unbrauchbar: nicht fuer ein Wiederverbinden erhalten
       const s = this.socket; this.socket = null;
       if (s) { try { s.close(); } catch { /* egal */ } }
-      if (this.onerror) this.onerror({ code: 1001, message: 'Der Browser kann das Bild nicht dekodieren.' });
+      if (this.onerror) this.onerror({ code: 1001, message: t('stream.decodeFailed') });
       this.setState(5);
       return;
     }

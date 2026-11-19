@@ -4,6 +4,7 @@
  * SizeGate und SizeCounter kennen keinen Browser (deploy/dev/test.sh startet ihre Tests mit node); LayoutLog liest das Fenster.
  * Es werden nur Zahlen und kurze Woerter protokolliert, nie Eingaben.
  */
+import { t } from './i18n.js';
 
 /** Zaehlt Groessenwechsel je Art in einem gleitenden Fenster ('send' gesendet, 'remote' von der VM gemeldet, 'stage' Bildflaeche, 'conn' Verbindungsaufbau). */
 export class SizeCounter {
@@ -128,7 +129,7 @@ export class LayoutLog {
     const loop = this.counter.looping(now);
     this.warn.hidden = !loop;
     if (loop) {
-      this.warn.textContent = `Die Größe ändert sich dauernd: ${c.n} Wechsel in 10 s. Bitte Uhrzeit merken und melden.`;
+      this.warn.textContent = t('term.layoutLoop', { n: c.n });
       clearTimeout(this.clearTimer); this.clearTimer = setTimeout(() => this.draw(), 10500);   // Hinweis geht von selbst weg, wenn Ruhe ist
     }
   }

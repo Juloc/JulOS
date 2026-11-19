@@ -97,3 +97,12 @@ test('Abgleich bei einem Fehler des Servers laesst alles lokal', async () => {
   srv.fail = true;
   assert.deepEqual(await createPrefs({ api: srv.api, storage: mem(), local: () => ({ theme: THEME }) }).sync(), {});
 });
+
+test('die Sprache ist eine Einstellung wie die anderen: lokal gemerkt, zum Server geschickt, vom Server uebernommen', async () => {
+  const srv = fakeServer(), clk = clock(), storage = mem();
+  const p = createPrefs({ api: srv.api, storage, local: () => ({ lang: { lang: 'en' } }), schedule: clk.schedule, cancel: clk.cancel });
+  assert.deepEqual(await p.sync(), {});                       // der Server hat nichts: das Geraet liefert seine Wahl
+  assert.deepEqual(srv.data.lang, { lang: 'en' });
+  const q = createPrefs({ api: srv.api, storage: mem(), local: () => ({ lang: { lang: 'de' } }), schedule: clk.schedule, cancel: clk.cancel });
+  assert.deepEqual(await q.sync(), { lang: { lang: 'en' } }); // der Server hat Vorrang
+});

@@ -14,8 +14,11 @@ import { MouseInput, mouseState } from './mouse.js';
 import { scancodeOf, isPasteShortcut } from './popout-keys.js';
 import { QUALITIES, normalizeQuality } from './perf.js';
 import { REGISTRY } from './popout-main.js';
+import { t, applyDom } from './i18n.js';
+import { serverMsg } from './i18n-errors.js';
 
 const $ = (id) => document.getElementById(id);
+applyDom(document);                       // statische Texte der Seite in der gewaehlten Sprache
 const store = {
   get(k, d) { try { const v = localStorage.getItem('pd.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem('pd.' + k, JSON.stringify(v)); } catch { /* egal */ } },
@@ -35,7 +38,7 @@ if (!h || !h.token) {
   $('poTitle').textContent = 'JulOS';
   for (const id of ['poQuality', 'poPerf', 'poBack']) $(id).hidden = true;
   $('poQuality').closest('label').hidden = true;
-  say('Dieses Fenster gehört zu einer Sitzung im Hauptfenster und lässt sich nur von dort öffnen (Fenstermenü: „In eigenem Fenster öffnen“).', { final: true });
+  say(t('popout.notOwned'), { final: true });
 } else start(h);
 
 function start(h) {
@@ -68,12 +71,12 @@ function start(h) {
     if (client) { try { client.disconnect(true); } catch { /* egal */ } }
   }
   function reattach() {
-    if (!handover()) { say('Das Hauptfenster gibt es nicht mehr. Die Sitzung läuft hier weiter; Schließen dieses Fensters beendet sie.'); setTimeout(() => say(''), 5000); return; }
+    if (!handover()) { say(t('popout.mainGone')); setTimeout(() => say(''), 5000); return; }
     release();
     const live = handover();
     if (live) { try { live.back(); } catch { /* egal */ } }
     window.close();
-    if (!window.closed) say('Die Sitzung ist wieder im Hauptfenster. Dieses Fenster kann geschlossen werden.', { final: true });
+    if (!window.closed) say(t('popout.backInMain'), { final: true });
   }
   // Das Hauptfenster schliesst die Sitzung (oder wird neu geladen): der Server soll sie nicht noch Minuten halten
   h.ended = () => { ended = true; clearTimeout(retryTimer); if (client) { try { client.disconnect(false); } catch { /* egal */ } } };
@@ -109,7 +112,7 @@ function start(h) {
   /* ---- Verbindung ---- */
   function connect() {
     if (ended) return;
-    say('Verbinde …');
+    say(t('app.connecting'));
     const wsBase = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
     const c = new StreamClient(wsBase + '/api/remote/screen');
     client = c; c.quality = quality; bar.attach(c);
@@ -118,7 +121,7 @@ function start(h) {
     display.onresize = () => fit();
     display.showCursor(true);
     c.onsession = (o) => { if (client === c) resume.offered(o.token, o.keep); };
-    c.onresumefailed = () => { if (client === c) finalMessage('Die Sitzung gibt es nicht mehr (beendet oder abgelaufen). „Wieder anheften“ öffnet sie im Hauptfenster neu.'); };
+    c.onresumefailed = () => { if (client === c) finalMessage(t('popout.sessionGone')); };
     c.onstatechange = (st) => {
       if (client !== c) return;
       if (st === 3) {
@@ -127,15 +130,15 @@ function start(h) {
       } else if (st === 5 && !ended) {
         if (c.drawn) resume.confirm();
         resume.lost();
-        if (!resume.usable()) return finalMessage('Die Verbindung ist getrennt.');
-        say('Verbindung wird wiederhergestellt …');
+        if (!resume.usable()) return finalMessage(t('popout.disconnected'));
+        say(t('app.busyResuming'));
         retryTimer = setTimeout(connect, resume.nextDelay());
       }
     };
     c.onerror = (err) => {
       if (client !== c || ended) return;
       if (err && err.code === 520 && resume.usable()) return;        // Leitung weg: das Schliessen plant den naechsten Versuch
-      finalMessage((err && err.message) || 'Verbindungsfehler');
+      finalMessage((err && err.message ? serverMsg(err.message) : '') || t('app.errConnection'));
     };
     c.onclipboard = (text) => {
       // Strg+C in der VM: Text in die Zwischenablage dieses Browsers (braucht Fokus und eine eben erfolgte Eingabe)

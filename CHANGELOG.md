@@ -11,6 +11,14 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 - Die Kopie am Ziel entsteht atomar (erst `.tmp`, dann umbenennen), die Aufbewahrung gilt dort wie lokal (`JULOS_BACKUP_KEEP_DAYS`, der neueste Auszug bleibt immer, fremde Dateien bleiben unberührt). Ein Fehler am Ziel lässt das lokale Backup unberührt (nur eine Warnung), der nächste Lauf holt Fehlendes nach. Der Zielordner wird nie vom Server angelegt.
 - „Über JulOS“ (Desktop und Handy) zeigt zusätzlich „Zweites Ziel“ mit OK und Zeit der letzten Kopie oder dem Fehler; `/api/about` hat dafür das Feld `backup.copy`. `dotnet JulOS.dll backup create` meldet das Ergebnis der Kopie.
 - Doku: [docs/BACKUP.md](docs/BACKUP.md) (Einrichtung, Compose-Beispiele für ein NAS und für SFTP, Rechte, Wiederherstellung vom zweiten Ziel), `.env.example` und beide Compose-Dateien haben die neuen Variablen (auskommentiert beziehungsweise mit Standard „aus“).
+- Englisch als zweite Sprache der gesamten Oberfläche (Standard bleibt Deutsch). Auswahl „Deutsch / English / System“ (System folgt der Browsersprache) im Handy-Profil (Darstellung) und in den Desktop-Einstellungen; die Wahl gilt sofort (die Seite lädt neu) und wird je Benutzer als Server-Einstellung `lang` gespeichert (kein neues Schema, vom Server geprüft: `de`, `en`, `system`), lokal bleibt eine Kopie als Rückfall. Vor der Anmeldung wählt `?lang=en` die Sprache des Geräts.
+- Alle sichtbaren Texte kommen aus zwei Wörterbüchern (`wwwroot/i18n/de.js`, `en.js`) über ein kleines Modul `i18n.js` (`t('schlüssel', {parameter})`, Mehrzahl, Rückfall auf Deutsch, nie ein roher Schlüssel): Anmeldung und Ersteinrichtung, Handy-Shell, Desktop mit Menüs, Fenstern, Dialogen und Statusleiste, Verbindungsdialog, Hosts, Konto, Netzwerkwerkzeuge, Module Caddy und DDNS, Quick Connect, Ordner, Zwischenablage, Anmeldedialog in der Sitzung, Fehlermeldungen des Stream-Clients und Terminal-Hinweise.
+- Feste Fehlertexte des Servers (JSON `error`) übersetzt der Browser über eine Zuordnung Text → Schlüssel; der Server selbst ändert sich dafür nicht.
+- `<html lang>` folgt der Sprache; Datum, Uhrzeit und Zahlen folgen ihr (`de-DE` bzw. `en-GB`). Der Service Worker hält die neuen Dateien bereit (Version pd-v47).
+- Neuer Test `tests/frontend/i18n.test.mjs` (gleiche Schlüssel und Parameter in beiden Wörterbüchern, alle benutzten Schlüssel vorhanden, keine unbenutzten, alle festen Servertexte zugeordnet) und ein Browser-Ablauf, der auf Englisch umschaltet. Doku: Abschnitt „Languages“ in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+### Geändert
+- Dateigrößen und andere Zahlen im Handy-Profil folgen dem Zahlenformat der Sprache (deutsch „1,5 GB“); die Datumszeile älterer Aktivitäten hatte einen doppelten Punkt („02.11..“), jetzt „02.11.“.
 
 ## [0.7.0] - 2026-11-19
 

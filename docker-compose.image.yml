@@ -65,6 +65,13 @@ services:
       JULOS_DDNS_HOSTS: "${JULOS_DDNS_HOSTS:-}"
       JULOS_DDNS_FRITZBOX_URL: "${JULOS_DDNS_FRITZBOX_URL:-}"
       JULOS_DDNS_IP_URL: "${JULOS_DDNS_IP_URL:-}"
+      JULOS_DDNS_PROVIDER: "${JULOS_DDNS_PROVIDER:-}"
+      JULOS_DDNS_CLOUDFLARE_ZONE: "${JULOS_DDNS_CLOUDFLARE_ZONE:-}"
+      JULOS_DDNS_TOKEN_FILE: "${JULOS_DDNS_TOKEN_FILE:-}"
+      JULOS_DDNS_UPDATE_URL: "${JULOS_DDNS_UPDATE_URL:-}"
+      JULOS_DDNS_UPDATE_AUTH_FILE: "${JULOS_DDNS_UPDATE_AUTH_FILE:-}"
+      JULOS_DDNS_AUTO: "${JULOS_DDNS_AUTO:-off}"
+      JULOS_DDNS_AUTO_SECONDS: "${JULOS_DDNS_AUTO_SECONDS:-}"
     # Der Server muss als derselbe Benutzer laufen wie die grafische Sitzung der Ziel-Maschine (Agent-Socket, Foto-Ordner)
     user: "${JULOS_UID:-1000}:${JULOS_GID:-1000}"
     extra_hosts:

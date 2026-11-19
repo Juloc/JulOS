@@ -782,9 +782,24 @@ function renderStart(m) {
       <button type="button" class="dk-b" data-act="devices">${ic('shield')}<span>${t('desktop.devicesShort')}</span></button>
       <button type="button" class="dk-b" data-act="settings">${ic('sliders')}<span>${t('desktop.settings')}</span></button>
     </div>
+    <h3 class="dk-heimh" hidden>${t('heimnetz.title')}</h3><div class="dk-heim"></div>
     <h3>${t('desktop.systemOverview')} <button type="button" class="dk-b dk-more" data-go="system">${t('desktop.openMonitor')}</button></h3>
     ${overviewCards()}`;
   watchOverview(m);
+  mountHeim(m);
+}
+
+/** Karte "Heimnetz" (heimnetz.js): nur, wenn der Server mindestens ein Modul eingeschaltet hat */
+let heimCtl = null;
+function mountHeim(m) {
+  const box = $('.dk-heim', m); if (!box) return;
+  heimCtl?.destroy(); heimCtl = null;
+  if (!(modules.caddy || modules.ddns || modules.services)) return;
+  $('.dk-heimh', m).hidden = false;
+  import('./heimnetz.js').then((h) => {
+    if (!box.isConnected) return;
+    heimCtl = h.mountHeimnetz(box, { api: ctx.api, mods: modules, esc: ctx.esc, open: (k) => runApp({ services: 'widgets', caddy: 'caddy', ddns: 'ddns' }[k]) });
+  });
 }
 
 /* ---------- System-Uebersicht: echte Messwerte des Rechners, auf dem der Server laeuft (GET /api/system/overview) ---------- */
@@ -1096,7 +1111,7 @@ export async function init(context) {
 }
 /** Nach Anmeldung (oder wenn die Seite die Startansicht zeigt): Konto setzen, Home-Fenster oeffnen */
 export function userChanged(user, message) {
-  import('./modules.js').then((m) => m.loadModules(ctx.api)).then((m) => { modules = m; applyModules(); });
+  import('./modules.js').then((m) => m.loadModules(ctx.api)).then((m) => { modules = m; applyModules(); const hw = wins.get('home'); if (hw && nav.view === 'start') mountHeim(hw.main); });
   const av = $('#dkUser .dk-avatar', root); if (av) av.textContent = (user || '?').slice(0, 1);
   if (!wins.has('home') && !wins.size) openHome();
   if (dockMode === 'auto' && !dockHinted) { dockHinted = true; showDock(); hideTimer = setTimeout(hideDock, 3500); }
@@ -1117,5 +1132,6 @@ export function reset() {
   for (const w of [...wins.values()]) { w.opts.onClose = null; closeWin(w); }
   sessWins.clear();
   modules = { caddy: false, ddns: false, services: false }; applyModules();
+  heimCtl?.destroy(); heimCtl = null; import('./heimnetz.js').then((h) => h.resetHeimnetz());
   nav.view = 'start'; nav.back = []; nav.fwd = [];
 }

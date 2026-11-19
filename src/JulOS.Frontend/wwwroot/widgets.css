@@ -64,3 +64,11 @@ html.desktop .dk-mtab[aria-selected="true"] { background: var(--dk-sel); color: 
 html.desktop .dk-mpre { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--dk-field); color: var(--dk-t1); font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow: auto; max-height: 52vh; white-space: pre; user-select: text; }
 html.desktop .dk-mstate.warn { background: rgba(240, 176, 48, .22); color: var(--dk-st-busy); }
 #mobile .m3-li .tr.m3mod.warn { background: color-mix(in oklab, #f0b030 24%, transparent); }
+/* Karte Heimnetz (heimnetz.js) */
+.hn { border-radius: 16px; background: var(--wd-card); border: 1px solid var(--wd-edge); color: var(--wd-fg); padding: 6px; }
+.hn-head { display: flex; align-items: center; gap: 10px; padding: 8px 10px; font-size: 15px; }
+.hn-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; font: inherit; color: inherit; background: transparent; border: 0; border-radius: 12px; padding: 9px 10px; cursor: pointer; min-height: 44px; }
+.hn-row:hover { background: var(--wd-hover); }
+.hn-name { font-weight: 650; min-width: 74px; }
+.hn-text { color: var(--wd-sub); font-size: 13px; overflow-wrap: anywhere; }
+.wd-dot.warn { background: #f0b030; box-shadow: 0 0 0 3px rgba(240, 176, 48, .25); }

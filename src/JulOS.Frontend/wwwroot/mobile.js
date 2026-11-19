@@ -172,7 +172,7 @@ export function setShown(on) {
     clearTimeout(overviewTimer);
   }
 }
-export function reset() { mods = { caddy: false, ddns: false, services: false }; modsPromise = null; srvActs = []; srvActsAt = 0; overview = null; overviewOk = null; user = ''; current = 'home'; view.q = ''; view.kind = 'all'; setShown(false); if (root) { root.hidden = true; root.removeAttribute('style'); } }
+export function reset() { mods = { caddy: false, ddns: false, services: false }; modsPromise = null; srvActs = []; srvActsAt = 0; import('./heimnetz.js').then((h) => h.resetHeimnetz()); overview = null; overviewOk = null; user = ''; current = 'home'; view.q = ''; view.kind = 'all'; setShown(false); if (root) { root.hidden = true; root.removeAttribute('style'); } }
 
 export function userChanged(name, message) {
   user = name;
@@ -345,12 +345,26 @@ function renderHome() {
     </div>
     ${sessionsSection()}
     ${server}
+    <div id="mHeimSec" hidden><div class="m3-sec">${icon('dns')}<span>${t('heimnetz.title')}</span></div><div id="mHeim"></div></div>
     <div class="m3-sec">${icon('star_o')}<span>${t('mobile.myFavourites')}</span><span class="sp"></span><button type="button" class="mb m3-btn text m3-state" data-go="services">${t('mobile.allServices')}${icon('chevron_right')}</button></div>
     ${favHtml}
     <div class="m3-sec">${icon('history')}<span>${t('mobile.activities')}</span><span class="sp"></span>${actsAll.length > 4 ? `<button type="button" class="mb m3-btn text m3-state" data-act="allacts">${view.allActs ? t('mobile.showLess') : t('mobile.showAll')}${icon('chevron_right')}</button>` : ''}</div>
     ${acts}`;
   pg.scrollTop = top;
+  mountHeim();
 }
+
+/* Karte "Heimnetz" (heimnetz.js): nur, wenn der Server mindestens ein Modul eingeschaltet hat */
+function mountHeim() {
+  const box = $('#mHeim'); if (!box) return;
+  ensureMods().then(async (m) => {
+    if (!(m.caddy || m.ddns || m.services) || !box.isConnected) return;
+    $('#mHeimSec').hidden = false;
+    const h = await import('./heimnetz.js');
+    if (box.isConnected) h.mountHeimnetz(box, { api: ctx.api, mods: m, esc, open: (k) => (k === 'services' ? go('services') : openModSheet(k)) });
+  });
+}
+const openModSheet = (kind) => import('./mobile-modules.js').then((m) => m.openSheet(kind, { icon, esc, api: ctx.api, wireSheet, app: $('#app') }));
 
 /* =====================================================================
  * Dienste
@@ -556,7 +570,7 @@ function onClick(e) {
   else if (act === 'quickq') ctx.quick(view.q);
   else if (act === 'addhost') ctx.addHost();
   else if (act === 'hostedit' || act === 'hostagent') { const h = hosts().find((x) => x.id === a.dataset.host); if (h) ctx.editHost(h); }
-  else if (act === 'mod') import('./mobile-modules.js').then((m) => m.openSheet(a.dataset.mod, { icon, esc, api: ctx.api, wireSheet, app: $('#app') }));
+  else if (act === 'mod') openModSheet(a.dataset.mod);
   else if (act === 'allacts') { view.allActs = !view.allActs; renderHome(); }
   else if (act === 'last') { const c = lastConnection(); if (c) ctx.connect(c); }
   else if (act === 'ssh') {

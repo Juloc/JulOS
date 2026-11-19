@@ -2,6 +2,8 @@
 
 Everything that is not in [SCOPE.md](SCOPE.md) goes here, one line each, with the date. Not started until 1.0 is tagged and one idea is picked on purpose.
 
+Note on the dated measurement entries: the ones from 2026-11-18 and 2026-11-19 compare the own stream engine with Apache Guacamole (guacd), which was the first engine and has since been removed (the own engine is the only way now). They stay as a record of why; where they name Guacamole they describe the past.
+
 - 2026-11-18 Windows agent (the outbound link exists; design notes in AGENT_API.md; the agent itself and a one-click install are missing)
 - 2026-11-18 Desktop web version with drag and drop of files into a chat or folder
 - 2026-11-18 File browser for the host, clipboard with file lists
@@ -23,7 +25,7 @@ Everything that is not in [SCOPE.md](SCOPE.md) goes here, one line each, with th
   - Guacamole, GFX on (`JULOS_RDP_GFX=on`): 2.7 fps, 619 ms, 2777 ms. GFX changes nothing important; the default stays off.
   - Selkies 2.2.1, WebSocket, software H.264, attached to display :10: 11.1 fps, 154 ms, 288 ms.
   - Idle (no video), click latency median: Guacamole 34 ms (p90 50), Selkies 70 ms (p90 181); the Guacamole number has no browser input path in it, so it is slightly optimistic.
-  Not measured yet: text sharpness (H.264 against PNG/JPEG tiles), Android Chrome, the real VM (RAM and CPU while encoding), HTTPS (WebCodecs needs a secure context, so Selkies needs TLS or localhost). Measuring tools: `JULOS_RDP_GFX` switch in `GuacSpec`, `kB insgesamt` in the "Bildaufbau" log line.
+  Not measured yet: text sharpness (H.264 against PNG/JPEG tiles), Android Chrome, the real VM (RAM and CPU while encoding), HTTPS (WebCodecs needs a secure context, so Selkies needs TLS or localhost). Measuring tools: the `JULOS_RDP_GFX` switch (then in the Guacamole engine's settings, now only for the own engine, see RDPGFX.md), `kB insgesamt` in the "Bildaufbau" log line.
 - 2026-11-18 Measured on the real VM (Selkies 2.2.1 in a container attached to the live display :10, 1344x2304 portrait, software H.264, loopback only, same probe and 640x360 30 fps test video, one run each): 16.1 visible fps with the video, click latency median 91 ms (p90 240 ms) under load and 78 ms (p90 135 ms) idle. Selkies used about 70-90 % of one core and 155 MB of RAM; the load average of the 6 vCPUs rose to about 5. Text in a 1:1 crop of the stream was crisp. No Guacamole baseline on the real VM yet: connecting would take over the live session and resize it. Still open: Android Chrome (needs HTTPS for WebCodecs), keeping the stream behind the JulOS login, a hardware encoder is not available on this KVM guest.
 - 2026-11-18 **Clean comparison (supersedes the earlier "Measured" entries above, those ran while other test jobs kept the machine at load 10-30 and used a coarse frame counter).** Same target (Docker test desktop, Debian 13, xrdp 0.10, XFCE), machine quiet (load 3-6 including the measuring browser), a 640x360 30 fps test video, real mouse clicks, frame rate counted from the video's own frame counter digits, one round each, 8-10 clicks, no GPU, Chromium in the app pane, loopback only:
   | Engine | frames shown per s (source 30) | click latency, video playing: median / p90 | click latency, idle: median / p90 |
@@ -67,7 +69,7 @@ admin API, a DNS token), so each gets the same shape. Apart from that, [SCOPE.md
    decrypts, no API returns them (the list only says "gespeichert"), no log line contains them. Without a key the module cannot store a token and says so.
 5. **Every change is logged** (who, what, when, result) in a small table and shown as "Verlauf" in the window; read calls are not logged.
 6. **The server cannot lock you out of itself.** JulOS never edits the Caddy route or the container that serves JulOS (see below), and every write has a way back.
-7. **Tests with fakes, not the real thing:** a fake Docker API and a fake Caddy admin API in the test project (like `FakeGuacd`), a fake DNS provider. Real systems only by hand on the test instance.
+7. **Tests with fakes, not the real thing:** a fake Docker API and a fake Caddy admin API in the test project (like `FakeAgent`), a fake DNS provider. Real systems only by hand on the test instance.
 8. A new container (the socket proxy, a Caddy filter) is a new service; [SCOPE.md](SCOPE.md) rule 4 asks to write down why it cannot be done without it. That reason is given in each entry.
 
 **Docker (containers, state, CPU and RAM; later start, stop, restart)**

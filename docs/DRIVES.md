@@ -1,6 +1,6 @@
 # Drive redirection: a server folder as a drive in the desktop
 
-The own stream engine (not Guacamole) can hand **one folder of the JulOS server** to the remote desktop as a drive (RDP device redirection,
+The own stream engine can hand **one folder of the JulOS server** to the remote desktop as a drive (RDP device redirection,
 RDPDR / MS-RDPEFS). On a Windows target it shows up as a network drive `JULOS on JulOS`, on xrdp under `~/thinclient_drives/JULOS`. It is the
 other direction from the file box: it does not touch a folder of the *browser* (a browser has none to give).
 
@@ -64,7 +64,7 @@ Everything the remote sends is hostile. A path is **accepted or refused, never r
   (3) Delete, rename and set-times go by path after the check (there is no `unlinkat` call): the same race, the same people.
   Keep the shared folder free of anything that is not meant to be shared, and out of reach of other users, and none of these matter.
 - Windows hosts: a share the user did not ask for appears in Explorer only when the connection switched it on.
-- Guacamole connections never get the drive (the switch is forced off for them; its own drive feature is not used).
+- Only desktop connections get the drive (the switch is forced off for terminals). Connections saved while Guacamole still existed behave like any other desktop connection now.
 
 ## Verified, and how
 

@@ -26,7 +26,7 @@ Zusatz: in Chrome am PC `chrome://inspect` öffnen, dann sieht man die Konsole d
 
 **Nicht empfohlen: ein zeitweiser Port im Heimnetz** (zum Beispiel `192.0.2.10:18080`). Das braucht eine Änderung der Port-Bindung in der
 Compose-Datei (nur auf die LAN-Adresse des PCs, nie `0.0.0.0`), eine Firewall-Regel nur für das Handy und gilt nur als `http`: ohne HTTPS
-gibt es auf dem Handy **kein WebCodecs** (die Stream-Engine fällt auf Guacamole zurück), keine Installation als App, und das Passwort geht im
+gibt es auf dem Handy **kein WebCodecs** (die Sitzung meldet, dass der Browser das Bild nicht dekodieren kann), keine Installation als App, und das Passwort geht im
 Klartext durchs WLAN. Nur wenn USB nicht geht, und dann nur mit einem Wegwerf-Konto und kurz.
 
 Nicht tun: die Test-Instanz über Caddy oder das Internet erreichbar machen.
@@ -34,11 +34,10 @@ Nicht tun: die Test-Instanz über Caddy oder das Internet erreichbar machen.
 ## Ablauf auf dem Handy
 
 Vorher: einen Wegwerf-Benutzer in der Test-Instanz haben (Einrichtung mit dem Setup-Code aus dem Server-Log, siehe `docs/DEVELOPMENT.md`).
-Passwort und Authenticator-Code gibst du selbst ein. Zwei Verbindungen anlegen, die beide auf den Test-Desktop zeigen: eine mit Engine
-Guacamole, eine mit Stream.
+Passwort und Authenticator-Code gibst du selbst ein. Eine Verbindung anlegen, die auf den Test-Desktop zeigt.
 
 1. Chrome öffnen, `http://localhost:18080/?debug` aufrufen, anmelden.
-2. Die **Guacamole**-Verbindung öffnen. Oben links erscheint ein kleines dunkles Messfeld (Fenstergröße, sichtbarer Bereich, Tastatur,
+2. Die Verbindung öffnen. Oben links erscheint ein kleines dunkles Messfeld (Fenstergröße, sichtbarer Bereich, Tastatur,
    Zähler „10 s: …“). Ein **roter Balken** bedeutet: mehr als 12 Größenwechsel in 10 s.
 3. Handy 30 Sekunden ruhig halten und beobachten. Die Zahl hinter „10 s:“ muss danach 0 bis 3 sein und das Bild darf nicht flackern.
 4. **Tastatur:** drei Mal die Tastatur öffnen und schließen (Tastaturtaste in der Leiste unten). Jeweils danach 3 Sekunden warten.
@@ -47,8 +46,7 @@ Guacamole, eine mit Stream.
 7. **Adressleiste:** im normalen Chrome-Tab (nicht als App) zum Tab-Wechsler und zurück gehen oder Chrome kurz in den Hintergrund legen; falls sich die Adressleiste dabei ein- oder ausblendet, 3 Sekunden warten und das Messfeld ansehen.
 8. **Programm-Modus:** in der Fensterleiste oben auf „Desktop“ tippen (wird „Apps“), zwei Programme starten und zwischen ihnen wechseln, dann zurück auf „Desktop“.
 9. **Sperren:** Handy sperren, 10 Sekunden warten, entsperren.
-10. Alles ab Schritt 2 mit der **Stream**-Verbindung wiederholen.
-11. Zum Schluss: „App installieren“ in Chrome (geht auch über `localhost`) und die Schritte 2 bis 6 aus der installierten App wiederholen. Dort gibt es kein Messfeld (die App startet ohne `?debug`), erkannte Schleifen stehen aber trotzdem im Server-Log; darum die Uhrzeit notieren.
+10. Zum Schluss: „App installieren“ in Chrome (geht auch über `localhost`) und die Schritte 2 bis 6 aus der installierten App wiederholen. Dort gibt es kein Messfeld (die App startet ohne `?debug`), erkannte Schleifen stehen aber trotzdem im Server-Log; darum die Uhrzeit notieren.
 
 ## Terminal (SSH) auf dem Handy
 
@@ -69,7 +67,7 @@ Eine Terminal-Verbindung zeigt echten Text (xterm.js), keinen Bildstrom. Prüfen
 
 - Ein Screenshot des Messfelds (Lauter- und Ausschalttaste zusammen) **direkt nach** jedem Schritt, bei dem etwas auffiel, und bei jedem roten Balken.
 - Pro Auffälligkeit: Schritt-Nummer, ungefähre Uhrzeit und ein Satz, was man gesehen hat („Bild sprang“, „Leiste verschwand“, „Bild blieb schwarz“).
-- Ob der Fehler mit Guacamole, mit Stream oder mit beiden auftritt, und ob im Browser-Tab oder in der installierten App.
+- Ob der Fehler im Browser-Tab oder in der installierten App auftritt.
 
 Die Messwerte holt der PC selbst aus dem Server-Log, du musst nichts kopieren:
 

@@ -5,13 +5,13 @@ Self-hosted and open source. What we build right now: [docs/SCOPE.md](docs/SCOPE
 
 The first piece is a remote desktop built for **phones**: your own Android keyboard (suggestions, autocorrect, images), a
 customisable extra-key bar, an in-app window bar instead of the desktop taskbar, dynamic resolution, Material You colours
-and an installable PWA. Under the hood it is plain remote access to your own machine (RDP through Apache Guacamole),
+and an installable PWA. Under the hood it is plain remote access to your own machine (RDP, streamed as H.264 by JulOS's own display engine),
 nothing is stored in the cloud.
 
 [Deutsche Version](README.de.md)
 
 ```
-phone (PWA)  --HTTPS-->  your reverse proxy  -->  JulOS server (.NET, own login)  -->  guacd  --RDP-->  your machine
+phone (PWA)  --HTTPS-->  your reverse proxy  -->  JulOS server (.NET, own login, RDP client + H.264 encoder)  --RDP-->  your machine
                                                         |--> SSH client (terminal, text drawn in the browser)  --SSH-->  your machine
                                                         |--> PostgreSQL (accounts, sessions, saved connections)
                                                         \<-- agent in the desktop session (connects outbound, or unix socket on the same machine): windows, apps, photo paste
@@ -55,10 +55,9 @@ tools/install-linux-agent.sh    # in the graphical session of the target machine
 
 Open `http://<BIND_IP>:8080` (on `localhost` or over HTTPS; the session cookie needs a secure context), enter the setup code, choose a user name and password and
 confirm the authenticator code. Then add a connection (Desktop = RDP, Terminal = SSH) and tap it. The target's password is typed per connection, or stored encrypted on request (needs a key: either `JULOS_SECRET_KEY` in `.env`, `openssl rand -base64 32`, or a volume at `/data` where the server creates `secret.key` itself, as the image's Compose stacks do). The server backs up the database and this key every day into `~/julos-backup` (see [docs/BACKUP.md](docs/BACKUP.md), including how to restore); copy that folder off the machine).
-A desktop connection can also use the experimental stream engine (own RDP client, H.264 in the browser; choose "Stream" under "Bildübertragung" in the connection dialog). Guacamole stays the default, and the app falls back to it when the browser or server cannot do H.264. The stream engine also plays the desktop's sound and can send the browser's microphone to the desktop (off until you switch it on in the menu). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+A desktop connection is streamed by JulOS's own display engine (own RDP client on the server, H.264 decoded in the browser with WebCodecs; the browser needs H.264 and a secure context, otherwise the app says so and offers "Neu verbinden"). It plays the desktop's sound and can send the browser's microphone to the desktop (off until you switch it on in the menu). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 With a GPU in the container the stream engine encodes on it (VAAPI, optionally H.265), see [docs/ENCODERS.md](docs/ENCODERS.md).
 Optionally (`JULOS_RDP_GFX=on`, off by default) the stream engine passes on the H.264 that an RDP server sends through its graphics pipeline instead of encoding again, and falls back to its own encoder whenever the server cannot do that; the common xrdp of Debian cannot, see [docs/RDPGFX.md](docs/RDPGFX.md).
-A desktop connection can also use the experimental stream engine (own RDP client, H.264 in the browser; choose "Stream" under "Bildübertragung" in the connection dialog). Guacamole stays the default, and the app falls back to it when the browser or server cannot do H.264. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 If only the browser's connection drops (phone switches network, tab in the background), the stream engine keeps the RDP session on the server for `JULOS_STREAM_KEEP_SECONDS` (default 300, 0 = off) and the browser re-attaches to it without a new login ([docs/SESSIONS.md](docs/SESSIONS.md)). It can also hand one server folder to the desktop as a drive, read only unless a second switch allows writing; off by default in the server settings (`JULOS_DRIVE_ROOT`) and per connection ([docs/DRIVES.md](docs/DRIVES.md)).
 Still screen parts of the stream engine are refined losslessly (text and colours pixel exact), its bit rate follows the link on slow connections, and the RDP certificate is remembered on first use (a change raises a warning, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)).
 A Terminal connection is a real terminal in the browser (the server holds the SSH connection, xterm.js draws the text: selection, copy and paste, scrollback). The first connection remembers the target's SSH host key; if it ever changes, the page warns and refuses until you confirm the new key. Login is by password for now.
@@ -80,7 +79,7 @@ Remote control must not be protected by the desktop password alone.
 - **Own login:** password (Argon2id) plus authenticator code, ten recovery codes, long-lived rotating sessions kept as hashes in PostgreSQL, lockout with growing delay. Every API and the WebSocket need a session; see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **First start:** the first account is created in the browser with a one-time setup code from the server log. Afterwards the setup is closed.
 - **Connections** use one-time tickets (30 s). The target password is typed per connection (held in memory for at most 30 s, never logged) or, on request, stored AES-256-GCM encrypted with a key that lives only in the server settings; it is never sent back to the browser.
-- `guacd` and PostgreSQL have no published port. Open connections end when their session ends.
+- PostgreSQL has no published port. Open connections end when their session ends.
 - **mTLS** in the proxy (optional extra layer): only your phone with a client certificate reaches the login page. Create one with
   `tools/make-client-cert.sh <name>` (you type the passphrase yourself); the Caddy example has the `client_auth` block.
 - The agent API is only reachable through the server with a live session. Agents either answer on a Unix socket (mode 0600, same machine) or connect outbound with a per-connection token (stored only as a hash on the server, revocable, one-time enrolment code).
@@ -92,12 +91,11 @@ Roll-out order: proxy config, port forward 443 to the proxy, DNS; optionally a c
 
 `POST /api/upload` saves the image in `~/julos-uploads`; `tools/julos-clip.py` (autostarted in the session) puts it on the GTK
 clipboard and acknowledges it, then the page sends Ctrl+V. Files are deleted after 30 minutes.
-Guacamole cannot transfer image clipboards over RDP, hence this path. The same helper also takes files (`files/<id>/`) and answers
-the "fetch the image from the remote clipboard" button (`pull/`); the own stream engine needs none of this, see [docs/CLIPBOARD.md](docs/CLIPBOARD.md).
+The app itself no longer needs this path: the stream engine sends images and files over RDP itself, see [docs/CLIPBOARD.md](docs/CLIPBOARD.md). The upload API and the helper (which also takes files in `files/<id>/` and answers `pull/`) stay for the agent API.
 
 ## Layout
 
-- `src/JulOS.Frontend` host: web client (`wwwroot`: PWA for the phone in Material 3 style, desktop interface with windows for wide screens with a mouse), HTTP API, WebSocket; `src/JulOS.Backend` accounts, sessions, connections (PostgreSQL); `src/JulOS.Integrations` guacd relay and agent client; `src/JulOS.Workers` background jobs
+- `src/JulOS.Frontend` host: web client (`wwwroot`: PWA for the phone in Material 3 style, desktop interface with windows for wide screens with a mouse), HTTP API, WebSocket; `src/JulOS.Backend` accounts, sessions, connections (PostgreSQL); `src/JulOS.Integrations` display engine (RDP client, H.264), SSH client and agent client; `src/JulOS.Workers` background jobs
 - `tests/` (`frontend/` runs with node), `database/` (SQL migrations), `deploy/dev/` the test instance with throwaway SSH and RDP targets (see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md); testing on a real phone: [docs/PHONE-TEST.md](docs/PHONE-TEST.md))
 - `tools/julos-agent.py` Linux agent (windows, apps, app mode, outbound link to the server), `tools/julos-clip.py` photo clipboard helper
 - `tools/install-linux-agent.sh`, `tools/julos-user.sh`, `tools/make-client-cert.sh`
@@ -110,4 +108,4 @@ Now: the Remote module (see [docs/SCOPE.md](docs/SCOPE.md)). Next: a module core
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Built on Apache Guacamole (guacd, guacamole-common-js).
+MIT, see [LICENSE](LICENSE). Third-party components and their licences: `src/JulOS.Frontend/wwwroot/licenses.txt` and `src/JulOS.Integrations/Display/NOTICE.md`.

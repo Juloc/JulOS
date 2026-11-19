@@ -7,6 +7,8 @@
  *   Server -> Browser: 1 Bild (flags, folge u32, H.264), 2 Zeiger, 3 Groesse, 4 Fehler, 5 uebernommen, 6 Zwischenablage (UTF-8-Text),
  *                      7 Bild aus der VM (format 1 PNG / 2 BMP), 8 Dateiliste der VM, 9 Dateistueck, 10 Ergebnis eines Sendens,
  *                      30 Kodierer (codec, GPU ja/nein, Name: nur zum Anzeigen); ein Bild hat in flags Bit 1 gesetzt, wenn es H.265 ist
+ *                      40 Nachbesserung (x, y, breite, hoehe u16, PNG: ein ruhendes Rechteck verlustfrei, kommt ueber das Video),
+ *                      41 Nachbesserung weg (anzahl u16, je x, y, breite, hoehe: dort hat sich der Bildschirm geaendert)
  *   Browser -> Server: 1 Bestaetigung (Folgenummer u32: alle Bilder bis dahin), 2 Maus bewegt, 3 Maustaste, 4 Mausrad, 5 Taste (Scancode), 6 Zeichen, 7 Fenstergroesse, 8 Schluesselbild,
  *                      9 Zwischenablage (UTF-8-Text, bis 1 MiB; der ferne Rechner holt ihn, wenn er einfuegt),
  *                      10 Senden Anfang (Bild als BMP oder Datei), 11 Stueck, 12 Ende, 13 Abbruch, 14 Datei der VM holen, 15 Holen Abbruch,
@@ -23,7 +25,7 @@
 import { StreamAudio } from './stream-audio.js';
 import { codecMask, probeCodecs, codecStringOf, decoderConfig, CODEC_H264, CODEC_HEVC } from './codecs.js';
 
-const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, image: 7, files: 8, fileChunk: 9, result: 10, audio: 20, audioStatus: 21, encoder: 30 };
+const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, image: 7, files: 8, fileChunk: 9, result: 10, audio: 20, audioStatus: 21, encoder: 30, refine: 40, refineClear: 41 };
 const OUT = { ack: 1, move: 2, button: 3, wheel: 4, key: 5, unicode: 6, resize: 7, keyframe: 8, clipboard: 9,
   sendBegin: 10, sendChunk: 11, sendEnd: 12, sendCancel: 13, fileRequest: 14, fileCancel: 15, pause: 16, codecs: 30 };
 const CHUNK = 128 * 1024;                 // so gross sind die Stuecke beim Senden (der Server nimmt bis 256 kB)
@@ -62,9 +64,14 @@ class StreamDisplay {
     this.canvas = document.createElement('canvas');
     this.canvas.style.cssText = 'display:block;';
     this.ctx = this.canvas.getContext('2d', { alpha: false, desynchronized: true });
+    // Nachbesserung: ruhende Teile des Bildschirms kommen zusaetzlich verlustfrei (PNG) und liegen ueber dem Video (dessen Farbe ist 4:2:0 und nie ganz scharf)
+    this.overlay = document.createElement('canvas');
+    this.overlay.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none;';
+    this.overlayCtx = this.overlay.getContext('2d');
+    this.overlayChain = Promise.resolve(); this.overlayEpoch = 0;
     this.cursorCanvas = document.createElement('canvas');
     this.cursorCanvas.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none;display:none;';
-    this.element.append(this.canvas, this.cursorCanvas);
+    this.element.append(this.canvas, this.overlay, this.cursorCanvas);
     this.width = 0; this.height = 0; this.scaleValue = 1;
     this.cursorHot = { x: 0, y: 0 }; this.pointer = { x: 0, y: 0 }; this.cursorShown = false; this.softCursor = false;
     this.onresize = null; this.oncursor = null;
@@ -74,13 +81,35 @@ class StreamDisplay {
   getHeight() { return this.height; }
   getScale() { return this.scaleValue; }
   scale(s) { this.scaleValue = s; this.element.style.transform = `scale(${s})`; }
-  flatten() { return this.canvas; }
+  // Video und Nachbesserung zusammengesetzt (eine Kopie)
+  flatten() {
+    const c = document.createElement('canvas'); c.width = this.canvas.width; c.height = this.canvas.height;
+    const g = c.getContext('2d'); g.drawImage(this.canvas, 0, 0); g.drawImage(this.overlay, 0, 0);
+    return c;
+  }
+
+  // Die Reihenfolge der Nachrichten bleibt erhalten, auch wenn das Dekodieren eines PNG laenger dauert als das Streichen danach
+  refine(x, y, bytes) {
+    const epoch = this.overlayEpoch;
+    this.overlayChain = this.overlayChain.then(async () => {
+      try {
+        const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+        if (epoch === this.overlayEpoch) this.overlayCtx.drawImage(bitmap, x, y);
+        bitmap.close();
+      } catch { /* kein Bild: das Video bleibt, wie es ist */ }
+    });
+  }
+  refineClear(rects) {
+    const epoch = this.overlayEpoch;
+    this.overlayChain = this.overlayChain.then(() => { if (epoch === this.overlayEpoch) for (const [x, y, w, h] of rects) this.overlayCtx.clearRect(x, y, w, h); });
+  }
   showCursor(on) { this.softCursor = !!on; this.updateCursor(); }
 
   resize(w, h) {
     if (w === this.width && h === this.height) return;
     this.width = w; this.height = h;
     this.canvas.width = w; this.canvas.height = h;
+    this.overlay.width = w; this.overlay.height = h; this.overlayEpoch++;
     if (this.onresize) this.onresize(w, h);
   }
 
@@ -153,6 +182,7 @@ export class StreamClient {
     this.audio = new StreamAudio((bytes) => this.send(bytes));
     this.submitted = 0; this.output = 0; this.activityAt = 0;   // Folgenummern: dem Dekodierer gegeben, von ihm geliefert; Zeit des letzten Wechsels
     this.received = 0;                  // Folgenummer des zuletzt empfangenen Bildes (der Server zaehlt aufsteigend, ohne Luecken)
+    this.refineOn = !/off/.test(localStorage.getItem('pd.refine') || '');   // zum Vergleichen: localStorage pd.refine = "off" ignoriert die Nachbesserung
     this.paused = false;                // die Ansicht ist im Hintergrund: der Server kodiert dann keine Bilder
     this.drawn = false;                 // ob schon ein Bild gezeichnet wurde (davor darf app.js auf Guacamole ausweichen)
     this.hevcOk = !!codecSupport.hevc;  // ob H.265 angeboten wird; nach einem Fehler des H.265-Dekodierers nicht mehr
@@ -239,7 +269,9 @@ export class StreamClient {
       case IN.error: {
         const code = v.getUint16(1), message = new TextDecoder().decode(new Uint8Array(buffer, 3));
         this.closing = true; this.setState(5);
-        if (this.onerror) this.onerror({ code, message });
+        // 800: das Zertifikat des Ziels ist nicht das gemerkte (Text: Fingerabdruck jetzt, Zeilenumbruch, Fingerabdruck bisher); es wurde nichts gesendet
+        const [fingerprint, previous] = code === 800 ? message.split('\n') : [];
+        if (this.onerror) this.onerror(code === 800 ? { code, message: 'Das Zertifikat des Ziels hat sich geändert.', fingerprint, previous } : { code, message });
         break;
       }
       case IN.taken:
@@ -250,6 +282,16 @@ export class StreamClient {
       case IN.encoder:
         this.encoder = { codec: v.getUint8(1) === 2 ? 'H.265' : 'H.264', hardware: (v.getUint8(2) & 1) !== 0, name: new TextDecoder().decode(new Uint8Array(buffer, 3)) };
         this.stats.encoder = `${this.encoder.name} (${this.encoder.codec}${this.encoder.hardware ? ', GPU' : ''})`;
+        break;
+      case IN.refine:
+        if (this.refineOn && buffer.byteLength > 9) this.display.refine(v.getUint16(1), v.getUint16(3), new Uint8Array(buffer, 9));
+        break;
+      case IN.refineClear:
+        if (this.refineOn) {
+          const n = v.getUint16(1), rects = [];
+          for (let i = 0; i < n && 3 + i * 8 + 8 <= buffer.byteLength; i++) rects.push([v.getUint16(3 + i * 8), v.getUint16(5 + i * 8), v.getUint16(7 + i * 8), v.getUint16(9 + i * 8)]);
+          this.display.refineClear(rects);
+        }
         break;
       case IN.clipboard: this.incomingClipboard(new Uint8Array(buffer, 1)); break;
       case IN.audio: this.audio.frame(buffer); break;

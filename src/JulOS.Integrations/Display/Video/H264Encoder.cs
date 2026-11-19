@@ -176,8 +176,19 @@ public sealed unsafe class H264Encoder : IVideoEncoder
 
     public int KilobitsPerSecond => _kilobitsPerSecond;
 
-    // The rate controller was built for one ceiling; the software encoder keeps it.
-    public bool TrySetBitrate(int kilobitsPerSecond) => false;
+    // The caller found the connection slower or faster than the bit rate given at the start: the rate controller works with the new one
+    // from the next picture on (it changes how coarse pictures are and when the caller is asked to wait, not the stream's format).
+    // With the library's own rate control (tests) there is nothing to change.
+    public bool TrySetBitrate(int kilobitsPerSecond)
+    {
+        if (kilobitsPerSecond < 1 || _rate is null)
+        {
+            return false;
+        }
+
+        _rate.SetBitrate(kilobitsPerSecond);
+        return true;
+    }
 
     // True when the picture the viewer has is as sharp as this encoder makes it: encoding the same frame
     // once more would change nothing. After a change or a key frame it is false until the picture has been

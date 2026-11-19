@@ -4,6 +4,13 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Neu
+- Stream-Engine: Vertrauen bei erster Nutzung für das RDP-Zertifikat statt „Zertifikat ignorieren“: der Fingerabdruck wird je Verbindung gemerkt; ändert er sich, kommt vor dem Senden des Passworts eine Warnung mit altem und neuem Fingerabdruck (Abbrechen oder bestätigen). Guacamole verhält sich wie bisher.
+- Stream-Engine: auf langsamer Leitung (WLAN, Mobilfunk, WAN) passt sich die Bitrate an die gemessene Liefergeschwindigkeit an und das Fenster der unbestätigten Bilder wird kleiner; Klicks reagieren dort nach etwa 0,3 s statt nach über 1 s.
+- Stream-Engine: ruhende Bildteile (Text, Farbe) werden zusätzlich verlustfrei nachgeliefert und liegen pixelgenau über dem Video, farbiger Text ist damit so scharf wie bei Guacamole.
+
 ## [0.3.0] - 2026-11-19
 
 ### Neu

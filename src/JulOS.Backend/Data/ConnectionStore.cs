@@ -2,14 +2,14 @@ using Npgsql;
 
 namespace JulOS.Backend.Data;
 
-public sealed record ConnectionRecord(Guid Id, string Name, string Kind, string Host, int Port, string Username, bool HasPassword, string Engine, string? HostKey = null);
+public sealed record ConnectionRecord(Guid Id, string Name, string Kind, string Host, int Port, string Username, bool HasPassword, string Engine, string? HostKey = null, string? CertFingerprint = null);
 
 /// <summary>Gespeicherte Verbindungen eines Benutzers. Ein Passwort gibt es nur auf Wunsch und nur verschluesselt (siehe SecretBox); die Listen liefern nie das Passwort, nur ob eins da ist.</summary>
 public sealed class ConnectionStore(NpgsqlDataSource db)
 {
-    private const string Columns = "id, name, kind, host, port, username, secret is not null, engine, host_key";
+    private const string Columns = "id, name, kind, host, port, username, secret is not null, engine, host_key, cert_fingerprint";
 
-    private static ConnectionRecord Read(NpgsqlDataReader r) => new(r.GetGuid(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetInt32(4), r.GetString(5), r.GetBoolean(6), r.GetString(7), r.IsDBNull(8) ? null : r.GetString(8));
+    private static ConnectionRecord Read(NpgsqlDataReader r) => new(r.GetGuid(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetInt32(4), r.GetString(5), r.GetBoolean(6), r.GetString(7), r.IsDBNull(8) ? null : r.GetString(8), r.IsDBNull(9) ? null : r.GetString(9));
 
     public async Task<ConnectionRecord> CreateAsync(Guid userId, string name, string kind, string host, int port, string username, string engine = "guac", CancellationToken ct = default)
     {
@@ -71,6 +71,13 @@ public sealed class ConnectionStore(NpgsqlDataSource db)
     }
 
     /// <summary>Merkt den Host-Schluessel des Ziels (Fingerabdruck), oder vergisst ihn (null).</summary>
+    /// <summary>Merkt den Fingerabdruck des RDP-Zertifikats dieser Verbindung (null: vergessen).</summary>
+    public async Task SetCertFingerprintAsync(Guid userId, Guid id, string? fingerprint, CancellationToken ct = default)
+    {
+        await using var cmd = db.Cmd("update connections set cert_fingerprint = $3 where user_id = $1 and id = $2", userId, id, fingerprint is null ? DBNull.Value : fingerprint);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
     public async Task SetHostKeyAsync(Guid userId, Guid id, string? hostKey, CancellationToken ct = default)
     {
         await using var cmd = db.Cmd("update connections set host_key = $3 where user_id = $1 and id = $2", userId, id, hostKey is null ? DBNull.Value : hostKey);

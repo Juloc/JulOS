@@ -64,7 +64,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         }
 
         var started = Environment.TickCount64;
-        await using var stream = new ScreenStream(target.Options, target.MaxKilobitsPerSecond, log, encoders, clientCodecs);
+        await using var stream = new ScreenStream(target.Options, target.MaxKilobitsPerSecond, log, encoders, clientCodecs, target.Trust);
         byte[]? last = null;
         try
         {
@@ -79,6 +79,11 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             {
                 try { await run.ConfigureAwait(false); }
                 catch (OperationCanceledException) { /* abgebrochen */ }
+                catch (RdpException e) when (e.CertificateFingerprint is not null)
+                {
+                    log.LogWarning("RDP-Zertifikat des Ziels hat sich geändert: Verbindung nicht aufgebaut, nichts gesendet");
+                    last = ScreenProtocol.CertificateChanged(e.CertificateFingerprint, target.Trust?.Stored);
+                }
                 catch (RdpException e) { last = ScreenProtocol.Error(e.IsLogonFailure ? ErrorLogonFailed : ErrorConnectFailed, e.Message); }
                 catch (Exception e) when (e is SocketException or IOException or TimeoutException)
                 {
@@ -137,6 +142,14 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                         buffer = pool.Rent(ScreenProtocol.PictureHeader + picture.Data.Length);
                         length = ScreenProtocol.WritePicture(buffer, picture.Sequence, picture.IsKey, picture.Data, picture.Codec);
                         break;
+                    case ScreenRefine refine:
+                        buffer = pool.Rent(ScreenProtocol.RefineHeader + refine.Png.Length);
+                        length = ScreenProtocol.WriteRefine(buffer, refine);
+                        break;
+                    case ScreenRefineClear clear:
+                        buffer = pool.Rent(3 + Math.Min(clear.Rects.Length / 4, ScreenProtocol.MaxClearRects) * 8);
+                        length = ScreenProtocol.WriteRefineClear(buffer, clear.Rects);
+                        break;
                     case ScreenCursor cursor:
                         buffer = pool.Rent(ScreenProtocol.CursorHeader + (cursor.Rgba?.Length ?? 0));
                         length = ScreenProtocol.WriteCursor(buffer, cursor);
@@ -190,7 +203,12 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                         continue;
                 }
 
+                var started = System.Diagnostics.Stopwatch.GetTimestamp();
                 await ws.SendAsync(buffer.AsMemory(0, length), WebSocketMessageType.Binary, true, ct).ConfigureAwait(false);
+                if (evt is ScreenPicture)
+                {
+                    stream.SocketSent((long)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                }
             }
             finally
             {

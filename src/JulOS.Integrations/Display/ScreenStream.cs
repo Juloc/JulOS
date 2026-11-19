@@ -1,6 +1,7 @@
 using System.Threading.Channels;
 using JulOS.Integrations.Display.Rdp;
 using JulOS.Integrations.Display.Rdp.Channels;
+using JulOS.Integrations.Display.Refine;
 using JulOS.Integrations.Display.Video;
 using Microsoft.Extensions.Logging;
 
@@ -39,6 +40,12 @@ public sealed record ScreenFileChunk(uint Batch, int Index, byte Flags, byte[] D
 /// <summary>Wie ein Senden vom Browser ausgegangen ist.</summary>
 public sealed record ScreenTransferResult(uint Id, byte Code, string Message) : ScreenEvent;
 
+/// <summary>Ein Rechteck des Bildschirms verlustfrei (PNG mit Palette); der Browser legt es ueber das Video (siehe <see cref="TileRefiner"/>).</summary>
+public sealed record ScreenRefine(int X, int Y, int Width, int Height, byte[] Png) : ScreenEvent;
+
+/// <summary>Diese Rechtecke (x, y, breite, hoehe, nacheinander) sind nicht mehr nachgebessert: der Browser nimmt die Ueberlagerung dort weg.</summary>
+public sealed record ScreenRefineClear(int[] Rects) : ScreenEvent;
+
 public enum CursorKind { Shape, Hidden, Default }
 
 /// <summary>Die Form des Mauszeigers des fernen Rechners (RGBA, R zuerst, gerade Alpha, von oben nach unten).</summary>
@@ -58,6 +65,13 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     private const int FramesPerSecond = 30;
     private const int SharpenGapMs = 30;
     private const int IdleWaitMs = 250;
+
+    // Verlustfreie Nachbesserung ruhender Teile (JULOS_STREAM_REFINE=off schaltet sie ab, zum Vergleichen): hoechstens dieser Teil der Bitrate,
+    // und nur, solange der Browser mit den Bildern nachkommt.
+    private const double RefineShare = 0.25;
+    private const int RefineTilesPerPass = 48;
+    private static readonly bool PacerAllowed = !string.Equals(Environment.GetEnvironmentVariable("JULOS_STREAM_PACER"), "off", StringComparison.OrdinalIgnoreCase);
+    private static readonly bool RefineAllowed = !string.Equals(Environment.GetEnvironmentVariable("JULOS_STREAM_REFINE"), "off", StringComparison.OrdinalIgnoreCase);
 
     // Kommt bei vollem Fenster unbestaetigter Bilder so lange keine Bestaetigung, gilt das Fenster als verloren (der Browser dekodiert
     // normalerweise in wenigen Millisekunden): zuruecksetzen und ein Schluesselbild senden, statt fuer immer zu warten.
@@ -81,6 +95,9 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     private IVideoEncoder? _encoder;
     private IEncoderBackend? _encoderBackend;
     private I420Frame? _frame;
+    private volatile TileRefiner? _refiner;
+    private double _refineCredit;
+    private long _refineAt;
 
     // Was der Browser dekodieren kann (unter _gate); eine Aenderung baut den Kodierer neu auf (zum Beispiel zurueck auf H.264).
     private VideoCodecs _clientCodecs;
@@ -94,6 +111,9 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     private (int Width, int Height)? _pendingSize;
 
     private readonly PictureWindow _window = new(MaxPicturesInFlight);
+    private readonly LinkPacer _pacer;
+    private readonly Lock _pacerGate = new();
+    private int _kilobits;
     private long _lastAckAt, _lastSentAt, _lastUpdateAt;
     private int _sequence;
     private int _disposed;
@@ -103,10 +123,15 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     private bool _settled = true;
     private long _lastAskedAt, _resizedAt;
 
-    public ScreenStream(RdpOptions options, int maxKilobitsPerSecond = 16_000, ILogger? log = null, EncoderSelector? encoders = null, VideoCodecs clientCodecs = VideoCodecs.H264)
+    private readonly CertificateTrust? _trust;
+
+    public ScreenStream(RdpOptions options, int maxKilobitsPerSecond = 16_000, ILogger? log = null, EncoderSelector? encoders = null, VideoCodecs clientCodecs = VideoCodecs.H264, CertificateTrust? trust = null)
     {
+        _trust = trust;
         _options = options;
         _maxKilobitsPerSecond = maxKilobitsPerSecond;
+        _kilobits = maxKilobitsPerSecond;
+        _pacer = new LinkPacer(maxKilobitsPerSecond);
         _log = log;
         _selector = encoders ?? DefaultSelector;
         _clientCodecs = clientCodecs == VideoCodecs.None ? VideoCodecs.H264 : clientCodecs;
@@ -159,6 +184,13 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         try
         {
             await rdp.ConnectAsync(linked.Token).ConfigureAwait(false);
+
+            // Angemeldet: ein neues oder bestaetigtes Zertifikat wird jetzt gemerkt (nicht schon bei einem Versuch mit falschem Passwort)
+            if (_trust is not null && await _trust.CommitAsync(linked.Token).ConfigureAwait(false))
+            {
+                _log?.LogInformation("RDP-Zertifikat {Decision}", _trust.Decision == CertificateDecision.FirstUse ? "gemerkt" : "ersetzt (vom Benutzer bestätigt)");
+            }
+
             SetPendingSize(rdp.Width, rdp.Height);
 
             var read = rdp.RunAsync(linked.Token);
@@ -217,6 +249,10 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         if (sequence is { } value)
         {
             _window.Acknowledge(value);
+            lock (_pacerGate)
+            {
+                _pacer.Acknowledged(value, Environment.TickCount64);
+            }
         }
         else
         {
@@ -259,6 +295,15 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         }
     }
 
+    /// <summary>Das Senden eines Bildes an den WebSocket hat so lange gedauert: ein voller Sendepuffer bremst (siehe <see cref="LinkPacer"/>).</summary>
+    public void SocketSent(long elapsedMilliseconds)
+    {
+        lock (_pacerGate)
+        {
+            _pacer.SocketSent(elapsedMilliseconds, Environment.TickCount64);
+        }
+    }
+
     /// <summary>
     /// Was der Browser dekodieren kann (er meldet es beim Verbinden und noch einmal, wenn ein Dekodierer nicht ging, dann ohne H.265).
     /// Passt der laufende Kodierer nicht mehr, kommt der naechste mit einem Schluesselbild.
@@ -295,7 +340,9 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
     void IRdpHandler.Updated(int x, int y, int width, int height)
     {
-        Volatile.Write(ref _lastUpdateAt, Environment.TickCount64);
+        var tick = Environment.TickCount64;
+        Volatile.Write(ref _lastUpdateAt, tick);
+        _refiner?.Mark(x, y, width, height, tick);
         lock (_gate)
         {
             if (_dirty)
@@ -380,9 +427,25 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
                     _log?.LogWarning("Keine Bestaetigung seit {Quiet} ms bei {InFlight} offenen Bildern (letztes Bild vor {Sent} ms, letzte Aenderung vor {Update} ms): Fenster zurueckgesetzt, Schluesselbild folgt",
                         quietFor, inFlight, tick - Volatile.Read(ref _lastSentAt), tick - Volatile.Read(ref _lastUpdateAt));
                     _window.Reset();
+                    lock (_pacerGate)
+                    {
+                        _pacer.Reset(Volatile.Read(ref _sequence));
+                    }
+
                     needKey = true;
                 }
             }
+
+            if (_window.Full && !Volatile.Read(ref _paused) && (needKey || PeekDirty(out _, out _, out _, out _, out _) || (encodedAny && encoder is { IsSharp: false })))
+            {
+                // Es gaebe etwas zu senden, aber das Fenster ist voll: der Engpass ist die Leitung oder der Browser
+                lock (_pacerGate)
+                {
+                    _pacer.Blocked(Environment.TickCount64);
+                }
+            }
+
+            AdaptToLink();
             if (encoder is not null && frame is not null && !Volatile.Read(ref _paused) && !_window.Full)
             {
                 var now = Environment.TickCount64;
@@ -400,6 +463,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
                         if (Convert(frame, left, top, width, height))
                         {
                             ClearDirty();
+                            ClearRefinements();
                             encodedAny |= Send(encoder, frame, needKey);
                             needKey = false;
                             lastEncodedAt = Environment.TickCount64;
@@ -440,6 +504,11 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
                 }
             }
 
+            if (wait > 0 && RefineAllowed)
+            {
+                wait = Math.Min(wait, RefineStep());
+            }
+
             if (wait > 0)
             {
                 try { await _wake.WaitAsync(wait, cancellationToken).ConfigureAwait(false); }
@@ -469,6 +538,138 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         }
 
         return true;
+    }
+
+    // Langsame Leitung: Bitrate und Fenster folgen dem, was die Messung (LinkPacer) sagt.
+    private void AdaptToLink()
+    {
+        if (!PacerAllowed)
+        {
+            return;
+        }
+
+        int kilobits, window;
+        lock (_pacerGate)
+        {
+            if (!_pacer.Update(Environment.TickCount64))
+            {
+                return;
+            }
+
+            (kilobits, window) = (_pacer.Kilobits, _pacer.Window);
+        }
+
+        if (kilobits != _kilobits)
+        {
+            _log?.LogDebug("Leitung: Bitrate {From} -> {To} kbit/s, Fenster {Window}", _kilobits, kilobits, window);
+            _kilobits = kilobits;
+            _encoder?.TrySetBitrate(kilobits);
+        }
+
+        _window.Max = window;
+    }
+
+    // Kacheln, die der Browser nachgebessert hat und die sich wieder geaendert haben, werden dort gestrichen, bevor das Bild mit der Aenderung
+    // hinausgeht (sonst bliebe das alte Bild darueber stehen).
+    private void ClearRefinements()
+    {
+        var invalid = _refiner?.TakeInvalidations();
+        if (invalid is not { Count: > 0 })
+        {
+            return;
+        }
+
+        var rects = new int[invalid.Count * 4];
+        for (var i = 0; i < invalid.Count; i++)
+        {
+            rects[i * 4] = invalid[i].X;
+            rects[i * 4 + 1] = invalid[i].Y;
+            rects[i * 4 + 2] = invalid[i].Width;
+            rects[i * 4 + 3] = invalid[i].Height;
+        }
+
+        _events.Writer.TryWrite(new ScreenRefineClear(rects));
+    }
+
+    // Schickt, was lange genug still war, verlustfrei hinterher. Gibt zurueck, in wie vielen Millisekunden es weitergeht (int.MaxValue: nichts wartet).
+    private int RefineStep()
+    {
+        var refiner = _refiner;
+        var rdp = _rdp;
+        if (refiner is null || rdp is null || refiner.DirtyTiles == 0)
+        {
+            return int.MaxValue;
+        }
+
+        var now = Environment.TickCount64;
+        var perSecond = _kilobits * 125.0 * RefineShare;
+        _refineCredit = Math.Min(perSecond, _refineCredit + perSecond * Math.Clamp(now - _refineAt, 0, 1000) / 1000.0);
+        _refineAt = now;
+        if (Volatile.Read(ref _paused) || _window.InFlight > 1)
+        {
+            return 100;
+        }
+
+        if (_refineCredit <= 0)
+        {
+            return 50;
+        }
+
+        foreach (var run in refiner.TakeQuiet(now, RefineTilesPerPass))
+        {
+            var pixels = new byte[run.Width * run.Height * 4];
+            lock (rdp.FrameLock)
+            {
+                if ((rdp.Width & ~1) != refiner.Width || (rdp.Height & ~1) != refiner.Height)
+                {
+                    return 50;
+                }
+
+                CopyPixels(rdp.Framebuffer, rdp.Width * 4, run, pixels);
+            }
+
+            EmitRefinement(refiner, run, pixels);
+        }
+
+        return refiner.NextDue() is { } due ? (int)Math.Max(1, due - Environment.TickCount64) : int.MaxValue;
+    }
+
+    private static void CopyPixels(byte[] framebuffer, int stride, TileRect rect, byte[] target)
+    {
+        for (var y = 0; y < rect.Height; y++)
+        {
+            framebuffer.AsSpan((rect.Y + y) * stride + rect.X * 4, rect.Width * 4).CopyTo(target.AsSpan(y * rect.Width * 4));
+        }
+    }
+
+    // Ein Rechteck als PNG; hat es zu viele Farben (Foto, Video), wird es in Kacheln geteilt, und was dann noch zu bunt ist, bleibt dem Video.
+    private void EmitRefinement(TileRefiner refiner, TileRect rect, byte[] pixels)
+    {
+        var png = TilePng.Encode(pixels, rect.Width, rect.Height);
+        if (png is not null)
+        {
+            _refineCredit -= png.Length;
+            _events.Writer.TryWrite(new ScreenRefine(rect.X, rect.Y, rect.Width, rect.Height, png));
+            return;
+        }
+
+        if (rect.Width <= TileRefiner.Tile)
+        {
+            refiner.Forget(rect);
+            return;
+        }
+
+        var leftWidth = (rect.Width / TileRefiner.Tile + 1) / 2 * TileRefiner.Tile;
+        foreach (var part in new[] { new TileRect(rect.X, rect.Y, leftWidth, rect.Height), new TileRect(rect.X + leftWidth, rect.Y, rect.Width - leftWidth, rect.Height) })
+        {
+            var sub = new byte[part.Width * part.Height * 4];
+            for (var y = 0; y < part.Height; y++)
+            {
+                pixels.AsSpan((y * rect.Width + part.X - rect.X) * 4, part.Width * 4).CopyTo(sub.AsSpan(y * part.Width * 4));
+            }
+
+            EmitRefinement(refiner, part, sub);
+        }
     }
 
     private bool Send(IVideoEncoder encoder, I420Frame frame, bool forceKey)
@@ -501,7 +702,13 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
         var sequence = Interlocked.Increment(ref _sequence);
         _window.Sent(sequence);
-        Volatile.Write(ref _lastSentAt, Environment.TickCount64);
+        var tick = Environment.TickCount64;
+        lock (_pacerGate)
+        {
+            _pacer.Sent(sequence, data.Length, tick);
+        }
+
+        Volatile.Write(ref _lastSentAt, tick);
         _events.Writer.TryWrite(new ScreenPicture(sequence, isKey, data.ToArray(), encoder.Codec));
         return true;
     }
@@ -524,6 +731,9 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         _frame = new I420Frame(evenWidth, evenHeight);
         MakeEncoder(evenWidth, evenHeight);
         _frame.MarkChanged();
+        var refiner = new TileRefiner(evenWidth, evenHeight);
+        refiner.Mark(0, 0, evenWidth, evenHeight, Environment.TickCount64);
+        _refiner = refiner;
         lock (_gate)
         {
             _dirty = true;
@@ -564,7 +774,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
     private void MakeEncoder(int width, int height)
     {
-        var choice = _selector.Choose(new EncoderRequest(width, height, FramesPerSecond, _maxKilobitsPerSecond, ClientCodecs), _noHardware);
+        var choice = _selector.Choose(new EncoderRequest(width, height, FramesPerSecond, _kilobits, ClientCodecs), _noHardware);
         _encoder = choice.Encoder;
         _encoderBackend = choice.Backend;
         foreach (var line in choice.Skipped)

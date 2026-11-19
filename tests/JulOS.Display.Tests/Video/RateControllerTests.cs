@@ -228,4 +228,27 @@ public sealed class RateControllerTests
             return Sizes[^1].Size;
         }
     }
+
+    [Fact]
+    public void A_lower_bit_rate_set_later_makes_the_same_pictures_coarser()
+    {
+        static int FinalLevel(int setTo)
+        {
+            var rate = new RateController(1280, 720, 30, 16_000, 22);
+            rate.Choose(PictureKind.Key, 1, 0);
+            rate.Encoded(900_000);
+            rate.SetBitrate(setTo);
+            var level = 0;
+            for (var i = 1; i <= 90; i++)
+            {
+                level = rate.Choose(PictureKind.Changed, 0.5, i * 33L).Quantiser;
+                rate.Encoded(60_000);          // 1,8 Mbit/s, wenn alle 33 ms ein solches Bild kommt
+            }
+
+            return level;
+        }
+
+        Assert.Equal(22, FinalLevel(16_000));
+        Assert.True(FinalLevel(1_000) > 22, "bei 1 Mbit/s muessen 1,8 Mbit/s Bilder groeber werden");
+    }
 }

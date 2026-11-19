@@ -307,6 +307,8 @@ public sealed partial class RdpClient : IAsyncDisposable
                 return new RdpException("The host name could not be resolved.", false, exception);
             case SocketException:
                 return new RdpException("The RDP server could not be reached.", false, exception);
+            case AuthenticationException when _certificateDeclined:
+                return new RdpException("The RDP server's certificate is not the one that was trusted.", false, exception) { CertificateFingerprint = _presentedFingerprint };
             case AuthenticationException:
                 return new RdpException(
                     _certificateRefused

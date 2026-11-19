@@ -14,6 +14,9 @@ public sealed class RdpException : Exception
     }
 
     public bool IsLogonFailure { get; }
+
+    // Set when the connection was stopped because the server's certificate is not the one that was trusted (the fingerprint it showed).
+    public string? CertificateFingerprint { get; init; }
 }
 
 // The server's bytes do not hold what the protocol says they hold. Never shown as it is: the session turns

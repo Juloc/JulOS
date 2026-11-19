@@ -105,12 +105,12 @@ internal sealed class RateController
         (16, 1.25), (22, 1.0), (28, 0.78), (34, 0.61), (40, 0.42), (46, 0.19), (52, 0.10), (58, 0.05), (64, 0.025), (70, 0.012),
     ];
 
-    private readonly double _bitsPerMillisecond;
-    private readonly double _capacity;
+    private double _bitsPerMillisecond;
+    private double _capacity;
 
     // The caller's own pace, and what flows in between two pictures at it.
     private readonly double _paceMilliseconds;
-    private readonly double _paceInflow;
+    private double _paceInflow;
     private readonly int _floor;
     private double _bucket;
     private long _last = long.MinValue;
@@ -163,6 +163,16 @@ internal sealed class RateController
         _keyBits = (double)width * height;
         _changeBits = _keyBits / 8;
         _scratchBits = _keyBits;
+    }
+
+    // The connection turned out slower (or faster) than the bit rate this was made for: from now on the bucket fills with
+    // this, and holds half a second of it. What is in it stays, but never more than it holds now.
+    public void SetBitrate(int maxKilobitsPerSecond)
+    {
+        _bitsPerMillisecond = maxKilobitsPerSecond * Margin;
+        _paceInflow = _paceMilliseconds * _bitsPerMillisecond;
+        _capacity = maxKilobitsPerSecond * 1000.0 * BucketSeconds;
+        _bucket = Math.Clamp(_bucket, -_capacity, _capacity);
     }
 
     // Whether the viewer's picture is as sharp as it gets: encoding the same picture again changes nothing.

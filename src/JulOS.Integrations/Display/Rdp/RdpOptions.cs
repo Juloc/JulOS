@@ -25,6 +25,11 @@ public sealed class RdpOptions
     // be one this machine trusts and has to carry the host's name.
     public bool IgnoreCertificate { get; init; } = true;
 
+    // Trust on first use: called in the TLS handshake with the certificate's fingerprint ("SHA256:AB:CD:..."), before any credentials are sent.
+    // Returning false ends the handshake (the exception carries the fingerprint, see RdpException.CertificateFingerprint). When set, this
+    // replaces IgnoreCertificate: whether the certificate is signed by anybody does not matter, only whether it is the one that was seen before.
+    public Func<string, bool>? CertificateCheck { get; init; }
+
     public string ClientName { get; init; } = "JulOS";
 
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(10);

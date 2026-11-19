@@ -362,6 +362,41 @@ public sealed class RemoteHttpTests
     }
 
     [Fact]
+    public async Task The_remembered_rdp_certificate_is_never_sent_to_the_browser_and_is_forgotten_when_the_target_changes()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db, "127.0.0.1:1");
+        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (cookie, userId) = await SignedInAsync(app, c, db);
+        var store = new ConnectionStore(db.Data);
+        var connection = await store.CreateAsync(userId, "Desktop", "desktop", "ziel", 3389, "jul", "stream");
+        const string fingerprint = "SHA256:AB:CD:EF:01";
+        await store.SetCertFingerprintAsync(userId, connection.Id, fingerprint);
+        Assert.Equal(fingerprint, (await store.GetAsync(userId, connection.Id))!.CertFingerprint);
+
+        // Weder die Liste noch die Antwort einer Aenderung enthalten den Fingerabdruck oder ein Feld dafuer
+        var list = await c.SendAsync(Send(HttpMethod.Get, "/api/connections", null, cookie));
+        var text = await list.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("ABCDEF", text.Replace(":", ""));
+        Assert.DoesNotContain("cert", text, StringComparison.OrdinalIgnoreCase);
+
+        // Anderer Benutzername: das Zertifikat gehoert zum Ziel, es bleibt; anderes Ziel: weg
+        var rename = await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{connection.Id}", new { name = "Desktop", kind = "desktop", host = "ziel", port = 3389, username = "anderer", engine = "stream" }, cookie));
+        Assert.Equal(HttpStatusCode.OK, rename.StatusCode);
+        Assert.DoesNotContain("cert", (await rename.Content.ReadAsStringAsync()), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(fingerprint, (await store.GetAsync(userId, connection.Id))!.CertFingerprint);
+        var move = await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{connection.Id}", new { name = "Desktop", kind = "desktop", host = "anderes-ziel", port = 3389, username = "anderer", engine = "stream" }, cookie));
+        Assert.Equal(HttpStatusCode.OK, move.StatusCode);
+        Assert.Null((await store.GetAsync(userId, connection.Id))!.CertFingerprint);
+
+        // und nach einem Port-Wechsel ebenfalls
+        await store.SetCertFingerprintAsync(userId, connection.Id, fingerprint);
+        var port = await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{connection.Id}", new { name = "Desktop", kind = "desktop", host = "anderes-ziel", port = 3390, username = "anderer", engine = "stream" }, cookie));
+        Assert.Equal(HttpStatusCode.OK, port.StatusCode);
+        Assert.Null((await store.GetAsync(userId, connection.Id))!.CertFingerprint);
+    }
+
+    [Fact]
     public async Task The_terminal_socket_needs_a_session_a_ticket_and_the_own_origin()
     {
         await using var db = await TestDb.CreateAsync();

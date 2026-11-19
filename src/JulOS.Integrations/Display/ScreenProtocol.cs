@@ -11,7 +11,8 @@ namespace JulOS.Integrations.Display;
 ///   1 Bild       flags(1: Bit0 = Schluesselbild, Bit1 = H.265 statt H.264) folge(4) Annex B ...   (Schluesselbild: mit Parametersaetzen davor, H.265 mit VPS, SPS, PPS; der Browser liest den Codec-Text daraus)
 ///   2 Zeiger     art(1: 0 Form, 1 versteckt, 2 Standard) hotX(2) hotY(2) breite(2) hoehe(2) RGBA ...
 ///   3 Groesse    breite(2) hoehe(2)
-///   4 Fehler     code(2) UTF-8-Text ...            (Codes wie bei Guacamole: 769 Anmeldung abgelehnt, 515 Verbindung misslungen ...)
+///   4 Fehler     code(2) UTF-8-Text ...            (Codes wie bei Guacamole: 769 Anmeldung abgelehnt, 515 Verbindung misslungen ...;
+///                                                    800 Zertifikat geaendert: Text "<Fingerabdruck jetzt>\n<Fingerabdruck bisher>", es wurde nichts gesendet)
 ///   5 Uebernommen
 ///   6 Zwischenablage UTF-8-Text ...          (der ferne Rechner hat Text kopiert; bis ClipboardBridge.MaxTextBytes)
 ///  20 Ton          kanaele(1) rate(4) zeit(4, ms des Servers) PCM ...   (16 Bit, little endian, verschachtelt; nur wenn der Browser den Ton eingeschaltet hat)
@@ -21,6 +22,8 @@ namespace JulOS.Integrations.Display;
 ///   9 Dateistueck    stapel(4) nummer(1) flags(1: Bit0 letztes, Bit1 gescheitert) Bytes ...   (bei Scheitern der Grund als Text)
 ///  10 Ergebnis       nummer(4) code(1: 0 ok, 1 zu gross, 2 nicht erlaubt, 3 keine Zwischenablage in der VM, 4 sonst) Text ...
 ///  30 Kodierer      codec(1: 1 H.264, 2 H.265) flags(1: Bit0 = GPU) Name (UTF-8) ...   (nach jedem Neuaufbau des Kodierers; nur zum Anzeigen)
+///  40 Nachbesserung x(2) y(2) breite(2) hoehe(2) PNG ...   (dieses Rechteck verlustfrei, steht still; der Browser legt es ueber das Video)
+///  41 Nachbesserung weg anzahl(2) dann je Rechteck x(2) y(2) breite(2) hoehe(2)   (dort hat sich der Bildschirm wieder geaendert: Ueberlagerung entfernen)
 /// Browser an Server:
 ///   1 Bestaetigung   folge(4)   (alle Bilder bis zu dieser Folgenummer sind dekodiert oder verworfen; ohne Nummer: ein Bild)
 ///   2 Maus bewegt    x(2) y(2)
@@ -47,7 +50,8 @@ namespace JulOS.Integrations.Display;
 public static class ScreenProtocol
 {
     public const byte ToBrowserPicture = 1, ToBrowserCursor = 2, ToBrowserSize = 3, ToBrowserError = 4, ToBrowserTaken = 5, ToBrowserClipboard = 6,
-        ToBrowserImage = 7, ToBrowserFiles = 8, ToBrowserFileChunk = 9, ToBrowserResult = 10, ToBrowserEncoder = 30;
+        ToBrowserImage = 7, ToBrowserFiles = 8, ToBrowserFileChunk = 9, ToBrowserResult = 10, ToBrowserEncoder = 30,
+        ToBrowserRefine = 40, ToBrowserRefineClear = 41;
     public const byte FromBrowserAck = 1, FromBrowserMove = 2, FromBrowserButton = 3, FromBrowserWheel = 4, FromBrowserKey = 5,
         FromBrowserUnicode = 6, FromBrowserResize = 7, FromBrowserKeyFrame = 8, FromBrowserClipboard = 9,
         FromBrowserSendBegin = 10, FromBrowserSendChunk = 11, FromBrowserSendEnd = 12, FromBrowserSendCancel = 13,
@@ -97,6 +101,39 @@ public static class ScreenProtocol
         return length;
     }
 
+    public const int RefineHeader = 9;
+    public const int MaxClearRects = 4000;
+
+    public static int WriteRefine(Span<byte> target, ScreenRefine refine)
+    {
+        target[0] = ToBrowserRefine;
+        BinaryPrimitives.WriteUInt16BigEndian(target[1..], (ushort)refine.X);
+        BinaryPrimitives.WriteUInt16BigEndian(target[3..], (ushort)refine.Y);
+        BinaryPrimitives.WriteUInt16BigEndian(target[5..], (ushort)refine.Width);
+        BinaryPrimitives.WriteUInt16BigEndian(target[7..], (ushort)refine.Height);
+        refine.Png.CopyTo(target[RefineHeader..]);
+        return RefineHeader + refine.Png.Length;
+    }
+
+    public static int WriteRefineClear(Span<byte> target, int[] rects)
+    {
+        // Mehr als MaxClearRects Rechtecke gibt es nur bei riesigen Bildschirmen: dann wird alles gestrichen (besser zu viel als stehengebliebenes Altes)
+        if (rects.Length / 4 > MaxClearRects)
+        {
+            rects = [0, 0, 65535, 65535];
+        }
+
+        var count = rects.Length / 4;
+        target[0] = ToBrowserRefineClear;
+        BinaryPrimitives.WriteUInt16BigEndian(target[1..], (ushort)count);
+        for (var i = 0; i < count * 4; i++)
+        {
+            BinaryPrimitives.WriteUInt16BigEndian(target[(3 + i * 2)..], (ushort)rects[i]);
+        }
+
+        return 3 + count * 8;
+    }
+
     public static int WriteSize(Span<byte> target, int width, int height)
     {
         target[0] = ToBrowserSize;
@@ -114,6 +151,10 @@ public static class ScreenProtocol
         text.CopyTo(result, 3);
         return result;
     }
+
+    public const int ErrorCertificateChanged = 800;
+
+    public static byte[] CertificateChanged(string presented, string? stored) => Error(ErrorCertificateChanged, presented + "\n" + (stored ?? ""));
 
     public static byte[] Clipboard(string text)
     {

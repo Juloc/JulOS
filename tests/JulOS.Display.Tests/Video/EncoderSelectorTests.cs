@@ -226,6 +226,6 @@ public sealed class EncoderSelectorTests
         Assert.True(key);
         Assert.Equal(7, data.Span[4] & 0x1F);
         Assert.StartsWith("avc1.", CodecStrings.FromStream(data.Span, VideoCodec.H264));
-        Assert.False(encoder.TrySetBitrate(1000));
+        Assert.True(encoder.TrySetBitrate(1000));      // der Ratenregler folgt der Bitrate zur Laufzeit (LinkPacer)
     }
 }

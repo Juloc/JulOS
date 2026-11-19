@@ -78,6 +78,11 @@ internal static class ConnectionEndpoints
             {
                 await store.SetHostKeyAsync(id.UserId, connection, null, ctx.RequestAborted);
             }
+            // Dasselbe fuer das Zertifikat des RDP-Ziels
+            if (before.CertFingerprint is not null && (before.Kind != v.Kind || before.Host != v.Host || before.Port != v.Port))
+            {
+                await store.SetCertFingerprintAsync(id.UserId, connection, null, ctx.RequestAborted);
+            }
             return Results.Json(ToDto(c), AppJson.Default.ConnectionDto);
         });
 

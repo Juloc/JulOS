@@ -23,6 +23,15 @@ public sealed class SettingsTests
     }
 
     [Fact]
+    public void The_language_setting_accepts_only_de_en_system()
+    {
+        foreach (var good in new[] { "de", "en", "system" })
+            Assert.Equal($$"""{"lang":"{{good}}"}""", SettingsRules.Validate("lang", J($$"""{"lang":"{{good}}","evil":"x"}""")).Json);
+        foreach (var bad in new[] { """{"lang":"fr"}""", """{"lang":""}""", """{"lang":"EN"}""", "{}", "[1]", "\"en\"" })
+            Assert.NotNull(SettingsRules.Validate("lang", J(bad)).Error);
+    }
+
+    [Fact]
     public void The_keybar_setting_keeps_only_known_fields_and_limits_sizes()
     {
         var good = """{"rows":[{"id":"keys","title":"Tasten","icon":"keyboard","extra":1,"items":[{"label":"Esc","type":"chord","value":"esc","scope":"both"},{"label":"Strg+C","type":"chord","value":"ctrl+c","scope":"terminal","x":1}]},{"id":"bar","title":"Leiste","fixed":true,"items":[]}]}""";

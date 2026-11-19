@@ -234,3 +234,97 @@ test('7 Sprache: auf Englisch umschalten, Überschrift und Kachel sind englisch,
   expect(errors).toEqual([]);
   await context.close();
 });
+
+const PROG_CLAUDE = { name: 'E2E Claude', kind: 'terminal', host: SSH.host, port: Number(SSH.port), username: SSH.user, program: 'claude', workDir: '/tmp' };
+const PROG_CODEX = { name: 'E2E Codex', kind: 'terminal', host: SSH.host, port: Number(SSH.port), username: SSH.user, program: 'codex' };
+
+test('8 Programm-Sitzungen: Claude startet im Arbeitsverzeichnis, die Eingabeleiste sendet, Codex zeigt den Hinweis (nicht installiert)', async ({ browser }) => {
+  const { context, page, errors } = await signedIn(browser);
+  await context.addInitScript(() => localStorage.setItem('pd.termGl', 'false'));   // Text im DOM statt auf der WebGL-Fläche
+  for (const c of [PROG_CLAUDE, PROG_CODEX]) {
+    const made = await page.request.post('/api/connections', { headers: API, data: c });
+    expect(made.status(), c.name).toBe(200);
+    expect((await made.json()).program).toBe(c.program);
+  }
+  // ungültiges Arbeitsverzeichnis: der Server lehnt es mit Meldung ab
+  const bad = await page.request.post('/api/connections', { headers: API, data: { ...PROG_CLAUDE, name: 'E2E Böse', workDir: '/tmp; id' } });
+  expect(bad.status()).toBe(400);
+
+  await page.goto('/?desktop');
+  await expect(tile(page, PROG_CLAUDE.name)).toBeVisible();
+  await expect(tile(page, PROG_CLAUDE.name)).toContainText('Claude Code');            // eigene Kachel mit Namen des Programms
+  await expect(page.locator('#desktop [data-act="claude"]').first()).toBeVisible();   // Ein-Tipp-Start in den Schnellaktionen
+
+  // Claude: Start im Arbeitsverzeichnis (die Attrappe meldet es), danach ihre Eingabeaufforderung
+  await connect(page, PROG_CLAUDE.name, SSH.password);
+  const rows = page.locator('.sv-terminal .xterm-rows');
+  await expect(rows).toContainText('fake-claude-start cwd=/tmp', { timeout: 30_000 });
+  await expect(rows).toContainText('claude>');
+  await expect(page.locator('.term-bar')).toBeVisible();                                // bei Programmen ist die Eingabeleiste offen
+  for (const key of ['esc', 'shiftTab', 'tab', 'ctrlC', 'ctrlD', 'up', 'down', 'left', 'right', 'pgUp', 'pgDn']) await expect(page.locator(`.term-key[data-key="${key}"]`), key).toBeVisible();
+
+  // Eingabeleiste: Enter sendet, Umschalt+Enter ist eine neue Zeile, der Knopf sendet mehrzeilig, das Feld ist danach leer
+  const input = page.locator('.term-input');
+  await input.click();
+  await page.keyboard.type('hallo welt');
+  await page.keyboard.press('Enter');
+  await expect(rows).toContainText('echo: hallo welt');
+  await expect(input).toHaveValue('');
+  await page.keyboard.type('zeile eins');
+  await page.keyboard.press('Shift+Enter');
+  await page.keyboard.type('zeile zwei');
+  await expect(input).toHaveValue('zeile eins\nzeile zwei');
+  await page.locator('.term-send').click();
+  await expect(rows).toContainText('echo: zeile eins');
+  await expect(rows).toContainText('echo: zeile zwei');
+  await expect(input).toHaveValue('');
+
+  // Schnelltaste: Strg+D beendet das Programm, die Sitzung meldet das Ende (und es gibt kein stilles Neuverbinden)
+  await page.locator('.term-key[data-key="ctrlD"]').click();
+  await expect(rows).toContainText('fake-claude-ende');
+  await expect(page.locator('.sv-overlay')).toBeVisible();
+
+  // Codex: nicht installiert -> verständlicher Hinweis, es läuft eine normale Shell
+  await page.goto('/?desktop');
+  await connect(page, PROG_CODEX.name, SSH.password);
+  const rows2 = page.locator('.sv-terminal .xterm-rows');
+  await expect(rows2).toContainText('codex ist auf diesem Rechner nicht installiert oder nicht im PATH', { timeout: 30_000 });
+  await expect(page.locator('.term-banner')).toContainText('codex ist auf diesem Rechner nicht installiert');
+  await expect(rows2).toContainText(/[$#] *$/m, { timeout: 30_000 });
+  await page.keyboard.type('echo shell-$((6*7))');
+  await page.keyboard.press('Enter');
+  await expect(rows2).toContainText('shell-42');
+  expect(errors).toEqual([]);
+  await context.close();
+});
+
+test('9 Programm-Kacheln am Handy: Symbol und Schnellstart "Claude" in den Diensten', async ({ browser }) => {
+  const { context, page, errors } = await signedIn(browser, PHONE);
+  await page.goto('/?phone');
+  await expect(page.locator('#mobile')).toBeVisible();
+  await page.locator('#mobile').getByText('Dienste', { exact: true }).last().click();
+  const claudeTile = page.locator('#mobile [data-conn]').filter({ hasText: PROG_CLAUDE.name }).first();
+  await expect(claudeTile).toBeVisible();
+  await expect(claudeTile).toHaveClass(/k-claude/);
+  await expect(page.locator('#mobile [data-conn]').filter({ hasText: PROG_CODEX.name }).first()).toHaveClass(/k-codex/);
+  await page.locator('#mobile [data-act="prog"][data-prog="claude"]').click();          // genau eine Kachel: öffnet sie (Passwortdialog)
+  await expect(page.locator('#startDlg')).toBeVisible();
+  expect(errors).toEqual([]);
+  await context.close();
+});
+
+test('10 Programm-Sitzung mit tmux: ohne tmux auf dem Ziel läuft eine normale Sitzung mit sichtbarem Hinweis', async ({ browser }) => {
+  const { context, page, errors } = await signedIn(browser);
+  await context.addInitScript(() => localStorage.setItem('pd.termGl', 'false'));
+  const made = await page.request.post('/api/connections', { headers: API, data: { ...PROG_CLAUDE, name: 'E2E Claude tmux', keepAlive: true } });
+  expect(made.status()).toBe(200);
+  expect((await made.json()).keepAlive).toBe(true);
+  await page.goto('/?desktop');
+  await connect(page, 'E2E Claude tmux', SSH.password);
+  const rows = page.locator('.sv-terminal .xterm-rows');
+  await expect(rows).toContainText('tmux ist auf diesem Rechner nicht installiert', { timeout: 30_000 });
+  await expect(rows).toContainText('fake-claude-start cwd=/tmp');                      // Claude läuft trotzdem, nur ohne tmux
+  await expect(rows).toContainText('claude>');
+  expect(errors).toEqual([]);
+  await context.close();
+});

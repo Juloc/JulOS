@@ -28,7 +28,7 @@ Jede Sitzungsart ist eine Klasse, die `Session` erweitert (ein `EventTarget`).
 ```js
 class Session extends EventTarget {
   id           // string, sid (siehe oben)
-  conn         // { id, name, kind: 'desktop'|'terminal', stored, target } (target = "host:port/user", fuer Schwestersitzungen)
+  conn         // { id, name, kind: 'desktop'|'terminal', stored, target, program, workDir } (target = "host:port/user", fuer Schwestersitzungen; program: 'shell'|'claude'|'codex'|'custom', siehe CLI-SESSIONS.md)
   kind         // 'desktop' | 'terminal'
   title        // Anzeigename ("Server" oder "Server 2" bei der zweiten Sitzung zum selben Ziel)
   state        // 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'error' | 'taken'
@@ -128,7 +128,7 @@ Desktop bleiben, sofort ein Schlüsselbild. Die Überlagerung zeigt „Verbindun
   wartet (5 s weniger als der Server); das `online`-Ereignis löst sofort einen aus.
 - **Sicherheit:** das Token gehört einem Benutzer und gilt nur, solange die Sitzung wartet; es steht in der Adresse des WebSockets (wie das Ticket)
   und nirgends sonst. Der WebSocket braucht weiterhin die App-Sitzung und denselben Ursprung. Ein wartender Desktop läuft weiter: wer ihn
-  nicht fünf Minuten offen lassen will, stellt die Zeit kleiner. SSH hat diesen Erhalt nicht.
+  nicht fünf Minuten offen lassen will, stellt die Zeit kleiner. SSH hat diesen Erhalt nicht; die Arbeit bleibt dort nur mit tmux auf dem Ziel erhalten, und der Browser hängt eine tmux-Sitzung nach einem Abriss nach denselben Fristen von `resume.js` wieder an (Programm-Sitzungen, [CLI-SESSIONS.md](CLI-SESSIONS.md)).
 
 ## Anmeldung in der Sitzung (Stream-Engine)
 

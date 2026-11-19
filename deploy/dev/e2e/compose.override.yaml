@@ -4,7 +4,11 @@
 services:
   postgres: { ports: !reset [] }
   julos: { ports: !reset [] }
-  test-ssh: { ports: !reset [] }
+  # Das SSH-Ziel bekommt eine Attrappe fuer "claude" (Programm-Sitzungen, docs/CLI-SESSIONS.md); "codex" gibt es dort bewusst nicht (Test des Hinweises)
+  test-ssh:
+    ports: !reset []
+    volumes:
+      - ./e2e/fake-programs/claude:/usr/local/bin/claude:ro
 
   e2e:
     profiles: [e2e]

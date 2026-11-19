@@ -24,5 +24,7 @@ internal sealed record UploadResponse(bool Ok);
 internal sealed record ConnectionDto(Guid Id, string Name, string Kind, string Host, int Port, string Username, bool HasPassword, Guid HostId, bool DriveShare = false, bool DriveWrite = false, string Domain = "", string Notes = "", string Layout = "de");
 internal sealed record ConnectionsResponse(ConnectionDto[] Connections, bool CanStorePasswords, bool DriveAvailable = false);
 internal sealed record ConnectionRequest(string? Name, string? Kind, string? Host, int? Port, string? Username, string? Password = null, bool? ForgetPassword = null, bool? DriveShare = null, bool? DriveWrite = null, Guid? HostId = null, string? Domain = null, string? Notes = null, string? Layout = null);
-internal sealed record TicketRequest(Guid? Connection, string? Password, int? Width, int? Height, string? Sid = null, int? Cols = null, int? Rows = null, string? AcceptHostKey = null, string? AcceptCert = null);
+internal sealed record TicketRequest(Guid? Connection, string? Password, int? Width, int? Height, string? Sid = null, int? Cols = null, int? Rows = null, string? AcceptHostKey = null, string? AcceptCert = null, QuickTarget? Quick = null);
+/// <summary>Quick Connect: Ziel einer Sitzung ohne gespeicherte Verbindung (das Passwort steht im Ticket selbst und wird nirgends abgelegt).</summary>
+internal sealed record QuickTarget(string? Kind, string? Host, int? Port, string? Username);
 internal sealed record TicketResponse(string Ticket, string Kind, int Width, int Height, string Engine = "stream", string? Drive = null, string? Layout = null);

@@ -177,6 +177,9 @@
         <label id="connHostRow">Host
           <select id="connHostSel"></select>
         </label>
+        <label id="connFolderRow">Ordner
+          <select id="connFolderSel"></select>
+        </label>
         <div id="connDriveRow" hidden>
           <label class="check"><input id="connDrive" type="checkbox"> Ordner des Servers als Laufwerk freigeben</label>
           <label id="connDriveWriteRow" class="check" hidden><input id="connDriveWrite" type="checkbox"> Schreiben erlauben</label>
@@ -204,8 +207,26 @@
         <p id="connMsg" class="msg" role="alert"></p>
         <div class="row">
           <button id="connSave" type="submit" class="primary">Speichern</button>
+          <button id="connUp" type="button" class="ghost" aria-label="In der Liste nach oben" title="In der Liste nach oben" hidden>▲</button>
+          <button id="connDown" type="button" class="ghost" aria-label="In der Liste nach unten" title="In der Liste nach unten" hidden>▼</button>
           <button id="connDelete" type="button" class="danger" hidden>Löschen</button>
           <button class="ghost close" data-act="close" type="button">Abbrechen</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Ordner fuer Verbindungen verwalten (docs/FOLDERS.md) -->
+    <dialog id="folderDlg">
+      <h2>Ordner</h2>
+      <div id="folderList" class="folderlist"></div>
+      <form id="folderForm" method="dialog" autocomplete="off">
+        <label>Name <input id="folderName" type="text" maxlength="40" autocomplete="off" required></label>
+        <div id="folderIcons" class="foldericons" role="radiogroup" aria-label="Symbol"></div>
+        <p id="folderMsg" class="msg" role="alert"></p>
+        <div class="row">
+          <button id="folderSave" type="submit" class="primary">Anlegen</button>
+          <button id="folderNew" type="button" class="ghost" hidden>Neu</button>
+          <button class="ghost close" data-act="close" type="button">Schließen</button>
         </div>
       </form>
     </dialog>
@@ -256,6 +277,25 @@
         <label>Passwort <input id="startPw" name="password" type="password" autocomplete="current-password" required></label>
         <div class="row">
           <button id="startGo" type="submit" class="primary">Verbinden</button>
+          <button class="ghost close" data-act="close" type="button">Abbrechen</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Quick Connect: Sitzung ohne Speichern -->
+    <dialog id="quickDlg">
+      <form id="quickForm" method="dialog" autocomplete="off">
+        <h2>Quick Connect</h2>
+        <p class="hint">Eine einzelne Sitzung, ohne Speichern: Adresse und Passwort bleiben nirgends hängen, auch nicht auf dem Server.</p>
+        <label>Art
+          <select id="quickKind"><option value="desktop">Desktop (RDP)</option><option value="terminal">Terminal (SSH)</option></select>
+        </label>
+        <label>Adresse <input id="quickHost" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Name oder IP-Adresse, auch benutzer@adresse:port" required></label>
+        <label>Benutzername auf dem Ziel <input id="quickUser" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
+        <label>Passwort <input id="quickPw" type="password" autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false" required></label>
+        <p id="quickMsg" class="msg" role="alert"></p>
+        <div class="row">
+          <button id="quickGo" type="submit" class="primary">Verbinden</button>
           <button class="ghost close" data-act="close" type="button">Abbrechen</button>
         </div>
       </form>
@@ -371,6 +411,9 @@
           <option value="text">Text eintippen</option>
           <option value="action">Aktion (zum Beispiel zoomin, keyboard)</option>
         </select>
+      </label>
+      <label>Gilt für
+        <select id="keyScope"><option value="both">Desktop und Terminal</option><option value="desktop">Nur Desktop</option><option value="terminal">Nur Terminal</option></select>
       </label>
       <label id="keyValueWrap"><span id="keyValueLabel">Tasten</span>
         <input id="keyValue" type="text" autocapitalize="off" autocorrect="off" spellcheck="false">

@@ -4,6 +4,14 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Neu
+- Einstellungen auf dem Server statt nur im Gerät: die Tastenleiste (Auswahl, Reihenfolge, neu: je Taste „Gilt für“ Desktop, Terminal oder beide) und die Themenfarbe werden je Benutzer gespeichert (Tabelle `user_settings`, Migration 010, Schlüssel `keybar` und `theme`, vom Server geprüft und neu geschrieben) und gelten auf jedem Gerät. Die lokale Kopie bleibt als Zwischenspeicher und Rückfall (ohne Server gilt sie, offene Änderungen gehen beim nächsten Start hinaus); beim ersten Aufruf geht, was das Gerät schon hat, zum Server. Siehe [docs/FOLDERS.md](docs/FOLDERS.md).
+- Ordner für Verbindungen (Name, eines von zwölf Symbolen, Reihenfolge; höchstens 30 je Benutzer): Handy-Shell (Dienste: Auswahl und Gruppen nach Ordner, Knopf „Ordner“) und Desktop (Ansicht „Dienste“: Auswahl, Gruppierung nach Ordner oder Host, Dialog „Ordner“); im Verbindungsdialog gibt es das Feld „Ordner“ und Knöpfe „nach oben/unten“. Bestehende Verbindungen bleiben ohne Ordner (Migration 010), ein gelöschter Ordner nimmt seine Verbindungen nicht mit.
+- Favoriten und „Zuletzt benutzt“ liegen jetzt auf dem Server und gelten auf jedem Gerät (Stern in der Desktop-Liste, „Als Favorit anheften“ am Handy, Auswahl „Zuletzt benutzt“, Abschnitt auf der Desktop-Startseite). Beim ersten Aufruf nach dem Update nimmt jedes Gerät seine bisherigen lokalen Favoriten, Zähler und Startzeiten einmal mit. Siehe [docs/FOLDERS.md](docs/FOLDERS.md).
+- Quick Connect: eine einzelne Sitzung ohne Speichern (Art Desktop/RDP oder Terminal/SSH, Adresse auch als `benutzer@adresse:port`, Benutzername, Passwort nur für diese Sitzung). Handy-Shell: Knopf „Quick Connect“ bei den Diensten und Vorschlag in der Suche; Desktop: Menü „Fenster“, Schnellaktion und Launcher. Nichts kommt in die Datenbank, das Passwort steht nirgends im Log; es gelten dieselben Regeln und dieselbe Erlaubnisliste (`JULOS_ALLOWED_HOSTS`) wie bei gespeicherten Verbindungen, höchstens 12 Quick-Tickets je Benutzer und Minute. Host-Schlüssel und Zertifikat eines Quick-Ziels werden nur im Speicher gemerkt. Siehe [docs/FOLDERS.md](docs/FOLDERS.md).
+
 ## [0.6.0] - 2026-11-19
 
 ### Neu

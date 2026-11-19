@@ -1,5 +1,7 @@
 import { ico, setTheme } from './app.js';
 import { Sessions } from './sessions.js';
+import { looksLikeAddress } from './quick.js';
+import { favouriteList, recentList, filterByFolder, groupByFolder, folderIconSvg, folderName, setFavorite } from './folders.js';
 import { connectionState, dotClass as hostDot, stateText, serviceState, hostDetail, agentSummary, servicesSummary } from './hosts.js';
 
 /* =====================================================================
@@ -9,7 +11,7 @@ import { connectionState, dotClass as hostDot, stateText, serviceState, hostDeta
  * diese Oberflaeche aus (setShown), beim Verlassen wieder ein.
  *
  * Echte Daten: Name, gespeicherte Verbindungen, Geraete und Sitzungen, Auslastung nur wenn /api/system/overview antwortet.
- * Nur auf diesem Geraet gemerkt (localStorage, "pd.m.*"): Favoriten, Nutzung, letzte Verbindungen (fuer "Aktivitaeten").
+ * Auf dem Server (je Benutzer, siehe docs/FOLDERS.md): Ordner, Favoriten, Nutzung, zuletzt benutzt. Nur auf diesem Geraet gemerkt (localStorage, "pd.m.*"): das Protokoll fuer "Aktivitaeten".
  * Platzhalter (klar beschriftet): die Seiten Server (ohne Auslastungs-API) und Monitoring.
  * ===================================================================== */
 
@@ -68,11 +70,12 @@ let ctx = null, root = null, ready = null;
 let current = 'home', shown = false;
 let user = '';
 let overview = null, overviewOk = null, overviewAt = 0, overviewTimer = 0;   // overviewOk: null = unbekannt, true/false
-const view = { q: '', kind: 'all', host: '', allActs: false };
+const view = { q: '', kind: 'all', host: '', folder: 'all', allActs: false };
 let snackTimer = 0;
 
 const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const conns = () => (ctx ? ctx.state.connections : []);
+const folders = () => (ctx ? ctx.state.folders || [] : []);
 const hosts = () => (ctx ? ctx.state.hosts : []);
 const byId = (id) => conns().find((c) => c.id === id);
 const showPlaceholders = () => ls.get('planned', true);
@@ -178,9 +181,8 @@ export function connectionsChanged() { if (root) renderAll(); }
 /** Neue Zustaende der Hosts (alle 30 s): die Seite neu zeichnen, die sie zeigt */
 export function hostsChanged() { if (root) renderAll(); }
 
-/** Merkt sich (nur auf diesem Geraet), was gestartet wurde: Grundlage fuer Favoriten ("meist genutzt"), "Aktivitaeten" und "Zuletzt geoeffnet". */
+/** Merkt sich (nur auf diesem Geraet), was gestartet wurde, fuer "Aktivitaeten"; Haeufigkeit und letzte Benutzung zaehlt der Server (shell.js). */
 export function started(c) {
-  const use = ls.get('use', {}); use[c.id] = (use[c.id] || 0) + 1; ls.set('use', use);
   const log = ls.get('log', []); log.unshift({ t: Date.now(), id: c.id, name: c.name, kind: c.kind, type: 'start' }); ls.set('log', log.slice(0, 40));
 }
 export function ended(message, reason) {
@@ -271,12 +273,7 @@ function whenLabel(t) {
   const time = dayFmt.format(d);
   return day === 0 ? `Heute, ${time}` : day === 1 ? `Gestern, ${time}` : `${d.toLocaleDateString('de', { day: '2-digit', month: '2-digit' })}., ${time}`;
 }
-function favourites() {
-  const fav = ls.get('fav', []).map(byId).filter(Boolean);
-  const use = ls.get('use', {});
-  const used = conns().filter((c) => !fav.includes(c) && use[c.id] > 0).sort((a, b) => use[b.id] - use[a.id]);
-  return [...fav, ...used].slice(0, 6);
-}
+const favourites = () => favouriteList(conns(), 6);
 const openCount = (c) => Sessions.find(c.id).length;
 const tileHtml = (c, pinned) => `<button type="button" class="mb tile m3-state ${c.kind}${openCount(c) ? ' live' : ''}" data-conn="${c.id}" data-act="start" aria-label="${esc(c.name)} (${esc(c.kind === 'terminal' ? 'Terminal' : 'Desktop')}, ${stateText(connectionState(hosts(), c))}), ${openCount(c) ? openCount(c) + ' Sitzung(en) offen, tippen zum Wechseln' : 'tippen zum Verbinden'}, gedrückt halten für mehr">
   <span class="hdot ${hostDot(connectionState(hosts(), c))}" title="${stateText(connectionState(hosts(), c))}"></span>${openCount(c) ? `<span class="liveb" title="Sitzung offen">${openCount(c)}</span>` : ''}${pinned ? `<span class="fav" title="Favorit">${icon('star')}</span>` : ''}${c.hasPassword ? `<span class="badge" title="Passwort gespeichert">${icon('key')}</span>` : ''}
@@ -304,7 +301,7 @@ function sessionsSection() {
 
 function renderHome() {
   const pg = $('#pg-home'), top = pg.scrollTop;
-  const list = conns(), favs = favourites(), pinned = new Set(ls.get('fav', []));
+  const list = conns(), favs = favourites();
   let chip;
   if (overviewOk && overview) {
     const hot = (overview.cpu ?? 0) >= 90 || (overview.ram ?? 0) >= 90 || (overview.disk ?? 0) >= 95;
@@ -317,7 +314,7 @@ function renderHome() {
   const server = overviewOk && overview ? `<button type="button" class="mb m3-card srv m3-state" data-go="server" aria-label="Server, Details öffnen">
       <div class="top"><span class="lead">${icon('dns')}</span><span class="t">${esc(serverTitle(overview))}<small>${esc(serverSub(overview))}</small></span>${icon('chevron_right')}</div>${metersHtml(overview)}</button>` : '';
   const favHtml = favs.length
-    ? `<div class="grid3">${favs.map((c) => tileHtml(c, pinned.has(c.id))).join('')}</div>`
+    ? `<div class="grid3">${favs.map((c) => tileHtml(c, c.favorite)).join('')}</div>`
     : `<div class="m3-card empty-card"><span class="lead">${icon('star_o')}</span><span>${list.length ? 'Halte eine Verbindung gedrückt, um sie hier anzuheften. Häufig genutzte erscheinen von selbst.' : 'Lege deine erste Verbindung an, dann erscheint sie hier.'}</span></div>`;
   const actsAll = ls.get('log', []).filter((l) => l.type !== 'start' || byId(l.id));
   const acts = actsAll.length
@@ -346,6 +343,7 @@ function buildServicesPage() {
     <div class="m3-h" data-head><h1>Dienste</h1><p>Deine Desktops und Terminals</p></div>
     <label class="m3-search"><span class="m3-ic" aria-hidden="true">${icon('search')}</span><input id="mSearch" type="search" placeholder="Dienste durchsuchen …" autocomplete="off" autocapitalize="none" spellcheck="false" enterkeyhint="search" aria-label="Dienste durchsuchen"></label>
     <div class="chips" role="group" aria-label="Filter" id="mChips"></div>
+    <div class="chips" role="group" aria-label="Ordner" id="mFolderChips" hidden></div>
     <div class="chips" role="group" aria-label="Host wählen" id="mHostChips" hidden></div>
     <div id="mGrid"></div>
     <div id="mMods"></div>
@@ -353,17 +351,27 @@ function buildServicesPage() {
     <div class="quick" id="mQuick"></div>`;
   $('#mSearch').addEventListener('input', (e) => { view.q = e.target.value; renderGrid(); });
   $('#mChips').addEventListener('click', (e) => { const b = e.target.closest('[data-kind]'); if (b) { view.kind = b.dataset.kind; renderServices(); } });
+  $('#mFolderChips').addEventListener('click', (e) => { const b = e.target.closest('[data-folder]'); if (b) { view.folder = b.dataset.folder; renderServices(); } });
   $('#mHostChips').addEventListener('click', (e) => { const b = e.target.closest('[data-host]'); if (b) { view.host = b.dataset.host; renderServices(); } });
 }
 function filtered() {
   const q = view.q.trim().toLowerCase();
-  return conns().filter((c) => (view.kind === 'all' || c.kind === view.kind) && (!view.host || c.hostId === view.host) && (!q || `${c.name} ${c.host} ${c.username}`.toLowerCase().includes(q)));
+  const list = view.folder === 'recent' ? recentList(conns(), 12) : filterByFolder(conns(), view.folder, folders());
+  return list.filter((c) => (view.kind === 'all' || c.kind === view.kind) && (!view.host || c.hostId === view.host) && (!q || `${c.name} ${c.host} ${c.username}`.toLowerCase().includes(q)));
 }
 function renderServices() {
   if (!$('#mChips')) return;
   const cnt = (k) => conns().filter((c) => k === 'all' || c.kind === k).length;
   $('#mChips').innerHTML = [['all', 'Alle', 'apps'], ['desktop', 'Desktop', 'desktop'], ['terminal', 'Terminal', 'terminal']].map(([k, l, ic]) =>
     `<button type="button" class="mb m3-chip m3-state" data-kind="${k}" aria-pressed="${view.kind === k}">${view.kind === k ? icon('check') : icon(ic)}${l} <span style="opacity:.7">${cnt(k)}</span></button>`).join('');
+  // Ordner, Favoriten und zuletzt benutzt (vom Server): die Auswahl gibt es, sobald es einen Ordner, einen Favoriten oder eine Benutzung gibt
+  const known = new Set(['all', 'fav', 'recent', 'none', ...folders().map((f) => f.id)]);
+  if (!known.has(view.folder)) view.folder = 'all';
+  const fc = $('#mFolderChips');
+  fc.hidden = !(folders().length || conns().some((c) => c.favorite || c.lastUsedAt));
+  const folderChip = (id, label, ic) => `<button type="button" class="mb m3-chip m3-state" data-folder="${esc(id)}" aria-pressed="${view.folder === id}">${view.folder === id ? icon('check') : ic}${esc(label)}</button>`;
+  fc.innerHTML = fc.hidden ? '' : [folderChip('all', 'Alle Ordner', icon('apps')), folderChip('fav', 'Favoriten', icon('star_o')), folderChip('recent', 'Zuletzt benutzt', icon('history')),
+    ...folders().map((f) => folderChip(f.id, f.name, folderIconSvg(f.icon))), ...(folders().length ? [folderChip('none', 'Ohne Ordner', icon('close'))] : [])].join('');
   // Die Auswahl des Hosts gibt es erst, wenn es mehr als einen gibt
   if (view.host && !hosts().some((h) => h.id === view.host)) view.host = '';
   const hc = $('#mHostChips');
@@ -374,7 +382,9 @@ function renderServices() {
   $('#mQuick').innerHTML = `
     <button type="button" class="mb m3-btn filled m3-state" data-act="add">${icon('add')}Neue Verbindung</button>
     <button type="button" class="mb m3-btn tonal m3-state" data-act="last" ${last ? '' : 'disabled'} ${last ? `aria-label="Zuletzt geöffnet: ${esc(last.name)}"` : ''}>${icon('history')}${last ? 'Zuletzt: ' + esc(last.name.length > 14 ? last.name.slice(0, 13) + '…' : last.name) : 'Zuletzt geöffnet'}</button>
-    <button type="button" class="mb m3-btn tonal m3-state" data-act="ssh">${icon('terminal')}SSH öffnen</button>`;
+    <button type="button" class="mb m3-btn tonal m3-state" data-act="ssh">${icon('terminal')}SSH öffnen</button>
+    <button type="button" class="mb m3-btn tonal m3-state" data-act="quick">${icon('bolt')}Quick Connect</button>
+    <button type="button" class="mb m3-btn tonal m3-state" data-act="folders">${folderIconSvg('folder')}Ordner</button>`;
 }
 /* Module Caddy und DDNS (nur lesen): Karten nur, wenn der Server sie eingeschaltet hat (GET /api/modules); Details im Sheet, siehe mobile-modules.js */
 let mods = { caddy: false, ddns: false }, modsLoaded = false;
@@ -384,12 +394,19 @@ async function renderModules() {
   if (mods.caddy || mods.ddns) (await import('./mobile-modules.js')).renderCards(box, mods, { icon, esc, api: ctx.api }); else box.replaceChildren();
 }
 function renderGrid() {
-  const list = filtered(), pinned = new Set(ls.get('fav', []));
-  $('#mGrid').innerHTML = list.length
-    ? `<div class="grid4">${list.map((c) => tileHtml(c, pinned.has(c.id))).join('')}</div>`
+  const list = filtered();
+  const grouped = view.folder === 'all' && !view.q.trim() && folders().length;     // mit Ordnern: unter ihren Ueberschriften
+  $('#mGrid').innerHTML = grouped && list.length
+    ? groupByFolder(folders(), list).map((g) => `<div class="m3-sec">${g.folder ? folderIconSvg(g.folder.icon) : icon('apps')}<span>${esc(g.folder ? g.folder.name : 'Ohne Ordner')}</span></div><div class="grid4">${g.connections.map((c) => tileHtml(c, c.favorite)).join('')}</div>`).join('')
+    : list.length
+    ? `<div class="grid4">${list.map((c) => tileHtml(c, c.favorite)).join('')}</div>`
     : `<p class="empty-hint">${conns().length ? 'Keine Verbindung passt zur Suche.' : 'Noch keine Verbindung. Lege den Computer an, den du steuern willst.'}</p>`;
+  // Sieht die Suche nach einer Adresse aus: Quick Connect ohne Speichern anbieten
+  if (looksLikeAddress(view.q)) $('#mGrid').insertAdjacentHTML('beforeend', `<button type="button" class="mb m3-btn tonal block m3-state" data-act="quickq" style="margin-top:12px">${icon('bolt')}Quick Connect zu ${esc(view.q.trim())}</button>`);
 }
 function lastConnection() {
+  const r = recentList(conns(), 1)[0];                       // vom Server, auf jedem Geraet gleich
+  if (r) return r;
   for (const l of ls.get('log', [])) if (l.type === 'start') { const c = byId(l.id); if (c) return c; }
   return null;
 }
@@ -502,6 +519,9 @@ function onClick(e) {
   if (act === 'sess') { Sessions.activate(a.dataset.sid, { reveal: true }); return; }
   if (act === 'start') { const c = byId(a.dataset.conn); if (c) ctx.connect(c); }
   else if (act === 'add') ctx.add();
+  else if (act === 'folders') ctx.folders();
+  else if (act === 'quick') ctx.quick();
+  else if (act === 'quickq') ctx.quick(view.q);
   else if (act === 'addhost') ctx.addHost();
   else if (act === 'hostedit' || act === 'hostagent') { const h = hosts().find((x) => x.id === a.dataset.host); if (h) ctx.editHost(h); }
   else if (act === 'mod') import('./mobile-modules.js').then((m) => m.openSheet(a.dataset.mod, { icon, esc, api: ctx.api, wireSheet, app: $('#app') }));
@@ -520,12 +540,12 @@ function actionSheet(c) {
   if (!c) return;
   let dlg = $('#mActDlg');
   if (!dlg) { dlg = document.createElement('dialog'); dlg.id = 'mActDlg'; dlg.className = 'm3sheet'; $('#app').appendChild(dlg); wireSheet(dlg); }
-  const fav = ls.get('fav', []).includes(c.id);
+  const fav = !!c.favorite;
   dlg.innerHTML = `<h2>${esc(c.name)}</h2><p class="hint">${esc(c.kind === 'terminal' ? 'Terminal' : 'Desktop')} · ${esc(c.username ? c.username + '@' : '')}${esc(c.host)}:${c.port}</p>
     <div class="m3-list" style="margin:0 -18px">
       <button type="button" class="mb m3-li m3-state" data-a="start"><span class="lead">${icon('play')}</span><span class="txt"><span class="hl">${openCount(c) ? 'Zur Sitzung wechseln' : 'Verbinden'}</span>${openCount(c) ? `<span class="sl">${openCount(c)} offen</span>` : ''}</span></button>
       ${openCount(c) ? `<button type="button" class="mb m3-li m3-state" data-a="extra"><span class="lead">${icon('add')}</span><span class="txt"><span class="hl">Weitere Sitzung</span><span class="sl">Noch eine zum selben Ziel</span></span></button>` : ''}
-      <button type="button" class="mb m3-li m3-state" data-a="fav"><span class="lead">${icon(fav ? 'star' : 'star_o')}</span><span class="txt"><span class="hl">${fav ? 'Aus den Favoriten nehmen' : 'Als Favorit anheften'}</span><span class="sl">Nur auf diesem Gerät</span></span></button>
+      <button type="button" class="mb m3-li m3-state" data-a="fav"><span class="lead">${icon(fav ? 'star' : 'star_o')}</span><span class="txt"><span class="hl">${fav ? 'Aus den Favoriten nehmen' : 'Als Favorit anheften'}</span><span class="sl">Gilt auf allen Geräten</span></span></button>
       <button type="button" class="mb m3-li m3-state" data-a="edit"><span class="lead">${icon('edit')}</span><span class="txt"><span class="hl">Bearbeiten</span></span></button>
     </div>`;
   dlg.onclick = (e) => {
@@ -534,7 +554,7 @@ function actionSheet(c) {
     if (b.dataset.a === 'start') ctx.connect(c);
     else if (b.dataset.a === 'extra') ctx.connect(c, { extra: true });
     else if (b.dataset.a === 'edit') ctx.edit(c);
-    else { const l = ls.get('fav', []); ls.set('fav', fav ? l.filter((x) => x !== c.id) : [...l, c.id]); renderAll(); snack(fav ? 'Aus den Favoriten genommen' : 'Als Favorit angeheftet'); }
+    else setFavorite(ctx.api, c, !fav).then(() => { renderAll(); snack(fav ? 'Aus den Favoriten genommen' : 'Als Favorit angeheftet'); }, (err) => snack(err.message));
   };
   dlg.showModal();
 }
@@ -560,7 +580,7 @@ function wireSheet(dlg) {
   dlg.addEventListener('pointerup', end); dlg.addEventListener('pointercancel', end);
 }
 function enhanceSheets() {
-  for (const id of ['connDlg', 'hostDlg', 'startDlg', 'devicesDlg', 'accountDlg', 'netDlg']) { const d = $('#' + id); if (!d) continue; d.classList.add('m3sheet'); wireSheet(d); }
+  for (const id of ['connDlg', 'hostDlg', 'startDlg', 'quickDlg', 'folderDlg', 'devicesDlg', 'accountDlg', 'netDlg']) { const d = $('#' + id); if (!d) continue; d.classList.add('m3sheet'); wireSheet(d); }
   // Art und Bildübertragung: segmentierte Tasten statt Auswahlliste; das select bleibt als Wertspeicher bestehen (shell.js liest und setzt es)
   const segFor = (sel) => {
     const label = sel.closest('label'), box = document.createElement('div');
@@ -576,6 +596,7 @@ function enhanceSheets() {
     if (lbl) { const sp = document.createElement('span'); sp.textContent = lbl.textContent.trim(); label.replaceChild(sp, lbl); }
   };
   segFor($('#connKind'));
+  segFor($('#quickKind'));
 }
 
 /* ---------- Thema: Grundfarbe und Theme-Color ---------- */

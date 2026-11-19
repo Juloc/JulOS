@@ -1,6 +1,9 @@
-import { ico } from './app.js';
+import { ico, prefs, applyServerPrefs } from './app.js';
 import { Sessions } from './sessions.js';
 import { agentSummary, hostDetail } from './hosts.js';
+import { loadOrganisation, takeOverLocal, mergePlacements, setFolder, touch, move, folderName } from './folders.js';
+import { initFolderDialog } from './folder-dialog.js';
+import { parseQuickTarget, quickConnection, DEFAULT_PORT as QUICK_PORT } from './quick.js';
 import { initAccount } from './account.js';
 import { initNetTools } from './nettools.js';
 import { qrSvg } from './qr.js';
@@ -64,7 +67,7 @@ async function api(path, { method = 'GET', body } = {}) {
 const setMsg = (el, text, ok = false) => { el.textContent = text || ''; el.classList.toggle('ok', ok && !!text); };
 const busy = (form, on) => { for (const b of form.querySelectorAll('button[type=submit]')) b.disabled = on; };
 
-const state = { user: null, connections: [], hosts: [], canStore: false, driveAvailable: false, editing: null, editingHost: null, starting: null };
+const state = { user: null, connections: [], folders: [], hosts: [], canStore: false, driveAvailable: false, editing: null, editingHost: null, starting: null };
 
 /* ---------- Start: wo stehen wir? ---------- */
 async function boot() {
@@ -150,13 +153,27 @@ async function showHome(user, message = '') {
   setMsg($('#homeMsg'), message);
   show('home');
   if (M) M.userChanged(user, message);
+  syncPrefs();
   await loadConnections();
   if (D) D.userChanged(user, message);
 }
 
+/** Tastenleiste und Themenfarbe vom Server holen (er hat Vorrang; hat er nichts, geht das Lokale hinaus). Ohne Server bleibt die lokale Kopie. */
+let prefsAt = 0;
+async function syncPrefs() {
+  prefsAt = Date.now();
+  const got = await prefs.sync();
+  if (got.keybar || got.theme) { applyServerPrefs(got); if (M) M.applyShellTheme(); }
+}
+// Ein anderes Geraet hat etwas geaendert: beim Zurueckkehren zur Seite (hoechstens einmal je Minute) neu abgleichen
+document.addEventListener('visibilitychange', () => { if (!document.hidden && state.user && Date.now() - prefsAt > 60000) syncPrefs(); });
+
 async function loadConnections() {
   try { const r = await api('/api/connections'); state.connections = r.connections; state.canStore = !!r.canStorePasswords; state.driveAvailable = !!r.driveAvailable; }
   catch (e) { if (e.status === 401) return showLogin('Die Sitzung ist abgelaufen. Bitte neu anmelden.'); setMsg($('#homeMsg'), e.message); if (M) M.snack(e.message); return; }
+  // Ordner, Favoriten und zuletzt benutzt kommen vom Server (beim ersten Mal nimmt das Geraet seine lokalen Favoriten mit); ein Fehler laesst die Liste ohne sie stehen
+  try { await takeOverLocal(localStorage, api); await loadOrganisation(api, state); }
+  catch (e) { if (e.status === 401) return showLogin('Die Sitzung ist abgelaufen. Bitte neu anmelden.'); mergePlacements(state.connections, []); }
   renderConnections();
   if (D) D.connectionsChanged();
   if (M) M.connectionsChanged();
@@ -185,7 +202,7 @@ function renderConnections() {
     const row = document.createElement('div');
     row.className = 'conn';
     row.innerHTML = `<button type="button" class="connmain"><span class="connic">${ico(c.kind === 'terminal' ? 'terminal' : 'desktop')}</span>
-        <span class="conntext"><span class="connname">${esc(c.name)}</span><span class="connsub">${esc(KIND_LABEL[c.kind] || c.kind)} · ${esc(c.username ? c.username + '@' : '')}${esc(c.host)}:${c.port}${c.hasPassword ? `<span class="connkey" title="Passwort gespeichert">${ico('key')}</span>` : ''}</span></span></button>
+        <span class="conntext"><span class="connname">${esc(c.name)}</span><span class="connsub">${esc(KIND_LABEL[c.kind] || c.kind)} · ${esc(c.username ? c.username + '@' : '')}${esc(c.host)}:${c.port}${folderName(state.folders, c) ? ' · ' + esc(folderName(state.folders, c)) : ''}${c.hasPassword ? `<span class="connkey" title="Passwort gespeichert">${ico('key')}</span>` : ''}</span></span></button>
       <button type="button" class="connedit ghost" aria-label="Bearbeiten">${ico('edit')}</button>`;
     row.querySelector('.connmain').addEventListener('click', () => startDialog(c));
     row.querySelector('.connedit').addEventListener('click', () => editDialog(c));
@@ -207,7 +224,7 @@ $('#accountMenu').addEventListener('click', async (e) => {
 async function signOut() {
   closeAllSessions();
   try { await api('/api/auth/logout', { method: 'POST' }); } catch { /* Sitzung war schon weg */ }
-  state.user = null; state.connections = []; state.hosts = [];
+  state.user = null; state.connections = []; state.folders = []; state.hosts = [];
   showLogin();
 }
 
@@ -246,6 +263,8 @@ function editDialog(c, kind) {
   $('#connDomain').value = c ? c.domain || '' : ''; $('#connLayout').value = c && c.layout ? c.layout : 'de'; $('#connNotes').value = c ? c.notes || '' : '';
   showDesktopFields();
   fillHostSelect(c ? c.hostId : undefined);
+  fillFolderSelect(c ? c.folderId : '');
+  $('#connUp').hidden = $('#connDown').hidden = !c;
   $('#connDelete').hidden = !c; $('#connDelete').textContent = 'Löschen';
   $('#connPw').value = ''; $('#connPw').disabled = !state.canStore;
   $('#connForget').checked = false; $('#connForgetRow').hidden = !(c && c.hasPassword);
@@ -275,6 +294,22 @@ $('#connHostSel').addEventListener('change', (e) => {
   sel.value = sel.dataset.prev;                      // bis der neue Host da ist, bleibt die bisherige Wahl
   hostDialog(null, (h) => { fillHostSelect(h.id); });
 });
+
+/* ---------- Ordner: Auswahl in der Verbindung, Verwaltung im Dialog (docs/FOLDERS.md) ---------- */
+function fillFolderSelect(selected) {
+  const sel = $('#connFolderSel');
+  sel.replaceChildren(new Option('Kein Ordner', ''), ...state.folders.map((f) => new Option(f.name, f.id)));
+  sel.value = selected && state.folders.some((f) => f.id === selected) ? selected : '';
+  $('#connFolderRow').hidden = state.folders.length === 0;
+}
+const openFolders = initFolderDialog({ state, api, esc: (t) => esc(t), changed: loadConnections });
+// Reihenfolge der Verbindung innerhalb ihres Ordners (der Dialog bleibt offen)
+for (const [id, delta] of [['#connUp', -1], ['#connDown', 1]]) {
+  $(id).addEventListener('click', async () => {
+    try { await move(api, state.editing, delta); await loadConnections(); setMsg($('#connMsg'), 'Verschoben.', true); }
+    catch (err) { setMsg($('#connMsg'), err.message); }
+  });
+}
 
 /** Der Befehl fuer den Host: die Dateien kommen vom Server selbst (passend zu seiner Version), der Code gilt einmal. */
 function agentCommands(code) {
@@ -422,7 +457,9 @@ $('#connForm').addEventListener('submit', async (e) => {
   busy(form, true); setMsg(msg, '');
   try {
     const c = state.editing;
-    await api(c ? `/api/connections/${c.id}` : '/api/connections', { method: c ? 'PUT' : 'POST', body });
+    const saved = await api(c ? `/api/connections/${c.id}` : '/api/connections', { method: c ? 'PUT' : 'POST', body });
+    const folder = $('#connFolderSel').value || null;
+    if (state.folders.length && folder !== ((c && c.folderId) || null)) await setFolder(api, { id: saved.id }, folder);
     $('#connPw').value = '';
     $('#connDlg').close();
     await loadConnections();
@@ -460,7 +497,11 @@ function startDialog(c, opts = {}) {
 function launch(c, password, extra = false) {
   const before = Sessions.count;
   Sessions.open(asConn(c), { password, extra });
-  if (M && Sessions.count > before) M.started(c);
+  if (Sessions.count > before) {
+    c.useCount = (c.useCount || 0) + 1; c.lastUsedAt = new Date().toISOString();       // sofort sichtbar; der Server zaehlt es fuer alle Geraete
+    touch(api, c).catch(() => {});
+    if (M) M.started(c);
+  }
 }
 
 $('#startForm').addEventListener('submit', (e) => {
@@ -470,6 +511,31 @@ $('#startForm').addEventListener('submit', (e) => {
   $('#startPw').value = '';
   $('#startDlg').close();
   launch(state.starting.c, password, state.starting.extra);
+});
+
+/* ---------- Quick Connect: Sitzung ohne Speichern (nichts in der Datenbank, das Passwort gilt nur fuer diese Sitzung) ---------- */
+/** prefill: Eingabe aus der Suche (Adresse, benutzer@adresse:port oder rdp://, ssh://) */
+function quickDialog(prefill = '') {
+  const t = parseQuickTarget(prefill);
+  $('#quickKind').value = (t && t.kind) || 'desktop'; $('#quickKind').dispatchEvent(new Event('change'));
+  $('#quickHost').value = t ? (t.port ? `${t.host}:${t.port}` : t.host) : prefill.trim();
+  $('#quickUser').value = t ? t.username : '';
+  $('#quickPw').value = '';
+  setMsg($('#quickMsg'), '');
+  $('#quickDlg').showModal();
+  setTimeout(() => ($('#quickHost').value ? $('#quickPw') : $('#quickHost')).focus(), 150);
+}
+$('#quickForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const kind = $('#quickKind').value, msg = $('#quickMsg');
+  const t = parseQuickTarget($('#quickHost').value);
+  if (!t) return setMsg(msg, 'Adresse ungültig (Name oder IP-Adresse, optional :Port).');
+  const user = $('#quickUser').value.trim() || t.username;
+  const password = $('#quickPw').value;
+  if (!password) return setMsg(msg, 'Das Passwort fehlt.');
+  $('#quickPw').value = '';
+  $('#quickDlg').close();
+  Sessions.open(quickConnection({ kind, host: t.host, port: t.port || QUICK_PORT[kind], username: user }), { password });
 });
 
 /* ---------- Sitzungen: die Huelle zeigt, was der Verwalter meldet ---------- */
@@ -520,8 +586,8 @@ Sessions.addEventListener('switcher', () => { if (M) M.openSwitcher(); else goHo
 
 const openAccount = initAccount({ api, setMsg });
 const openNetTools = initNetTools({ api, setMsg, connections: () => state.connections });
-if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), signOut, home: goHome, account: openAccount, nettools: openNetTools });
-if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), devices: openDevices, account: openAccount, nettools: openNetTools, signOut });
+if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), signOut, home: goHome, account: openAccount, nettools: openNetTools });
+if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), devices: openDevices, account: openAccount, nettools: openNetTools, signOut });
 
 /* ---------- Geraete und Sitzungen ---------- */
 function describeAgent(ua) {

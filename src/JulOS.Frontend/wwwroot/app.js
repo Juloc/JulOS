@@ -8,6 +8,7 @@ import { StreamAudio } from './stream-audio.js';
 import { SizeGate, LayoutLog } from './layoutlog.js';
 import { KB_SETTLE_MS, StageBase, effectiveStage, panOffset, panDrag, normalizeKbMode, nextKbMode, kbModeLabel } from './kbpan.js';
 import { Session, Sessions } from './sessions.js';
+import { createPrefs } from './prefs.js';
 import { LIMITS, fmtSize, bmpFromImage, pngFromBytes, filesFromTransfer, saveBlob } from './clip.js';
 
 /* =====================================================================
@@ -23,10 +24,27 @@ import { LIMITS, fmtSize, bmpFromImage, pngFromBytes, filesFromTransfer, saveBlo
 const $ = (s, r = document) => r.querySelector(s);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+/** Wohin das Ticket gilt: eine gespeicherte Verbindung oder (Quick Connect) die Angaben der Sitzung selbst. */
+export const ticketTarget = (conn) => (conn.quick ? { quick: conn.quick } : { connection: conn.id });
 const store = {
   get(k, d) { try { const v = localStorage.getItem('pd.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem('pd.' + k, JSON.stringify(v)); } catch { /* ignorieren */ } },
 };
+
+/* ---------- Einstellungen auf dem Server (prefs.js): Tastenleiste und Themenfarbe; lokal bleibt die Kopie als Rueckfall ---------- */
+const validSeed = (v) => v === 'system' || /^#[0-9a-f]{6}$/i.test(v);
+export const prefs = createPrefs({
+  storage: localStorage,
+  local: () => ({
+    keybar: normalizeRows(store.get('rows4', null)) ? { rows: store.get('rows4', null) } : null,       // null: nie veraendert, nichts hochzuladen
+    theme: localStorage.getItem('pd.seed') !== null || localStorage.getItem('pd.scheme') !== null ? { seed: validSeed(S.seed) ? S.seed : 'system', scheme: S.scheme } : null,
+  }),
+});
+/** Farbe und Hell/Dunkel lokal merken und (wenn gueltig) zum Server schicken. */
+function saveTheme() {
+  store.set('seed', S.seed); store.set('scheme', S.scheme);
+  if (validSeed(S.seed) && ['auto', 'light', 'dark'].includes(S.scheme)) prefs.push('theme', { seed: S.seed, scheme: S.scheme });
+}
 
 /* ---------- Material-Icons (inline SVG, 24 px) ---------- */
 const ICONS = {
@@ -74,7 +92,7 @@ const el = {
   kb: $('#kb'), kbInput: $('#kb'), kbRich: $('#kbRich'),
   imgSeedBtn: $('#imgSeedBtn'), imgSeedInput: $('#imgSeedInput'),
   clipDlg: $('#clipDlg'), sendText: $('#sendText'), remoteClip: $('#remoteClip'), typeBtn: $('#typeBtn'), pasteBtn: $('#pasteBtn'), copyBtn: $('#copyBtn'),
-  keyDlg: $('#keyDlg'), keyDlgTitle: $('#keyDlgTitle'), keyLabel: $('#keyLabel'), keyType: $('#keyType'), keyValue: $('#keyValue'),
+  keyDlg: $('#keyDlg'), keyDlgTitle: $('#keyDlgTitle'), keyLabel: $('#keyLabel'), keyType: $('#keyType'), keyScope: $('#keyScope'), keyValue: $('#keyValue'),
   keyValueLabel: $('#keyValueLabel'), keyHint: $('#keyHint'), keyLeft: $('#keyLeft'), keyRight: $('#keyRight'),
   keySave: $('#keySave'), keyDelete: $('#keyDelete'),
   photoInput: $('#photoInput'),
@@ -237,12 +255,15 @@ const DEFAULT_ROWS = [
     ACT('expand_less', 'expand'), ACT('keyboard', 'keyboard') ] },
 ];
 const clone = (o) => JSON.parse(JSON.stringify(o));
+/** Prueft eine gespeicherte Tastenbelegung (lokal oder vom Server); ohne die festen Gruppen taugt sie nicht (null). */
+function normalizeRows(saved) {
+  if (!(Array.isArray(saved) && saved.some((r) => r.fixed) && ['keys', 'combos', 'funcs'].every((id) => saved.some((r) => r.id === id)))) return null;
+  for (const r of saved) { const d = DEFAULT_ROWS.find((x) => x.id === r.id); if (d && !r.icon) r.icon = d.icon; }
+  return saved;
+}
 function loadRows() {
-  const saved = store.get('rows4', null);
-  if (Array.isArray(saved) && saved.some((r) => r.fixed) && ['keys', 'combos', 'funcs'].every((id) => saved.some((r) => r.id === id))) {
-    for (const r of saved) { const d = DEFAULT_ROWS.find((x) => x.id === r.id); if (d && !r.icon) r.icon = d.icon; }
-    return saved;
-  }
+  const saved = normalizeRows(store.get('rows4', null));
+  if (saved) return saved;
   // Aus der alten Aufteilung (Mehr/Tasten) nur die eigene untere Leiste mitnehmen
   const fresh = clone(DEFAULT_ROWS);
   const old = store.get('rows3', null);
@@ -253,7 +274,9 @@ function loadRows() {
 let rows = loadRows();
 let suppressClick = false;
 let editRow = 0, editIndex = -1;      // editIndex -1 = neue Taste
-const saveRows = () => store.set('rows4', rows);
+const saveRows = () => { store.set('rows4', rows); prefs.push('keybar', { rows }); };
+/** Bereich einer Taste: 'both' (Standard), 'desktop' oder 'terminal'; eine Sitzung zeigt nur die Tasten ihrer Art. */
+const keyInScope = (def, kind) => !def.scope || def.scope === 'both' || def.scope === kind;
 
 /* Tasten per langem Druecken ziehen: innerhalb der Zeile und in andere Zeilen */
 function enableDrag(btn) {
@@ -306,7 +329,7 @@ function openKeyEditor(r, i) {
   editRow = r; editIndex = i;
   const def = i >= 0 ? rows[r].items[i] : { label: '', type: 'chord', value: '' };
   el.keyDlgTitle.textContent = i >= 0 ? 'Taste bearbeiten' : `Neue Taste in „${rows[r].title}“`;
-  el.keyLabel.value = def.label; el.keyType.value = def.type; el.keyValue.value = def.value;
+  el.keyLabel.value = def.label; el.keyType.value = def.type; el.keyValue.value = def.value; el.keyScope.value = def.scope || 'both';
   el.keyDelete.hidden = i < 0; el.keyLeft.hidden = i < 0; el.keyRight.hidden = i < 0;
   updateKeyEditorHints();
   el.keyDlg.showModal();
@@ -314,6 +337,7 @@ function openKeyEditor(r, i) {
 el.keyType.addEventListener('change', updateKeyEditorHints);
 el.keySave.addEventListener('click', () => {
   const def = { label: el.keyLabel.value.trim() || el.keyValue.value.trim().slice(0, 10) || '?', type: el.keyType.value, value: el.keyValue.value.trim() };
+  if (el.keyScope.value !== 'both') def.scope = el.keyScope.value;
   if (!def.value) { toast('Bitte Tasten oder Text angeben'); return; }
   try {
     if (def.type === 'chord') parseChord(def.value);
@@ -751,7 +775,7 @@ export class RemoteSession extends Session {
     if (!resumeToken) try {
       const acceptCert = this.acceptCert; this.acceptCert = null;      // gilt nur fuer diesen einen Versuch (siehe certDialog)
       const resp = await fetch('/api/remote/ticket', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, signal: AbortSignal.timeout(10000),
-        body: JSON.stringify({ connection: this.conn.id, sid: this.id, password: this.password || undefined, width: w, height: h, acceptCert: acceptCert || undefined }) });
+        body: JSON.stringify({ ...ticketTarget(this.conn), sid: this.id, password: this.password || undefined, width: w, height: h, acceptCert: acceptCert || undefined }) });
       const data = await resp.json().catch(() => ({}));
       if (stale()) return;
       if (resp.status === 401) return this.requestClose('Die Sitzung ist abgelaufen. Bitte neu anmelden.', 'auth');
@@ -1011,7 +1035,7 @@ export class RemoteSession extends Session {
     clearTimeout(this.zoomTimer); this.zoomTimer = setTimeout(() => this.el.zoomPop.classList.remove('show'), 900);
   }
   setK(k, announce = true) {
-    this.k = clamp(k, 0.35, 1.8); store.set('k.' + this.conn.id, this.k);          // je Verbindung gemerkt
+    this.k = clamp(k, 0.35, 1.8); if (!this.conn.quick) store.set('k.' + this.conn.id, this.k);          // je Verbindung gemerkt
     if (announce) this.showZoomPop();
     this.scheduleSize();
   }
@@ -1024,10 +1048,10 @@ export class RemoteSession extends Session {
     const gen = this.gen, W = this.W;
     W.available = false;
     // Der Agent gehoert zur Maschine, neben der der Server laeuft: nur fuer Desktop-Verbindungen anbieten
-    if (this.conn.kind === 'desktop') { try { const h = await (await fetch('/api/agent/health?c=' + encodeURIComponent(this.conn.id))).json(); W.available = !!h.available; } catch { W.available = false; } }
+    if (this.conn.kind === 'desktop' && !this.conn.quick) { try { const h = await (await fetch('/api/agent/health?c=' + encodeURIComponent(this.conn.id))).json(); W.available = !!h.available; } catch { W.available = false; } }
     if (gen !== this.gen || this.disposed) return;
     this.dbg('agent', { available: W.available });
-    if (this.conn.kind === 'desktop') store.set('winbar.' + this.conn.id, W.available);
+    if (this.conn.kind === 'desktop' && !this.conn.quick) store.set('winbar.' + this.conn.id, W.available);
     this.renderWindows();
     if (!W.available) return;
     this.pollWindows(); W.timer = setInterval(() => this.pollWindows(), 2000);
@@ -1206,7 +1230,7 @@ export class RemoteSession extends Session {
     wrap.className = 'row ' + (bar ? 'bar' : 'grp') + (S.editing ? ' editing' : '');
     const rk = document.createElement('div'); rk.className = 'rk'; rk.dataset.r = String(r);
     if (label && !bar) { const t = document.createElement('div'); t.className = 'gt'; t.textContent = row.title; rk.appendChild(t); }
-    row.items.forEach((def, i) => rk.appendChild(this.keyEl(def, r, i)));
+    row.items.forEach((def, i) => { if (S.editing || keyInScope(def, this.kind)) rk.appendChild(this.keyEl(def, r, i)); });
     if (S.editing) {
       const add = document.createElement('div'); add.setAttribute('role', 'button'); add.className = 'k add'; add.innerHTML = ico('add') + '<span>Taste</span>';
       add.addEventListener('click', () => openKeyEditor(r, -1)); rk.appendChild(add);
@@ -1289,7 +1313,7 @@ export class RemoteSession extends Session {
     else if (act === 'home') Sessions.requestHome();
     else if (act === 'extra') Sessions.open(this.conn, { password: this.password, extra: true });
     else if (act === 'editKeys') { S.editing = true; renderAllRows(); toast('Taste antippen = bearbeiten, gedrückt halten = verschieben (auch in andere Zeilen)', 3600); }
-    else if (act === 'resetKeys') { if (confirm('Sondertasten auf Standard zurücksetzen?')) { rows = clone(DEFAULT_ROWS); saveRows(); renderAllRows(); } }
+    else if (act === 'resetKeys') { if (confirm('Sondertasten auf Standard zurücksetzen?')) { rows = clone(DEFAULT_ROWS); localStorage.removeItem('pd.rows4'); prefs.reset('keybar'); renderAllRows(); } }
     else if (act === 'password') openPwDialog();
     else if (act === 'theme') openThemeDialog();
     else if (act === 'install') installApp();
@@ -1834,11 +1858,11 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if
 function openThemeDialog() {
   el.swatches.replaceChildren();
   const sys = document.createElement('div'); sys.className = 'sw sys' + (S.seed === 'system' ? ' sel' : ''); sys.textContent = 'System';
-  sys.addEventListener('click', () => { S.seed = 'system'; store.set('seed', S.seed); applyTheme(); openThemeDialog(); });
+  sys.addEventListener('click', () => { S.seed = 'system'; saveTheme(); applyTheme(); openThemeDialog(); });
   el.swatches.appendChild(sys);
   for (const [hex, name] of SWATCHES) {
     const s = document.createElement('div'); s.className = 'sw' + (S.seed.toLowerCase() === hex ? ' sel' : ''); s.style.background = hex; s.title = name;
-    s.addEventListener('click', () => { S.seed = hex; store.set('seed', S.seed); applyTheme(); openThemeDialog(); });
+    s.addEventListener('click', () => { S.seed = hex; saveTheme(); applyTheme(); openThemeDialog(); });
     el.swatches.appendChild(s);
   }
   el.schemeSel.value = S.scheme;
@@ -1871,13 +1895,19 @@ el.imgSeedInput.addEventListener('change', async () => {
   try {
     const hex = await seedFromImage(f);
     if (!hex) { toast('Im Bild keine kräftige Farbe gefunden', 3000); return; }
-    S.seed = hex; store.set('seed', hex); applyTheme(); openThemeDialog(); toast('Farbe aus Bild übernommen', 2000); dbg('seedimg', { c: hex });
+    S.seed = hex; saveTheme(); applyTheme(); openThemeDialog(); toast('Farbe aus Bild übernommen', 2000); dbg('seedimg', { c: hex });
   } catch (e) { toast('Bild konnte nicht gelesen werden', 3000); }
 });
-el.seedInput.addEventListener('input', () => { S.seed = el.seedInput.value; store.set('seed', S.seed); applyTheme(); });
-el.schemeSel.addEventListener('change', () => { S.scheme = el.schemeSel.value; store.set('scheme', S.scheme); applyTheme(); });
+el.seedInput.addEventListener('input', () => { S.seed = el.seedInput.value; saveTheme(); applyTheme(); });
+el.schemeSel.addEventListener('change', () => { S.scheme = el.schemeSel.value; saveTheme(); applyTheme(); });
 /** Fuer die Handy-Oberflaeche (mobile.js): Farbe und Hell/Dunkel setzen, speichern und anwenden. */
-export function setTheme({ seed, scheme }) { if (seed) { S.seed = seed; store.set('seed', seed); } if (scheme) { S.scheme = scheme; store.set('scheme', scheme); } applyTheme(); }
+export function setTheme({ seed, scheme }) { if (seed) S.seed = seed; if (scheme) S.scheme = scheme; saveTheme(); applyTheme(); }
+/** Was der Server fuer diesen Benutzer hat (prefs.sync): Tastenleiste und Theme uebernehmen, lokale Kopie auffrischen, neu zeichnen. */
+export function applyServerPrefs({ keybar, theme } = {}) {
+  const r = keybar && normalizeRows(keybar.rows);
+  if (r) { rows = r; store.set('rows4', rows); renderAllRows(); }
+  if (theme && validSeed(theme.seed) && ['auto', 'light', 'dark'].includes(theme.scheme)) { S.seed = theme.seed; S.scheme = theme.scheme; store.set('seed', S.seed); store.set('scheme', S.scheme); applyTheme(); }
+}
 /* =====================================================================
  *  Foto einfuegen: hochladen, Helfer legt es in die Zwischenablage der VM-Sitzung, dann Strg+V
  * ===================================================================== */
@@ -2027,7 +2057,7 @@ export const remoteApi = {
   group: (id) => { const r = rows.findIndex((x) => x.id === id); return r < 0 ? null : { index: r, title: rows[r].title, items: rows[r].items }; },
   press: (def) => cur() && cur().activateKey(def),
   editKey: (r, i) => openKeyEditor(r, i),
-  resetKeys: () => { if (confirm('Sondertasten auf Standard zurücksetzen?')) { rows = clone(DEFAULT_ROWS); saveRows(); renderAllRows(); } },
+  resetKeys: () => { if (confirm('Sondertasten auf Standard zurücksetzen?')) { rows = clone(DEFAULT_ROWS); localStorage.removeItem('pd.rows4'); prefs.reset('keybar'); renderAllRows(); } },
   /** Ansicht */
   zoomPercent: () => (cur() ? cur().zoomPercent() : 100),
   setZoomPercent: (p) => { const s = cur(); if (s) { s.setK(100 / p); s.rememberProfile(); } },

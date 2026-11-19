@@ -14,6 +14,7 @@ import { isScheme, normalizeScheme, isDark } from './scheme.js';
 import { t, tp, tk, applyDom, getPref, setPref, isPref } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
 import { ClipDiag } from './clipdiag.js';
+import { queryState, browserKind, readDeviceText, copyToDevice } from './clipperm.js';
 import { LIMITS, fmtSize, bmpFromImage, pngFromBytes, filesFromTransfer, itemsFromFiles, planSend, topLevel, progressText, startDownload, saveBlob } from './clip.js';
 
 /* =====================================================================
@@ -255,7 +256,7 @@ const DEFAULT_ROWS = [
     ITEM('Strg+C', 'chord', 'ctrl+c'), ITEM('Strg+V', 'chord', 'ctrl+v'), ITEM('Strg+X', 'chord', 'ctrl+x'), ITEM('Strg+A', 'chord', 'ctrl+a'),
     ITEM('Strg+Z', 'chord', 'ctrl+z'), ITEM('Strg+F', 'chord', 'ctrl+f'), ITEM('Alt+Tab', 'chord', 'alt+tab'), ITEM('Strg+⇧+T', 'chord', 'ctrl+shift+t') ] },
   { id: 'funcs', title: 'Funktionen', icon: 'apps', items: [
-    ITEM('Bild einfügen', 'action', 'pasteimg'), ITEM('Foto wählen', 'action', 'photo'), ITEM('Datei senden', 'action', 'sendfile'), ITEM('Ordner senden', 'action', 'sendfolder'), ITEM('Text senden', 'action', 'clip'), ITEM('Passwort', 'action', 'password') ] },
+    ITEM('Bild einfügen', 'action', 'pasteimg'), ITEM('Text einfügen', 'action', 'pastetext'), ITEM('Foto wählen', 'action', 'photo'), ITEM('Datei senden', 'action', 'sendfile'), ITEM('Ordner senden', 'action', 'sendfolder'), ITEM('Text senden', 'action', 'clip'), ITEM('Passwort', 'action', 'password') ] },
   // die Leiste: immer sichtbar, eine Zeile, ganz unten
   { id: 'bar', title: 'Leiste', fixed: true, items: [
     ITEM('Esc', 'chord', 'esc'), ITEM('Strg', 'mod', 'ctrl'), ITEM('Tab', 'chord', 'tab'),
@@ -269,7 +270,7 @@ const ROW_TITLES = { keys: ['Tasten', tk('app.keys')], combos: ['Combos', tk('ap
 const KEY_LABELS = {
   Entf: tk('app.keyDel'), Pos1: tk('app.keyHome'), Ende: tk('app.keyEnd'), 'Bild↑': tk('app.keyPgUp'), 'Bild↓': tk('app.keyPgDn'), Strg: tk('app.keyCtrl'),
   'Strg+C': tk('app.keyCtrlC'), 'Strg+V': tk('app.keyCtrlV'), 'Strg+X': tk('app.keyCtrlX'), 'Strg+A': tk('app.keyCtrlA'), 'Strg+Z': tk('app.keyCtrlZ'),
-  'Strg+F': tk('app.keyCtrlF'), 'Strg+⇧+T': tk('app.keyCtrlShiftT'), 'Bild einfügen': tk('app.photoTitle'), 'Foto wählen': tk('app.keyChoosePhoto'),
+  'Strg+F': tk('app.keyCtrlF'), 'Strg+⇧+T': tk('app.keyCtrlShiftT'), 'Bild einfügen': tk('app.photoTitle'), 'Text einfügen': tk('clipperm.keyPasteText'), 'Foto wählen': tk('app.keyChoosePhoto'),
   'Datei senden': tk('app.sendFile'), 'Ordner senden': tk('app.sendFolder'), 'Text senden': tk('app.sendText'), Passwort: tk('app.password'),
 };
 const rowTitle = (row) => { const d = ROW_TITLES[row.id]; return d && row.title === d[0] ? t(d[1]) : row.title; };
@@ -404,10 +405,12 @@ function openClipDlg() {
   el.clipDlg.showModal();
 }
 /* Die Zwischenablage-Diagnose im Dialog (clipdiag.js): Zeilen der aktiven Sitzung, nur solange der Dialog offen ist */
+let permAt = 0;
 function renderClipDiag() {
   const s = cur(), list = $('#clipDiagList');
   if (!s || !list || !el.clipDlg.open) return;
-  list.replaceChildren(...s.clipDiag.lines({ secure: window.isSecureContext !== false }).map((l) => {
+  if (Date.now() - permAt > 5000) { permAt = Date.now(); queryState().then((st) => { s.clipDiag.perm = st; renderClipDiag(); }); }       // Berechtigungen alle paar Sekunden neu lesen
+  list.replaceChildren(...s.clipDiag.lines({ perm: s.clipDiag.perm, kind: browserKind(), secure: window.isSecureContext !== false }).map((l) => {
     const li = document.createElement('li'); li.className = l.ok === true ? 'ok' : l.ok === false ? 'no' : 'note'; li.textContent = l.text; return li;
   }));
 }
@@ -427,6 +430,7 @@ const ACTIONS = {
   expand: toggleExpanded,
   photo: () => openPhotoDlg(),
   pasteimg: () => pasteImageFromClipboard(),
+  pastetext: () => readDeviceClipboard(true),
   sendfile: () => pickFile(),
   sendfolder: () => pickFolder(),
   clip: () => openClipDlg(),
@@ -1262,14 +1266,10 @@ export class RemoteSession extends Session {
       this.toast(t('app.textCopiedFromVm'), 3200, () => openClipDlg());
       if (cur() === this) renderClipDiag();
     };
-    if (!(navigator.clipboard && navigator.clipboard.writeText)) return fallback(window.isSecureContext === false ? 'insecure' : 'unsupported');
-    if (window.isSecureContext === false) return fallback('insecure');
-    if (!document.hasFocus()) return fallback('nofocus');       // der Browser legt ohne Fokus nichts ab; beim naechsten Fokus wird es noch einmal versucht (clipRetry)
-    try {
-      await navigator.clipboard.writeText(data);
-      this.clipPending = null; diag.vmText(n, 'stored'); this.toast(t('app.copied'), 1200);
-      if (cur() === this) renderClipDiag();
-    } catch (e) { fallback('denied', (e && e.name) || ''); }
+    // ohne Fokus oder HTTPS wird nichts versucht oder der Rueckfall ueber ein verstecktes Textfeld genommen (clipperm.js); der Rest steht in der Diagnose
+    const r = await copyToDevice(data);
+    if (r.ok) { this.clipPending = null; diag.vmText(n, 'stored'); this.toast(t('app.copied'), 1200); if (cur() === this) renderClipDiag(); }
+    else fallback(r.reason === 'error' ? 'denied' : r.reason, r.detail || '');
   }
   // Text in die Zwischenablage der VM legen; die Rueckgabe sagt, ob er hinausging, und jedes Scheitern wird gemeldet statt verschluckt
   sendClipboard(txt) {
@@ -1887,9 +1887,27 @@ el.pasteBtn.addEventListener('click', () => {
 });
 el.copyBtn.addEventListener('click', async () => {
   const txt = el.remoteClip.value;
-  try { await navigator.clipboard.writeText(txt); toast(t('app.copied')); }
-  catch { el.remoteClip.focus(); el.remoteClip.select(); try { document.execCommand('copy'); toast(t('app.copied')); } catch { toast(t('app.selectAndCopy')); } }
+  if ((await copyToDevice(txt)).ok) { toast(t('app.copied')); return; }
+  el.remoteClip.focus(); el.remoteClip.select();                         // letzter Rueckfall: Text markiert, der Anwender kopiert von Hand
+  toast(t('app.selectAndCopy'), 3200);
 });
+/* Text aus der Zwischenablage des Geraets holen (nur aus dieser Geste): der Browser fragt ggf. nach (Hinweis vorher), bei Nein oder ohne HTTPS bleibt Strg+V im Feld */
+async function readDeviceClipboard(toVm) {
+  const s = cur();
+  const r = await readDeviceText({ onHint: (key) => toast(t(key), 5000) });
+  if (s) s.clipDiag.perm = r.state || null;
+  if (!r.text) {
+    if (r.problem) toast(t(r.problem), 6500);
+    if (r.fallback && !toVm) { el.sendText.focus(); }
+    renderClipDiag();
+    return false;
+  }
+  if (toVm) { if (s && s.client) s.pasteToRemote(r.text, [KS.ctrl, charKeysym('v')]); }
+  else { el.sendText.value = r.text; toast(t('clipperm.pasted'), 1400); }
+  renderClipDiag();
+  return true;
+}
+$('#pasteDevBtn').addEventListener('click', () => readDeviceClipboard(false));
 
 /* ----- Datei senden und Bilder/Dateien aus der VM: der Dialog gehoert der aktiven Sitzung ----- */
 const fileInput = $('#fileInput');

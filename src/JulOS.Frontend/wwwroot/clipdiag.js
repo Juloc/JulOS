@@ -4,6 +4,7 @@
  * Die Ereignisse des Servers sind die Nachricht 15 (ClipNote in ClipboardBridge.cs); der Browser meldet selbst, ob er den Text ablegen durfte.
  * ===================================================================== */
 import { t, tk } from './i18n.js';
+import { stateWord, beforeReadHint, deniedHint } from './clipperm.js';
 
 /** Die Arten der Nachricht 15 (Reihenfolge wie ClipNote im Server). */
 export const NOTE = { status: 0, textFromVm: 1, textFromVmLost: 2, textFetchedByVm: 3, textTooLong: 4, textFromVmTooLong: 5, textWaiting: 6, listRefused: 7 };
@@ -24,6 +25,7 @@ export class ClipDiag {
   constructor(now = () => Date.now()) {
     this.now = now;
     this.startedAt = now();
+    this.perm = null;                   // Zustand der Berechtigungen (clipperm.queryState), vom Dialog nachgetragen
     this.ready = null;                  // null: noch nichts vom Server gehoert, true/false: Stand des Kanals der VM
     this.files = false;
     this.fromVm = null;                 // { at, chars, outcome: 'stored' | 'denied' | 'nofocus' | 'insecure' | 'unsupported' | 'background', detail }
@@ -76,13 +78,20 @@ export class ClipDiag {
   /** Die Zeilen der Anzeige: [{ id, ok: true | false | null, text }] (null: Hinweis). */
   lines(env = {}) {
     const now = this.now(), out = [];
-    const secure = env.secure !== false;
+    const perm = env.perm || null, secure = perm ? perm.secure : env.secure !== false;
     // Kanal der VM
     if (this.ready === true) out.push({ id: 'channel', ok: true, text: t(this.files ? tk('clipdiag.channelReadyFiles') : tk('clipdiag.channelReady')) });
     else if (this.ready === false || now - this.startedAt > CHANNEL_WAIT_MS) out.push({ id: 'channel', ok: false, text: t('clipdiag.channelMissing') });
     else out.push({ id: 'channel', ok: null, text: t('clipdiag.channelWaiting') });
     // Browser
-    out.push(secure ? { id: 'browser', ok: true, text: t('clipdiag.browserOk') } : { id: 'browser', ok: false, text: t('clipdiag.browserInsecure') });
+    const denied = !!perm && (perm.read === 'denied' || perm.write === 'denied');
+    out.push({ id: 'browser', ok: secure && !denied, text: t('clipdiag.browserCtx', { ctx: t(secure ? tk('clipdiag.ctxSecure') : tk('clipdiag.ctxInsecure')), read: perm ? stateWord(perm.read) : '?', write: perm ? stateWord(perm.write) : '?' }) });
+    if (!secure) out.push({ id: 'browserHint', ok: false, text: t('clipperm.hintInsecure') });
+    else if (perm) {
+      const key = beforeReadHint(perm, env.kind);
+      if (key && perm.read !== 'unknown') out.push({ id: 'browserHint', ok: denied ? false : null, text: t(key) });
+      else if (perm.write === 'denied') out.push({ id: 'browserHint', ok: false, text: t(deniedHint(env.kind)) });
+    }
     // aus der VM
     const f = this.fromVm;
     if (!f) out.push({ id: 'fromVm', ok: null, text: t('clipdiag.fromVmNone') });

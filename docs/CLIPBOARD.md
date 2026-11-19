@@ -15,10 +15,23 @@ not. The rest of the page is about images, files and folders.
 | No answer | a data request the remote never answers counts as refused after 15 s, the next one goes out (before, one lost answer blocked every later copy of that session) |
 | Selection | xrdp only knows the `CLIPBOARD` selection (Ctrl+C, Ctrl+X), not `PRIMARY` (marking with the mouse, middle click). Marking text in the VM does nothing for the browser; copy it. Pasting from the browser with the middle mouse button does not work either, use Ctrl+V (Ctrl+Shift+V in terminals). |
 
-What the browser may do is decided by the browser, not by JulOS: `navigator.clipboard` exists only on HTTPS or `localhost`, writing needs the page to have focus (and in Firefox and Safari a
-recent key press or click), reading is never done without a user action (Ctrl+V gives the text through the `paste` event, which needs no permission at all). Where it does not work, the
-toast "Text aus der VM kopiert (Symbol Zwischenablage)" opens the dialog "Text senden", which shows the text and has the button to copy it by hand; a text that arrived while the page
-had no focus is tried again when the focus returns. Without HTTPS only the paste field and Ctrl+V work, which the diagnosis says.
+### Browser permissions (`clipperm.js`)
+
+What the browser may do is decided by the browser, not by JulOS. JulOS asks for the state first (`navigator.permissions.query` for `clipboard-read` and `clipboard-write`, inside a
+try/catch: Firefox and Safari do not know `clipboard-read`, the state is then "unknown") and acts on it:
+
+| Situation | What JulOS does |
+| --- | --- |
+| Insecure context (plain `http`, not `localhost`): `navigator.clipboard` does not exist | says why ("Diese Seite läuft ohne HTTPS ...") and keeps the way that needs no permission: Ctrl+V in the picture or in the field of the dialog (the `paste` event carries the text), and for copying from the VM the hidden text field with `document.execCommand('copy')` (works without HTTPS, but only straight after a tap or key) |
+| `prompt` | a hint **before** the call ("Dein Browser fragt gleich nach Zugriff auf die Zwischenablage, bitte erlauben"), then `readText()`; the first read is only ever made from a user gesture (button "Aus der Zwischenablage holen", key "Text einfügen" of the key bar, Ctrl+V) |
+| `denied` | no call; a hint with the way to allow it again (Chrome/Edge: lock icon, site settings, clipboard; Firefox: lock icon, permissions; Safari/iOS: Settings; Android Chrome: site settings) and the fallback Ctrl+V or long press in the field of the dialog |
+| Safari, iOS | `readText` shows its own "Einfügen" bubble and only directly inside the gesture: hint before the call |
+| Firefox | `readText` only in newer versions and with a bubble, otherwise the `paste` event; the hint says so |
+| Android Chrome | reads only while the page is in the foreground and has focus |
+| Page without focus when text arrives from the VM | nothing is tried (the browser refuses it); the text waits in the dialog and is stored once the focus returns |
+
+The diagnosis shows the context (secure or not) and both permission states. Texts: `clipperm.*` and `clipdiag.*` in `i18n/de.js` and `en.js`. Where writing does not work, the toast "Text aus der VM kopiert (Symbol Zwischenablage)" opens the
+dialog "Text senden" with the text and the button to copy it by hand.
 
 ## What the stream carries
 
@@ -166,7 +179,7 @@ Server side, one line per event at debug level, never with the text (`Zwischenab
 - Text from the browser went to xrdp with CR LF (reproduced against xrdp 0.10.1: `xclip -o` in the VM returned `\r\n`): fixed, test `ClipboardRealTextTests` (real xrdp) and `ClipboardBridgeTests`.
 - Text copied in the VM that equalled the last text pasted from the browser was dropped for the rest of the session (echo filter without an end): fixed, same tests.
 - One data request without an answer blocked every later one for the rest of the session (not reproducible with xrdp, which answers or fails by itself; found by reading, covered with a simulated server in `ClipboardConversationTests`).
-- Silent failures on the browser side (text too long, no connection, Ctrl+V without text, clipboard write refused): now a message and a line in the diagnosis (`tests/frontend/clipdiag.test.mjs`, `stream-clip.test.mjs`).
+- Silent failures on the browser side (text too long, no connection, Ctrl+V without text, clipboard write refused): now a message and a line in the diagnosis (`tests/frontend/clipdiag.test.mjs`, `clipperm.test.mjs` with a faked `navigator` for the states allowed, asks, denied, missing, and the fallback, `stream-clip.test.mjs`).
 - Browser flows against a real xrdp desktop: `deploy/dev/e2e/tests/e2e.spec.mjs`, test 8 (text from the VM into `navigator.clipboard`, Shift+Home and Shift+Arrow selection and Ctrl+C in a real window, Ctrl+V with a line break into the VM, the diagnosis).
 
 ### Not verified

@@ -157,6 +157,20 @@ public sealed class LogicTests
     }
 
     [Fact]
+    public void A_vnc_connection_has_port_5900_no_domain_no_drive_and_the_default_layout()
+    {
+        var v = ConnectionRules.Validate("Alt", "vnc", "ziel", null, "", driveShare: true, driveWrite: true, domain: "DOM", layout: "fr").Value!;
+        Assert.Equal(("vnc", 5900), (v.Kind, v.Port));
+        Assert.False(v.DriveShare);
+        Assert.False(v.DriveWrite);
+        Assert.Equal("", v.Domain);
+        Assert.Equal(KeyboardLayouts.Default, v.Layout);
+        Assert.Equal(5901, ConnectionRules.Validate("Alt", "vnc", "ziel", 5901, "").Value!.Port);
+        Assert.Equal(3389, ConnectionRules.Validate("PC", "desktop", "ziel", null, "").Value!.Port);
+        Assert.NotNull(ConnectionRules.Validate("Alt", "telnet", "ziel", null, "").Error);
+    }
+
+    [Fact]
     public void Drive_switches_default_to_off_belong_to_desktops_and_writing_needs_the_share()
     {
         var plain = ConnectionRules.Validate("PC", "desktop", "ziel", null, "u").Value!;

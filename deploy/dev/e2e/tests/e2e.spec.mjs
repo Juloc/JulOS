@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { existsSync } from 'node:fs';
-import { AUTH_FILE, RDP, SSH, STATE_FILE, loadState, newPassword, saveState, totp } from './helpers.mjs';
+import { AUTH_FILE, RDP, SSH, VNC, STATE_FILE, loadState, newPassword, saveState, totp } from './helpers.mjs';
 
 const DESKTOP = { viewport: { width: 1280, height: 800 } };
 const PHONE = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
@@ -290,5 +290,43 @@ test('8 Zwischenablage: Text aus der VM im Browser, Markieren mit Umschalt+Pfeil
 
   await probe('/entry-close', { method: 'POST' });
   expect(errors).toEqual([]);
+  await context.close();
+});
+
+test('9 VNC: verbinden (Passwort im Dialog der Sitzung), Bild, Klick und Taste erreichen das Ziel', async ({ browser }) => {
+  const { context, page, errors } = await signedIn(browser);
+  const sockets = watchSockets(page);
+  const conn = { name: 'E2E VNC', kind: 'vnc', host: VNC.host, user: '' };
+  await page.goto('/');
+  for (const c of (await (await page.request.get('/api/connections')).json()).connections.filter((x) => x.name === conn.name)) await page.request.delete('/api/connections/' + c.id, { headers: API });
+  await page.reload();
+  await addConnection(page, conn);
+  await expect(tile(page, conn.name)).toContainText(VNC.host);
+  await tile(page, conn.name).click();
+
+  // Der Server verlangt ein Passwort: die Sitzung fragt in einem Dialog, nur nach dem Passwort (ein VNC-Server kennt keinen Benutzer)
+  const login = page.locator('.term-dialog input[name=pw]');
+  await expect(login).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('.term-dialog input[name=user]')).toHaveCount(0);
+  await login.fill('falsch123');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.term-dialog p', { hasText: /abgelehnt|rejected/ }).first()).toBeVisible({ timeout: 30_000 });    // abgelehnt: der Dialog kommt noch einmal, mit dem Hinweis
+  await page.locator('.term-dialog input[name=pw]').fill(VNC.password);
+  await page.keyboard.press('Enter');
+  await waitForPicture(page, sockets);
+
+  // Klick und Taste: das Fuehlerfenster im Desktop (300 x 300 bei 600,400) protokolliert, was bei ihm ankommt
+  const read = async () => (await fetch(VNC.probe + '/input.log')).text();
+  const shape = await page.locator('.sv-display canvas').first().evaluate((c) => ({ w: c.width, h: c.height }));
+  const box = await page.locator('.sv-display canvas').first().boundingBox();
+  const at = (x, y) => [box.x + (x * box.width) / shape.w, box.y + (y * box.height) / shape.h];
+  const [cx, cy] = at(750, 550);
+  await page.mouse.move(cx, cy);
+  await page.mouse.click(cx, cy);
+  await expect.poll(read, { message: 'der Klick kam im Fuehlerfenster an', timeout: 15_000 }).toContain('button 1,');
+  await page.waitForTimeout(300);
+  await page.keyboard.type('j');
+  await expect.poll(read, { message: 'die Taste kam im Fuehlerfenster an', timeout: 15_000 }).toContain('keysym 0x6a');
+  expect(errors.filter((e) => !/401|403/.test(e))).toEqual([]);
   await context.close();
 });

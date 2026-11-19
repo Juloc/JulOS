@@ -158,8 +158,10 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             return null;
         }
 
-        var stream = new ScreenStream(target.Options, target.MaxKilobitsPerSecond, log, encoders, clientCodecs, target.Trust, drive: target.Drive);
-        log.LogInformation("Bildschirm-Verbindung offen (RDP; der Browser kann {Codecs})", clientCodecs);
+        var stream = target.Vnc is { } vnc
+            ? new ScreenStream(vnc, target.MaxKilobitsPerSecond, log, encoders, clientCodecs, target.Trust)
+            : new ScreenStream(target.Options, target.MaxKilobitsPerSecond, log, encoders, clientCodecs, target.Trust, drive: target.Drive);
+        log.LogInformation("Bildschirm-Verbindung offen ({Protocol}; der Browser kann {Codecs})", target.Vnc is null ? "RDP" : "VNC", clientCodecs);
         var live = new Live
         {
             Token = NewToken(), Owner = owner, Stream = stream, Stop = stop, Lease = lease, Target = target, Started = Environment.TickCount64,
@@ -296,12 +298,19 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                 }
 
                 var limits = live.Stream.ClipboardLimits;
-                await SendOnceAsync(ws, ScreenProtocol.Limits(limits.MaxFileBytes, ClipboardOptions.MaxFiles, ClipboardOptions.MaxEntries), ct).ConfigureAwait(false);
+                await SendOnceAsync(ws, live.Stream.SupportsFiles ? ScreenProtocol.Limits(limits.MaxFileBytes, ClipboardOptions.MaxFiles, ClipboardOptions.MaxEntries) : ScreenProtocol.Limits(0, 0, 0), ct).ConfigureAwait(false);
 
                 var send = PumpToBrowserAsync(ws, live.Stream, live.Owner, Downloads, attach.Token);
                 var receive = ReceiveFromBrowserAsync(ws, live.Stream, attach.Token);
                 var watch = WatchAsync(sessionAlive, sessionCheck, attach.Token);
                 var first = await Task.WhenAny(live.Run, send, receive, watch).ConfigureAwait(false);
+
+                // Die Ereignisse enden, wenn die Sitzung endet (RunAsync schliesst sie in seinem finally), also einen Atemzug bevor die Sitzung selbst
+                // als beendet gilt: dann ist es das Ende der Sitzung (mit ihrem Grund, etwa einer abgelehnten Anmeldung), kein Abriss des Browsers.
+                if (first == send && send.IsCompletedSuccessfully && await Task.WhenAny(live.Run, Task.Delay(1000, CancellationToken.None)).ConfigureAwait(false) == live.Run)
+                {
+                    first = live.Run;
+                }
 
                 if (live.Lease.Replaced)
                 {
@@ -326,7 +335,13 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                 // Zuerst sagen, warum es endet (ein abgebrochenes Senden oder Empfangen reisst den WebSocket ein), dann die Schleifen beenden
                 if (last is not null)
                 {
-                    await FinishAsync(ws, last, ct).ConfigureAwait(false);
+                    await FinishAsync(ws, last, ct, log).ConfigureAwait(false);
+
+                    // Den Abschluss-Rahmen senden und dem Browser Zeit zum Antworten lassen (sein Rahmen beendet die Empfangsschleife), bevor das Abbrechen
+                    // die Verbindung einreisst: sonst geht die Nachricht (der Grund, etwa "Passwort abgelehnt") oft auf dem Weg verloren, weil der Server
+                    // die Verbindung schliesst, bevor seine Ausgabe auf dem Draht ist, und der Browser sieht nur einen Abriss
+                    await CloseAsync(ws).ConfigureAwait(false);
+                    await Task.WhenAny(receive, Task.Delay(2000, CancellationToken.None)).ConfigureAwait(false);
                 }
 
                 await attach.CancelAsync().ConfigureAwait(false);
@@ -380,7 +395,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         catch (OperationCanceledException) { /* abgebrochen */ }
         catch (RdpException e) when (e.CertificateFingerprint is not null)
         {
-            log.LogWarning("RDP-Zertifikat des Ziels hat sich geändert: Verbindung nicht aufgebaut, nichts gesendet");
+            log.LogWarning("Zertifikat des Ziels hat sich geändert: Verbindung nicht aufgebaut, nichts gesendet");
             last = ScreenProtocol.CertificateChanged(e.CertificateFingerprint, live.Target.Trust?.Stored);
         }
         catch (RdpException e) { last = ScreenProtocol.Error(e.IsCredentialsMissing ? ErrorCredentialsMissing : e.IsLogonFailure ? ErrorLogonFailed : ErrorConnectFailed, e.Message); }
@@ -719,6 +734,9 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             case ScreenProtocol.FromBrowserKey when m.Length >= 3:
                 stream.Key(m[1], (m[2] & 1) != 0, (m[2] & 2) != 0);
                 break;
+            case ScreenProtocol.FromBrowserKeysym when m.Length >= 6:
+                stream.Keysym(BinaryPrimitives.ReadUInt32BigEndian(m[1..]), m[5] != 0);
+                break;
             case ScreenProtocol.FromBrowserUnicode when m.Length >= 3:
                 stream.Unicode((char)BinaryPrimitives.ReadUInt16BigEndian(m[1..]));
                 break;
@@ -786,7 +804,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
     }
 
     /// <summary>Eine letzte Nachricht senden und den WebSocket schliessen (Fehler, Ablosung, Abmeldung).</summary>
-    private static async Task FinishAsync(WebSocket ws, byte[] message, CancellationToken ct)
+    private static async Task FinishAsync(WebSocket ws, byte[] message, CancellationToken ct, ILogger? log = null)
     {
         try
         {
@@ -797,6 +815,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         catch (Exception e) when (e is WebSocketException or OperationCanceledException or ObjectDisposedException or InvalidOperationException)
         {
             // der Browser ist schon weg
+            log?.LogDebug("Bildschirm: letzte Nachricht nicht gesendet: {Type} {Message}", e.GetType().Name, e.Message);
         }
     }
 

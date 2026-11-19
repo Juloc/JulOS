@@ -196,7 +196,7 @@ async function loadHosts() {
 setInterval(() => { if (state.user && !document.hidden) loadHosts(); }, 30000);
 
 const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const KIND_LABEL = { desktop: tk('shell.kindDesktop'), terminal: tk('shell.kindTerminal') };
+const KIND_LABEL = { desktop: tk('shell.kindDesktop'), vnc: tk('shell.kindVnc'), terminal: tk('shell.kindTerminal') };
 
 function renderConnections() {
   const list = $('#connList');
@@ -233,7 +233,7 @@ async function signOut() {
 }
 
 /* ---------- Verbindung anlegen und aendern ---------- */
-const DEFAULT_PORT = { desktop: '3389', terminal: '22' };
+const DEFAULT_PORT = { desktop: '3389', vnc: '5900', terminal: '22' };
 // Laufwerk (nur Desktop): Freigabe und Schreiben, beide standardmaessig aus; ohne Ordner am Server (JULOS_DRIVE_ROOT) nur der Hinweis
 const showDriveChoice = () => {
   const on = $('#connKind').value === 'desktop';
@@ -489,7 +489,8 @@ function startDialog(c, opts = {}) {
   if (!opts.extra && Sessions.find(c.id).length) { Sessions.open(asConn(c)); return; }   // laeuft schon: nach vorn, kein Passwort noetig
   state.starting = { c, extra: !!opts.extra };
   // Mit gespeichertem Passwort genuegt ein Tipp: der Server nimmt es aus dem verschluesselten Speicher
-  if (c.hasPassword) { launch(c, '', !!opts.extra); return; }
+  // Ein VNC-Server kann ohne Anmeldung laufen: dann gleich verbinden; verlangt er ein Passwort, fragt die Sitzung danach
+  if (c.hasPassword || c.kind === 'vnc') { launch(c, '', !!opts.extra); return; }
   $('#startTitle').textContent = c.name;
   $('#startUser').value = c.username;
   $('#startPw').value = '';
@@ -529,6 +530,7 @@ function quickDialog(prefill = '') {
   $('#quickDlg').showModal();
   setTimeout(() => ($('#quickHost').value ? $('#quickPw') : $('#quickHost')).focus(), 150);
 }
+$('#quickKind').addEventListener('change', () => { $('#quickPw').required = $('#quickKind').value !== 'vnc'; });   // ein VNC-Ziel ohne Anmeldung braucht kein Passwort
 $('#quickForm').addEventListener('submit', (e) => {
   e.preventDefault();
   const kind = $('#quickKind').value, msg = $('#quickMsg');
@@ -536,7 +538,7 @@ $('#quickForm').addEventListener('submit', (e) => {
   if (!q) return setMsg(msg, t('shell.quickAddressInvalid'));
   const user = $('#quickUser').value.trim() || q.username;
   const password = $('#quickPw').value;
-  if (!password) return setMsg(msg, t('shell.quickPasswordMissing'));
+  if (!password && kind !== 'vnc') return setMsg(msg, t('shell.quickPasswordMissing'));
   $('#quickPw').value = '';
   $('#quickDlg').close();
   Sessions.open(quickConnection({ kind, host: q.host, port: q.port || QUICK_PORT[kind], username: user }), { password });

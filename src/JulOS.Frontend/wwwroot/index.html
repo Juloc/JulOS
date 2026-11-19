@@ -173,7 +173,7 @@
         <h2 id="connDlgTitle" data-i18n="app.connection">Verbindung</h2>
         <label>Name <input id="connName" type="text" maxlength="60" autocomplete="off" required></label>
         <label data-i18n="app.kind">Art
-          <select id="connKind"><option value="desktop">Desktop (RDP)</option><option value="terminal">Terminal (SSH)</option></select>
+          <select id="connKind"><option value="desktop">Desktop (RDP)</option><option value="vnc">Desktop (VNC)</option><option value="terminal">Terminal (SSH)</option></select>
         </label>
         <label id="connHostRow">Host
           <select id="connHostSel"></select>
@@ -289,7 +289,7 @@
         <h2>Quick Connect</h2>
         <p class="hint" data-i18n="app.quickHint">Eine einzelne Sitzung, ohne Speichern: Adresse und Passwort bleiben nirgends hängen, auch nicht auf dem Server.</p>
         <label data-i18n="app.kind">Art
-          <select id="quickKind"><option value="desktop">Desktop (RDP)</option><option value="terminal">Terminal (SSH)</option></select>
+          <select id="quickKind"><option value="desktop">Desktop (RDP)</option><option value="vnc">Desktop (VNC)</option><option value="terminal">Terminal (SSH)</option></select>
         </label>
         <label data-i18n="app.address">Adresse <input id="quickHost" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Name oder IP-Adresse, auch benutzer@adresse:port" data-i18n-placeholder="app.quickHostPh" required></label>
         <label data-i18n="app.userOnTarget">Benutzername auf dem Ziel <input id="quickUser" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>

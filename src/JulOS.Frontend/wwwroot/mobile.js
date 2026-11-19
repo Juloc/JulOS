@@ -67,7 +67,7 @@ const DEST = [
 ];
 const SWATCHES = [['#9a67ea', tk('mobile.colorViolet')], ['#4f86f7', tk('mobile.colorBlue')], ['#00a67e', tk('mobile.colorGreen')], ['#0aa5b8', tk('mobile.colorTeal')], ['#e5599a', tk('mobile.colorPink')], ['#e5484d', tk('mobile.colorRed')], ['#f5a524', tk('mobile.colorOrange')]];
 const SCHEME_LABEL = { light: tk('mobile.schemeLight'), dark: tk('mobile.schemeDark'), auto: tk('mobile.schemeAuto') };
-const kindText = (k) => (k === 'terminal' ? t('shell.kindTerminal') : t('shell.kindDesktop'));
+const kindText = (k) => (k === 'terminal' ? t('shell.kindTerminal') : k === 'vnc' ? t('shell.kindVnc') : t('shell.kindDesktop'));
 const DEFAULT_SEED = '#9a67ea';
 
 let ctx = null, root = null, ready = null;
@@ -394,7 +394,7 @@ function filtered() {
 function renderServices() {
   if (!$('#mChips')) return;
   const cnt = (k) => conns().filter((c) => k === 'all' || c.kind === k).length;
-  $('#mChips').innerHTML = [['all', tk('mobile.all'), 'apps'], ['desktop', tk('shell.kindDesktop'), 'desktop'], ['terminal', tk('shell.kindTerminal'), 'terminal']].map(([k, l, ic]) =>
+  $('#mChips').innerHTML = [['all', tk('mobile.all'), 'apps'], ['desktop', tk('shell.kindDesktop'), 'desktop'], ['vnc', tk('shell.kindVnc'), 'desktop'], ['terminal', tk('shell.kindTerminal'), 'terminal']].map(([k, l, ic]) =>
     `<button type="button" class="mb m3-chip m3-state" data-kind="${k}" aria-pressed="${view.kind === k}">${view.kind === k ? icon('check') : icon(ic)}${esc(t(l))} <span style="opacity:.7">${cnt(k)}</span></button>`).join('');
   // Ordner, Favoriten und zuletzt benutzt (vom Server): die Auswahl gibt es, sobald es einen Ordner, einen Favoriten oder eine Benutzung gibt
   const known = new Set(['all', 'fav', 'recent', 'none', ...folders().map((f) => f.id)]);

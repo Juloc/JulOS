@@ -9,6 +9,7 @@ using JulOS.Integrations;
 using JulOS.Integrations.Display;
 using JulOS.Integrations.Display.Rdp;
 using JulOS.Integrations.Display.Rdp.Drive;
+using JulOS.Integrations.Display.Vnc;
 using JulOS.Integrations.Ssh;
 
 namespace JulOS.Frontend.Remote;
@@ -51,11 +52,12 @@ internal static class RemoteEndpoints
                 var (v, quickError) = ConnectionRules.Validate("Quick Connect", q.Kind, q.Host, q.Port, q.Username);
                 if (v is null) return Error(400, quickError!);
                 if (!policy.Allows(v.Host)) return Error(403, "Dieses Ziel ist nicht erlaubt.");
-                if (string.IsNullOrEmpty(password)) return Error(400, "Passwort fehlt.");
+                // Ein VNC-Server kann ohne Anmeldung laufen: dann genuegt ein leeres Passwort (verlangt er eins, fragt die Sitzung danach)
+                if (string.IsNullOrEmpty(password) && v.Kind != "vnc") return Error(400, "Passwort fehlt.");
                 if (!hits.Allow("quick:" + owner, QuickConnect.MaxPerMinute, TimeSpan.FromMinutes(1))) return Error(429, "Zu viele Anfragen, bitte kurz warten.");
                 var known = quickTrust.Get(owner, v.Kind, v.Host, v.Port);
                 c = new ConnectionRecord(QuickConnect.IdOf(v.Kind, v.Host, v.Port, v.Username), v.Host, v.Kind, v.Host, v.Port, v.Username, false, Guid.Empty,
-                    HostKey: v.Kind == "terminal" ? known : null, CertFingerprint: v.Kind == "desktop" ? known : null);
+                    HostKey: v.Kind == "terminal" ? known : null, CertFingerprint: v.Kind is "desktop" or "vnc" ? known : null);
                 saveHostKey = saveCert = (value, _) => { quickTrust.Set(owner, v.Kind, v.Host, v.Port, value); return Task.CompletedTask; };
             }
             else
@@ -75,8 +77,10 @@ internal static class RemoteEndpoints
                     password = sealedValue is null ? null : box.Decrypt(sealedValue, connectionId);
                     if (password is null) return Error(409, "Das gespeicherte Passwort lässt sich nicht lesen. Bitte neu eingeben und speichern.");
                 }
-                if (string.IsNullOrEmpty(password)) return Error(400, "Passwort fehlt.");
+                if (string.IsNullOrEmpty(password) && c.Kind != "vnc") return Error(400, "Passwort fehlt.");
             }
+
+            password ??= "";
 
             // Terminal: eigener SSH-Client im Server, der Browser zeichnet den Text selbst (xterm.js). Spalten und Zeilen kommen vom Browser.
             if (c.Kind == "terminal")
@@ -85,6 +89,18 @@ internal static class RemoteEndpoints
                     SshProtocol.Clamp(body.Cols ?? 80, SshProtocol.MinCols, SshProtocol.MaxCols), SshProtocol.Clamp(body.Rows ?? 24, SshProtocol.MinRows, SshProtocol.MaxRows));
                 var sshTicket = sshTickets.Create(id.UserId, new SshTarget(owner, options, c.HostKey, body.AcceptHostKey, saveHostKey, SessionRegistry.SlotOf(owner, c.Id, body.Sid)));
                 return sshTicket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(sshTicket, c.Kind, options.Cols, options.Rows, "ssh"), AppJson.Default.TicketResponse);
+            }
+
+            // VNC: dieselbe Strom-Engine, der eigene RFB-Client im Server; Passwort (hoechstens 8 Zeichen zaehlen) und bei VeNCrypt mit Zertifikat der Fingerabdruck wie bei RDP
+            if (c.Kind == "vnc")
+            {
+                if (!ScreenStream.IsAvailable) return Error(503, "Die Bildübertragung ist auf diesem Server nicht verfügbar: " + ScreenStream.UnavailableReason);
+                var vncTrust = new CertificateTrust(c.CertFingerprint, body.AcceptCert, saveCert);
+                var vnc = new VncOptions { Host = c.Host, Port = c.Port, Password = password, UserName = string.IsNullOrWhiteSpace(body.Username) ? c.Username : body.Username.Trim(), CertificateCheck = vncTrust.Check };
+                var vncTicket = screenTickets.Create(id.UserId, ScreenTarget.ForVnc(vnc, SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid), trust: vncTrust));
+                var vw = Math.Clamp(body.Width ?? 900, 400, 4096) & ~1;
+                var vh = Math.Clamp(body.Height ?? 1600, 300, 4096) & ~1;
+                return vncTicket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(vncTicket, c.Kind, vw, vh, "stream", null, KeyboardLayouts.ClientKey(KeyboardLayouts.Default)), AppJson.Default.TicketResponse);
             }
 
             // Remote-Aufloesung: Breite Vielfaches von 4, Hoehe von 2, sinnvolle Grenzen

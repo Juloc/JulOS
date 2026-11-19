@@ -85,6 +85,7 @@ const LOGO = `<svg viewBox="0 0 32 32" aria-hidden="true">
 const APPS = [
   { id: 'home', name: t('desktop.start'), ic: 'home', g: ['#7b78ee', '#5160e6'] },
   { id: 'desktop', name: t('desktop.desktop'), sub: 'RDP', ic: 'monitor', g: ['#3a99dc', '#2f5fe0'] },
+  { id: 'vnc', name: t('desktop.vnc'), sub: t('desktop.desktop'), ic: 'monitor', g: ['#2a8f8a', '#25758f'] },
   { id: 'terminal', name: t('desktop.terminal'), sub: 'SSH', ic: 'terminal', g: ['#5b6275', '#2c3142'] },
   { id: 'settings', name: t('desktop.settings'), ic: 'sliders', g: ['#7d849f', '#555b78'] },
   { id: 'files', name: t('desktop.files'), ic: 'folder', g: ['#c28418', '#a86408'] },
@@ -96,6 +97,7 @@ const APPS = [
   { id: 'monitor', name: t('desktop.monitor'), ic: 'activity', g: ['#cf5fae', '#8c45d6'] },
 ];
 const appById = (id) => APPS.find((a) => a.id === id);
+const kindName = (kind) => (kind === 'terminal' ? t('desktop.terminal') : kind === 'vnc' ? t('desktop.vnc') : t('desktop.desktop'));
 let modules = { caddy: false, ddns: false, services: false };   // vom Server (GET /api/modules), nach der Anmeldung geladen
 const shownApps = () => APPS.filter((a) => !a.mod || modules[a.mod]);
 const tile = (g, icon) => `<span class="dk-ti" style="--g1:${g[0]};--g2:${g[1]}">${ic(icon)}</span>`;
@@ -365,6 +367,7 @@ const MENUS = () => ({
     { label: t('desktop.openLauncher'), icon: 'grid', run: () => openLauncher() },
     { sep: true },
     { label: t('desktop.connectDesktopDots'), icon: 'monitor', run: () => pickConnection('desktop', $('[data-menu="Apps"]', root)) },
+    { label: t('desktop.connectVncDots'), icon: 'monitor', run: () => pickConnection('vnc', $('[data-menu="Apps"]', root)) },
     { label: t('desktop.connectTerminalDots'), icon: 'terminal', run: () => pickConnection('terminal', $('[data-menu="Apps"]', root)) },
     { sep: true },
     ...shownApps().filter((a) => a.mod).map((a) => ({ label: a.name, icon: a.ic, run: () => runApp(a.id) })),
@@ -515,6 +518,7 @@ function buildDock() {
     item('hosts', t('desktop.hosts'), appById('hosts')),
     el('div', 'dk-dsep'),
     item('desktop', t('desktop.desktopRdp'), appById('desktop')),
+    item('vnc', t('desktop.desktopVnc'), appById('vnc')),
     item('terminal', t('desktop.terminalSsh'), appById('terminal')),
     modDock(item),
     el('div', 'dk-dsep'),
@@ -624,12 +628,12 @@ function runApp(id, anchor) {
   if (id === 'files') return openFiles();
   if (id === 'hosts') return openHome('hosts');
   if (a && a.mod) return modules[a.mod] ? openModule(id) : notify(t('desktop.moduleOff', { name: a.name }));
-  if (id === 'desktop' || id === 'terminal') return pickConnection(id, anchor);
+  if (id === 'desktop' || id === 'terminal' || id === 'vnc') return pickConnection(id, anchor);
 }
 
 /** Verbindung fuer Desktop oder Terminal waehlen: eine = direkt, mehrere = Menue, keine = neue anlegen */
 function pickConnection(kind, anchor) {
-  const label = kind === 'desktop' ? t('desktop.desktop') : t('desktop.terminal');
+  const label = kind === 'desktop' ? t('desktop.desktop') : kind === 'vnc' ? t('desktop.vnc') : t('desktop.terminal');
   const list = ctx.state.connections.filter((c) => c.kind === kind);
   const running = [...sessWins.values()].filter((w) => w.session.kind === kind);
   if (running.length && list.length <= 1) { const w = running.find((x) => x.session === Sessions.active) || running[0]; w.minimized ? restoreWin(w) : focusWin(w); return; }
@@ -670,7 +674,7 @@ function openLauncher() {
     }
     hits = [
       ...shownApps().filter((a) => a.name.toLowerCase().includes(q) || (a.sub || '').toLowerCase().includes(q)).map((a) => ({ name: a.name, sub: a.soon ? t('desktop.soonAvail') : a.sub || t('desktop.program'), g: a.g, ic: a.ic, soon: a.soon, run: (anchor) => runApp(a.id, anchor) })),
-      ...ctx.state.connections.filter((c) => (c.name + ' ' + c.host).toLowerCase().includes(q)).map((c) => ({ name: c.name, sub: c.kind === 'terminal' ? t('desktop.terminal') : t('desktop.desktop'), g: appById(c.kind).g, ic: appById(c.kind).ic, run: () => ctx.connect(c) })),
+      ...ctx.state.connections.filter((c) => (c.name + ' ' + c.host).toLowerCase().includes(q)).map((c) => ({ name: c.name, sub: kindName(c.kind), g: appById(c.kind).g, ic: appById(c.kind).ic, run: () => ctx.connect(c) })),
       // Sieht die Eingabe nach einer Adresse aus: Quick Connect ohne Speichern anbieten
       ...(looksLikeAddress(input.value) ? [{ name: t('desktop.quickConnectTo', { address: input.value.trim() }), sub: t('desktop.withoutSaving'), g: appById('desktop').g, ic: 'plus', run: () => ctx.quick(input.value) }] : []),
     ];
@@ -761,7 +765,7 @@ function renderHome() {
 const connTile = (c) => {
   const n = Sessions.find(c.id).length, open = n > 0;
   const a = appById(c.kind);
-  return `<button type="button" class="dk-b dk-tile" data-conn="${ctx.esc(c.id)}">${tile(a.g, a.ic)}<span class="dk-tt"><b><span class="dk-sd ${dotClass(connectionState(ctx.state.hosts, c))}" title="${stateText(connectionState(ctx.state.hosts, c))}"></span>${ctx.esc(c.name)}</b><i class="${open ? 'on' : ''}">${open ? (n > 1 ? t('desktop.sessionsNOpen', { n }) : t('desktop.sessionOpen')) : (c.kind === 'terminal' ? t('desktop.terminal') : t('desktop.desktop')) + ' · ' + ctx.esc(c.host)}</i></span></button>`;
+  return `<button type="button" class="dk-b dk-tile" data-conn="${ctx.esc(c.id)}">${tile(a.g, a.ic)}<span class="dk-tt"><b><span class="dk-sd ${dotClass(connectionState(ctx.state.hosts, c))}" title="${stateText(connectionState(ctx.state.hosts, c))}"></span>${ctx.esc(c.name)}</b><i class="${open ? 'on' : ''}">${open ? (n > 1 ? t('desktop.sessionsNOpen', { n }) : t('desktop.sessionOpen')) : kindName(c.kind) + ' · ' + ctx.esc(c.host)}</i></span></button>`;
 };
 function renderStart(m) {
   const conns = [...ctx.state.connections.filter((c) => c.favorite), ...ctx.state.connections.filter((c) => !c.favorite)];     // Favoriten (vom Server) zuerst
@@ -854,7 +858,7 @@ function renderSystem(m) {
 const hostFilter = { id: '' };      // leer = alle Hosts (Auswahl in der Dienste-Ansicht, nur solange das Fenster lebt)
 const serviceRow = (c) => {
   const a = appById(c.kind), n = Sessions.find(c.id).length, open = n > 0, st = connectionState(ctx.state.hosts, c);
-  return `<div class="dk-row">${tile(a.g, a.ic)}<span class="dk-tt"><b><span class="dk-sd ${dotClass(st)}" title="${stateText(st)}"></span>${ctx.esc(c.name)}${open ? ` <span class="dk-tag">${n > 1 ? t('desktop.sessionsN', { n }) : t('desktop.sessionOpen')}</span>` : ''}</b><i>${c.kind === 'terminal' ? t('desktop.terminalSsh') : t('desktop.desktopRdp')} · ${ctx.esc(c.username ? c.username + '@' : '')}${ctx.esc(c.host)}:${c.port}${folderName(ctx.state.folders || [], c) ? ' · ' + ctx.esc(folderName(ctx.state.folders, c)) : ''}${c.hasPassword ? ' · ' + t('desktop.passwordSaved') : ''}</i></span>
+  return `<div class="dk-row">${tile(a.g, a.ic)}<span class="dk-tt"><b><span class="dk-sd ${dotClass(st)}" title="${stateText(st)}"></span>${ctx.esc(c.name)}${open ? ` <span class="dk-tag">${n > 1 ? t('desktop.sessionsN', { n }) : t('desktop.sessionOpen')}</span>` : ''}</b><i>${c.kind === 'terminal' ? t('desktop.terminalSsh') : c.kind === 'vnc' ? t('desktop.desktopVnc') : t('desktop.desktopRdp')} · ${ctx.esc(c.username ? c.username + '@' : '')}${ctx.esc(c.host)}:${c.port}${folderName(ctx.state.folders || [], c) ? ' · ' + ctx.esc(folderName(ctx.state.folders, c)) : ''}${c.hasPassword ? ' · ' + t('desktop.passwordSaved') : ''}</i></span>
     <button type="button" class="dk-b dk-btn sq dk-star${c.favorite ? ' on' : ''}" data-fav="${ctx.esc(c.id)}" aria-pressed="${!!c.favorite}" aria-label="${c.favorite ? t('desktop.unfavorite') : t('desktop.pinFavorite')}" title="${c.favorite ? t('desktop.favoriteEverywhere') : t('desktop.pinFavorite')}">${ic('star')}</button>
     <button type="button" class="dk-b dk-btn pri" data-conn="${ctx.esc(c.id)}">${ic('play')}${open ? t('desktop.open') : t('desktop.connect')}</button>
     ${open ? `<button type="button" class="dk-b dk-btn sq" data-extra="${ctx.esc(c.id)}" aria-label="${t('desktop.anotherSession')}" title="${t('desktop.anotherSessionTarget')}">${ic('plus')}</button>` : ''}
@@ -938,7 +942,7 @@ function onMainClick(e) {
   else if (t.dataset.act === 'account') ctx.account();
   else if (t.dataset.act === 'signout') ctx.signOut();
   else if (t.dataset.act === 'settings') goto('einstellungen');
-  else if (t.dataset.act === 'desktop' || t.dataset.act === 'terminal') pickConnection(t.dataset.act, t);
+  else if (t.dataset.act === 'desktop' || t.dataset.act === 'terminal' || t.dataset.act === 'vnc') pickConnection(t.dataset.act, t);
 }
 
 

@@ -4,6 +4,19 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Neu
+- VNC als Verbindungsart „Desktop (VNC)“ (gespeicherte Art `vnc`, Standardport 5900) in der eigenen Strom-Engine: ein RFB-Client im Server (RFB 3.3, 3.7 und 3.8) schreibt in dieselbe Bildpipeline wie RDP, also dieselben Rechtecke, derselbe H.264-Kodierer, dieselbe verlustfreie Nachbesserung, dieselbe Statusleiste, dasselbe Browser-Protokoll und dieselben Sitzungen (Mehrfach-Sitzungen, Erhalten nach einem Verbindungsabriss). Kodierungen: Raw, CopyRect, RRE, Hextile, Zlib und ZRLE; dazu Zeigerform, DesktopSize und ExtendedDesktopSize (die Größe des Desktops folgt dem Browserfenster, wo der Server es kann, etwa TigerVNC) und der erweiterte Zwischenablage-Austausch (Text in UTF-8, sonst Latin-1).
+- Anmeldung: ohne, mit VNC-Passwort (DES-Antwort auf die Aufforderung; **nur die ersten 8 Zeichen zählen**, das ist das Protokoll) oder VeNCrypt 0.2 mit Zertifikat (X509None, X509Vnc, X509Plain; das Zertifikat wird bei der ersten Nutzung gemerkt, eine Änderung stoppt die Verbindung vor dem Senden des Passworts, wie bei RDP). Nicht unterstützt und mit Namen gemeldet: VeNCrypt ohne Zertifikat (anonymes TLS), Apple-Anmeldung, RSA-AES, Tight. Ein VNC-Server ohne Anmeldung braucht kein Passwort (leer lassen); verlangt er eins, fragt die Sitzung in einem Dialog danach. Reines VNC ist nicht verschlüsselt: nur im vertrauten Netz oder mit VeNCrypt benutzen.
+- Eingabe: der Browser schickt bei VNC das X11-Keysym des getippten Zeichens (neue Nachricht 18), unabhängig vom Layout des Ziels; Tasten, Kombinationen (Strg+C, Strg+Alt+Entf aus der Tastenleiste), Maus mit Rad (als Tasten 4 und 5, waagerecht 6 und 7) wie bei RDP. Ohne Keysym-Nachricht bildet der Server Scancodes mit dem deutschen Layout ab.
+- Verbindungsdialog (Handy und Desktop, Auswahl „Desktop (VNC)“, Port 5900), Quick Connect (`vnc://host:port`, Port 5900), Dock und Menü am Desktop, Filter am Handy; Passwort gespeichert (verschlüsselt) oder je Verbindung getippt wie bei RDP, gleiche Erlaubnisliste (`JULOS_ALLOWED_HOSTS`). Migration `015_connection_vnc.sql` erlaubt die neue Art.
+- Grenzen: keine Dateien und Bilder in der Zwischenablage, kein Ton, kein Laufwerk, ein Monitor, kein „Vor“-Knopf der Maus. Doku: [docs/VNC.md](docs/VNC.md).
+- Tests: DES gegen veröffentlichte Vektoren und OpenSSL, jede Kodierung mit handgebauten Rechtecken, der Client gegen einen Testserver (Versionen, Anmeldung, VeNCrypt mit echtem TLS, Bilder, Zeiger, Größe, Zwischenablage, Eingabe) und `deploy/dev/test-vnc.sh` gegen zwei echte TigerVNC-Wegwerfziele in Docker (eigenes Netz, am Ende entfernt).
+
+### Geändert
+- Die Strom-Engine liest ihr Bild über die Schnittstelle `IScreenSource` (RDP-Client und VNC-Client); das RDP-Verhalten ist unverändert. Der Service Worker hält die geänderten Dateien bereit (Version pd-v48).
+
 ## [0.8.1] - 2026-11-19
 
 ### Behoben

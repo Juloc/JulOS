@@ -6,6 +6,15 @@ services:
   julos: { ports: !reset [] }
   test-ssh: { ports: !reset [] }
 
+  # Wegwerf-Ziel fuer die VNC-Ablaeufe: TigerVNC mit festem Test-Passwort (ein Fuehlerfenster protokolliert Tasten und Klicks auf Port 8080 im Stacknetz)
+  vnc-target:
+    build:
+      context: ../..
+      dockerfile: deploy/dev/vnc-target/Dockerfile
+    hostname: vnc-target
+    environment:
+      VNC_PASSWORD: vnctest1
+
   e2e:
     profiles: [e2e]
     build: ./e2e

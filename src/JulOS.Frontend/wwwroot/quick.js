@@ -3,12 +3,12 @@
  * die Pruefung und die Erlaubnisliste am Server (POST /api/remote/ticket mit "quick"). Reines JavaScript, ohne DOM.
  * ===================================================================== */
 
-export const DEFAULT_PORT = { desktop: 3389, terminal: 22 };
-const SCHEME_KIND = { rdp: 'desktop', ssh: 'terminal' };
+export const DEFAULT_PORT = { desktop: 3389, vnc: 5900, terminal: 22 };
+const SCHEME_KIND = { rdp: 'desktop', vnc: 'vnc', ssh: 'terminal' };
 const HOST = /^[A-Za-z0-9._\-]{1,253}$/;
 
 /**
- * Liest "[rdp://|ssh://][benutzer@]adresse[:port]". Die Art ergibt sich aus dem Schema, sonst aus dem Port (22 = Terminal, 3389 = Desktop), sonst null.
+ * Liest "[rdp://|vnc://|ssh://][benutzer@]adresse[:port]". Die Art ergibt sich aus dem Schema, sonst aus dem Port (22 = Terminal, 3389 = Desktop, 5900 = VNC), sonst null.
  * Eine IPv6-Adresse (mehrere Doppelpunkte) gilt als Ganzes ohne Port. Gibt null zurueck, wenn es keine Adresse ist.
  */
 export function parseQuickTarget(input) {
@@ -37,6 +37,7 @@ export function parseQuickTarget(input) {
   if (!host || (colons <= 1 && !HOST.test(host)) || username.length > 64) return null;
   if (!kind && port === 22) kind = 'terminal';
   else if (!kind && port === 3389) kind = 'desktop';
+  else if (!kind && port === 5900) kind = 'vnc';
   return { kind, host, port, username };
 }
 

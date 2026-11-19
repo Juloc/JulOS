@@ -18,6 +18,7 @@
  *                      31 Bildrate (Stufe: 0 automatisch, 1 hoechstens 60 Bilder/s, 2 hoechstens 30, 3 sparsam; je Sitzung),
  *                      16 Pause (1 = die Ansicht ist nicht zu sehen: der Server kodiert nicht, 0 = weiter),
  *                      17 Beenden (die Sitzung wird geschlossen: der Server erhaelt sie nicht fuer ein Wiederverbinden),
+ *                      18 Keysym (u32 X11-Keysym, Byte unten; nur bei VNC-Sitzungen, sonst gehen Tasten als 5 Scancode und 6 Zeichen),
  *                      30 Codecs (Menge: 1 H.264, 2 H.265; beim Verbinden steht sie in der Adresse als codecs=, danach nur noch bei einem Wechsel zurueck auf H.264)
  *
  * Ton (20 und 21 in beide Richtungen: Ton vom fernen Rechner, Zustand, "Ton an", Mikrofon): siehe stream-audio.js, erreichbar als client.audio.
@@ -35,7 +36,7 @@ import { serverMsg } from './i18n-errors.js';
 
 const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, image: 7, files: 8, fileState: 9, result: 10, session: 11, resumeFailed: 12, limits: 14, clipNote: 15, audio: 20, audioStatus: 21, encoder: 30, refine: 40, refineClear: 41 };
 const OUT = { ack: 1, move: 2, button: 3, wheel: 4, key: 5, unicode: 6, resize: 7, keyframe: 8, clipboard: 9,
-  sendBegin: 10, sendChunk: 11, sendEnd: 12, sendCancel: 13, fileRequest: 14, fileCancel: 15, pause: 16, end: 17, codecs: 30, quality: 31 };
+  sendBegin: 10, sendChunk: 11, sendEnd: 12, sendCancel: 13, fileRequest: 14, fileCancel: 15, pause: 16, end: 17, keysym: 18, codecs: 30, quality: 31 };
 export const CLIP_TEXT_MAX = 1024 * 1024;   // so lang darf Text auf dem Weg zwischen Browser und Server sein (ClipboardBridge.MaxTextBytes)
 const CHUNK = 128 * 1024;                 // so gross sind die Stuecke beim Senden (der Server nimmt bis 256 kB)
 const BUFFER_HIGH = 1024 * 1024;          // darueber wartet das Senden, bis der Socket leer laeuft (sonst steht die Maus hinter einer Datei)
@@ -182,8 +183,11 @@ export class StreamClient {
   /** Was dieser Browser dekodieren kann: { h264, hevc } (erst nach supported() gueltig). */
   static codecs() { return { ...codecSupport }; }
 
-  constructor(url, layout = 'de') {
+  /** opts.keysyms: VNC-Sitzung, Tasten gehen als X11-Keysym (Nachricht 18) statt als Scancode oder Zeichen hinaus. */
+  constructor(url, layout = 'de', opts = {}) {
     this.url = url;
+    this.keysyms = !!opts.keysyms;
+    this.heldKeysyms = new Set();   // gedrueckte Keysyms (VNC), damit sie beim Fokusverlust losgelassen werden koennen
     this.display = new StreamDisplay();
     this.onstatechange = null; this.onerror = null; this.onclipboard = null;
     this.onsession = null; this.onresumefailed = null;                            // Sitzungserhalt: Token des Servers, Token abgelehnt (siehe resume.js)
@@ -544,6 +548,8 @@ export class StreamClient {
   releaseAll() {
     for (const code of this.held) this.send(Uint8Array.of(OUT.key, code >> 1, (code & 1)));
     this.held.clear();
+    for (const keysym of this.heldKeysyms) this.sendKeysym(false, keysym);
+    this.heldKeysyms.clear();
     this.mods.ctrl = this.mods.alt = this.mods.super = false;
     const l = this.last;
     for (const [name, button] of [['left', 0], ['middle', 1], ['right', 2], ['back', 3], ['forward', 4]]) {
@@ -555,6 +561,7 @@ export class StreamClient {
   // Windows-Taste gehen Buchstaben und Ziffern ueber ihre Taste, damit Kombinationen wie Strg+C ankommen
   sendKeyEvent(pressed, keysym) {
     const mod = MODIFIERS[keysym]; if (mod) this.mods[mod] = !!pressed;
+    if (this.keysyms) return this.sendKeysym(pressed, keysym);
     const special = SPECIAL.get(keysym);
     if (special) { this.key(special[0], special[1], pressed); return; }
     const cp = keysym >= 0x01000000 ? keysym - 0x01000000 : keysym;
@@ -571,6 +578,13 @@ export class StreamClient {
     if (german) { if (pressed) this.tapLayoutKey(german); return; }
     if (pressed) this.noteInput();
     if (pressed) for (const unit of char) { for (let i = 0; i < unit.length; i++) { this.send(Uint8Array.of(OUT.unicode, unit.charCodeAt(i) >> 8, unit.charCodeAt(i) & 255)); } }
+  }
+
+  // VNC kennt keine Scancodes: der Server bekommt das Keysym, das app.js aus der getippten Taste gemacht hat (also das Zeichen, nicht die Taste)
+  sendKeysym(pressed, keysym) {
+    if (pressed) { this.heldKeysyms.add(keysym); this.noteInput(); } else this.heldKeysyms.delete(keysym);
+    const b = new DataView(new ArrayBuffer(6)); b.setUint8(0, OUT.keysym); b.setUint32(1, keysym >>> 0); b.setUint8(5, pressed ? 1 : 0);
+    this.send(b.buffer);
   }
 
   tapLayoutKey([code, shift, altgr]) {

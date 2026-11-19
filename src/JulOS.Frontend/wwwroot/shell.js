@@ -60,7 +60,7 @@ async function api(path, { method = 'GET', body } = {}) {
 const setMsg = (el, text, ok = false) => { el.textContent = text || ''; el.classList.toggle('ok', ok && !!text); };
 const busy = (form, on) => { for (const b of form.querySelectorAll('button[type=submit]')) b.disabled = on; };
 
-const state = { user: null, connections: [], canStore: false, editing: null, starting: null };
+const state = { user: null, connections: [], canStore: false, driveAvailable: false, editing: null, starting: null };
 
 /* ---------- Start: wo stehen wir? ---------- */
 async function boot() {
@@ -150,7 +150,7 @@ async function showHome(user, message = '') {
 }
 
 async function loadConnections() {
-  try { const r = await api('/api/connections'); state.connections = r.connections; state.canStore = !!r.canStorePasswords; }
+  try { const r = await api('/api/connections'); state.connections = r.connections; state.canStore = !!r.canStorePasswords; state.driveAvailable = !!r.driveAvailable; }
   catch (e) { if (e.status === 401) return showLogin('Die Sitzung ist abgelaufen. Bitte neu anmelden.'); setMsg($('#homeMsg'), e.message); if (M) M.snack(e.message); return; }
   renderConnections();
   if (D) D.connectionsChanged();
@@ -196,8 +196,22 @@ async function signOut() {
 /* ---------- Verbindung anlegen und aendern ---------- */
 const DEFAULT_PORT = { desktop: '3389', terminal: '22' };
 const showEngineChoice = () => { const desktop = $('#connKind').value === 'desktop'; $('#connEngineRow').hidden = !desktop; $('#connEngineHint').hidden = !desktop || $('#connEngine').value !== 'stream'; };
-$('#connKind').addEventListener('change', () => { $('#connPort').placeholder = DEFAULT_PORT[$('#connKind').value]; showEngineChoice(); });
-$('#connEngine').addEventListener('change', showEngineChoice);
+// Laufwerk (nur Desktop mit Stream): Freigabe und Schreiben, beide standardmaessig aus; ohne Ordner am Server (JULOS_DRIVE_ROOT) nur der Hinweis
+const showDriveChoice = () => {
+  const on = $('#connKind').value === 'desktop' && $('#connEngine').value === 'stream';
+  const share = $('#connDrive').checked && state.driveAvailable;
+  $('#connDriveRow').hidden = !on;
+  $('#connDrive').disabled = !state.driveAvailable;
+  if (!state.driveAvailable) { $('#connDrive').checked = false; $('#connDriveWrite').checked = false; }
+  if (!share) $('#connDriveWrite').checked = false;
+  $('#connDriveWriteRow').hidden = !on || !share;
+  $('#connDriveWriteHint').hidden = !on || !share || !$('#connDriveWrite').checked;
+  $('#connDriveOff').hidden = !on || state.driveAvailable;
+};
+$('#connKind').addEventListener('change', () => { $('#connPort').placeholder = DEFAULT_PORT[$('#connKind').value]; showEngineChoice(); showDriveChoice(); });
+$('#connEngine').addEventListener('change', () => { showEngineChoice(); showDriveChoice(); });
+$('#connDrive').addEventListener('change', showDriveChoice);
+$('#connDriveWrite').addEventListener('change', showDriveChoice);
 $('#addConn').addEventListener('click', () => editDialog(null));
 
 function editDialog(c, kind) {
@@ -206,6 +220,7 @@ function editDialog(c, kind) {
   $('#connName').value = c ? c.name : '';
   $('#connKind').value = c ? c.kind : kind || 'desktop';
   $('#connEngine').value = c && c.engine ? c.engine : M ? M.defaultEngine() : 'guac'; showEngineChoice();
+  $('#connDrive').checked = !!(c && c.driveShare); $('#connDriveWrite').checked = !!(c && c.driveWrite); showDriveChoice();
   $('#connHost').value = c ? c.host : '';
   $('#connPort').value = c ? String(c.port) : '';
   $('#connPort').placeholder = DEFAULT_PORT[$('#connKind').value];
@@ -288,6 +303,8 @@ $('#connForm').addEventListener('submit', async (e) => {
   const portText = $('#connPort').value.trim();
   if (portText && !/^\d{1,5}$/.test(portText)) return setMsg(msg, 'Der Port muss eine Zahl sein.');
   const body = { name: $('#connName').value, kind: $('#connKind').value, host: $('#connHost').value, port: portText ? Number(portText) : null, username: $('#connUser').value, engine: $('#connKind').value === 'desktop' ? $('#connEngine').value : 'guac' };
+  const drive = body.kind === 'desktop' && body.engine === 'stream' && state.driveAvailable && $('#connDrive').checked;
+  body.driveShare = drive; body.driveWrite = drive && $('#connDriveWrite').checked;
   const pw = $('#connPw').value;
   if (pw) body.password = pw;
   if ($('#connForget').checked && !pw) body.forgetPassword = true;

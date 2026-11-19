@@ -8,6 +8,7 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ### Neu
 - Stream-Engine: Sitzungserhalt. Bricht die Verbindung zum Browser ab (Handy wechselt das Netz, Tab im Hintergrund), bleibt die RDP-Sitzung auf dem Server `JULOS_STREAM_KEEP_SECONDS` Sekunden (Standard 300, 0 = aus) erhalten; der Browser nimmt sie mit einem Sitzungs-Token wieder auf, ohne neuen Login am Ziel und mit sofortigem Schlüsselbild, und zeigt „Verbindung wird wiederhergestellt …“ statt eines Abbruchs. Schließen in der App, Abmelden, Ablösen und Ablauf beenden die Sitzung wirklich.
+- Stream-Engine: Laufwerksumleitung (RDPDR). Ein Ordner des Servers (Einstellung `JULOS_DRIVE_ROOT`, aus, wenn leer) kann je Verbindung als Laufwerk in den Desktop gereicht werden; im Verbindungsdialog zwei Schalter, beide aus: „freigeben“ und „Schreiben erlauben“ (ohne den zweiten nur Lesen). Streng abgesichert: fester Wurzelpfad nur aus der Server-Einstellung, nur Windows-Pfade unterhalb der Wurzel, kein `..`, keine versteckten Namen, keine Symlinks, keine Unicode-Tricks, `openat2` mit `RESOLVE_BENEATH`. Siehe [docs/DRIVES.md](docs/DRIVES.md). Auf einem echten Windows-Ziel noch nicht erprobt.
 
 ## [0.4.0] - 2026-11-19
 

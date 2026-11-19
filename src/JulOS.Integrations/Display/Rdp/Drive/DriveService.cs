@@ -318,7 +318,7 @@ public sealed class DriveService : IDisposable
         {
             if (disposition is Open or Overwrite)
             {
-                Fail(request, ParentExists(segments) ? StatusNameNotFound : StatusPathNotFound);
+                Fail(request, ParentExists(segments) ? StatusNoSuchFile : StatusPathNotFound);       // FILE_OPEN of a missing file: STATUS_NO_SUCH_FILE, as FreeRDP answers (xrdp turns anything else into an I/O error)
                 return;
             }
 
@@ -405,7 +405,7 @@ public sealed class DriveService : IDisposable
 
     private static uint Map(int errno) => JailFs.Classify(errno) switch
     {
-        JailFs.Failure.NotFound => StatusNameNotFound,
+        JailFs.Failure.NotFound => StatusNoSuchFile,
         JailFs.Failure.Denied => StatusAccessDenied,
         _ => StatusUnsuccessful,
     };

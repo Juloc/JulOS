@@ -173,6 +173,13 @@
           <select id="connEngine"><option value="guac">Standard (Guacamole)</option><option value="stream">Stream (H.264, neu)</option></select>
         </label>
         <p id="connEngineHint" class="hint" hidden>Der Stream ist flüssiger bei Bewegung, braucht aber einen Browser mit H.264-Dekodierer und HTTPS. Geht er nicht, verbindet die App automatisch mit Guacamole.</p>
+        <div id="connDriveRow" hidden>
+          <label class="check"><input id="connDrive" type="checkbox"> Ordner des Servers als Laufwerk freigeben</label>
+          <label id="connDriveWriteRow" class="check" hidden><input id="connDriveWrite" type="checkbox"> Schreiben erlauben</label>
+          <p id="connDriveHint" class="hint">Der Server reicht einen festen Ordner als Laufwerk in den Desktop. Alles darin sieht jeder, der den Desktop bedient. Standard: aus, und wenn an, nur Lesen. Nur mit dem Stream.</p>
+          <p id="connDriveWriteHint" class="hint" hidden>Mit Schreiben kann der Desktop in diesem Ordner Dateien anlegen, ändern, umbenennen und löschen (bis 1 GiB je Datei).</p>
+          <p id="connDriveOff" class="hint" hidden>Am Server ist kein Ordner eingerichtet (JULOS_DRIVE_ROOT).</p>
+        </div>
         <label>Adresse <input id="connHost" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Name oder IP-Adresse" required></label>
         <label>Port <input id="connPort" type="text" inputmode="numeric" autocomplete="off" placeholder="3389"></label>
         <label>Benutzername auf dem Ziel <input id="connUser" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>

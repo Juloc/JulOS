@@ -688,7 +688,7 @@ export class RemoteSession extends Session {
     const choice = this.forceGuac ? 'guac' : store.get('engine', null) || this.conn.engine || 'guac';
     const wantStream = this.conn.kind === 'desktop' && choice === 'stream' && await StreamClient.supported();
     if (stale()) return;
-    let ticket, engine = 'guac';
+    let ticket, engine = 'guac', driveMode = null;
     // Eine erhaltene Sitzung des Servers wieder aufnehmen: kein Ticket, kein Passwort, kein neuer Login am Ziel (der Server nimmt das Token, siehe resume.js)
     const resumeToken = wantStream && this.everConnected && this.resume.usable() ? this.resume.token : null;
     if (resumeToken) engine = 'stream';
@@ -700,7 +700,7 @@ export class RemoteSession extends Session {
       if (stale()) return;
       if (resp.status === 401) return this.requestClose('Die Sitzung ist abgelaufen. Bitte neu anmelden.', 'auth');
       if (!resp.ok) throw new Error(data.error || 'Fehler ' + resp.status);
-      ticket = data.ticket; engine = data.engine || 'guac';
+      ticket = data.ticket; engine = data.engine || 'guac'; driveMode = data.drive || null;
     } catch (e) {
       if (stale()) return;
       const msg = e.name === 'TimeoutError' || e.name === 'TypeError' ? 'Keine Verbindung zum Server. Netz prüfen.' : e.message;
@@ -746,6 +746,7 @@ export class RemoteSession extends Session {
         clearTimeout(this.connectTimer);
         this.connected = true; this.everConnected = true; this.connectedAt = Date.now(); this.frameSeen = false; this.resume.connected();
         this.setState('connected', 'Verbunden');
+        if (driveMode && !this.driveNoted) { this.driveNoted = true; this.toast(driveMode === 'rw' ? 'Laufwerk vom Server ist freigegeben (Lesen und Schreiben)' : 'Laufwerk vom Server ist freigegeben (nur Lesen)', 4000); }
         if (this.hasSibling()) this.toast('Hinweis: Eine andere Sitzung läuft zum selben Ziel und Benutzer. Ein RDP-Ziel gibt je Benutzer nur einen Desktop her, die Sitzungen übernehmen ihn gegenseitig.', 6000);
         this.startWindowBar(); this.fitDisplay(); this.pushSize(); this.waitForFrame(client); this.applyPause();
         if (cur() === this) focusKbForHardware();

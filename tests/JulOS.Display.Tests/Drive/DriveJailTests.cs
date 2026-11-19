@@ -53,6 +53,25 @@ public sealed class DriveJailTests : IDisposable
     public void Normal_paths_are_accepted(string path) => Assert.NotNull(DriveJail.Segments(path));
 
     [Fact]
+    public void A_forward_slash_separates_like_a_backslash_because_xrdp_sends_it_so_and_means_a_place_inside_the_root()
+    {
+        Assert.Equal(["hello.txt"], DriveJail.Segments("/hello.txt")!);
+        Assert.Equal(["sub", "inner.txt"], DriveJail.Segments("/sub/inner.txt")!);
+        Assert.Equal(["sub", "inner.txt"], DriveJail.Segments("\\sub/inner.txt")!);                 // mixed
+        Assert.Empty(DriveJail.Segments("/")!);
+        // "/etc/passwd" is the folder etc below the share, not the one of the server
+        var jail = DriveJail.TryCreate(_root, out _)!;
+        Assert.Equal(Path.Combine(_root, "etc", "passwd"), jail.Resolve("/etc/passwd", out _));
+        Assert.True(jail.Inside(jail.Resolve("/etc/passwd", out _)!));
+        // and the strict rules apply to every part, whichever slash is used
+        Assert.Null(DriveJail.Segments("/sub/.env"));
+        Assert.Null(DriveJail.Segments("/sub/../x"));
+        Assert.Null(DriveJail.Segments("/a:b"));
+        Assert.Null(DriveJail.Segments("/a\u202Eb"));
+        Assert.False(DriveJail.IsAllowedName("a/b"));                                        // a name itself never holds one
+    }
+
+    [Fact]
     public void The_root_is_an_empty_list_of_names_and_a_trailing_backslash_is_ignored()
     {
         Assert.Empty(DriveJail.Segments("")!);
@@ -87,10 +106,12 @@ public sealed class DriveJailTests : IDisposable
     [InlineData("\\\\server\\share\\x")]                  // UNC
     [InlineData("\\\\?\\C:\\x")]
     [InlineData("\\\\.\\PhysicalDrive0")]
-    [InlineData("/etc/passwd")]                            // a Unix path
-    [InlineData("\\/etc/passwd")]
-    [InlineData("\\sub/inner.txt")]
+    [InlineData("\\/etc/passwd")]                         // an empty part
+    [InlineData("//etc")]
     [InlineData("\\sub/../../outside/secret.txt")]
+    [InlineData("/sub/../hello.txt")]
+    [InlineData("/..")]
+    [InlineData("/../outside")]
     [InlineData("\\sub\\\\inner.txt")]                    // an empty part
     [InlineData("\\\\")]
     public void Absolute_relative_and_foreign_forms_are_refused(string path) => Assert.Null(DriveJail.Segments(path));

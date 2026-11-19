@@ -21,8 +21,8 @@ public sealed record SharedDrive(string Root, bool Writable = false, string Name
 /// <summary>
 /// Der Zaun um das Laufwerk: aus dem, was der ferne Rechner als Pfad schickt, wird ein Pfad unterhalb der Wurzel, oder gar keiner. Zusagen:
 /// <list type="bullet">
-/// <item>Ein Pfad ist immer relativ zur Wurzel und im Windows-Format (<c>\ordner\datei</c>). Ein Pfad, der nicht mit <c>\</c> anfaengt (absolut,
-/// <c>C:\...</c>, <c>/etc</c>), wird abgelehnt.</item>
+/// <item>Ein Pfad ist immer relativ zur Wurzel und im Windows-Format (<c>\ordner\datei</c>; ein <c>/</c> trennt ebenso, so schickt es xrdp: <c>/etc</c> meint
+/// <c>\etc</c> unterhalb der Wurzel, nie ein Verzeichnis des Servers). Ein Pfad, der nicht mit einem Trenner anfaengt (<c>C:\...</c>, <c>datei</c>), wird abgelehnt.</item>
 /// <item>Ein Name wird nie "bereinigt", nur angenommen oder abgelehnt: kein <c>.</c> oder <c>..</c>, nichts mit Punkt am Anfang (versteckt: <c>.env</c>,
 /// <c>.ssh</c>), kein Punkt oder Leerzeichen am Ende, keines der Zeichen <c>&lt; &gt; : " | ? * / \</c>, keine Steuerzeichen, keine Format- oder
 /// Richtungszeichen (Unicode), keine einzelnen Surrogate, keine Zeichen, die erst nach Unicode-Normalisierung (NFKC) zu einem verbotenen werden
@@ -158,9 +158,12 @@ public sealed class DriveJail
             return [];
         }
 
+        // Ein Schraegstrich trennt wie ein Rueckstrich: xrdp (chansrv) schickt Pfade so ("/datei.txt"), Windows-Clients mit Rueckstrich. Danach gelten fuer
+        // jeden Namen dieselben strengen Regeln, ein Schraegstrich steckt in keinem Namen.
+        path = path.Replace('/', '\\');
         if (path[0] != '\\')
         {
-            return null;                // absolut ("C:\..."), relativ ohne Rueckstrich oder mit "/" (der gilt hier als Namenszeichen und ist verboten)
+            return null;                // absolut ("C:\...") oder relativ ohne Trenner am Anfang
         }
 
         var parts = path[1..].Split('\\');

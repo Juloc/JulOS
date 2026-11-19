@@ -15,6 +15,7 @@ using JulOS.Frontend.SystemInfo;
 using JulOS.Integrations;
 using JulOS.Integrations.Agent;
 using JulOS.Integrations.Display;
+using JulOS.Integrations.Display.Rdp.Drive;
 using JulOS.Integrations.Display.Video;
 using JulOS.Integrations.Guacamole;
 using JulOS.Integrations.Ssh;
@@ -52,6 +53,8 @@ builder.Services.AddSingleton<AuthService>();
 builder.Services.AddHostedService<SessionPurgeWorker>();
 builder.Services.AddSingleton<GuacTickets>();
 builder.Services.AddSingleton<ScreenTickets>();
+// Laufwerksumleitung (nur Stream-Engine): der eine Ordner, der je Verbindung als Laufwerk gereicht werden darf (leer oder "off": keine Freigabe), siehe docs/DRIVES.md
+builder.Services.AddSingleton(sp => DriveRoot.FromSetting(builder.Configuration["JULOS_DRIVE_ROOT"], sp.GetRequiredService<ILoggerFactory>().CreateLogger("JulOS.Drive")));
 builder.Services.AddSingleton<SshTickets>();
 builder.Services.AddHostedService<TicketSweepWorker>();
 // guacd (Container im selben Netz), erreichbar nur fuer den Server

@@ -255,7 +255,7 @@ public sealed class ScreenRelayKeepTests
         Assert.Equal(1, relay.DetachedCount);
 
         await WaitFor(() => relay.DetachedCount == 0, "die Sitzung laeuft ab");
-        Assert.Equal(1, log.Count("abgelaufen"));
+        Assert.Equal(1, log.Count("Wartende Sitzung abgelaufen"));
         var late = Browser.Create();
         await relay.RunAsync(late.Server, null, Alive, CancellationToken.None, owner: owner, resume: token);
         Assert.Equal(ScreenProtocol.ToBrowserResumeFailed, (await late.ReadAsync(cts.Token))![0]);

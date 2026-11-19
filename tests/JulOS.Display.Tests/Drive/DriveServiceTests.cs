@@ -8,7 +8,7 @@ namespace JulOS.Display.Tests.Drive;
 // answers are read back. Read only is the default and has to hold for every kind of request; the escape attempts have to find nothing.
 public sealed class DriveServiceTests : IDisposable
 {
-    private const uint Success = 0, NoMoreFiles = 0x80000006, AccessDenied = 0xC0000022, NameNotFound = 0xC0000034, NameInvalid = 0xC0000033,
+    private const uint Success = 0, NoMoreFiles = 0x80000006, AccessDenied = 0xC0000022, NoSuchFile = 0xC000000F, NameInvalid = 0xC0000033,
         NameCollision = 0xC0000035, InvalidHandle = 0xC0000008, DirectoryNotEmpty = 0xC0000101, DiskFull = 0xC000007F, NotSupported = 0xC00000BB,
         PathNotFound = 0xC000003A, NotADirectory = 0xC0000103, IsADirectory = 0xC00000BA;
 
@@ -171,6 +171,17 @@ public sealed class DriveServiceTests : IDisposable
     // ---- reading ----
 
     [Fact]
+    public void Paths_with_forward_slashes_work_like_xrdp_sends_them()
+    {
+        var c = Start(false);
+        var (status, id) = c.Create("/sub/inner.txt", 0x00100001);
+        Assert.Equal(Success, status);
+        Assert.Equal("inner"u8.ToArray(), c.Read(id, 100, 0).Data);
+        Assert.Equal(PathNotFound, c.Create("/etc/passwd").Status);                         // a place below the root, and there is no folder "etc" there
+        Assert.Equal(NameInvalid, c.Create("/../outside/secret.txt").Status);
+    }
+
+    [Fact]
     public void A_file_can_be_opened_read_in_pieces_and_read_past_its_end()
     {
         var c = Start(false);
@@ -286,8 +297,8 @@ public sealed class DriveServiceTests : IDisposable
     [InlineData("..\\outside\\secret.txt")]
     [InlineData("C:\\Windows\\win.ini")]
     [InlineData("\\\\server\\share\\x")]
-    [InlineData("/etc/passwd")]
     [InlineData("\\/etc/passwd")]
+    [InlineData("/../outside/secret.txt")]
     [InlineData("\\.env")]
     [InlineData("\\.ssh\\id")]
     [InlineData("\\hello.txt:stream")]
@@ -363,7 +374,7 @@ public sealed class DriveServiceTests : IDisposable
         var c = Start(false);
         Assert.Equal(NotADirectory, c.Create("\\hello.txt", GenericRead, Open, DirectoryFile).Status);
         Assert.Equal(IsADirectory, c.Create("\\sub", GenericRead, Open, NonDirectoryFile).Status);
-        Assert.Equal(NameNotFound, c.Create("\\missing.txt").Status);
+        Assert.Equal(NoSuchFile, c.Create("\\missing.txt").Status);
         Assert.Equal(PathNotFound, c.Create("\\missing\\x.txt").Status);
         Assert.Equal(NameCollision, Start(true).Create("\\hello.txt", GenericWrite, CreateNew).Status);
     }
@@ -436,12 +447,14 @@ public sealed class DriveServiceTests : IDisposable
     {
         var c = Start(true);
         var (_, id) = c.Create("\\hello.txt", Delete | GenericRead);
-        foreach (var target in new[] { "\\..\\outside\\stolen.txt", "\\sub\\..\\..\\outside\\x", "C:\\x", "\\.hidden", "\\link_out\\x", "/tmp/x", "\\a:b" })
+        foreach (var target in new[] { "\\..\\outside\\stolen.txt", "\\sub\\..\\..\\outside\\x", "C:\\x", "\\.hidden", "\\link_out\\x", "\\a:b" })
         {
             var name = Utf16(target + "\0");
             Assert.Equal(NameInvalid, c.Set(10, id, [1, 0, .. BitConverter.GetBytes((uint)name.Length), .. name]));
         }
 
+        var elsewhere = Utf16("/tmp/x\0");                                                             // a place below the root, and no folder "tmp" there
+        Assert.Equal(PathNotFound, c.Set(10, id, [1, 0, .. BitConverter.GetBytes((uint)elsewhere.Length), .. elsewhere]));
         Assert.True(File.Exists(Disk("hello.txt")));
         Assert.Equal(["secret.txt"], Directory.GetFileSystemEntries(_outside).Select(Path.GetFileName).ToArray());
 

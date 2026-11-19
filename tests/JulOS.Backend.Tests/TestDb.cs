@@ -20,7 +20,7 @@ internal sealed class TestDb : IAsyncDisposable
         await using (var admin = NpgsqlDataSource.Create(Admin!))
         await using (var cmd = admin.CreateCommand($"create schema {t._schema}"))
             await cmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
-        t.ConnectionString = new NpgsqlConnectionStringBuilder(Admin!) { SearchPath = t._schema }.ConnectionString;
+        t.ConnectionString = new NpgsqlConnectionStringBuilder(Admin!) { SearchPath = t._schema, MaxPoolSize = 20, ConnectionIdleLifetime = 15 }.ConnectionString;   // kleine, kurzlebige Pools: viele Tests nebeneinander sollen die 100 Verbindungen der Test-Datenbank nicht aufbrauchen
         t.Data = NpgsqlDataSource.Create(t.ConnectionString);
         if (migrate) await new Migrator(t.Data).RunAsync(TestContext.Current.CancellationToken);
         return t;

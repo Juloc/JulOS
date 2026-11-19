@@ -59,7 +59,7 @@ public sealed class HostTests
         foreach (var name in asm.GetManifestResourceNames().Where(n => n.StartsWith("database/", StringComparison.Ordinal) && n.EndsWith(".sql", StringComparison.Ordinal)).Order(StringComparer.Ordinal))
         {
             var id = name["database/".Length..^4];
-            if (string.CompareOrdinal(id, "007") >= 0) continue;
+            if (string.CompareOrdinal(id, "007") >= 0) continue;   // Stand vor den Migrationen ab 007
             using var reader = new StreamReader(asm.GetManifestResourceStream(name)!);
             await db.ExecAsync(await reader.ReadToEndAsync());
             await db.ExecAsync("insert into schema_migrations (id) values ($1)", id);
@@ -80,7 +80,7 @@ public sealed class HostTests
         await db.ExecAsync("insert into agent_codes (code_hash, connection_id, user_id, expires_at) values ('c1', $1, $2, now() + interval '5 minutes')", annaPc, anna);
 
         var applied = await new Migrator(db.Data).RunAsync(TestContext.Current.CancellationToken);
-        Assert.Contains("007_hosts", applied);
+        Assert.Contains("008_hosts", applied);
 
         // nichts geht verloren: alle Verbindungen haben einen Host, alle Agenten ihr Token
         Assert.Equal(4L, await db.ScalarAsync<long>("select count(*) from connections where host_id is not null"));
@@ -268,7 +268,7 @@ public sealed class HostTests
         var created = await c.SendAsync(Req(HttpMethod.Post, "/api/hosts", cookie, new { name = "  Heimserver  " }));
         Assert.Equal(HttpStatusCode.OK, created.StatusCode);
         var host = (await Json(created)).GetProperty("id").GetGuid();
-        Assert.Equal("Heimserver", (await Json(await c.SendAsync(Req(HttpMethod.Put, $"/api/hosts/{host}", cookie, new { name = "NAS" })))).GetProperty("name").GetString());
+        Assert.Equal("NAS", (await Json(await c.SendAsync(Req(HttpMethod.Put, $"/api/hosts/{host}", cookie, new { name = "NAS" })))).GetProperty("name").GetString());
 
         foreach (var bad in new[] { "", "   ", new string('a', 61), "Zeile\neins" })
         {

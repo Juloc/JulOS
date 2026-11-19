@@ -197,7 +197,8 @@ public sealed class AgentLinkTests
             Assert.False(a.GetProperty("outdated").GetBoolean());
         }
 
-        // ein zu alter Agent wird mit Begruendung abgewiesen und geht nicht online
+        // ein zu alter Agent wird mit Begruendung abgewiesen und geht nicht online (vorher muss der gute getrennt sein, der Server merkt es kurz spaeter)
+        await Eventually(() => !Online(app, conn));
         await using (var old = await FakeLinkAgent.ConnectAsync(app.Server, token, version: "0.2.0"))
         {
             Assert.True(await old.WaitClosedAsync(Wait));

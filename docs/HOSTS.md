@@ -13,7 +13,7 @@ saw one machine; now the desktop interface and the phone shell list several, eac
 
 - A user always has a host: the first connection (or the first `GET /api/hosts`) creates **Mein Rechner** when there is none.
   A new connection without a host goes to the user's first host.
-- **Migration 007** moves the existing data without loss: every user with connections gets one default host holding all of them.
+- **Migration 008** moves the existing data without loss: every user with connections gets one default host holding all of them.
   Until now an agent hung on one connection; a user with several agents keeps the most recently seen one on the default host, and
   each further agent gets its own host (named after its connection, the connection moves there), so no token is lost and the agent
   keeps working. Open one-time codes are dropped (they live 10 minutes).

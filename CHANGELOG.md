@@ -12,7 +12,7 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ### Geändert
 - Der Agent gehört jetzt zum Host statt zu einer einzelnen Verbindung und bedient alle Verbindungen seines Hosts. Die Wege dafür sind `/api/hosts/{id}/agent/code` und `/api/hosts/{id}/agent`; `/api/agents` und `/api/connections/{id}/agent/*` entfallen. Aufrufe des Agenten nehmen weiter `?c=<Verbindung>` oder neu `?h=<Host>`.
-- Migration 007: bestehende Verbindungen kommen auf einen Standard-Host „Mein Rechner“ pro Benutzer, bestehende Agenten behalten ihr Token (hatte ein Benutzer mehrere, bekommt jeder weitere einen eigenen Host mit dem Namen seiner Verbindung). Offene Einrichtungscodes (10 Minuten) entfallen.
+- Migration 008: bestehende Verbindungen kommen auf einen Standard-Host „Mein Rechner“ pro Benutzer, bestehende Agenten behalten ihr Token (hatte ein Benutzer mehrere, bekommt jeder weitere einen eigenen Host mit dem Namen seiner Verbindung). Offene Einrichtungscodes (10 Minuten) entfallen.
 - Der Agent meldet Rechnername und Betriebssystem (nur zur Anzeige); ältere Agenten funktionieren unverändert.
 
 ## [0.4.0] - 2026-11-19

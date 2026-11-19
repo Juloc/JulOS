@@ -55,7 +55,7 @@ public sealed class AgentLinks(ILogger<AgentLinks> log)
 
         if (_links.TryGetValue(hostId, out var old) && _links.TryUpdate(hostId, link, old)) old.Disconnect();
         else _links[hostId] = link;
-        log.LogInformation("Agent-Link {Host}: verbunden (Agent {Version}, {Platform})", hostId, hello.Version ?? "?", hello.Platform ?? "?");
+        log.LogInformation("Agent-Link {Host}: verbunden (Agent {Version}, {Platform})", hostId, hello.Version ?? "?", hello.Info.Platform ?? "?");
         await touch(hello.Info).ConfigureAwait(false);
         try { await link.LoopAsync(ct).ConfigureAwait(false); }
         finally

@@ -67,9 +67,9 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<AuthService>();
 builder.Services.AddHostedService<SessionPurgeWorker>();
 // Taegliche Sicherung der Datenbank und des Schluessels in den Backup-Ordner, siehe docs/BACKUP.md
-builder.Services.AddSingleton(BackupOptions.Parse(builder.Configuration["JULOS_BACKUP"], builder.Configuration["JULOS_BACKUP_DIR"], builder.Configuration["JULOS_BACKUP_TIME"],
-    builder.Configuration["JULOS_BACKUP_KEEP_DAYS"], builder.Configuration["JULOS_BACKUP_KEY"], builder.Configuration["JULOS_DATA"]));
-builder.Services.AddSingleton<BackupService>();
+builder.Services.AddSingleton(BackupOptions.FromSettings(k => builder.Configuration[k]));
+builder.Services.AddSingleton(sp => new BackupService(sp.GetRequiredService<NpgsqlDataSource>(), sp.GetRequiredService<BackupOptions>(), sp.GetRequiredService<TimeProvider>(),
+    sp.GetRequiredService<ILogger<BackupService>>(), BackupTargets.Factory(sp.GetRequiredService<BackupOptions>(), sp.GetRequiredService<ILoggerFactory>().CreateLogger("JulOS.BackupCopy"))));
 builder.Services.AddHostedService<BackupWorker>();
 builder.Services.AddSingleton<ScreenTickets>();
 // Laufwerksumleitung: der eine Ordner, der je Verbindung als Laufwerk gereicht werden darf (leer oder "off": keine Freigabe), siehe docs/DRIVES.md

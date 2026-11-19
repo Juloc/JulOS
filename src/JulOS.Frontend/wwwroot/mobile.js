@@ -484,6 +484,9 @@ function renderProfile() {
 }
 const backupText = (b) => !b ? '' : b.state === 'ok' ? `${new Date(b.lastAt).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' })}, ${b.bytes < 1048576 ? Math.max(1, Math.round(b.bytes / 1024)) + ' KB' : (b.bytes / 1048576).toFixed(1) + ' MB'}`
   : b.state === 'off' ? 'Aus' : b.state === 'pending' ? `Noch keins (geplant ${b.time})` : b.state === 'failed' ? `Fehlgeschlagen: ${b.message || ''}` : `Nicht eingerichtet: ${b.message || ''}`;
+const copyText = (b) => { const c = b && b.copy; if (!c || c.state === 'off') return '';
+  const at = c.lastAt ? new Date(c.lastAt).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  return c.state === 'ok' ? `OK, ${at}` : c.state === 'failed' ? `Fehler: ${c.message || ''}${at ? ` (zuletzt OK ${at})` : ''}` : 'Noch nicht kopiert'; };
 async function loadAbout() {
   const box = $('#mAbout'); if (!box || !ctx) return;
   try {
@@ -493,6 +496,7 @@ async function loadAbout() {
     box.innerHTML = row('Version', `JulOS ${a.version}`) + (a.commit || built ? row('Build', [a.commit, built].filter(Boolean).join(' · ')) : '')
       + row('Bildübertragung', a.engines.stream ? `Stream (${a.engines.encoder || 'H.264'})` : 'Nicht verfügbar')
       + row('Letztes Backup', backupText(a.backup))
+      + (copyText(a.backup) ? row('Zweites Ziel', copyText(a.backup)) : '')
       + `<div style="padding:4px 12px 10px;display:flex;gap:8px"><a class="mb m3-btn tonal block m3-state" href="/licenses.txt" target="_blank" rel="noopener">Lizenzen</a><a class="mb m3-btn tonal block m3-state" href="${esc(a.repository)}" target="_blank" rel="noopener">Quelltext</a></div>`;
   } catch (e) { box.innerHTML = `<p class="empty-hint">${esc(e.message)}</p>`; }
 }

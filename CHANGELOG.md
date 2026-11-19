@@ -4,6 +4,14 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Neu
+- Zweites Backup-Ziel außerhalb des Rechners, optional und standardmäßig aus (`JULOS_BACKUP_COPY=off|path|sftp`). Nach jedem erfolgreichen lokalen Backup kopiert der Server den neuen Auszug und die Schlüsselkopie (weiter getrennte Dateien) in einen zusätzlich eingebundenen Ordner (`path`, zum Beispiel ein NAS; `JULOS_BACKUP_COPY_PATH`) oder auf einen SFTP-Server (`sftp`; `JULOS_BACKUP_SFTP_HOST`, `_PORT`, `_USER`, `_PATH`). Die Anmeldung per SFTP geht mit einem privaten Schlüssel aus einer Datei (`JULOS_BACKUP_SFTP_KEY_FILE`, optional mit Passphrase aus `..._KEY_PASSPHRASE_FILE`) oder einem Passwort aus einer Datei (`JULOS_BACKUP_SFTP_PASSWORD_FILE`); Passwörter und Schlüssel stehen nie in Umgebungsvariablen oder im Log. Der Host-Schlüssel des SFTP-Servers wird beim ersten Mal gemerkt (`/data/backup-sftp-hostkey`, oder fest vorgegeben mit `JULOS_BACKUP_SFTP_HOST_KEY`) und danach geprüft: ändert er sich, wird nichts übertragen und es gibt eine Warnung mit beiden Fingerabdrücken.
+- Die Kopie am Ziel entsteht atomar (erst `.tmp`, dann umbenennen), die Aufbewahrung gilt dort wie lokal (`JULOS_BACKUP_KEEP_DAYS`, der neueste Auszug bleibt immer, fremde Dateien bleiben unberührt). Ein Fehler am Ziel lässt das lokale Backup unberührt (nur eine Warnung), der nächste Lauf holt Fehlendes nach. Der Zielordner wird nie vom Server angelegt.
+- „Über JulOS“ (Desktop und Handy) zeigt zusätzlich „Zweites Ziel“ mit OK und Zeit der letzten Kopie oder dem Fehler; `/api/about` hat dafür das Feld `backup.copy`. `dotnet JulOS.dll backup create` meldet das Ergebnis der Kopie.
+- Doku: [docs/BACKUP.md](docs/BACKUP.md) (Einrichtung, Compose-Beispiele für ein NAS und für SFTP, Rechte, Wiederherstellung vom zweiten Ziel), `.env.example` und beide Compose-Dateien haben die neuen Variablen (auskommentiert beziehungsweise mit Standard „aus“).
+
 ## [0.7.0] - 2026-11-19
 
 ### Neu

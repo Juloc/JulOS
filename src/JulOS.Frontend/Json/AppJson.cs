@@ -20,6 +20,7 @@ namespace JulOS.Frontend;
 [JsonSerializable(typeof(Health))]
 [JsonSerializable(typeof(AboutResponse))]
 [JsonSerializable(typeof(BackupStatus))]
+[JsonSerializable(typeof(CopyStatus))]
 [JsonSerializable(typeof(ErrorBody))]
 [JsonSerializable(typeof(SetupStatus))]
 [JsonSerializable(typeof(SetupBeginRequest))]

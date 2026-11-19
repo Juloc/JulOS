@@ -64,11 +64,6 @@ public sealed partial class VncClient
 
             _wheelRest += delta;
             var clicks = Math.Min(Math.Abs(_wheelRest) / 120, 20);
-            if (clicks == 0 && delta != 0 && Math.Abs(_wheelRest) >= 60)
-            {
-                clicks = 1;
-            }
-
             if (clicks == 0)
             {
                 return;

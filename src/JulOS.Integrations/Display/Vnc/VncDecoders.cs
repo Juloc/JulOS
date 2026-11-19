@@ -226,7 +226,15 @@ internal static class VncDecoders
 
         private void Fill()
         {
-            _length = source.Read(_buffer, 0, _buffer.Length);
+            try
+            {
+                _length = source.Read(_buffer, 0, _buffer.Length);
+            }
+            catch (InvalidDataException)
+            {
+                throw new VncProtocolException("compressed data that is damaged");
+            }
+
             _position = 0;
             if (_length <= 0)
             {

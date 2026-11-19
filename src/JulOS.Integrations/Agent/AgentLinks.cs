@@ -38,7 +38,7 @@ public sealed class AgentLinks(ILogger<AgentLinks> log)
 
     public bool IsOnline(Guid hostId) => _links.ContainsKey(hostId);
 
-    public AgentLinkStatus? Status(Guid hostId) => _links.TryGetValue(hostId, out var l) ? new AgentLinkStatus(l.Version, l.Platform, l.Hostname, l.Os, l.Since) : null;
+    public AgentLinkStatus? Status(Guid hostId) => _links.TryGetValue(hostId, out var l) ? new AgentLinkStatus(l.Version, l.Platform, l.Hostname, l.Os, l.Since, l.Caps, l.Allow) : null;
 
     /// <summary>Trennt den Agenten eines Hosts (Agent entfernt, Host geloescht).</summary>
     public void Disconnect(Guid hostId)
@@ -81,4 +81,4 @@ public sealed class AgentLinks(ILogger<AgentLinks> log)
     }
 }
 
-public sealed record AgentLinkStatus(string? Version, string? Platform, string? Hostname, string? Os, DateTimeOffset Since);
+public sealed record AgentLinkStatus(string? Version, string? Platform, string? Hostname, string? Os, DateTimeOffset Since, IReadOnlyList<string> Caps, IReadOnlyList<string> Allow);

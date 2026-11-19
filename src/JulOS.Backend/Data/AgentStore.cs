@@ -3,7 +3,7 @@ using Npgsql;
 
 namespace JulOS.Backend.Data;
 
-public sealed record AgentRecord(Guid HostId, Guid UserId, DateTimeOffset CreatedAt, DateTimeOffset? LastSeen, string? Version, string? Platform, string? Hostname = null, string? Os = null, bool AutoUpdate = false);
+public sealed record AgentRecord(Guid HostId, Guid UserId, DateTimeOffset CreatedAt, DateTimeOffset? LastSeen, string? Version, string? Platform, string? Hostname = null, string? Os = null, bool AutoUpdate = false, string Control = "read");
 
 /// <summary>
 /// Agenten, die sich von der Ziel-Maschine aus beim Server melden. Je Host hoechstens einer. Einrichtungscodes und Token stehen
@@ -12,10 +12,10 @@ public sealed record AgentRecord(Guid HostId, Guid UserId, DateTimeOffset Create
 public sealed class AgentStore(NpgsqlDataSource db, TimeProvider time)
 {
     public static readonly TimeSpan CodeLifetime = TimeSpan.FromMinutes(10);
-    private const string Columns = "host_id, user_id, created_at, last_seen, version, platform, hostname, os, auto_update";
+    private const string Columns = "host_id, user_id, created_at, last_seen, version, platform, hostname, os, auto_update, control";
 
     private static AgentRecord Read(NpgsqlDataReader r) =>
-        new(r.GetGuid(0), r.GetGuid(1), r.GetFieldValue<DateTimeOffset>(2), r.IsDBNull(3) ? null : r.GetFieldValue<DateTimeOffset>(3), r.IsDBNull(4) ? null : r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5), r.IsDBNull(6) ? null : r.GetString(6), r.IsDBNull(7) ? null : r.GetString(7), r.GetBoolean(8));
+        new(r.GetGuid(0), r.GetGuid(1), r.GetFieldValue<DateTimeOffset>(2), r.IsDBNull(3) ? null : r.GetFieldValue<DateTimeOffset>(3), r.IsDBNull(4) ? null : r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5), r.IsDBNull(6) ? null : r.GetString(6), r.IsDBNull(7) ? null : r.GetString(7), r.GetBoolean(8), r.GetString(9));
 
     /// <summary>Neuer Einrichtungscode fuer einen Host des Benutzers (ein frueherer, noch offener Code wird ungueltig). Null, wenn der Host nicht ihm gehoert.</summary>
     public async Task<(string Code, DateTimeOffset Expires)?> CreateCodeAsync(Guid userId, Guid hostId, CancellationToken ct = default)

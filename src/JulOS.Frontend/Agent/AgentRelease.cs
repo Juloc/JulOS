@@ -25,6 +25,40 @@ public sealed partial class AgentRelease(string? directory = null)
     [GeneratedRegex("""^AGENT_VERSION\s*=\s*"(\d+\.\d+\.\d+)"\s*(#.*)?$""", RegexOptions.Multiline)]
     private static partial Regex VersionLine();
 
+    /// <summary>Die Dateien, die der Server fuer die Ziel-Maschine ausliefert (GET /agent-files/&lt;Name&gt;); nichts anderes aus dem Ordner.</summary>
+    public static readonly string[] Files = ["julos-agent.py", "julos-clip.py", "install-linux-agent.sh", "install-host-agent.sh"];
+
+    /// <summary>Der Name der Pruefsummen-Datei (<c>sha256sum</c>-Format), die der Host-Installer gegen seinen Download prueft.</summary>
+    public const string SumsName = "SHA256SUMS";
+
+    private readonly Dictionary<string, (DateTime Written, long Length, string Hash)> _hashes = [];
+
+    /// <summary>Die Pruefsummen der ausgelieferten Dateien, eine Zeile je Datei ("&lt;sha256&gt;  &lt;Name&gt;"); Dateien, die fehlen, stehen nicht darin. Aus den Bytes gelesen, also immer das, was /agent-files/ ausliefert.</summary>
+    public string Sums()
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var name in Files)
+        {
+            var path = System.IO.Path.Combine(Directory, name);
+            FileInfo info;
+            try { info = new FileInfo(path); if (!info.Exists) continue; }
+            catch (IOException) { continue; }
+            string hash;
+            lock (_lock)
+            {
+                if (_hashes.TryGetValue(name, out var c) && c.Written == info.LastWriteTimeUtc && c.Length == info.Length) hash = c.Hash;
+                else
+                {
+                    try { hash = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path))); }
+                    catch (IOException) { continue; }
+                    _hashes[name] = (info.LastWriteTimeUtc, info.Length, hash);
+                }
+            }
+            sb.Append(hash).Append("  ").Append(name).Append('\n');
+        }
+        return sb.ToString();
+    }
+
     /// <summary>Die mitgelieferte Agent-Datei; null, wenn sie fehlt oder keine Version nennt.</summary>
     public AgentFile? Latest()
     {

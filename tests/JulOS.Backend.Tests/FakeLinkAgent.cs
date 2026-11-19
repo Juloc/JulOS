@@ -31,6 +31,10 @@ internal sealed class FakeLinkAgent : IAsyncDisposable
     public byte[]? PullImage { get; set; }
     public (int Status, string Body)? PullError { get; set; }
     public string? HealthBody { get; set; }
+    /// <summary>Antworten auf /v1/host/* (Pfad, Status und Body); fehlt ein Pfad, antwortet der Agent 404 wie ein Agent ohne diese Faehigkeit. Gezaehlt in <see cref="Requests"/>.</summary>
+    public Dictionary<string, (int Status, string Body)> HostReplies { get; } = [];
+    /// <summary>Verzoegert jede Antwort auf /v1/host/* (fuer Tests mit gleichzeitigen Anfragen).</summary>
+    public TimeSpan HostDelay { get; set; }
     /// <summary>Nach dem ersten Stueck einer Uebertragung die Verbindung kappen.</summary>
     public bool DropDuringPut { get; set; }
     public string? WelcomeText { get; private set; }
@@ -42,12 +46,12 @@ internal sealed class FakeLinkAgent : IAsyncDisposable
     }
 
     /// <summary>Baut die Verbindung auf und begruesst den Server. Wirft, wenn der Server die Verbindung ablehnt.</summary>
-    public static async Task<FakeLinkAgent> ConnectAsync(TestServer server, string? token, string version = "0.3.0", string platform = "test-linux", string? hostname = null, string? os = null)
+    public static async Task<FakeLinkAgent> ConnectAsync(TestServer server, string? token, string version = "0.3.0", string platform = "test-linux", string? hostname = null, string? os = null, object? caps = null, object? allow = null)
     {
         var client = server.CreateWebSocketClient();
         client.ConfigureRequest = r => { if (token is not null) r.Headers["Authorization"] = "Bearer " + token; };
         var ws = await client.ConnectAsync(new Uri("ws://localhost/api/agent-link"), CancellationToken.None);
-        await SendText(ws, JsonSerializer.Serialize(new { t = "hello", agent = version, platform, hostname, os }));
+        await SendText(ws, JsonSerializer.Serialize(new { t = "hello", agent = version, platform, hostname, os, caps, allow }));
         var agent = new FakeLinkAgent(ws);
         return agent;
     }
@@ -109,6 +113,13 @@ internal sealed class FakeLinkAgent : IAsyncDisposable
                 var path = root.GetProperty("path").GetString()!;
                 var method = root.GetProperty("method").GetString()!;
                 lock (Requests) Requests.Add((method, path, root.TryGetProperty("body", out var b) ? b.GetRawText() : ""));
+                if (path.StartsWith("/v1/host/", StringComparison.Ordinal))
+                {
+                    if (HostDelay > TimeSpan.Zero) await Task.Delay(HostDelay);
+                    var (hs, hb) = HostReplies.TryGetValue(path, out var r) ? r : (404, """{"error":"unsupported"}""");
+                    await Reply($$"""{"t":"res","id":{{id}},"status":{{hs}},"body":{{hb}}}""");
+                    break;
+                }
                 var (status, body) = (method, path) switch
                 {
                     ("GET", "/v1/health") => (200, HealthBody ?? """{"ok":true,"api":1,"platform":"link-test","mode":"desktop"}"""),

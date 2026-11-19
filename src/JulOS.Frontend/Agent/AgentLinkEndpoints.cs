@@ -30,10 +30,16 @@ internal static class AgentLinkEndpoints
     {
         var log = app.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("AgentLink");
 
-        // Die drei Dateien fuer die Ziel-Maschine (kein Geheimnis, wie der Rest des Quelltexts): so passt, was dort laeuft, zur Version dieses Servers
+        // Die Dateien fuer die Ziel-Maschine (kein Geheimnis, wie der Rest des Quelltexts): so passt, was dort laeuft, zur Version dieses Servers.
+        // SHA256SUMS: ihre Pruefsummen, damit der Host-Installer seinen Download pruefen kann (die Datei kommt aus denselben Bytes wie die Auslieferung)
         app.MapGet("/agent-files/{name}", (string name, HttpContext ctx, AgentRelease release) =>
         {
-            if (name is not ("julos-agent.py" or "julos-clip.py" or "install-linux-agent.sh")) return Results.NotFound();
+            if (name == AgentRelease.SumsName)
+            {
+                ctx.Response.Headers.CacheControl = "no-cache";
+                return Results.Text(release.Sums(), "text/plain", System.Text.Encoding.UTF8);
+            }
+            if (!AgentRelease.Files.Contains(name)) return Results.NotFound();
             var path = Path.Combine(release.Directory, name);
             if (!File.Exists(path)) return Results.NotFound();
             ctx.Response.Headers.CacheControl = "no-cache";

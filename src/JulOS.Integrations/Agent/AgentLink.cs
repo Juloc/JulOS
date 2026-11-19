@@ -412,6 +412,25 @@ public static class AgentLabels
         return sb.ToString().Trim();
     }
 
+    /// <summary>Ausgabe eines Programms auf dem Host (zum Beispiel apt): wie <see cref="Printable"/>, aber Zeilenumbrueche bleiben (CRLF wird LF, ein Tabulator ein Leerzeichen, nie mehr als eine Leerzeile hintereinander), damit der Dialog sie als Text mit Umbruch zeigen kann.</summary>
+    public static string PrintableLines(string? s, int max)
+    {
+        if (s is null) return "";
+        var sb = new System.Text.StringBuilder();
+        var newlines = 0;
+        foreach (var rune in s.Replace("\r\n", "\n").EnumerateRunes())
+        {
+            if (sb.Length >= max) break;
+            if (rune.Value == '\n') { if (++newlines <= 2) sb.Append('\n'); continue; }
+            newlines = 0;
+            if (rune.Value == '\t') { sb.Append(' '); continue; }
+            if (System.Text.Rune.GetUnicodeCategory(rune) is System.Globalization.UnicodeCategory.Control or System.Globalization.UnicodeCategory.Format or System.Globalization.UnicodeCategory.LineSeparator
+                or System.Globalization.UnicodeCategory.ParagraphSeparator or System.Globalization.UnicodeCategory.PrivateUse or System.Globalization.UnicodeCategory.Surrogate or System.Globalization.UnicodeCategory.OtherNotAssigned) continue;
+            sb.Append(rune.ToString());
+        }
+        return sb.ToString().Trim();
+    }
+
     /// <summary>Eine Liste von Woertern aus dem hello: nur aus <paramref name="allowed"/>, ohne Doppelte, in der Reihenfolge der Erlaubnisliste. Alles Falsche gibt eine leere Liste.</summary>
     internal static IReadOnlyList<string> Words(JsonElement root, string name, string[] allowed)
     {

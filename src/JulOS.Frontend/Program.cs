@@ -137,6 +137,10 @@ app.UseForwardedHeaders();
 
 await MigrateWithRetryAsync(app.Services.GetRequiredService<Migrator>(), log);
 
+// Ohne JULOS_TRUSTED_PROXIES glaubt der Server X-Forwarded-* von jedem privaten Netz: ein Geraet im eigenen LAN, das den Port direkt erreicht, kann die Client-Adresse
+// (Sperre pro Adresse, Sitzungsliste) und das Protokoll faelschen (docs/SECURITY-REVIEW.md, F-06). Deshalb eine laute Warnung, solange es nicht eingeschraenkt ist.
+if (string.IsNullOrWhiteSpace(builder.Configuration["JULOS_TRUSTED_PROXIES"]))
+    log.LogWarning("JULOS_TRUSTED_PROXIES ist nicht gesetzt: X-Forwarded-For/-Proto/-Host werden von jedem privaten Netz geglaubt. Hinter einem Proxy auf dessen Adresse einschränken (zum Beispiel 192.0.2.10/32) und den Port 8080 nur für den Proxy erreichbar machen.");
 if (!app.Services.GetRequiredService<SecretBox>().Enabled)
     log.LogWarning("Passwörter speichern ist aus: kein Schlüssel. JULOS_SECRET_KEY setzen oder dafür sorgen, dass der Server in JULOS_DATA schreiben darf (dort legt er secret.key an).");
 // Was der Bildkodierer kann, einmal ins Log (Einzelheiten: dotnet JulOS.dll diag encoders)

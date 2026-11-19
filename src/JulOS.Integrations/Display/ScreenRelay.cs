@@ -23,7 +23,7 @@ namespace JulOS.Integrations.Display;
 /// </summary>
 public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, SessionRegistry? registry = null, EncoderSelector? encoders = null, TimeSpan? keep = null) : IDisposable
 {
-    public static readonly TimeSpan SessionCheck = TimeSpan.FromSeconds(60);
+    public static readonly TimeSpan SessionCheck = TimeSpan.FromSeconds(15);
 
     /// <summary>So oft wird bei einer wartenden Sitzung nachgesehen, ob die App-Sitzung noch lebt (Abmeldung beendet sie).</summary>
     public static readonly TimeSpan WaitCheck = TimeSpan.FromSeconds(10);

@@ -83,7 +83,9 @@ internal static class RemoteEndpoints
             {
                 var options = new SshConnectOptions(c.Host, c.Port, c.Username, password,
                     SshProtocol.Clamp(body.Cols ?? 80, SshProtocol.MinCols, SshProtocol.MaxCols), SshProtocol.Clamp(body.Rows ?? 24, SshProtocol.MinRows, SshProtocol.MaxRows));
-                var sshTicket = sshTickets.Create(id.UserId, new SshTarget(owner, options, c.HostKey, body.AcceptHostKey, saveHostKey, SessionRegistry.SlotOf(owner, c.Id, body.Sid)));
+                // Was startet (Shell, Claude Code, Codex, eigener Befehl), kommt nur aus der gespeicherten Verbindung, nie aus dieser Anfrage; Quick Connect startet immer die Shell
+                var launch = body.Quick is null ? new SshLaunch(c.Program, c.WorkDir, c.KeepAlive, c.CustomCommand) : SshLaunch.Shell;
+                var sshTicket = sshTickets.Create(id.UserId, new SshTarget(owner, options, c.HostKey, body.AcceptHostKey, saveHostKey, SessionRegistry.SlotOf(owner, c.Id, body.Sid), launch, c.Name, c.Id));
                 return sshTicket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(sshTicket, c.Kind, options.Cols, options.Rows, "ssh"), AppJson.Default.TicketResponse);
             }
 

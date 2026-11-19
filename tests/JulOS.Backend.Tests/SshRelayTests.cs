@@ -23,6 +23,11 @@ internal sealed class FakeSshSession : ISshSession
     public SshHostKey? PresentedHostKey { get; private set; }
     private byte[]? _rest;
 
+    /// <summary>Antwort auf den Befehl der Pruefung (null: keine Antwort, wie bei Zeitueberschreitung); Execs merkt sich die Befehle.</summary>
+    public string? ProbeOutput { get; init; }
+    public List<string> Execs { get; } = [];
+    public Task<string?> ExecAsync(string command, TimeSpan timeout, CancellationToken ct) { lock (Execs) Execs.Add(command); return Task.FromResult(ProbeOutput); }
+
     public Task ConnectAsync(SshConnectOptions options, Func<SshHostKey, bool> trustHostKey, CancellationToken ct)
     {
         Options = options;
@@ -105,9 +110,9 @@ public sealed class HostKeyPolicyTests
 public sealed class SshRelayTests
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
-    private static Task<bool> Alive(CancellationToken _) => Task.FromResult(true);
+    internal static Task<bool> Alive(CancellationToken _) => Task.FromResult(true);
 
-    private static async Task<(WebSocket Browser, WebSocket Server)> SocketPairAsync()
+    internal static async Task<(WebSocket Browser, WebSocket Server)> SocketPairAsync()
     {
         var l = new TcpListener(IPAddress.Loopback, 0);
         l.Start();
@@ -125,7 +130,7 @@ public sealed class SshRelayTests
 
     private static SshRelay Relay(FakeSshSession session, int max = 32) => new(NullLogger<SshRelay>.Instance, () => session, max);
 
-    private static async Task<byte[]> ReceiveAsync(WebSocket ws)
+    internal static async Task<byte[]> ReceiveAsync(WebSocket ws)
     {
         using var cts = new CancellationTokenSource(Wait);
         var buf = new byte[70000];
@@ -134,8 +139,8 @@ public sealed class SshRelayTests
         return buf[..r.Count];
     }
 
-    private static Task SendAsync(WebSocket ws, params byte[] data) => ws.SendAsync(data, WebSocketMessageType.Binary, true, CancellationToken.None);
-    private static JsonElement Body(byte[] message) => JsonDocument.Parse(message.AsMemory(1)).RootElement;
+    internal static Task SendAsync(WebSocket ws, params byte[] data) => ws.SendAsync(data, WebSocketMessageType.Binary, true, CancellationToken.None);
+    internal static JsonElement Body(byte[] message) => JsonDocument.Parse(message.AsMemory(1)).RootElement;
 
     [Fact]
     public async Task Output_goes_to_the_browser_and_input_and_resize_to_the_shell()

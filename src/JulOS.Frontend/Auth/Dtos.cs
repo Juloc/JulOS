@@ -21,9 +21,13 @@ internal sealed record ActivateRequest(bool? Maximize);
 internal sealed record LaunchRequest(string? Id);
 internal sealed record ModeRequest(string? Mode);
 internal sealed record UploadResponse(bool Ok);
-internal sealed record ConnectionDto(Guid Id, string Name, string Kind, string Host, int Port, string Username, bool HasPassword, Guid HostId, bool DriveShare = false, bool DriveWrite = false, string Domain = "", string Notes = "", string Layout = "de");
+internal sealed record ConnectionDto(Guid Id, string Name, string Kind, string Host, int Port, string Username, bool HasPassword, Guid HostId, bool DriveShare = false, bool DriveWrite = false, string Domain = "", string Notes = "", string Layout = "de",
+    string Program = "shell", string WorkDir = "", bool KeepAlive = false, string CustomCommand = "");
 internal sealed record ConnectionsResponse(ConnectionDto[] Connections, bool CanStorePasswords, bool DriveAvailable = false);
-internal sealed record ConnectionRequest(string? Name, string? Kind, string? Host, int? Port, string? Username, string? Password = null, bool? ForgetPassword = null, bool? DriveShare = null, bool? DriveWrite = null, Guid? HostId = null, string? Domain = null, string? Notes = null, string? Layout = null);
+internal sealed record ConnectionRequest(string? Name, string? Kind, string? Host, int? Port, string? Username, string? Password = null, bool? ForgetPassword = null, bool? DriveShare = null, bool? DriveWrite = null, Guid? HostId = null, string? Domain = null, string? Notes = null, string? Layout = null,
+    string? Program = null, string? WorkDir = null, bool? KeepAlive = null, string? CustomCommand = null);
+/// <summary>Eine Kachel "Claude auf ..." oder "Codex auf ..." aus einer vorhandenen Terminal-Verbindung (POST /api/connections/{id}/program): Programm, Arbeitsverzeichnis, tmux und ein Name (ohne Name: "Claude auf <Host>").</summary>
+internal sealed record ProgramTileRequest(string? Program, string? WorkDir = null, bool? KeepAlive = null, string? Name = null);
 /// <summary>Username und Domain: Anmeldedaten fuer genau diesen Verbindungsversuch (Anmeldedialog in der Sitzung); sie ersetzen die der Verbindung und werden nicht gespeichert.</summary>
 internal sealed record TicketRequest(Guid? Connection, string? Password, int? Width, int? Height, string? Sid = null, int? Cols = null, int? Rows = null, string? AcceptHostKey = null, string? AcceptCert = null, QuickTarget? Quick = null, string? Username = null, string? Domain = null);
 /// <summary>Quick Connect: Ziel einer Sitzung ohne gespeicherte Verbindung (das Passwort steht im Ticket selbst und wird nirgends abgelegt).</summary>

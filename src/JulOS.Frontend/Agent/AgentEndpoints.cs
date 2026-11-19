@@ -160,6 +160,7 @@ internal static partial class AgentEndpoints
                 FileOutcome.TooBig => Error(413, "Datei zu groß (höchstens 64 MB)."),
                 FileOutcome.BadName => Error(400, "Ungültiger Dateiname."),
                 FileOutcome.Blocked => Error(400, $"Dateityp nicht erlaubt ({r.Detail})."),
+                FileOutcome.QuotaExceeded => Error(507, "Der Ordner für Dateien ist voll. Alte Dateien in ~/julos-uploads/files löschen."),
                 FileOutcome.FolderNotWritable => Error(500, "Upload-Ordner nicht beschreibbar."),
                 FileOutcome.HelperFailed => Error(500, "Helfer: " + r.Detail),
                 _ => Error(504, "Der Helfer in der Sitzung der Ziel-Maschine antwortet nicht (läuft tools/julos-clip.py?)."),

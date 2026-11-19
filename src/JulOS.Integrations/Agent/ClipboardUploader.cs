@@ -4,7 +4,8 @@ public enum UploadOutcome { Ok, NotAnImage, Empty, FolderNotWritable, HelperFail
 
 public sealed record UploadResult(UploadOutcome Outcome, string? Detail = null);
 
-public sealed record UploadOptions(string Directory, TimeSpan? HelperWait = null);
+/// <param name="FilesQuota">Hoechstens so viele Bytes liegen im Ordner files/ (Standard 2 GiB). Der Helfer raeumt erst nach 7 Tagen auf, bei 20 Uploads je Minute fuellte sich sonst der Datentraeger.</param>
+public sealed record UploadOptions(string Directory, TimeSpan? HelperWait = null, long? FilesQuota = null);
 
 /// <summary>
 /// Foto-Upload: legt das Bild in einen gemeinsamen Ordner. Ein Helfer in der Sitzung der Ziel-Maschine (tools/julos-clip.py) bemerkt es,

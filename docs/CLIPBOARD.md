@@ -50,8 +50,8 @@ then image.
   (png, jpg, webp, gif), never on the type the sender claims.
 - Files from the remote are only listed (name, size) until the user asks for one; the browser saves it under the cleaned name.
 - The pull answers only to the signed-in session, only when the user pressed the button, only with an image (never files or paths), at most
-  14 MB, 30 requests per minute and user. Uploads: 20 per minute and user.
-- Files in `~/julos-uploads/files/` stay for 7 days (the helper deletes older ones); photos for 30 minutes, as before.
+  14 MB, 30 requests per minute and user. Uploads: 20 per minute and user, and at most four uploads run at the same time (each one is held in memory).
+- Files in `~/julos-uploads/files/` stay for 7 days (the helper deletes older ones); photos for 30 minutes, as before. The folder `files/` is capped at 2 GiB: when a new file would not fit, folders older than one day are removed first, and if it still does not fit the upload is refused (HTTP 507, "Der Ordner für Dateien ist voll").
 
 ## Stream engine protocol (additions, binary, big endian)
 

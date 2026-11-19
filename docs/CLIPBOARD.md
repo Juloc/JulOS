@@ -1,7 +1,24 @@
-# Clipboard: images and files
+# Clipboard: text, images and files
 
-Text has always travelled both ways (see [ARCHITECTURE.md](ARCHITECTURE.md), display engine). This page is about images, files and folders. The
-text path is unchanged.
+Text travels both ways (see [ARCHITECTURE.md](ARCHITECTURE.md), display engine); the section "Text" below says how, "Fehlersuche" says what to check when it does
+not. The rest of the page is about images, files and folders.
+
+## Text
+
+| | |
+| --- | --- |
+| Remote to browser | the remote copies; xrdp announces `CF_UNICODETEXT`, the server fetches it at once and sends it as message 6; the browser puts it into its own clipboard (`navigator.clipboard.writeText`) |
+| Browser to remote | Ctrl+V (or Ctrl+Shift+V, Shift+Insert) in the picture: the browser's `paste` event carries the text, the page sends it (message 9), waits 180 ms and then sends the key combination to the remote; the "Text senden" dialog does the same with a button |
+| Limit | 1 MiB of UTF-8 in both directions; more is refused **with a message** (toast and diagnosis), not silently |
+| Line ends | **LF to the remote**, unless the remote has shown that it wants CR LF. xrdp passes text on unchanged in both directions, so a CR from the browser ended up in every line (terminal, editors). The server switches to CR LF when the remote itself has sent text with CR LF and no lone LF (a Windows host) and back when it sends lone LF. `JULOS_CLIP_EOL=lf` or `crlf` fixes it, `auto` (default) is this behaviour. Text from the remote always arrives with LF. |
+| Echo | some servers report text we just gave them as a new copy; it is not forwarded to the browser for 1.5 s after the paste and only while the remote has not copied anything else (before, the same text copied in the remote later never reached the browser) |
+| No answer | a data request the remote never answers counts as refused after 15 s, the next one goes out (before, one lost answer blocked every later copy of that session) |
+| Selection | xrdp only knows the `CLIPBOARD` selection (Ctrl+C, Ctrl+X), not `PRIMARY` (marking with the mouse, middle click). Marking text in the VM does nothing for the browser; copy it. Pasting from the browser with the middle mouse button does not work either, use Ctrl+V (Ctrl+Shift+V in terminals). |
+
+What the browser may do is decided by the browser, not by JulOS: `navigator.clipboard` exists only on HTTPS or `localhost`, writing needs the page to have focus (and in Firefox and Safari a
+recent key press or click), reading is never done without a user action (Ctrl+V gives the text through the `paste` event, which needs no permission at all). Where it does not work, the
+toast "Text aus der VM kopiert (Symbol Zwischenablage)" opens the dialog "Text senden", which shows the text and has the button to copy it by hand; a text that arrived while the page
+had no focus is tried again when the focus returns. Without HTTPS only the paste field and Ctrl+V work, which the diagnosis says.
 
 ## What the stream carries
 
@@ -118,3 +135,41 @@ use of the ticket gives 404, `Content-Length` and `Content-Disposition` as docum
 A real Windows host (folders both ways, Explorer paste of a file list, `CF_DIB` into Office, copying files in Explorer, files over 4 GiB with ZIP64), Android Chrome (file and folder
 picker, share, permission prompts of `navigator.clipboard.write`, the download manager with the ticket) and a Linux VM other than the xrdp test desktop. Not measured: a 2 GiB transfer
 (the limits are covered by tests, the largest hand test was 63 MB). The helper path (kept for the agent API) was checked with GTK only, not with other Linux programs.
+
+## Fehlersuche
+
+First look at the **diagnosis**: menu row "Funktionen" or the key "Zwischenablage", dialog "Text senden", at the bottom "Diagnose". It shows (never the content, only direction, time and length):
+
+- *Kanal der VM*: ready, being set up, or missing. Missing means xrdp's `xrdp-chansrv` did not announce the clipboard channel within 8 s after connecting. In the VM: `pgrep -u "$USER" -a xrdp-chansrv` must list one process. If it died and was restarted
+  (`tools/install-chansrv-watch.sh`), an open connection does not get the channel back: reconnect once. See [DEVELOPMENT.md](DEVELOPMENT.md) (long black picture).
+- *Browser*: whether the page may use the clipboard at all (HTTPS or localhost).
+- *Aus der VM*: when the last text came, how long it was and whether the browser could put it into its clipboard (or why not: `NotAllowedError`, no focus, no HTTPS).
+- *In die VM*: when the last text went out, and whether the VM fetched it. "Noch nicht abgeholt" means the paste happened on our side but the VM did not ask: press Ctrl+V there (terminals
+  take Ctrl+Shift+V), or the program in the VM asks for a target xrdp does not offer.
+- *Letzter Fehler*: in plain words.
+
+| Symptom | Likely cause | Check |
+| --- | --- | --- |
+| Nothing ever arrives in either direction, "Kanal der VM: fehlt" | `xrdp-chansrv` not running in the session, or restarted after the connection was made | `pgrep -u "$USER" -a xrdp-chansrv`, `journalctl -t julos-chansrv-watch`; reconnect |
+| VM to browser works only sometimes | the browser refuses to write (no focus, Firefox/Safari without a recent click), diagnosis says "verweigert" or "keinen Fokus" | tap the toast, "Auf dem Handy kopieren"; use Chrome or Edge on HTTPS |
+| Browser to VM pastes the old text | the key arrived before xrdp had taken the new list (a slow link between server and VM) | paste again; the diagnosis shows whether the VM fetched the new text |
+| Pasted text has `^M` or one line too many | an old JulOS (before this fix) sent CR LF to xrdp | update; `JULOS_CLIP_EOL=lf` |
+| Copied text in the VM does not arrive although the diagnosis is green | the same text was given to the VM within the last 1.5 s (echo filter), or the VM only has it in `PRIMARY` (marked, not copied) | copy with Ctrl+C |
+| `xrdp-chansrv` log: `clipboard_event_selection_request: unknown target ...` | a program in the VM asks xrdp for a target it does not offer (`TEXT`, `text/plain`, a numeric atom); xrdp refuses it and the program tries the next. Harmless, unless that program asks for nothing else | `~/.local/share/xrdp/xrdp-chansrv.<display>.log` in the VM |
+| Another program owns the clipboard (a clipboard manager such as `xfce4-clipman`) and the text arrives twice or late | each owner change is a new copy for xrdp | stop the manager to test; a request that is never answered is dropped after 15 s |
+
+Server side, one line per event at debug level, never with the text (`Zwischenablage: TextFetchedByVm (52)`: kind and length in characters). Switch it on with
+`Logging__LogLevel__JulOS.Integrations.Display.ScreenRelay=Debug` in the environment of the server container, then `docker compose logs julos | grep Zwischenablage`.
+
+### What was found and how it is covered
+
+- Text from the browser went to xrdp with CR LF (reproduced against xrdp 0.10.1: `xclip -o` in the VM returned `\r\n`): fixed, test `ClipboardRealTextTests` (real xrdp) and `ClipboardBridgeTests`.
+- Text copied in the VM that equalled the last text pasted from the browser was dropped for the rest of the session (echo filter without an end): fixed, same tests.
+- One data request without an answer blocked every later one for the rest of the session (not reproducible with xrdp, which answers or fails by itself; found by reading, covered with a simulated server in `ClipboardConversationTests`).
+- Silent failures on the browser side (text too long, no connection, Ctrl+V without text, clipboard write refused): now a message and a line in the diagnosis (`tests/frontend/clipdiag.test.mjs`, `stream-clip.test.mjs`).
+- Browser flows against a real xrdp desktop: `deploy/dev/e2e/tests/e2e.spec.mjs`, test 8 (text from the VM into `navigator.clipboard`, Shift+Home and Shift+Arrow selection and Ctrl+C in a real window, Ctrl+V with a line break into the VM, the diagnosis).
+
+### Not verified
+
+The real development VM with Chromium (not allowed to log in): suspected, not proven, are (1) a restarted `xrdp-chansrv` that leaves an open connection without the clipboard channel (the diagnosis now says so), (2) a program in the VM that
+takes over `CLIPBOARD` after each copy, (3) Firefox and Safari on a phone, which only write to the clipboard right after a touch. Other browsers than Chromium, a Windows host (CR LF switching is covered by unit tests only) and clipboard managers were not tested end to end.

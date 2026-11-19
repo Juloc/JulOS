@@ -30,7 +30,7 @@ test('der Kanal: erst "wird aufgebaut", dann bereit; ohne Meldung nach einigen S
   assert.equal(text(d.lines(), 'channel').ok, null);
   c.tick(CHANNEL_WAIT_MS + 1);
   assert.equal(text(d.lines(), 'channel').ok, false);
-  assert.match(text(d.lines(), 'channel').text, /xrdp-chansrv/);
+  assert.match(text(d.lines(), 'channel').text, /xrdp-chansrv.*neu verbinden/);
   d.serverNote({ ready: true, files: false, note: NOTE.status, count: 0 });
   assert.equal(text(d.lines(), 'channel').ok, true);
   assert.match(text(d.lines(), 'channel').text, /bereit \(Text und Bilder\)/);

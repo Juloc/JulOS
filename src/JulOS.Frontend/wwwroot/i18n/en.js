@@ -389,7 +389,7 @@ export default {
   "clipdiag.channelReady": "VM channel: ready (text and images)",
   "clipdiag.channelReadyFiles": "VM channel: ready (text, images and files)",
   "clipdiag.channelWaiting": "VM channel: being set up …",
-  "clipdiag.channelMissing": "VM channel: missing. xrdp-chansrv is probably not running there (check in the VM: pgrep -a xrdp-chansrv).",
+  "clipdiag.channelMissing": "VM channel: missing. xrdp-chansrv is probably not running there, or it was restarted after connecting (then reconnect once). Check in the VM: pgrep -u \"$USER\" -a xrdp-chansrv.",
   "clipdiag.browserOk": "Browser: copy and paste work directly",
   "clipdiag.browserInsecure": "Browser: no HTTPS, access to the clipboard is blocked. Paste with Ctrl+V or in the field above, copy with the button below.",
   "clipdiag.fromVmNone": "From the VM: nothing copied yet",

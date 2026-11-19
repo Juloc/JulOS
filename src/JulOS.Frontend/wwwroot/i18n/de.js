@@ -389,7 +389,7 @@ export default {
   "clipdiag.channelReady": "Kanal der VM: bereit (Text und Bilder)",
   "clipdiag.channelReadyFiles": "Kanal der VM: bereit (Text, Bilder und Dateien)",
   "clipdiag.channelWaiting": "Kanal der VM: wird aufgebaut …",
-  "clipdiag.channelMissing": "Kanal der VM: fehlt. Dort läuft vermutlich xrdp-chansrv nicht (in der VM prüfen: pgrep -a xrdp-chansrv).",
+  "clipdiag.channelMissing": "Kanal der VM: fehlt. Dort läuft vermutlich xrdp-chansrv nicht, oder er wurde nach dem Verbinden neu gestartet (dann einmal neu verbinden). Prüfen in der VM: pgrep -u \"$USER\" -a xrdp-chansrv.",
   "clipdiag.browserOk": "Browser: Kopieren und Einfügen ohne Umweg möglich",
   "clipdiag.browserInsecure": "Browser: kein HTTPS, der Zugriff auf die Zwischenablage ist gesperrt. Einfügen geht mit Strg+V oder im Feld oben, Kopieren über den Knopf darunter.",
   "clipdiag.fromVmNone": "Aus der VM: noch nichts kopiert",

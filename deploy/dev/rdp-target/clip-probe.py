@@ -6,6 +6,8 @@ setzen und lesen (xclip), ohne dass der Test-Container Docker braucht. Hoert auf
   POST /set?sel=clipboard&type=<ziel>           Koerper wird der Inhalt (xclip bleibt als Besitzer im Hintergrund)
   POST /set?...&stall=1                         wie /set, aber der Besitzer wird angehalten (SIGSTOP): er antwortet nie auf Anfragen, wie ein haengender Zwischenablage-Verwalter
   POST /clear                                   alle Besitzer beenden (die Auswahl ist leer)
+  POST /entry                                   ein kleines Fenster "clip-entry" mit einem Eingabefeld (Koerper = Inhalt), zum Markieren und Kopieren mit der Tastatur
+  POST /entry-close                             schliesst es wieder
 """
 import http.server, os, subprocess, time, urllib.parse
 
@@ -53,6 +55,12 @@ class H(http.server.BaseHTTPRequestHandler):
             if q.get("stall", ["0"])[0] == "1":
                 time.sleep(0.3)
                 subprocess.run(["pkill", "-STOP", "-u", str(os.getuid()), "-x", "xclip"])
+            return self.reply(200, b"ok")
+        if u.path == "/entry":
+            subprocess.Popen(["python3", "/opt/julos/clip-entry.py", body.decode("utf-8", "replace")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return self.reply(200, b"ok")
+        if u.path == "/entry-close":
+            subprocess.run(["pkill", "-u", str(os.getuid()), "-f", "clip-entry.py"])
             return self.reply(200, b"ok")
         if u.path == "/clear":
             subprocess.run(["pkill", "-KILL", "-u", str(os.getuid()), "-x", "xclip"])

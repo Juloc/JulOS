@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Browser-Tests (Playwright in Docker, nichts auf dem Host noetig) gegen einen eigenen, frisch aufgesetzten Stack aus diesem Arbeitsordner:
 # Datenbank, Server, SSH-Ziel und RDP-Desktop in einem eigenen Compose-Projekt "julos-e2e" ohne veroeffentlichte Ports.
+# Neben einer anderen Sitzung mit eigenem Stack: E2E_PROJECT=<name> (Standard julos-e2e).
 # Aufruf: deploy/dev/e2e.sh [Playwright-Optionen, z. B. -g Terminal]    Stack danach stehen lassen: E2E_KEEP=1    Aufraeumen: deploy/dev/e2e.sh down
 # Fehlerbilder und Traces landen ausserhalb des Repos in $JULOS_E2E_STATE (Standard ~/.cache/julos-e2e/out).
 set -euo pipefail
@@ -12,7 +13,7 @@ mkdir -p "$state"
 if [ ! -f "$state/env" ]; then
   ( umask 077; printf 'DEV_DB_PASSWORD=%s\nDEV_TARGET_PASSWORD=%s\nDEV_SECRET_KEY=%s\n' "$(openssl rand -hex 16)" "$(openssl rand -hex 12)" "$(openssl rand -base64 32)" > "$state/env" )
 fi
-dc() { docker compose -p julos-e2e -f compose.yaml -f e2e/compose.override.yaml --env-file "$state/env" "$@"; }
+dc() { docker compose -p "${E2E_PROJECT:-julos-e2e}" -f compose.yaml -f e2e/compose.override.yaml --env-file "$state/env" "$@"; }
 # Aufbau und Neustarts laufen leise; bei einem Fehler steht die Ausgabe in $state/stack.log
 quiet() { "$@" >>"$state/stack.log" 2>&1 || { echo "Fehlgeschlagen: $* (Ausgabe: $state/stack.log)" >&2; exit 1; }; }
 teardown() { [ "${E2E_KEEP:-}" = 1 ] || dc --profile e2e down -v --remove-orphans >/dev/null 2>&1 || true; }

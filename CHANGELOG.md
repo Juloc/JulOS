@@ -4,6 +4,18 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Behoben
+- Zwischenablage, Text vom Browser in die VM: der Text ging mit CR LF an xrdp, das ihn unverändert weitergibt; in der VM bekam jede Zeile ein CR (`^M` im Terminal, Fehler in Skripten). Jetzt geht LF hinaus; CR LF erst, wenn die VM selbst Text mit CR LF schickt (Windows-Rechner). `JULOS_CLIP_EOL=auto|lf|crlf` stellt es fest ein. Gegen ein echtes xrdp reproduziert und per Display-Test abgesichert.
+- Zwischenablage, Text aus der VM zum Browser: der Echo-Filter verwarf Text, der dem zuletzt eingefügten glich, bis zum Ende der Sitzung (derselbe Text in der VM erneut kopiert kam nie an, „manchmal geht es“). Er gilt jetzt nur 1,5 s nach dem Einfügen und nur, solange die VM nichts anderes kopiert hat.
+- Zwischenablage: eine Datenanfrage, die die VM nie beantwortet, blockierte alle späteren Kopien dieser Sitzung. Nach 15 s gilt sie als verweigert und die nächste geht hinaus.
+- Fehler der Zwischenablage werden nicht mehr verschluckt: zu langer Text (über 1 MiB), keine Verbindung, Strg+V ohne Text im Browser, vom Browser verweigertes Ablegen (HTTPS, Fokus, Berechtigung) und ein fehlender Kanal der VM (`xrdp-chansrv`) erscheinen als Meldung; die Meldung „Text aus der VM kopiert“ ist antippbar und öffnet den Dialog. Text, der ohne Fokus der Seite ankam, wird beim nächsten Fokus noch einmal abgelegt. Strg+V wird auch bei Tastaturbelegungen erkannt, in denen die Taste nicht „v“ meldet.
+
+### Neu
+- Zwischenablage-Diagnose im Dialog „Text senden“ („Diagnose“): Kanal der VM bereit oder fehlt, letzte Richtung und Zeit, ob die VM den Text abgeholt hat, letzter Fehler im Klartext, nie ein Inhalt. Neue Protokollnachricht 15 (Ereignis der Text-Zwischenablage). Im Server-Log steht je Ereignis eine Debug-Zeile (`Zwischenablage: <Art> (<Länge>)`, nie der Text).
+- Doku: [docs/CLIPBOARD.md](docs/CLIPBOARD.md) beschreibt den Textweg und hat den Abschnitt „Fehlersuche“ mit Ursachen und Prüfbefehlen. Tests: echte Text-Tests gegen xrdp (`ClipboardRealTextTests`, mit dem Hilfsdienst `clip-probe.py` im Test-Desktop), Kanal- und Brückentests, `clipdiag.test.mjs` und ein Browser-Ablauf (Strg+C und Umschalt+Pfeile in einem echten Fenster der VM, Strg+V, Diagnose). Der Service Worker hat die Version pd-v48.
+
 ## [0.8.0] - 2026-11-19
 
 ### Neu

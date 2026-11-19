@@ -234,3 +234,61 @@ test('7 Sprache: auf Englisch umschalten, Überschrift und Kachel sind englisch,
   expect(errors).toEqual([]);
   await context.close();
 });
+
+/** Die Zwischenablage der VM setzen und lesen: der kleine Dienst in der Sitzung des Ziels (deploy/dev/rdp-target/clip-probe.py, xclip). */
+const probe = (path, init) => fetch(`http://${RDP.host}:9777${path}`, init);
+
+test('8 Zwischenablage: Text aus der VM im Browser, Markieren mit Umschalt+Pfeilen und Strg+C in einem echten Fenster, Strg+V mit Zeilenumbruch in die VM, Diagnose', async ({ browser }) => {
+  test.setTimeout(100_000);
+  const { context, page, errors } = await signedIn(browser);
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://127.0.0.1:8080' });
+  const sockets = watchSockets(page);
+  await page.goto('/');
+  const id = await connectionId(page, DESKTOP_CONN.name);
+  await connect(page, DESKTOP_CONN.name, RDP.password);
+  await waitForPicture(page, sockets);
+  await page.bringToFront();
+  await expect.poll(async () => { const r = await page.request.get('/api/agent/health?c=' + id); return r.ok() && (await r.json()).available; }, { message: 'der Agent im Ziel meldet sich', timeout: 40_000 }).toBe(true);
+  const readClip = () => page.evaluate(() => navigator.clipboard.readText());
+  const stamp = Date.now().toString(36);
+
+  // 1) Text, der in der VM kopiert wird (xclip, wie Strg+C in einem Programm), liegt gleich in der Zwischenablage des Browsers. Der Kanal der VM braucht nach dem
+  //    Verbinden einen Augenblick: die Kopie wird bis zum Erfolg wiederholt.
+  const fromVm = `aus der VM äöü ${stamp}`;
+  await expect.poll(async () => { await probe('/set', { method: 'POST', body: fromVm }); await page.waitForTimeout(700); return readClip(); }, { message: 'Text aus der VM erscheint in navigator.clipboard', timeout: 40_000, intervals: [100] }).toBe(fromVm);
+
+  // 2) Ein echtes Programmfenster der VM: Eingabefeld mit Text; Umschalt+Pos1 und Umschalt+Pfeile markieren, Strg+C legt die Markierung in die Zwischenablage des Browsers
+  await probe('/entry', { method: 'POST', body: 'Hallo Welt' });
+  const entryWindow = async () => (await windowsOf(page, id)).find((w) => w.title === 'clip-entry');
+  await expect.poll(async () => !!(await entryWindow()), { message: 'das Eingabefenster der VM erscheint', timeout: 20_000 }).toBe(true);
+  await page.request.post(`/api/agent/windows/${(await entryWindow()).id}/activate`, { headers: API });
+  await expect.poll(async () => (await entryWindow())?.active, { message: 'das Eingabefenster hat den Fokus', timeout: 10_000 }).toBe(true);
+  await page.keyboard.press('End');
+  await page.keyboard.press('Shift+Home');                        // alles markieren
+  await page.keyboard.press('Control+c');
+  await expect.poll(readClip, { message: 'Umschalt+Pos1 markiert, Strg+C kopiert in den Browser', timeout: 15_000 }).toBe('Hallo Welt');
+  await page.keyboard.press('Home');
+  for (let i = 0; i < 4; i++) await page.keyboard.press('Shift+ArrowRight');    // "Hall" markieren
+  await page.keyboard.press('Control+c');
+  await expect.poll(readClip, { message: 'Umschalt+Pfeil markiert genau vier Zeichen', timeout: 15_000 }).toBe('Hall');
+
+  // 3) Strg+V im Browser: der Text (mit Zeilenumbruch) liegt danach als LF, ohne CR, in der Zwischenablage der VM
+  const toVm = `Zeile eins ${stamp}\nZeile zwei ä`;
+  await page.evaluate((v) => navigator.clipboard.writeText(v), toVm);
+  await page.keyboard.press('Control+v');
+  await expect.poll(async () => { const r = await probe('/get'); return r.ok ? await r.text() : null; }, { message: 'Strg+V legte den Text in die Zwischenablage der VM (LF, kein CR)', timeout: 15_000, intervals: [300] }).toBe(toVm);
+
+  // 4) Die Diagnose im Dialog zeigt Kanal, beide Richtungen und keinen Fehler; ohne Inhalt
+  await page.evaluate(() => document.querySelector('#clipDlg').showModal());
+  const diag = page.locator('#clipDiagList');
+  await expect(diag).toContainText('Kanal der VM: bereit');
+  await expect(diag).toContainText('Aus der VM:');
+  await expect(diag).toContainText('im Browser abgelegt');
+  await expect(diag).toContainText(/In die VM: .*Zeichen; die VM hat den Text abgeholt/);
+  await expect(diag).not.toContainText(stamp);
+  await page.evaluate(() => document.querySelector('#clipDlg').close());
+
+  await probe('/entry-close', { method: 'POST' });
+  expect(errors).toEqual([]);
+  await context.close();
+});

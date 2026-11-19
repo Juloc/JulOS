@@ -99,6 +99,8 @@ internal sealed class ByteWriter
         _buffer = new byte[length];
     }
 
+    public int Length => _buffer.Length;
+
     public ByteWriter U8(byte value)
     {
         _buffer[_position] = value;

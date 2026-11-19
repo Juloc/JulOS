@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, chromium } from '@playwright/test';
 import { existsSync } from 'node:fs';
 import { AUTH_FILE, RDP, SSH, VNC, STATE_FILE, loadState, newPassword, saveState, totp } from './helpers.mjs';
 
@@ -327,6 +327,11 @@ test('9 VNC: verbinden (Passwort im Dialog der Sitzung), Bild, Klick und Taste e
   await page.waitForTimeout(300);
   await page.keyboard.type('j');
   await expect.poll(read, { message: 'die Taste kam im Fuehlerfenster an', timeout: 15_000 }).toContain('keysym 0x6a');
+  // Ton und Mikrofon: VNC kennt keins von beiden, und das Menü "Ton" sagt es, statt Knöpfe anzubieten, die nichts bewirken
+  await page.locator('.dk-mi[data-menu="sound"]').click();
+  await expect(page.locator('.dk-menu .dk-it')).toHaveCount(1);
+  await expect(page.locator('.dk-menu')).toContainText('VNC überträgt keinen Ton und kein Mikrofon');
+  await page.keyboard.press('Escape');
   expect(errors.filter((e) => !/401|403/.test(e))).toEqual([]);
   await context.close();
 });
@@ -431,4 +436,155 @@ test('12 Programm-Sitzung mit tmux: ohne tmux auf dem Ziel läuft eine normale S
   await expect(rows).toContainText('claude>');
   expect(errors).toEqual([]);
   await context.close();
+});
+
+/* ---------- Ton und Mikrofon (Chromium mit Ersatzgeräten: das Mikrofon liefert einen Testton, die Freigabe wird ohne Rückfrage erteilt) ---------- */
+// Nur für diese Abläufe: --use-fake-device-for-media-stream (Mikrofon ohne Hardware), --use-fake-ui-for-media-stream (die Freigabe erscheint nicht als Frage),
+// --autoplay-policy=no-user-gesture-required (der AudioContext startet ohne Eingabe; das Verhalten ohne Eingabe prüfen die Tests im Browser-Modul)
+const FAKE_MEDIA = ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required'];
+/** Der kleine Dienst im Ziel für Ton (deploy/dev/rdp-target/clip-probe.py): Ton abspielen, Mikrofon aufnehmen und auswerten */
+const tone = (seconds = 3) => probe(`/tone?s=${seconds}`, { method: 'POST' });
+const recording = async () => (await probe('/record-level')).json();
+/** Zustand von Ton und Mikrofon der aktiven Sitzung aus dem Browser (window.__pd gibt es nur mit ?debug) */
+const audioState = (page) => page.evaluate(() => {
+  const a = window.__pd.cur().client.audio;
+  return { state: a.state, wanted: a.wanted, active: a.active, remote: { ...a.remote }, stats: { ...a.stats }, micOn: a.micOn, micChunks: a.micChunks, micLevel: a.micLevel, lastOn: a.lastOn };
+});
+const soundMenu = (page) => page.locator('.dk-mi[data-menu="sound"]');
+const menuItem = (page, name) => page.locator('.dk-menu .dk-it', { hasText: name });
+
+/** Öffnet die Sitzung des RDP-Ziels in einem eigenen Chromium und wartet auf das Bild; die Seite lädt mit ?debug */
+async function openDesktopSession(browser, { microphone = false } = {}) {
+  const s = await signedIn(browser, DESKTOP);
+  if (microphone) await s.context.grantPermissions(['microphone'], { origin: 'http://127.0.0.1:8080' });     // der Zustand der Freigabe ist dann "erteilt"
+
+  const sockets = watchSockets(s.page);
+  await s.page.goto('/?debug');
+  await connect(s.page, DESKTOP_CONN.name, RDP.password);
+  await waitForPicture(s.page, sockets);
+  await s.page.bringToFront();
+  return s;
+}
+
+test('13 Ton: ein Ton im Desktop erreicht den Browser, der Worklet spielt ihn (Pegel, Proben), die Diagnose sagt es; die Sitzung im Hintergrund bekommt nichts', async () => {
+  test.setTimeout(120_000);
+  const browser = await chromium.launch({ args: FAKE_MEDIA });
+  try {
+    const { context, page, errors } = await openDesktopSession(browser);
+
+    // 1) Die Verbindung hat den Ton-Kanal ausgehandelt und der AudioContext läuft; ohne Ton im Desktop kommt nichts
+    await expect.poll(async () => { const a = await audioState(page); return a.state === 'running' && a.wanted && a.remote.output; }, { message: 'Ton-Kanal ausgehandelt, AudioContext läuft', timeout: 40_000 }).toBe(true);
+    const idle = await audioState(page);
+    expect(idle.lastOn, 'der Server hat "Ton an" gehört').toBe(true);
+
+    // 2) Ein Ton im Desktop (paplay in der Sitzung): Blöcke kommen an, der Worklet gibt Proben aus, der Pegel entspricht dem Testton (12000 von 32768, etwa 0,37)
+    let peak = 0, start = await audioState(page), last = start;
+    await expect.poll(async () => {
+      if (!(await page.evaluate(() => window.__toneUntil > Date.now()))) { await tone(3); await page.evaluate(() => { window.__toneUntil = Date.now() + 2500; }); }
+      last = await audioState(page); peak = Math.max(peak, last.stats.peak);
+      return last.stats.played - start.stats.played > 24000 && peak > 0.2;
+    }, { message: 'Ton aus dem Desktop wird abgespielt', timeout: 60_000, intervals: [150] }).toBe(true);
+    expect(peak, 'Pegel nahe am Testton').toBeLessThan(0.6);
+    expect(last.stats.blocks - last.stats.ignored, 'Tonstücke kamen an').toBeGreaterThan(10);
+    expect(last.stats.received, 'der Worklet bekam Proben').toBeGreaterThan(24000);
+
+    // 3) Die Diagnose im Dialog zeigt Kanal, Wiedergabe und Pegel
+    await soundMenu(page).click();
+    await menuItem(page, 'Ton und Mikrofon: Diagnose').click();
+    const diag = page.locator('#audioDiagList');
+    await expect(diag).toContainText('Ton-Kanal des Desktops: vorhanden');
+    await expect(diag).toContainText('Wiedergabe: läuft');
+    await expect(diag).toContainText(/Vom Desktop angekommen: \d+ Stücke/);
+    await expect(diag).toContainText(/Pegel \d+ %, Puffer/);
+    await page.evaluate(() => document.querySelector('#audioDlg').close());
+
+    // 4) Das Fenster wird minimiert (die Sitzung ist dann nicht vorn): der Server hört "Ton aus", im Browser kommt trotz Ton im Desktop nichts an
+    await page.getByRole('dialog', { name: DESKTOP_CONN.name }).getByRole('button', { name: 'Minimieren' }).click();
+    await expect.poll(async () => (await audioState(page)).active, { message: 'die Sitzung im Hintergrund ist nicht mehr aktiv', timeout: 10_000 }).toBe(false);
+    expect((await audioState(page)).lastOn, 'der Server hört "Ton aus"').toBe(false);
+    await page.waitForTimeout(500);
+    const hidden0 = await audioState(page);
+    await tone(2);
+    await page.waitForTimeout(2500);
+    const hidden1 = await audioState(page);
+    expect(hidden1.stats.received, 'im Hintergrund wurde kein Ton abgespielt').toBe(hidden0.stats.received);
+    expect(hidden1.stats.blocks, 'im Hintergrund schickte der Server nichts').toBe(hidden0.stats.blocks);
+
+    // 5) Wieder nach vorn: der Ton kommt wieder an
+    await page.locator('#dkSess').click();                                                  // Menü der offenen Sitzungen: die minimierte holt das Fenster zurück
+    await menuItem(page, DESKTOP_CONN.name).click();
+    await expect.poll(async () => (await audioState(page)).active, { message: 'die Sitzung ist wieder vorn', timeout: 10_000 }).toBe(true);
+    const back0 = await audioState(page);
+    await expect.poll(async () => { await tone(2); await page.waitForTimeout(1500); return (await audioState(page)).stats.received > back0.stats.received + 8000; }, { message: 'Ton kommt wieder an', timeout: 30_000 }).toBe(true);
+
+    expect(errors.filter((e) => !/401|403/.test(e))).toEqual([]);
+    await context.close();
+  } finally { await browser.close(); }
+});
+
+test('14 Mikrofon: im Menü einschalten, Chromium liefert den Testton, im Desktop nimmt ein Programm auf und hört ihn; ausschalten beendet es', async () => {
+  test.setTimeout(120_000);
+  const browser = await chromium.launch({ args: FAKE_MEDIA });
+  try {
+    const { context, page, errors } = await openDesktopSession(browser, { microphone: true });
+    await expect.poll(async () => (await audioState(page)).state, { message: 'Ton-Kanal steht', timeout: 40_000 }).toBe('running');
+
+    // Im Desktop nimmt ein Programm auf (parecord in der Sitzung): so öffnet xrdp den Mikrofon-Kanal
+    await expect.poll(async () => (await probe('/record-start', { method: 'POST' })).status, { message: 'im Desktop läuft eine Aufnahme', timeout: 40_000, intervals: [500] }).toBe(200);
+    await soundMenu(page).click();
+    await menuItem(page, /^Mikrofon/).click();
+    await expect.poll(async () => (await audioState(page)).micOn, { message: 'das Mikrofon des Browsers läuft', timeout: 15_000 }).toBe(true);
+    await expect(page.locator('#micLive')).toBeVisible();                                  // die rote Anzeige "Mikrofon an"
+    await expect.poll(async () => { const a = await audioState(page); return a.remote.microphone && a.remote.recording; }, { message: 'der Desktop bietet das Mikrofon an und verlangt Ton', timeout: 40_000, intervals: [300] }).toBe(true);
+    await expect.poll(async () => (await audioState(page)).micChunks, { message: 'der Browser schickt Mikrofon-Stücke', timeout: 15_000 }).toBeGreaterThan(50);
+
+    // Die Aufnahme im Desktop enthält den Ton (Pegel über der Schwelle, nicht nur Stille)
+    let level = { samples: 0, loud: 0, peak: 0 };
+    await expect.poll(async () => { level = await recording(); return level.loud; }, { message: 'die Aufnahme im Desktop enthält Ton', timeout: 40_000, intervals: [500] }).toBeGreaterThan(1500);
+    expect(level.peak, 'Pegel der Aufnahme').toBeGreaterThan(4000);
+
+    // Die Diagnose nennt Kanal, Aufnahme und Freigabe
+    await soundMenu(page).click();
+    await menuItem(page, 'Ton und Mikrofon: Diagnose').click();
+    const diag = page.locator('#audioDiagList');
+    await expect(diag).toContainText('Mikrofon des Desktops: Kanal angeboten');
+    await expect(diag).toContainText('Mikrofon: an, der Desktop nimmt auf');
+    await expect(diag).toContainText('Mikrofon-Freigabe: erteilt');
+    await page.evaluate(() => document.querySelector('#audioDlg').close());
+
+    // Ausschalten (auch über die rote Anzeige): die Spur des Browsers endet
+    await page.locator('#micLive').click();
+    await expect.poll(async () => (await audioState(page)).micOn, { message: 'das Mikrofon ist aus', timeout: 10_000 }).toBe(false);
+    await expect(page.locator('#micLive')).toBeHidden();
+    await probe('/record-stop', { method: 'POST' });
+    expect(errors.filter((e) => !/401|403/.test(e))).toEqual([]);
+    await context.close();
+  } finally { await browser.close(); }
+});
+
+test('15 Mikrofon verweigert: der Browser lehnt die Freigabe ab, die Sitzung nennt eine Anleitung für den Browser, das Mikrofon bleibt aus', async () => {
+  test.setTimeout(120_000);
+  const browser = await chromium.launch({ args: ['--use-fake-device-for-media-stream'] });
+  try {
+    const { context, page, errors } = await openDesktopSession(browser);
+    await expect.poll(async () => (await audioState(page)).remote.output, { message: 'Ton-Kanal steht', timeout: 40_000 }).toBe(true);
+    // Der Browser verweigert das Mikrofon für diese Seite (wie nach "Blockieren" in der Frage): über das Protokoll des Browsers gesetzt, der Kontext des Tabs ergibt sich aus dessen Ziel
+    const cdp = await browser.newBrowserCDPSession();
+    const target = (await cdp.send('Target.getTargets')).targetInfos.find((x) => x.type === 'page' && x.url.includes('127.0.0.1'));
+    await cdp.send('Browser.setPermission', { permission: { name: 'microphone' }, setting: 'denied', origin: 'http://127.0.0.1:8080', browserContextId: target.browserContextId });
+    await soundMenu(page).click();
+    await menuItem(page, /^Mikrofon/).click();
+    const toast = page.locator('.sv-toast');
+    await expect(toast).toContainText('Der Browser hat das Mikrofon nicht freigegeben.', { timeout: 15_000 });
+    await expect(toast).toContainText('Schloss oder Regler');                               // die Anleitung für Chromium
+    expect((await audioState(page)).micOn).toBe(false);
+    await expect(page.locator('#micLive')).toBeHidden();
+    await soundMenu(page).click();
+    await menuItem(page, 'Ton und Mikrofon: Diagnose').click();
+    await expect(page.locator('#audioDiagList')).toContainText('Mikrofon: aus');
+    await expect(page.locator('#audioDiagList')).toContainText('Mikrofon-Freigabe: verweigert. Klicke links neben der Adresse');
+    await page.evaluate(() => document.querySelector('#audioDlg').close());
+    expect(errors.filter((e) => !/401|403|NotAllowed|Permission/.test(e))).toEqual([]);
+    await context.close();
+  } finally { await browser.close(); }
 });

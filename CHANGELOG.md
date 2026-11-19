@@ -4,7 +4,7 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
-## [Unveröffentlicht]
+## [0.10.0] - 2026-11-19
 
 ### Neu
 - Programm-Sitzungen („der direkte Claude CLI und Codex CLI wie SSH, bloß direkter“): eine Terminal-Verbindung kann statt der Shell Claude Code (`claude`), Codex (`codex`) oder einen eigenen Befehl starten, in einem Arbeitsverzeichnis und auf Wunsch in einer tmux-Sitzung (`tmux new-session -A -s julos-<programm>-<name>-<kennung>`, Name nur `[a-z0-9-]`), die ein Abreißen der Verbindung übersteht; das erneute Verbinden hängt sich wieder an. Neue Felder je Verbindung (Migration 014, alle mit Standardwerten: bestehende Verbindungen bleiben gewöhnliche Shells): `program`, `workdir`, `keep_alive`, `custom_command`; API `program`, `workDir`, `keepAlive`, `customCommand`. Anmeldedaten für Claude oder Codex speichert JulOS nie (die Werkzeuge melden sich auf dem Ziel selbst an).

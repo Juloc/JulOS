@@ -305,6 +305,13 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                 var watch = WatchAsync(sessionAlive, sessionCheck, attach.Token);
                 var first = await Task.WhenAny(live.Run, send, receive, watch).ConfigureAwait(false);
 
+                // Die Ereignisse enden, wenn die Sitzung endet (RunAsync schliesst sie in seinem finally), also einen Atemzug bevor die Sitzung selbst
+                // als beendet gilt: dann ist es das Ende der Sitzung (mit ihrem Grund, etwa einer abgelehnten Anmeldung), kein Abriss des Browsers.
+                if (first == send && send.IsCompletedSuccessfully && await Task.WhenAny(live.Run, Task.Delay(1000, CancellationToken.None)).ConfigureAwait(false) == live.Run)
+                {
+                    first = live.Run;
+                }
+
                 if (live.Lease.Replaced)
                 {
                     outcome = Outcome.Replaced;

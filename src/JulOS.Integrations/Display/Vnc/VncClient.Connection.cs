@@ -13,6 +13,9 @@ public sealed partial class VncClient
     internal const int VeNCryptX509None = 260, VeNCryptX509Vnc = 261, VeNCryptX509Plain = 262;
 
     private const int MaxSide = 8192;
+    private const long MaxPixels = 40_000_000;       // two copies of the picture are kept (160 MB each at most)
+
+    internal static bool SizeOk(int width, int height) => width is >= 1 and <= MaxSide && height is >= 1 and <= MaxSide && (long)width * height <= MaxPixels;
 
     // Connects and signs in; returns when the server has told how large its desktop is and the first picture has been asked for.
     public async Task ConnectAsync(CancellationToken cancellationToken)
@@ -67,7 +70,7 @@ public sealed partial class VncClient
         var height = _reader.U16();
         _reader.Skip(16);
         DesktopName = _reader.Text(256);
-        if (width is < 1 or > MaxSide || height is < 1 or > MaxSide)
+        if (!SizeOk(width, height))
         {
             throw new RdpException($"The VNC desktop is {width} x {height}, which JulOS does not take.");
         }

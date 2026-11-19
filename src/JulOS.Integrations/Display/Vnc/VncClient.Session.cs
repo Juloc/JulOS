@@ -216,7 +216,7 @@ public sealed partial class VncClient
     // A new desktop size: new buffers, the handler is told, and the whole picture is asked for again.
     private void Resize(int w, int h)
     {
-        if (w < 1 || h < 1 || w > MaxSide || h > MaxSide)
+        if (!SizeOk(w, h))
         {
             throw new VncProtocolException($"a desktop of {w} x {h}");
         }
@@ -234,7 +234,7 @@ public sealed partial class VncClient
     /// <summary>Asks the server for another desktop size (ExtendedDesktopSize). The answer comes as an update; nothing happens when the server cannot.</summary>
     public void RequestSize(int width, int height)
     {
-        if (!CanResize || width < 1 || height < 1 || width > MaxSide || height > MaxSide)
+        if (!CanResize || !SizeOk(width, height))
         {
             return;
         }

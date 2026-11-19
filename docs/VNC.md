@@ -31,7 +31,7 @@ A connection of kind **Desktop (VNC)** (stored kind `vnc`) shows a machine that 
 - One monitor (the whole screen of the server). The picture is encoded as H.264 like RDP, which is 4:2:0; still parts are refined losslessly afterwards, so text stays pixel exact.
 - Back is a button (8) but forward cannot be sent: the pointer message has a single byte for buttons.
 - Tight (the preferred encoding of many servers) is not implemented; the server then falls back to ZRLE, Hextile or Raw, which costs more bandwidth on a slow link.
-- The desktop size must be 1 to 8192 pixels each way.
+- The desktop size must be 1 to 8192 pixels each way and at most 40 million pixels.
 - A server with a different pixel format is no problem: the client always asks for 32 bits (blue lowest) and the server converts.
 
 ## Setting up a target

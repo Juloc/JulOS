@@ -92,6 +92,7 @@ public sealed class QuickConnectTests
     [Fact]
     public async Task Quick_connect_takes_vnc_with_port_5900_and_without_a_password_but_under_the_same_allow_list()
     {
+        Assert.SkipUnless(JulOS.Integrations.Display.ScreenStream.IsAvailable, "libopenh264 fehlt: ohne Kodierer gibt es keine Desktop-Verbindung");
         await using var db = await TestDb.CreateAsync();
         await using var app = new Server(db, allowed: "erlaubt.example");
         var c = app.Http();

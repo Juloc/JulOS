@@ -7,6 +7,8 @@ export const AUTH_FILE = OUT + '/auth.json';           // Cookie der angemeldete
 
 // Ziele im Compose-Netz des Stacks (deploy/dev/compose.yaml): RDP-Desktop mit festem Wegwerf-Zugang, SSH-Ziel mit Zufallspasswort aus dem Stack
 export const RDP = { host: 'rdp-target', user: 'ubuntu', password: 'ubuntu' };
+// VNC-Ziel des Stacks (deploy/dev/e2e/compose.override.yaml): festes Wegwerf-Passwort; Port 8080 zeigt, was im Desktop angekommen ist
+export const VNC = { host: 'vnc-target', password: 'vnctest1', probe: 'http://vnc-target:8080' };
 export const SSH = { host: 'test-ssh', port: '2222', user: 'tester', password: process.env.E2E_SSH_PASSWORD || '' };
 
 export const saveState = (s) => writeFileSync(STATE_FILE, JSON.stringify(s));

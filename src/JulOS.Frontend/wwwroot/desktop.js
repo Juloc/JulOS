@@ -1,6 +1,7 @@
 import { remoteApi } from './app.js';
 import { Sessions } from './sessions.js';
 import { looksLikeAddress } from './quick.js';
+import { filterByFolder, groupByFolder, recentList, folderIconSvg, folderName, setFavorite } from './folders.js';
 import { remoteMenuNames, remoteMenuItems, sessionMenu } from './desktop-remote.js';
 import { serviceState, connectionState, dotClass, stateText, groupConnections, hostDetail, agentSummary, servicesSummary } from './hosts.js';
 
@@ -13,7 +14,7 @@ import { serviceState, connectionState, dotClass, stateText, groupConnections, h
 
 const $ = (s, r = document) => r.querySelector(s);
 const BAR_H = 34;
-let ctx = null;            // von shell.js: { state, esc, api, connect, edit, add, quick, editHost, addHost, devices, signOut }
+let ctx = null;            // von shell.js: { state, esc, api, connect, edit, add, quick, folders, editHost, addHost, devices, signOut }
 let root = null;
 const wins = new Map();    // id -> Fenster
 let zTop = 10;
@@ -46,6 +47,7 @@ const P = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   grid: '<path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  star: '<path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
   minus: '<path d="M5 12h14"/>',
   square: '<rect x="5" y="5" width="14" height="14" rx="2"/>',
   restore: '<rect x="4.5" y="8.5" width="11" height="11" rx="2"/><path d="M8.5 8.5V6.5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-2"/>',
@@ -752,13 +754,15 @@ const connTile = (c) => {
   return `<button type="button" class="dk-b dk-tile" data-conn="${ctx.esc(c.id)}">${tile(a.g, a.ic)}<span class="dk-tt"><b><span class="dk-sd ${dotClass(connectionState(ctx.state.hosts, c))}" title="${stateText(connectionState(ctx.state.hosts, c))}"></span>${ctx.esc(c.name)}</b><i class="${open ? 'on' : ''}">${open ? (n > 1 ? n + ' Sitzungen offen' : 'Sitzung offen') : (c.kind === 'terminal' ? 'Terminal' : 'Desktop') + ' · ' + ctx.esc(c.host)}</i></span></button>`;
 };
 function renderStart(m) {
-  const conns = ctx.state.connections;
+  const conns = [...ctx.state.connections.filter((c) => c.favorite), ...ctx.state.connections.filter((c) => !c.favorite)];     // Favoriten (vom Server) zuerst
+  const recent = recentList(ctx.state.connections, 4);
   m.innerHTML = `
     <section class="dk-hero"><div class="dk-wp">${scene(false)}</div>
       <div class="dk-hi"><h2>${greeting()}</h2><p>Dein Server-Arbeitsplatz an einem Ort.</p></div>
       <div class="dk-hd"><span class="dk-hero-date"></span><b class="dk-hero-time"></b></div></section>
     <h3>Deine Dienste <button type="button" class="dk-b dk-more" data-go="dienste">Alle Dienste ›</button></h3>
     <div class="dk-tiles">${conns.map(connTile).join('')}<button type="button" class="dk-b dk-tile add" data-act="add"><span class="dk-ti" style="--g1:#cfc8f7;--g2:#b3aaf2;box-shadow:none">${ic('plus')}</span><span class="dk-tt"><b>Verbindung</b><i>hinzufügen</i></span></button></div>
+    ${recent.length ? `<h3>Zuletzt benutzt</h3><div class="dk-tiles">${recent.map(connTile).join('')}</div>` : ''}
     <h3>Schnellaktionen</h3>
     <div class="dk-qa">
       <button type="button" class="dk-b" data-act="add">${ic('plus')}<span>Neue Verbindung</span></button>
@@ -825,21 +829,34 @@ function renderSystem(m) {
 const hostFilter = { id: '' };      // leer = alle Hosts (Auswahl in der Dienste-Ansicht, nur solange das Fenster lebt)
 const serviceRow = (c) => {
   const a = appById(c.kind), n = Sessions.find(c.id).length, open = n > 0, st = connectionState(ctx.state.hosts, c);
-  return `<div class="dk-row">${tile(a.g, a.ic)}<span class="dk-tt"><b><span class="dk-sd ${dotClass(st)}" title="${stateText(st)}"></span>${ctx.esc(c.name)}${open ? ` <span class="dk-tag">${n > 1 ? n + ' Sitzungen' : 'Sitzung offen'}</span>` : ''}</b><i>${c.kind === 'terminal' ? 'Terminal (SSH)' : 'Desktop (RDP)'} · ${ctx.esc(c.username ? c.username + '@' : '')}${ctx.esc(c.host)}:${c.port}${c.hasPassword ? ' · Passwort gespeichert' : ''}</i></span>
+  return `<div class="dk-row">${tile(a.g, a.ic)}<span class="dk-tt"><b><span class="dk-sd ${dotClass(st)}" title="${stateText(st)}"></span>${ctx.esc(c.name)}${open ? ` <span class="dk-tag">${n > 1 ? n + ' Sitzungen' : 'Sitzung offen'}</span>` : ''}</b><i>${c.kind === 'terminal' ? 'Terminal (SSH)' : 'Desktop (RDP)'} · ${ctx.esc(c.username ? c.username + '@' : '')}${ctx.esc(c.host)}:${c.port}${folderName(ctx.state.folders || [], c) ? ' · ' + ctx.esc(folderName(ctx.state.folders, c)) : ''}${c.hasPassword ? ' · Passwort gespeichert' : ''}</i></span>
+    <button type="button" class="dk-b dk-btn sq dk-star${c.favorite ? ' on' : ''}" data-fav="${ctx.esc(c.id)}" aria-pressed="${!!c.favorite}" aria-label="${c.favorite ? 'Aus den Favoriten nehmen' : 'Als Favorit anheften'}" title="${c.favorite ? 'Favorit (auf allen Geräten)' : 'Als Favorit anheften'}">${ic('star')}</button>
     <button type="button" class="dk-b dk-btn pri" data-conn="${ctx.esc(c.id)}">${ic('play')}${open ? 'Öffnen' : 'Verbinden'}</button>
     ${open ? `<button type="button" class="dk-b dk-btn sq" data-extra="${ctx.esc(c.id)}" aria-label="Weitere Sitzung" title="Weitere Sitzung zu diesem Ziel">${ic('plus')}</button>` : ''}
     <button type="button" class="dk-b dk-btn sq" data-edit="${ctx.esc(c.id)}" aria-label="Bearbeiten" title="Bearbeiten">${ic('edit')}</button></div>`;
 };
+const folderFilter = { id: 'all', by: '' };   // all | fav | recent | none | Ordner-Kennung; by: 'host' | 'folder' (leer = Ordner, wenn es welche gibt)
 function renderServices(m) {
-  const hosts = ctx.state.hosts, conns = ctx.state.connections;
+  const hosts = ctx.state.hosts, conns = ctx.state.connections, folders = ctx.state.folders || [];
   if (hostFilter.id && !hosts.some((h) => h.id === hostFilter.id)) hostFilter.id = '';
-  const groups = groupConnections(hosts, conns).filter((g) => !hostFilter.id || (g.host && g.host.id === hostFilter.id));
+  if (!['all', 'fav', 'recent', 'none'].includes(folderFilter.id) && !folders.some((f) => f.id === folderFilter.id)) folderFilter.id = 'all';
+  const shown = filterByFolder(conns, folderFilter.id, folders).filter((c) => !hostFilter.id || c.hostId === hostFilter.id);
+  const byFolder = folders.length > 0 && folderFilter.id === 'all' && (folderFilter.by || 'folder') === 'folder';
   // Die Auswahl des Hosts gibt es erst, wenn es mehr als einen gibt; die Gruppenkoepfe zeigen den Zustand des Hosts
   const chips = hosts.length > 1 ? `<div class="dk-chips" role="group" aria-label="Host wählen">${[{ id: '', name: 'Alle Hosts' }, ...hosts].map((h) => `<button type="button" class="dk-b dk-chip${h.id === hostFilter.id ? ' sel' : ''}" data-hostfilter="${ctx.esc(h.id)}" aria-pressed="${h.id === hostFilter.id}">${h.id ? `<span class="dk-sd ${dotClass(h.online)}"></span>` : ''}${ctx.esc(h.name)}</button>`).join('')}</div>` : '';
-  m.innerHTML = `<h3 style="margin-top:14px">Dienste <button type="button" class="dk-b dk-btn pri" style="margin-left:auto" data-act="add">${ic('plus')}Verbindung hinzufügen</button></h3>
-    ${chips}
+  // Ordner, Favoriten, zuletzt benutzt: die Auswahl gibt es, sobald es einen Ordner, einen Favoriten oder eine Benutzung gibt
+  const fchip = (id, label, svg) => `<button type="button" class="dk-b dk-chip${folderFilter.id === id ? ' sel' : ''}" data-folderfilter="${ctx.esc(id)}" aria-pressed="${folderFilter.id === id}">${svg ? `<span class="dk-fi2">${svg}</span>` : ''}${ctx.esc(label)}</button>`;
+  const fchips = folders.length || conns.some((c) => c.favorite || c.lastUsedAt)
+    ? `<div class="dk-chips" role="group" aria-label="Ordner">${fchip('all', 'Alle', '')}${fchip('fav', 'Favoriten', folderIconSvg('star'))}${fchip('recent', 'Zuletzt benutzt', '')}${folders.map((f) => fchip(f.id, f.name, folderIconSvg(f.icon))).join('')}${folders.length ? fchip('none', 'Ohne Ordner', '') : ''}`
+      + `${folders.length && hosts.length > 1 && folderFilter.id === 'all' ? `<button type="button" class="dk-b dk-chip" data-groupby="${byFolder ? 'host' : 'folder'}" title="Gruppierung wechseln">Gruppiert nach ${byFolder ? 'Ordner' : 'Host'}</button>` : ''}</div>` : '';
+  const heads = (g) => (byFolder
+    ? `<h4 class="dk-gh">${g.folder ? `<span class="dk-fi2">${folderIconSvg(g.folder.icon)}</span>` : ''}${ctx.esc(g.folder ? g.folder.name : 'Ohne Ordner')}</h4>`
+    : hosts.length > 1 ? `<h4 class="dk-gh"><span class="dk-sd ${dotClass(g.host && g.host.online)}"></span>${ctx.esc(g.host ? g.host.name : 'Ohne Host')} <span class="dk-sub">${g.host ? ctx.esc(stateText(g.host.online)) : ''}</span></h4>` : '');
+  const groups = byFolder ? groupByFolder(folders, shown) : groupConnections(hosts, shown).filter((g) => !hostFilter.id || (g.host && g.host.id === hostFilter.id));
+  m.innerHTML = `<h3 style="margin-top:14px">Dienste <button type="button" class="dk-b dk-btn" style="margin-left:auto" data-act="folders">${ic('folder')}Ordner</button><button type="button" class="dk-b dk-btn pri" data-act="add">${ic('plus')}Verbindung hinzufügen</button></h3>
+    ${fchips}${chips}
     ${conns.length ? '' : '<p class="dk-lead">Noch keine Verbindung. Lege den Computer an, den du steuern willst.</p>'}
-    ${groups.map((g) => `${hosts.length > 1 ? `<h4 class="dk-gh"><span class="dk-sd ${dotClass(g.host && g.host.online)}"></span>${ctx.esc(g.host ? g.host.name : 'Ohne Host')} <span class="dk-sub">${g.host ? ctx.esc(stateText(g.host.online)) : ''}</span></h4>` : ''}
+    ${groups.map((g) => `${heads(g)}
       <div class="dk-list">${g.connections.map(serviceRow).join('') || '<p class="dk-lead">Keine Verbindung auf diesem Host.</p>'}</div>`).join('')}`;
 }
 
@@ -869,11 +886,15 @@ function renderSettings(m) {
     <div class="dk-card"><h4>Darstellung</h4><p>Die Desktop-Oberfläche ist zurzeit immer hell. Ein dunkles Design folgt später.</p></div>`;
 }
 function onMainClick(e) {
-  const t = e.target.closest('[data-conn],[data-edit],[data-extra],[data-act],[data-go],[data-app],[data-dockmode],[data-hostfilter],[data-hostedit],[data-hostagent]'); if (!t) return;
+  const t = e.target.closest('[data-conn],[data-edit],[data-extra],[data-act],[data-go],[data-app],[data-dockmode],[data-hostfilter],[data-folderfilter],[data-groupby],[data-fav],[data-hostedit],[data-hostagent]'); if (!t) return;
   const find = (id) => ctx.state.connections.find((c) => c.id === id);
   const host = (id) => ctx.state.hosts.find((h) => h.id === id);
   if (t.dataset.dockmode) setDockMode(t.dataset.dockmode);
   else if (t.dataset.hostfilter !== undefined) { hostFilter.id = t.dataset.hostfilter; renderHome(); }
+  else if (t.dataset.folderfilter !== undefined) { folderFilter.id = t.dataset.folderfilter; renderHome(); }
+  else if (t.dataset.groupby) { folderFilter.by = t.dataset.groupby; renderHome(); }
+  else if (t.dataset.fav) { const c = find(t.dataset.fav); c && setFavorite(ctx.api, c, !c.favorite).then(() => renderHome(), (err) => notify(err.message)); }
+  else if (t.dataset.act === 'folders') ctx.folders();
   else if (t.dataset.hostedit || t.dataset.hostagent) { const h = host(t.dataset.hostedit || t.dataset.hostagent); h && ctx.editHost(h); }
   else if (t.dataset.act === 'addhost') ctx.addHost();
   else if (t.dataset.conn) { const c = find(t.dataset.conn); c && ctx.connect(c); }

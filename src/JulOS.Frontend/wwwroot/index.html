@@ -173,6 +173,9 @@
         <label id="connHostRow">Host
           <select id="connHostSel"></select>
         </label>
+        <label id="connFolderRow">Ordner
+          <select id="connFolderSel"></select>
+        </label>
         <div id="connDriveRow" hidden>
           <label class="check"><input id="connDrive" type="checkbox"> Ordner des Servers als Laufwerk freigeben</label>
           <label id="connDriveWriteRow" class="check" hidden><input id="connDriveWrite" type="checkbox"> Schreiben erlauben</label>
@@ -191,8 +194,26 @@
         <p id="connMsg" class="msg" role="alert"></p>
         <div class="row">
           <button id="connSave" type="submit" class="primary">Speichern</button>
+          <button id="connUp" type="button" class="ghost" aria-label="In der Liste nach oben" title="In der Liste nach oben" hidden>▲</button>
+          <button id="connDown" type="button" class="ghost" aria-label="In der Liste nach unten" title="In der Liste nach unten" hidden>▼</button>
           <button id="connDelete" type="button" class="danger" hidden>Löschen</button>
           <button class="ghost close" data-act="close" type="button">Abbrechen</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Ordner fuer Verbindungen verwalten (docs/FOLDERS.md) -->
+    <dialog id="folderDlg">
+      <h2>Ordner</h2>
+      <div id="folderList" class="folderlist"></div>
+      <form id="folderForm" method="dialog" autocomplete="off">
+        <label>Name <input id="folderName" type="text" maxlength="40" autocomplete="off" required></label>
+        <div id="folderIcons" class="foldericons" role="radiogroup" aria-label="Symbol"></div>
+        <p id="folderMsg" class="msg" role="alert"></p>
+        <div class="row">
+          <button id="folderSave" type="submit" class="primary">Anlegen</button>
+          <button id="folderNew" type="button" class="ghost" hidden>Neu</button>
+          <button class="ghost close" data-act="close" type="button">Schließen</button>
         </div>
       </form>
     </dialog>

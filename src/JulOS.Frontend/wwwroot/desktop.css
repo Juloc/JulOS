@@ -328,3 +328,10 @@ html.desktop .sv .sv-menu [data-only="phone"] { display: none; }
 .dk-mhead p.dk-mnote { color: #6b6f8f; }
 .dk-mtop { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .dk-mod > .dk-btn { align-self: flex-start; }
+
+/* Ordner und Favoriten in der Dienste-Ansicht (docs/FOLDERS.md) */
+.dk-fi2 { display: inline-flex; align-items: center; margin-right: 5px; }
+.dk-fi2 svg { width: 14px; height: 14px; fill: currentColor; }
+.dk-gh .dk-fi2 svg { width: 16px; height: 16px; }
+.dk-star svg { fill: none; }
+.dk-star.on svg { fill: #f3b400; stroke: #d89b00; }

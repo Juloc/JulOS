@@ -239,6 +239,16 @@ button:disabled { opacity: .55; cursor: default; }
 .empty { text-align: center; color: var(--muted); padding: 40px 28px; margin: 0; }
 .fab { position: fixed; right: 20px; bottom: calc(20px + env(safe-area-inset-bottom)); display: inline-flex; align-items: center; gap: 10px; height: 56px; padding: 0 22px 0 18px; border-radius: 18px; background: var(--md-primary-container); color: var(--md-on-primary-container); box-shadow: 0 4px 16px rgba(0,0,0,.35); }
 .fab svg { width: 24px; height: 24px; fill: currentColor; display: block; }
+/* Ordner fuer Verbindungen (Dialog, docs/FOLDERS.md) */
+.folderlist { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.folderlist:empty { display: none; }
+.frow { display: flex; align-items: center; gap: 4px; padding: 4px 4px 4px 12px; border-radius: 14px; background: color-mix(in srgb, currentColor 8%, transparent); }
+.frow .fi svg, .foldericons svg { width: 22px; height: 22px; fill: currentColor; display: block; }
+.frow .fn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: 6px; }
+.frow button { min-width: 40px; min-height: 40px; padding: 0 8px; }
+.foldericons { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 10px; }
+.foldericons button { width: 44px; min-width: 44px; height: 44px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: 12px; }
+.foldericons button[aria-checked="true"] { outline: 2px solid currentColor; outline-offset: -2px; }
 .devlist { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
 .dev { display: flex; flex-direction: column; gap: 2px; background: var(--md-surface-high); border-radius: 14px; padding: 10px 14px; font-size: .92rem; }
 .dev span { color: var(--muted); font-size: .84rem; }

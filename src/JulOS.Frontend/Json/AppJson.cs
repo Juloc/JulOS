@@ -5,6 +5,7 @@ using JulOS.Frontend.Agent;
 using JulOS.Frontend.Auth;
 using JulOS.Backend.Modules;
 using JulOS.Frontend.Files;
+using JulOS.Frontend.Folders;
 using JulOS.Frontend.Hosts;
 using JulOS.Frontend.Modules;
 using JulOS.Frontend.SystemInfo;
@@ -45,6 +46,14 @@ namespace JulOS.Frontend;
 [JsonSerializable(typeof(FileListingDto))]
 [JsonSerializable(typeof(FileSearchDto))]
 [JsonSerializable(typeof(ModulesResponse))]
+[JsonSerializable(typeof(FolderDto))]
+[JsonSerializable(typeof(OrganisationResponse))]
+[JsonSerializable(typeof(FolderRequest))]
+[JsonSerializable(typeof(FolderOrderRequest))]
+[JsonSerializable(typeof(FolderAssignRequest))]
+[JsonSerializable(typeof(FavoriteRequest))]
+[JsonSerializable(typeof(MoveRequest))]
+[JsonSerializable(typeof(LocalImportRequest))]
 [JsonSerializable(typeof(CaddyListing))]
 [JsonSerializable(typeof(CaddyReachability))]
 [JsonSerializable(typeof(DdnsStatus))]

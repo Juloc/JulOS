@@ -105,8 +105,11 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     private bool _settled = true;
     private long _lastAskedAt, _resizedAt;
 
-    public ScreenStream(RdpOptions options, int maxKilobitsPerSecond = 16_000, ILogger? log = null)
+    private readonly CertificateTrust? _trust;
+
+    public ScreenStream(RdpOptions options, int maxKilobitsPerSecond = 16_000, ILogger? log = null, CertificateTrust? trust = null)
     {
+        _trust = trust;
         _options = options;
         _maxKilobitsPerSecond = maxKilobitsPerSecond;
         _kilobits = maxKilobitsPerSecond;
@@ -148,6 +151,13 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         try
         {
             await rdp.ConnectAsync(linked.Token).ConfigureAwait(false);
+
+            // Angemeldet: ein neues oder bestaetigtes Zertifikat wird jetzt gemerkt (nicht schon bei einem Versuch mit falschem Passwort)
+            if (_trust is not null && await _trust.CommitAsync(linked.Token).ConfigureAwait(false))
+            {
+                _log?.LogInformation("RDP-Zertifikat {Decision}", _trust.Decision == CertificateDecision.FirstUse ? "gemerkt" : "ersetzt (vom Benutzer bestätigt)");
+            }
+
             SetPendingSize(rdp.Width, rdp.Height);
 
             var read = rdp.RunAsync(linked.Token);

@@ -540,6 +540,25 @@ export class RemoteSession extends Session {
   showOverlay(msg, canRetry = true) {
     const e = this.el; e.overlayMsg.textContent = msg; e.spinner.hidden = true; e.overlay.hidden = false; e.reconnectBtn.hidden = !canRetry; e.closeBtn.hidden = false;
   }
+  /** Warnung, wenn das TLS-Zertifikat des Desktops nicht mehr das gemerkte ist (Vertrauen bei erster Nutzung, wie beim SSH-Schluessel). Nichts wurde gesendet,
+      auch das Passwort nicht. Nur der Knopf "Neuem Zertifikat vertrauen" wiederholt die Verbindung, und nur mit genau dem gezeigten Fingerabdruck. */
+  certDialog(err) {
+    const wrap = document.createElement('div'); wrap.className = 'term-dialog';
+    const box = document.createElement('div'); box.className = 'box'; box.setAttribute('role', 'alertdialog');
+    const add = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; n.textContent = text; box.appendChild(n); return n; };
+    add('h2', '', 'Das Zertifikat des Ziels hat sich geändert');
+    add('p', '', 'Das kann ein Angriff sein (jemand gibt sich als dein Rechner aus) oder ein neu aufgesetzter Rechner. Die Verbindung wurde nicht aufgebaut und dein Passwort nicht gesendet.');
+    for (const [label, value] of [['Bisher', err.previous], ['Jetzt', err.fingerprint]]) { const r = add('p', 'fp', ''); r.appendChild(Object.assign(document.createElement('span'), { textContent: label })); r.appendChild(Object.assign(document.createElement('code'), { textContent: value || '–' })); }
+    add('p', 'hint', 'Vertraue dem neuen Zertifikat nur, wenn du weißt, dass sich das Ziel geändert hat. Vergleiche im Zweifel auf dem Ziel mit „openssl x509 -noout -fingerprint -sha256“ auf dem Zertifikat des RDP-Dienstes.');
+    const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'primary'; cancel.textContent = 'Abbrechen';
+    const trust = document.createElement('button'); trust.type = 'button'; trust.className = 'danger'; trust.textContent = 'Neuem Zertifikat vertrauen';
+    cancel.addEventListener('click', () => { wrap.remove(); this.requestClose('Verbindung abgebrochen: das Zertifikat des Ziels hat sich geändert.'); });
+    trust.addEventListener('click', () => { wrap.remove(); this.fatal = false; this.acceptCert = err.fingerprint; this.retry = 0; this.start(); });
+    const actions = document.createElement('div'); actions.className = 'actions'; actions.append(cancel, trust); box.appendChild(actions);
+    wrap.appendChild(box); this.el.stage.appendChild(wrap);
+    this.el.overlay.hidden = true; this.setState('error', 'Zertifikat geändert');
+    cancel.focus();
+  }
   showBusy(msg) { // Fortschritt mit Animation, ohne Knoepfe
     const e = this.el; e.overlayMsg.textContent = msg; e.spinner.hidden = false; e.overlay.hidden = false; e.reconnectBtn.hidden = true; e.closeBtn.hidden = true;
   }
@@ -573,7 +592,7 @@ export class RemoteSession extends Session {
     if (!(client instanceof StreamClient)) return false;
     if (client.drawn) this.streamWorked = true;
     if (this.streamWorked || this.forceGuac || this.intentional || this.client !== client) return false;
-    if (err && [513, 769, 777, 797].includes(err.code)) return false;
+    if (err && [513, 769, 777, 797, 800].includes(err.code)) return false;
     this.forceGuac = true;
     this.dbg('stream-fallback', { code: err ? err.code : 0, message: err && err.message ? String(err.message).slice(0, 80) : '' });
     this.toast('Der schnelle Stream geht hier nicht, verbinde mit Guacamole …', 3200);
@@ -607,8 +626,9 @@ export class RemoteSession extends Session {
     if (stale()) return;
     let ticket, engine = 'guac';
     try {
+      const acceptCert = this.acceptCert; this.acceptCert = null;      // gilt nur fuer diesen einen Versuch (siehe certDialog)
       const resp = await fetch('/api/remote/ticket', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, signal: AbortSignal.timeout(10000),
-        body: JSON.stringify({ connection: this.conn.id, sid: this.id, password: this.password || undefined, width: w, height: h, dpi: 96, engine: wantStream ? 'stream' : 'guac' }) });
+        body: JSON.stringify({ connection: this.conn.id, sid: this.id, password: this.password || undefined, width: w, height: h, dpi: 96, engine: wantStream ? 'stream' : 'guac', acceptCert: wantStream ? acceptCert || undefined : undefined }) });
       const data = await resp.json().catch(() => ({}));
       if (stale()) return;
       if (resp.status === 401) return this.requestClose('Die Sitzung ist abgelaufen. Bitte neu anmelden.', 'auth');
@@ -667,6 +687,7 @@ export class RemoteSession extends Session {
       if (this.client !== client) return;
       // guacd meldet meist nur "Aborted. See logs."; der Statuscode sagt mehr
       if (this.fallBackFromStream(client, err)) return;
+      if (err && err.code === 800) { this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); return this.certDialog(err); }   // Zertifikat des Ziels geaendert: der Benutzer entscheidet
       const code = err && err.code;
       const known = ERROR_TEXT[code];
       const msg = known || ((err && err.message) ? err.message : 'Verbindungsfehler');

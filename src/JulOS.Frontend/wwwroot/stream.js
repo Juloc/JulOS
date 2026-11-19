@@ -248,7 +248,9 @@ export class StreamClient {
       case IN.error: {
         const code = v.getUint16(1), message = new TextDecoder().decode(new Uint8Array(buffer, 3));
         this.closing = true; this.setState(5);
-        if (this.onerror) this.onerror({ code, message });
+        // 800: das Zertifikat des Ziels ist nicht das gemerkte (Text: Fingerabdruck jetzt, Zeilenumbruch, Fingerabdruck bisher); es wurde nichts gesendet
+        const [fingerprint, previous] = code === 800 ? message.split('\n') : [];
+        if (this.onerror) this.onerror(code === 800 ? { code, message: 'Das Zertifikat des Ziels hat sich geändert.', fingerprint, previous } : { code, message });
         break;
       }
       case IN.taken:

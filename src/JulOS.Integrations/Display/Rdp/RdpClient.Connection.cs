@@ -20,6 +20,8 @@ public sealed partial class RdpClient
 
     private uint _selectedProtocol;
     private bool _certificateRefused;
+    private bool _certificateDeclined;
+    private string? _presentedFingerprint;
     private ushort _userChannel;
     private ushort _ioChannel = DefaultIoChannel;
     private IPAddress _localAddress = IPAddress.Any;
@@ -63,8 +65,26 @@ public sealed partial class RdpClient
         var network = tcp.GetStream();
         await NegotiateAsync(network, cancellationToken);
 
-        var ssl = new SslStream(network, false, (_, _, _, errors) =>
+        var ssl = new SslStream(network, false, (_, certificate, _, errors) =>
         {
+            if (_options.CertificateCheck is { } check)
+            {
+                if (certificate is null)
+                {
+                    _certificateRefused = true;
+                    return false;
+                }
+
+                _presentedFingerprint = CertificateFingerprint.Of(certificate);
+                if (check(_presentedFingerprint))
+                {
+                    return true;
+                }
+
+                _certificateDeclined = true;
+                return false;
+            }
+
             if (_options.IgnoreCertificate || errors == SslPolicyErrors.None)
             {
                 return true;

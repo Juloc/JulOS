@@ -10,7 +10,8 @@ namespace JulOS.Integrations.Display;
 ///   1 Bild       flags(1: Bit0 = Schluesselbild) folge(4) H.264 Annex B ...
 ///   2 Zeiger     art(1: 0 Form, 1 versteckt, 2 Standard) hotX(2) hotY(2) breite(2) hoehe(2) RGBA ...
 ///   3 Groesse    breite(2) hoehe(2)
-///   4 Fehler     code(2) UTF-8-Text ...            (Codes wie bei Guacamole: 769 Anmeldung abgelehnt, 515 Verbindung misslungen ...)
+///   4 Fehler     code(2) UTF-8-Text ...            (Codes wie bei Guacamole: 769 Anmeldung abgelehnt, 515 Verbindung misslungen ...;
+///                                                    800 Zertifikat geaendert: Text "<Fingerabdruck jetzt>\n<Fingerabdruck bisher>", es wurde nichts gesendet)
 ///   5 Uebernommen
 ///   6 Zwischenablage UTF-8-Text ...          (der ferne Rechner hat Text kopiert; bis ClipboardBridge.MaxTextBytes)
 ///   7 Bild           format(1: 1 PNG, 2 BMP) Bytes ...          (der ferne Rechner hat ein Bild kopiert)
@@ -130,6 +131,10 @@ public static class ScreenProtocol
         text.CopyTo(result, 3);
         return result;
     }
+
+    public const int ErrorCertificateChanged = 800;
+
+    public static byte[] CertificateChanged(string presented, string? stored) => Error(ErrorCertificateChanged, presented + "\n" + (stored ?? ""));
 
     public static byte[] Clipboard(string text)
     {

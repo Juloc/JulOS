@@ -11,3 +11,9 @@ Measures click-to-picture latency of the two display engines in the browser, wit
 5. Server CPU: `docker stats --no-stream` on the julos and guacd containers during the run.
 
 Gotchas: the browser pane's tool clicks send no mouse move, so use `hover` before a click; the pane drops the login cookie on a reload, log in again.
+
+## Slow link, sharpness (added with the pacing and refinement work)
+
+- `probe_gtk.py [video [noise]]` is `probe.py` for the test desktop as it is built (GTK, no tkinter there): the red/green square at 620,90 and, with `video`, a moving picture at 200,330 (`noise`: random pixels, a worst case for any link; `TICK=16` environment variable: faster ticks). Copy it into the container, run it as the desktop user with `DISPLAY` and `XAUTHORITY` as above.
+- `slowproxy.py LISTEN TARGET RATE_KBIT DELAY_MS` is a throttling TCP forwarder (bandwidth and delay per direction; `rate.txt` next to it changes the rate while it runs). Open the page on `LISTEN` instead of the server's port (cookies are shared between ports; origin and host match because the proxy keeps the headers). With 3000 kbit/s, 30 ms and the noise video the stream's click latency is the measure for `LinkPacer`; `JULOS_STREAM_PACER=off` on the server switches the pacer off for the comparison, `JULOS_STREAM_REFINE=off` the lossless refinement.
+- `text_editor.py "Monospace 11" X` (a GTK text view with syntax-coloured text) and `text_terminal.sh` (run it in `xfce4-terminal -x`: black on white, coloured and grey text) are the text samples for sharpness. Method: grab the display canvas of a Guacamole session (exact) and of a stream session of the same desktop with `getImageData`, compare rectangles (mean absolute error and the share of pixels off by more than 32), and draw both enlarged next to each other for a look. `localStorage` `pd.refine` = `"off"` switches the refinement off in the browser.

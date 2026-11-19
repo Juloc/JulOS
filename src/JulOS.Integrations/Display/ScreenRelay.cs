@@ -62,7 +62,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         }
 
         var started = Environment.TickCount64;
-        await using var stream = new ScreenStream(target.Options, target.MaxKilobitsPerSecond, log);
+        await using var stream = new ScreenStream(target.Options, target.MaxKilobitsPerSecond, log, target.Trust);
         byte[]? last = null;
         try
         {
@@ -77,6 +77,11 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             {
                 try { await run.ConfigureAwait(false); }
                 catch (OperationCanceledException) { /* abgebrochen */ }
+                catch (RdpException e) when (e.CertificateFingerprint is not null)
+                {
+                    log.LogWarning("RDP-Zertifikat des Ziels hat sich geändert: Verbindung nicht aufgebaut, nichts gesendet");
+                    last = ScreenProtocol.CertificateChanged(e.CertificateFingerprint, target.Trust?.Stored);
+                }
                 catch (RdpException e) { last = ScreenProtocol.Error(e.IsLogonFailure ? ErrorLogonFailed : ErrorConnectFailed, e.Message); }
                 catch (Exception e) when (e is SocketException or IOException or TimeoutException)
                 {

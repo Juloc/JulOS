@@ -65,12 +65,15 @@ internal static class RemoteEndpoints
             var wanted = body.Engine ?? c.Engine;
             if (c.Kind == "desktop" && string.Equals(wanted, ConnectionRules.EngineStream, StringComparison.Ordinal) && ScreenStream.IsAvailable)
             {
+                // Zertifikat des Ziels: beim ersten Mal merken, danach muss es dasselbe sein (Warnung mit Bestaetigung im Browser, siehe CertificateTrust)
+                var (user, connectionKey) = (id.UserId, c.Id);
+                var trust = new CertificateTrust(c.CertFingerprint, body.AcceptCert, (fingerprint, ct) => connections.SetCertFingerprintAsync(user, connectionKey, fingerprint, ct));
                 var options = new RdpOptions
                 {
                     Host = c.Host, Port = c.Port, UserName = c.Username, Password = password, Width = w & ~1, Height = h & ~1,
-                    KeyboardLayout = 0x407,
+                    KeyboardLayout = 0x407, CertificateCheck = trust.Check,
                 };
-                var screenTicket = screenTickets.Create(id.UserId, new ScreenTarget(options, SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid)));
+                var screenTicket = screenTickets.Create(id.UserId, new ScreenTarget(options, SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid), Trust: trust));
                 return screenTicket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(screenTicket, c.Kind, w & ~1, h & ~1, "stream"), AppJson.Default.TicketResponse);
             }
 

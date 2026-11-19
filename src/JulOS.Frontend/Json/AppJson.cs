@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using JulOS.Backend.Services;
 using JulOS.Frontend.About;
 using JulOS.Frontend.Agent;
 using JulOS.Frontend.Auth;
@@ -11,6 +12,7 @@ namespace JulOS.Frontend;
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(Health))]
 [JsonSerializable(typeof(AboutResponse))]
+[JsonSerializable(typeof(BackupStatus))]
 [JsonSerializable(typeof(ErrorBody))]
 [JsonSerializable(typeof(SetupStatus))]
 [JsonSerializable(typeof(SetupBeginRequest))]

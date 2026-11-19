@@ -18,6 +18,7 @@ internal static class HostInfoEndpoints
     public static readonly HostQuery<HostSysinfo> Status = new("status", "sysinfo", "/v1/host/sysinfo", TimeSpan.FromSeconds(12), HostReportParser.Sysinfo);
     public static readonly HostQuery<HostUpdates> Updates = new("updates", "updates", "/v1/host/updates", TimeSpan.FromSeconds(50), HostReportParser.Updates);
     public static readonly HostQuery<HostServices> Services = new("services", "services", "/v1/host/services", TimeSpan.FromSeconds(15), HostReportParser.Services);
+    public static readonly HostQuery<HostUnits> Units = new("units", "services", "/v1/host/units", TimeSpan.FromSeconds(15), HostReportParser.Units);
     public static readonly HostQuery<HostDocker> Docker = new("docker", "docker", "/v1/host/docker", TimeSpan.FromSeconds(15), HostReportParser.Docker);
 
     private static IResult Error(int status, string message) =>

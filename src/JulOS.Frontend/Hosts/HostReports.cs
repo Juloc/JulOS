@@ -32,13 +32,17 @@ internal sealed record HostUpdates(string Manager, int Count, int? Security, boo
 internal sealed record HostFailedUnit(string Unit, string Sub, string? Description);
 internal sealed record HostServices(string State, int Count, HostFailedUnit[] Failed);
 
-internal sealed record HostContainer(string Id, string Name, string Image, string State, string Status);
+internal sealed record HostContainer(string Id, string Name, string Image, string State, string Status, string? Project = null);
+/// <summary>Die geladenen systemd-Dienste (Stufe 3: aus dieser Liste stammen die Ziele fuer Start, Stopp, Neustart und Logs).</summary>
+internal sealed record HostUnit(string Unit, string Active, string Sub, string? Description);
+internal sealed record HostUnits(int Count, bool Truncated, HostUnit[] Units);
 internal sealed record HostDocker(bool Available, string? Reason, int Running, int Total, HostContainer[] Containers, bool Truncated, int Restarting = 0);
 
 /// <summary>Antwort der Endpunkte unter /api/hosts/{id}/...: State (ok, offline, no_agent, unsupported, error), Alter der Daten und die Daten selbst (auch aus dem Zwischenspeicher, dann Stale).</summary>
 internal sealed record HostStatusResponse(string State, DateTimeOffset? At, bool Stale, string? Error, HostSysinfo? Info);
 internal sealed record HostUpdatesResponse(string State, DateTimeOffset? At, bool Stale, string? Error, HostUpdates? Updates);
 internal sealed record HostServicesResponse(string State, DateTimeOffset? At, bool Stale, string? Error, HostServices? Services);
+internal sealed record HostUnitsResponse(string State, DateTimeOffset? At, bool Stale, string? Error, HostUnits? Units);
 internal sealed record HostDockerResponse(string State, DateTimeOffset? At, bool Stale, string? Error, HostDocker? Docker);
 
 internal static class HostReportParser
@@ -166,6 +170,16 @@ internal static class HostReportParser
         return new HostServices(Text(root, "state", 24) ?? "unknown", (int)Math.Max(failed.Length, Long(root, "count", 100000)), failed);
     }
 
+    public const int MaxUnits = 300;
+
+    public static HostUnits? Units(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object) return null;
+        var units = Items(root, "units", MaxUnits).Where(u => u.ValueKind == JsonValueKind.Object && Text(u, "unit", 100) is { } n && n.EndsWith(".service", StringComparison.Ordinal))
+            .Select(u => new HostUnit(Text(u, "unit", 100)!, Text(u, "active", 16) ?? "", Text(u, "sub", 24) ?? "", Text(u, "description", 100))).ToArray();
+        return new HostUnits((int)Math.Max(units.Length, Long(root, "count", 100000)), Bool(root, "truncated") || units.Length >= MaxUnits, units);
+    }
+
     public static HostDocker? Docker(JsonElement root)
     {
         if (root.ValueKind != JsonValueKind.Object) return null;
@@ -175,7 +189,7 @@ internal static class HostReportParser
             return new HostDocker(false, reason is "no_socket" or "no_access" or "error" ? reason : "error", 0, 0, [], false);
         }
         var containers = Items(root, "containers", MaxContainers).Where(c => c.ValueKind == JsonValueKind.Object).Select(c =>
-            new HostContainer(Text(c, "id", 12) ?? "", Text(c, "name", 64) ?? "", Text(c, "image", 100) ?? "", Text(c, "state", 16) ?? "", Text(c, "status", 64) ?? "")).ToArray();
+            new HostContainer(Text(c, "id", 12) ?? "", Text(c, "name", 64) ?? "", Text(c, "image", 100) ?? "", Text(c, "state", 16) ?? "", Text(c, "status", 64) ?? "", Text(c, "project", 40))).ToArray();
         return new HostDocker(true, null, (int)Long(root, "running", 100000), (int)Long(root, "total", 100000), containers, Bool(root, "truncated"), (int)Long(root, "restarting", 100000));
     }
 }

@@ -47,7 +47,7 @@ public sealed class AgentLink
     public string? Os { get; private set; }
     /// <summary>Was der Agent kann (nur bekannte Namen, siehe <see cref="AgentLabels.Caps"/>): leer fuer Desktop-Agenten, bei einem Host-Agenten zum Beispiel sysinfo, updates.</summary>
     public IReadOnlyList<string> Caps { get; private set; } = [];
-    /// <summary>Schreibrechte, die der Agent lokal erlaubt (hello "allow", nur updates und reboot); Stufe 3.</summary>
+    /// <summary>Aktionsarten, die der Agent lokal erlaubt (hello "allow", siehe <see cref="AgentLabels.Rights"/>); Stufe 3.</summary>
     public IReadOnlyList<string> Allow { get; private set; } = [];
     public DateTimeOffset Since { get; } = DateTimeOffset.UtcNow;
 
@@ -56,8 +56,9 @@ public sealed class AgentLink
         _ws = ws; HostId = hostId; UserId = userId; _log = log;
     }
 
-    private sealed class Pending(int blobCap)
+    private sealed class Pending(int blobCap, Action<AgentProgress>? onProgress = null)
     {
+        public readonly Action<AgentProgress>? OnProgress = onProgress;
         public readonly TaskCompletionSource<AgentReply> Done = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public readonly int BlobCap = blobCap;
         public MemoryStream? Blob;
@@ -172,6 +173,17 @@ public sealed class AgentLink
                 p.Done.TrySetResult(new AgentReply(status, json));
                 return;
             }
+            case "progress":
+            {
+                // Fortschritt einer langen Aktion (Stufe 3): nur zu einer offenen Anfrage, Text gekuerzt und bereinigt, Zaehler begrenzt
+                var id = root.GetProperty("id").GetInt32();
+                if (!_pending.TryGetValue(id, out var p) || p.OnProgress is not { } cb) return;
+                var text = root.TryGetProperty("text", out var tx) && tx.ValueKind == JsonValueKind.String ? AgentLabels.Printable(tx.GetString(), 160) : "";
+                int? done = root.TryGetProperty("done", out var dn) && dn.ValueKind == JsonValueKind.Number && dn.TryGetInt32(out var d) ? Math.Clamp(d, 0, 100000) : null;
+                int? total = root.TryGetProperty("total", out var tt) && tt.ValueKind == JsonValueKind.Number && tt.TryGetInt32(out var n) ? Math.Clamp(n, 0, 100000) : null;
+                try { cb(new AgentProgress(text, done, total)); } catch (Exception e) when (e is not OutOfMemoryException) { _log.LogDebug("Fortschritt nicht verarbeitet ({Type})", e.GetType().Name); }
+                return;
+            }
             case "blob":
             {
                 var id = root.GetProperty("id").GetInt32();
@@ -252,19 +264,19 @@ public sealed class AgentLink
 
     // ------------------------------------------------------------------ Anfragen
 
-    private (int Id, Pending Pending) Register(int blobCap = 0)
+    private (int Id, Pending Pending) Register(int blobCap = 0, Action<AgentProgress>? onProgress = null)
     {
         if (_pending.Count >= MaxPending) throw new AgentUnavailableException("Agent ist überlastet.");
         var id = Interlocked.Increment(ref _nextId);
-        var p = new Pending(blobCap);
+        var p = new Pending(blobCap, onProgress);
         _pending[id] = p;
         return (id, p);
     }
 
-    /// <summary>Eine Anfrage der Agent-API v1; Pfad und Inhalt kommen vom Server, nie vom Browser frei.</summary>
-    public async Task<AgentReply> RequestAsync(HttpMethod method, string path, string? jsonBody, TimeSpan timeout, CancellationToken ct)
+    /// <summary>Eine Anfrage der Agent-API v1; Pfad und Inhalt kommen vom Server, nie vom Browser frei. <paramref name="onProgress"/> bekommt die Fortschrittsmeldungen langer Aktionen.</summary>
+    public async Task<AgentReply> RequestAsync(HttpMethod method, string path, string? jsonBody, TimeSpan timeout, CancellationToken ct, Action<AgentProgress>? onProgress = null)
     {
-        var (id, p) = Register();
+        var (id, p) = Register(0, onProgress);
         try
         {
             using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -366,6 +378,9 @@ public sealed class AgentLink
     }
 }
 
+/// <summary>Eine Fortschrittsmeldung des Agenten zu einer laufenden Aktion: Text (bereinigt), erledigt und gesamt (wenn bekannt).</summary>
+public sealed record AgentProgress(string Text, int? Done, int? Total);
+
 /// <summary>Was ein Agent von sich meldet (reine Anzeigewerte, jeder darf fehlen).</summary>
 public sealed record AgentInfo(string? Version, string? Platform, string? Hostname = null, string? Os = null, IReadOnlyList<string>? Caps = null);
 
@@ -379,8 +394,23 @@ public static class AgentLabels
     /// <summary>Die Faehigkeiten, die ein Host-Agent melden darf (docs/HOST-AGENT.md). Andere Woerter im hello werden verworfen.</summary>
     public static readonly string[] Caps = ["sysinfo", "updates", "services", "docker"];
 
-    /// <summary>Die lokalen Schreibrechte, die ein Agent melden darf (dieselben Woerter wie AgentControl.Rights).</summary>
-    public static readonly string[] Rights = ["updates", "reboot"];
+    /// <summary>Die lokalen Rechte (Aktionsarten), die ein Agent melden darf (dieselben Woerter wie AgentControl.Rights).</summary>
+    public static readonly string[] Rights = ["updates", "reboot", "services", "docker", "logs"];
+
+    /// <summary>Anzeigetext des Agenten: nur druckbare Zeichen, hoechstens <paramref name="max"/> lang (Steuerzeichen und Umbrueche fallen weg).</summary>
+    public static string Printable(string? s, int max)
+    {
+        if (s is null) return "";
+        var sb = new System.Text.StringBuilder();
+        foreach (var rune in s.EnumerateRunes())
+        {
+            if (sb.Length >= max) break;
+            if (System.Text.Rune.GetUnicodeCategory(rune) is System.Globalization.UnicodeCategory.Control or System.Globalization.UnicodeCategory.Format or System.Globalization.UnicodeCategory.LineSeparator
+                or System.Globalization.UnicodeCategory.ParagraphSeparator or System.Globalization.UnicodeCategory.PrivateUse or System.Globalization.UnicodeCategory.Surrogate or System.Globalization.UnicodeCategory.OtherNotAssigned) continue;
+            sb.Append(rune.ToString());
+        }
+        return sb.ToString().Trim();
+    }
 
     /// <summary>Eine Liste von Woertern aus dem hello: nur aus <paramref name="allowed"/>, ohne Doppelte, in der Reihenfolge der Erlaubnisliste. Alles Falsche gibt eine leere Liste.</summary>
     internal static IReadOnlyList<string> Words(JsonElement root, string name, string[] allowed)

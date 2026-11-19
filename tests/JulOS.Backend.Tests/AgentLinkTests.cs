@@ -19,7 +19,7 @@ public sealed partial class AgentLinkTests
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
     private static readonly byte[] PngHead = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
-    private sealed class Server(TestDb db, Action<IServiceCollection>? configure = null) : WebApplicationFactory<Program>
+    private sealed class Server(TestDb db, Action<IServiceCollection>? configure = null, IReadOnlyDictionary<string, string>? settings = null) : WebApplicationFactory<Program>
     {
         public HttpClient Http() => CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
 
@@ -27,6 +27,7 @@ public sealed partial class AgentLinkTests
         {
             builder.UseSetting("JULOS_DB", db.ConnectionString);
             builder.UseSetting("JULOS_SETUP_CODE", SetupCode);
+            if (settings is not null) foreach (var (k, v) in settings) builder.UseSetting(k, v);
             builder.ConfigureServices(s => s.AddTransient<IStartupFilter, LoopbackFilter>());
             if (configure is not null) builder.ConfigureTestServices(configure);
         }

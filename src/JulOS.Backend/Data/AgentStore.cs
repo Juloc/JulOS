@@ -97,6 +97,14 @@ public sealed class AgentStore(NpgsqlDataSource db, TimeProvider time)
         return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
 
+    /// <summary>Stellt ein, was der Server diesem Agenten auftragen darf (read, updates, full). False bei unbekannter Stufe oder wenn es fuer den Host keinen Agenten des Benutzers gibt.</summary>
+    public async Task<bool> SetControlAsync(Guid userId, Guid hostId, string level, CancellationToken ct = default)
+    {
+        if (!AgentControl.IsLevel(level)) return false;
+        await using var cmd = db.Cmd("update agents set control = $3 where user_id = $1 and host_id = $2", userId, hostId, level);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
     /// <summary>Entfernt den Agenten (sein Token gilt nicht mehr) und offene Codes des Hosts.</summary>
     public async Task<bool> RevokeAsync(Guid userId, Guid hostId, CancellationToken ct = default)
     {

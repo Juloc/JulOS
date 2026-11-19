@@ -31,21 +31,21 @@ public sealed partial class AgentLinkTests
 
     private static readonly string[] AllCaps = ["sysinfo", "updates", "services", "docker"];
 
-    private sealed record HostRig(Server App, HttpClient Http, string Cookie, Guid Host, FakeLinkAgent Agent) : IAsyncDisposable
+    private sealed record HostRig(Server App, HttpClient Http, string Cookie, Guid Host, FakeLinkAgent Agent, string? Token = null, Guid UserId = default) : IAsyncDisposable
     {
         public ValueTask DisposeAsync() => Agent.DisposeAsync();
     }
 
-    private static async Task<HostRig> RigAsync(TestDb db, Server app, object? caps = null, object? allow = null)
+    private static async Task<HostRig> RigAsync(TestDb db, Server app, object? caps = null, object? allow = null, string version = "0.5.0")
     {
         var e = await EnrollAsync(app, db, "Server");
-        var agent = await FakeLinkAgent.ConnectAsync(app.Server, e.Token, version: "0.5.0", platform: "linux-host", hostname: "srv-01", os: "Debian GNU/Linux 13", caps: caps ?? AllCaps, allow: allow);
+        var agent = await FakeLinkAgent.ConnectAsync(app.Server, e.Token, version: version, platform: "linux-host", hostname: "srv-01", os: "Debian GNU/Linux 13", caps: caps ?? AllCaps, allow: allow);
         await Eventually(() => Online(app, e.Connection));
         agent.HostReplies["/v1/host/sysinfo"] = (200, SysinfoBody);
         agent.HostReplies["/v1/host/updates"] = (200, UpdatesBody);
         agent.HostReplies["/v1/host/services"] = (200, """{"state":"degraded","count":1,"failed":[{"unit":"nginx.service","sub":"failed","description":"Web server"}]}""");
         agent.HostReplies["/v1/host/docker"] = (200, """{"available":true,"running":1,"restarting":1,"total":2,"containers":[{"id":"abcdef123456","name":"web","image":"nginx:1","state":"running","status":"Up 2 hours"}],"truncated":false}""");
-        return new HostRig(app, e.Http, e.Cookie, e.Host, agent);
+        return new HostRig(app, e.Http, e.Cookie, e.Host, agent, e.Token);
     }
 
     private static async Task<(HttpStatusCode Status, JsonElement Body)> GetInfo(HostRig r, string what, string query = "")

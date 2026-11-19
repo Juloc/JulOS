@@ -25,7 +25,7 @@ JulOS carries the sound of a remote RDP desktop to the browser and the browser's
   explains how to allow it again for the browser in use (Chrome and Edge, Firefox, Safari and iOS, Android Chrome), like the clipboard does.
 * **Only the session in front plays**, the microphone belongs to one session at a time (starting it in a second one is refused with the name of the first).
   A browser tab in the background keeps playing (that is what you want for music or a call); a minimised window or another active session is told "off", so the server sends nothing.
-  A hidden pop-out window is silent as well.
+  A hidden or minimised pop-out window is silent as well (decision: like a session that is not in front; the main page's background tab keeps playing).
 * **Diagnosis** ("Sound and microphone: diagnosis"): is the desktop's sound channel there, is playback running or waiting for input, how many chunks arrived,
   level, buffer, underruns and drops, is the desktop's microphone channel offered, is it recording, level and chunks sent, and the browser's permission state.
   It never shows or stores any sound. With `?debug` in the address, `__pd.cur().client.audio.stats` has the same counters (`received` = samples handed to the
@@ -42,9 +42,20 @@ xrdp only forwards sound that a **per-user audio server inside the session** han
 | the session's `XDG_RUNTIME_DIR` (`/run/user/<uid>`) and the user's audio server running when you log in | the module is loaded per session | `pactl info` answers; `pactl list short modules` shows the xrdp module |
 | a program that plays or records | the microphone channel is opened by xrdp **only while something records** | `parecord --raw /dev/null` in a terminal of the desktop, then the menu shows "recording" |
 
-Installing on Debian 13 with PipeWire: `sudo apt install pipewire pipewire-pulse wireplumber pipewire-module-xrdp pulseaudio-utils`, make sure the user's
-`pipewire`, `wireplumber` and `pipewire-pulse` units are enabled (`systemctl --user enable --now pipewire pipewire-pulse wireplumber`; if the desktop had PulseAudio before,
-`pipewire-pulse` replaces it: stop and disable `pulseaudio.service` and `pulseaudio.socket` of the user first), then **log the xrdp session out and in again** (the module is loaded when the session starts).
+### Setting it up on Debian 13 (steps for the machine's owner; JulOS itself changes nothing there)
+
+Two routes. **Route A (PipeWire)** is the one with a package: Debian 13 (trixie) has `pipewire-module-xrdp` 0.2-2 (it pulls in `libpipewire-0.3-modules-xrdp`). The desktop then uses PipeWire
+instead of PulseAudio, which also serves the local desktop (`pipewire-pulse` speaks the PulseAudio protocol, so programs keep working).
+
+1. Install: `sudo apt install pipewire pipewire-pulse wireplumber pipewire-module-xrdp pulseaudio-utils` (apt replaces the `pulseaudio` package by `pipewire-pulse`; read the list of removals before you confirm).
+2. Make sure the user services run: `systemctl --user enable --now pipewire pipewire-pulse wireplumber`, and that the old PulseAudio is not started any more (`systemctl --user disable --now pulseaudio.service pulseaudio.socket` if they still exist).
+3. Log the xrdp session out completely and connect again (a new session is needed: the module is loaded when the session starts, via `/etc/xdg/autostart/pipewire-xrdp.desktop` of the package). Closing only the JulOS tab keeps the old session.
+4. Check with the checklist below (`pactl list short sinks` must list `xrdp-sink`).
+
+**Route B (PulseAudio kept)** has no Debian package for `pulseaudio-module-xrdp`; it is built against the installed PulseAudio sources (follow the project's README of `neutrinolabs/pulseaudio-module-xrdp`; in outline:
+enable `deb-src`, `sudo apt install build-essential dpkg-dev git autoconf libtool libltdl-dev libpulse-dev pulseaudio`, `sudo apt build-dep pulseaudio`, clone the repository, run its script that fetches and configures the PulseAudio source
+(`scripts/install_pulseaudio_sources_apt_wrapper.sh`, name per release), then `./bootstrap && ./configure PULSE_DIR=<that source folder> && make && sudo make install`), then log the xrdp session out and in. This route was not run here; route A is the tested one (the test desktop uses it).
+
 The test desktop (`deploy/dev/rdp-target`, which has no systemd) starts PipeWire from an autostart script instead (`julos-audio.sh`).
 
 ### Checklist for the real VM
@@ -61,7 +72,7 @@ Run these as the desktop user, in a terminal **inside the xrdp session** (not ov
 
 State of the development VM when this page was written (read-only look, 2026-11-19): xrdp 0.10.1-3.1+deb13u2 and xorgxrdp 0.10.2 installed, `xrdp-chansrv` of session `:10` running and
 its log shows the sound formats negotiated (PCM 44100 and 22050 Hz, 2 channels), the user's PulseAudio 17 running, but **only the `auto_null` sink and no xrdp module**
-(`pulseaudio-module-xrdp` and `pipewire-module-xrdp` are not installed). So the browser side and the server side are in place, and sound and microphone for that desktop need
+(`pulseaudio-module-xrdp` and `pipewire-module-xrdp` are not installed; PipeWire is not installed at all and the user's `pulseaudio` unit is enabled, so route A replaces it). So the browser side and the server side are in place, and sound and microphone for that desktop need
 step 3 above; until then the diagnosis shows the channel as present and "no sound arrived".
 
 ## Tests and tools
@@ -77,15 +88,3 @@ step 3 above; until then the diagnosis shows the channel as present and "no soun
 ## Not verified here
 
 Safari and iOS (the unlock rules above follow the documented behaviour, the code was exercised with Chromium and fake objects only), a real phone, and the real VM (see its state above).
-
-## Work in progress (paused, to be removed when finished)
-
-Done on branch `claude/audio-check`: the three formerly red display tests are green against a freshly built target (environment cause, see DEVELOPMENT.md); sound end to end (e2e flow 13) and microphone end to end (flow 14) are green in Chromium with fake devices; unit tests (`node --test tests/frontend`) green; real-VM look done (no xrdp audio module installed there, see above).
-
-Not yet done / unverified:
-* Flow 15 (denied microphone) was red: Chromium without a permission UI reports `NotSupportedError`. The fix (use the permission state `denied` for unknown error names, `stream-audio.js`) is in the code and unit-tested but flow 15 was **not re-run**.
-* `deploy/dev/test.sh` (backend tests) was started and stopped before it finished; run it again: `nice -n 10 deploy/dev/test.sh`.
-* The new server test `A_browser_that_takes_over_a_kept_session_is_told_what_the_desktop_offers_for_sound` was not run yet (needs the SDK container): `JULOS_DEV_NETWORK=<net> deploy/dev/test-display.sh --filter-class "*AudioBridgeTests"`.
-* Full `deploy/dev/e2e.sh` once after a 60 s pause (all 15 flows), `dotnet build-server shutdown` afterwards.
-* Open decision: a hidden/minimised pop-out window is silent, a hidden browser tab is not (see "In the browser").
-* The throwaway target and the e2e stack were removed. Rebuild for a re-run: `docker build -t julos-audio-rdp-target -f deploy/dev/rdp-target/Dockerfile .`, run it as described in DEVELOPMENT.md ("If the display tests are red"), and for e2e `E2E_PROJECT=julos-audio-e2e JULOS_E2E_STATE=$HOME/.cache/julos-audio-e2e E2E_KEEP=1 deploy/dev/e2e.sh -g '[^0-9](1|2|13|14|15) [A-Z]'`, then `... e2e.sh down`.

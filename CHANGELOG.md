@@ -4,6 +4,18 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Neu
+- Englisch als zweite Sprache der gesamten Oberfläche (Standard bleibt Deutsch). Auswahl „Deutsch / English / System“ (System folgt der Browsersprache) im Handy-Profil (Darstellung) und in den Desktop-Einstellungen; die Wahl gilt sofort (die Seite lädt neu) und wird je Benutzer als Server-Einstellung `lang` gespeichert (kein neues Schema, vom Server geprüft: `de`, `en`, `system`), lokal bleibt eine Kopie als Rückfall. Vor der Anmeldung wählt `?lang=en` die Sprache des Geräts.
+- Alle sichtbaren Texte kommen aus zwei Wörterbüchern (`wwwroot/i18n/de.js`, `en.js`) über ein kleines Modul `i18n.js` (`t('schlüssel', {parameter})`, Mehrzahl, Rückfall auf Deutsch, nie ein roher Schlüssel): Anmeldung und Ersteinrichtung, Handy-Shell, Desktop mit Menüs, Fenstern, Dialogen und Statusleiste, Verbindungsdialog, Hosts, Konto, Netzwerkwerkzeuge, Module Caddy und DDNS, Quick Connect, Ordner, Zwischenablage, Anmeldedialog in der Sitzung, Fehlermeldungen des Stream-Clients und Terminal-Hinweise.
+- Feste Fehlertexte des Servers (JSON `error`) übersetzt der Browser über eine Zuordnung Text → Schlüssel; der Server selbst ändert sich dafür nicht.
+- `<html lang>` folgt der Sprache; Datum, Uhrzeit und Zahlen folgen ihr (`de-DE` bzw. `en-GB`). Der Service Worker hält die neuen Dateien bereit (Version pd-v47).
+- Neuer Test `tests/frontend/i18n.test.mjs` (gleiche Schlüssel und Parameter in beiden Wörterbüchern, alle benutzten Schlüssel vorhanden, keine unbenutzten, alle festen Servertexte zugeordnet) und ein Browser-Ablauf, der auf Englisch umschaltet. Doku: Abschnitt „Languages“ in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+### Geändert
+- Dateigrößen und andere Zahlen im Handy-Profil folgen dem Zahlenformat der Sprache (deutsch „1,5 GB“); die Datumszeile älterer Aktivitäten hatte einen doppelten Punkt („02.11..“), jetzt „02.11.“.
+
 ## [0.7.0] - 2026-11-19
 
 ### Neu

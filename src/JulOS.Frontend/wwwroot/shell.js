@@ -224,10 +224,13 @@ const showDriveChoice = () => {
   $('#connDriveWriteHint').hidden = !on || !share || !$('#connDriveWrite').checked;
   $('#connDriveOff').hidden = !on || state.driveAvailable;
 };
-$('#connKind').addEventListener('change', () => { $('#connPort').placeholder = DEFAULT_PORT[$('#connKind').value]; showDriveChoice(); });
+$('#connKind').addEventListener('change', () => { $('#connPort').placeholder = DEFAULT_PORT[$('#connKind').value]; showDriveChoice(); showDesktopFields(); });
 $('#connDrive').addEventListener('change', showDriveChoice);
 $('#connDriveWrite').addEventListener('change', showDriveChoice);
 $('#addConn').addEventListener('click', () => editDialog(null));
+
+// Domäne und Tastaturlayout gibt es nur beim Desktop (RDP)
+function showDesktopFields() { const on = $('#connKind').value === 'desktop'; $('#connDomainRow').hidden = !on; $('#connLayoutRow').hidden = !on; }
 
 function editDialog(c, kind) {
   state.editing = c;
@@ -239,6 +242,8 @@ function editDialog(c, kind) {
   $('#connPort').value = c ? String(c.port) : '';
   $('#connPort').placeholder = DEFAULT_PORT[$('#connKind').value];
   $('#connUser').value = c ? c.username : '';
+  $('#connDomain').value = c ? c.domain || '' : ''; $('#connLayout').value = c && c.layout ? c.layout : 'de'; $('#connNotes').value = c ? c.notes || '' : '';
+  showDesktopFields();
   fillHostSelect(c ? c.hostId : undefined);
   $('#connDelete').hidden = !c; $('#connDelete').textContent = 'Löschen';
   $('#connPw').value = ''; $('#connPw').disabled = !state.canStore;
@@ -365,7 +370,8 @@ $('#connForm').addEventListener('submit', async (e) => {
   const form = e.currentTarget, msg = $('#connMsg');
   const portText = $('#connPort').value.trim();
   if (portText && !/^\d{1,5}$/.test(portText)) return setMsg(msg, 'Der Port muss eine Zahl sein.');
-  const body = { name: $('#connName').value, kind: $('#connKind').value, host: $('#connHost').value, port: portText ? Number(portText) : null, username: $('#connUser').value };
+  const body = { name: $('#connName').value, kind: $('#connKind').value, host: $('#connHost').value, port: portText ? Number(portText) : null, username: $('#connUser').value, notes: $('#connNotes').value };
+  if (body.kind === 'desktop') { body.domain = $('#connDomain').value; body.layout = $('#connLayout').value; }
   const hostId = $('#connHostSel').value; if (hostId && hostId !== NEW_HOST) body.hostId = hostId;
   const drive = body.kind === 'desktop' && state.driveAvailable && $('#connDrive').checked;
   body.driveShare = drive; body.driveWrite = drive && $('#connDriveWrite').checked;

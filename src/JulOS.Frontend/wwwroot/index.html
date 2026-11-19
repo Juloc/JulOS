@@ -184,11 +184,20 @@
         <label>Adresse <input id="connHost" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Name oder IP-Adresse" required></label>
         <label>Port <input id="connPort" type="text" inputmode="numeric" autocomplete="off" placeholder="3389"></label>
         <label>Benutzername auf dem Ziel <input id="connUser" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
+        <label id="connDomainRow"><span>Domäne <span class="opt">(optional, nur Desktop)</span></span> <input id="connDomain" type="text" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="leer = keine Windows-Domäne"></label>
+        <label id="connLayoutRow"><span>Tastaturlayout des Ziels <span class="opt">(nur Desktop)</span></span>
+          <select id="connLayout">
+            <option value="de">Deutsch</option><option value="de-at">Deutsch (Österreich)</option><option value="de-ch">Deutsch (Schweiz)</option>
+            <option value="en-us">Englisch (USA)</option><option value="en-gb">Englisch (Vereinigtes Königreich)</option>
+            <option value="fr">Französisch</option><option value="es">Spanisch</option><option value="it">Italienisch</option>
+          </select>
+        </label>
         <label><span>Passwort <span class="opt">(optional)</span></span>
           <input id="connPw" type="password" autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="leer = bei jeder Verbindung tippen">
         </label>
         <label id="connForgetRow" class="check" hidden><input id="connForget" type="checkbox"> Gespeichertes Passwort löschen</label>
         <p id="connPwHint" class="hint"></p>
+        <label><span>Notizen <span class="opt">(optional)</span></span> <textarea id="connNotes" rows="2" maxlength="500" autocomplete="off" placeholder="Wofür ist das Ziel, Besonderheiten …"></textarea></label>
         <p id="connMsg" class="msg" role="alert"></p>
         <div class="row">
           <button id="connSave" type="submit" class="primary">Speichern</button>

@@ -46,10 +46,15 @@ for (let i = 0; i < 10; i++) SPECIAL.set(0xffbe + i, [0x3b + i, 0]);            
 SPECIAL.set(0xffc8, [0x57, 0]); SPECIAL.set(0xffc9, [0x58, 0]);                    // F11, F12
 const MODIFIERS = { 0xffe3: 'ctrl', 0xffe4: 'ctrl', 0xffe9: 'alt', 0xffea: 'alt', 0xffeb: 'super', 0xffec: 'super' };
 
-// Buchstaben und Ziffern fuer Tastenkombinationen (Strg+C ...): die Taste der deutschen Belegung; auf der englischen sind y und z vertauscht
+// Buchstaben und Ziffern fuer Tastenkombinationen (Strg+C ...): die Taste der deutschen Belegung; auf der englischen sind y und z vertauscht,
+// auf der franzoesischen (AZERTY) a/q, z/w und m (siehe LETTER_OVERRIDES, je nach Layout der Verbindung)
 const LETTER_SCANCODES = { q: 0x10, w: 0x11, e: 0x12, r: 0x13, t: 0x14, z: 0x15, u: 0x16, i: 0x17, o: 0x18, p: 0x19,
   a: 0x1e, s: 0x1f, d: 0x20, f: 0x21, g: 0x22, h: 0x23, j: 0x24, k: 0x25, l: 0x26, y: 0x2c, x: 0x2d, c: 0x2e, v: 0x2f, b: 0x30, n: 0x31, m: 0x32,
   1: 0x02, 2: 0x03, 3: 0x04, 4: 0x05, 5: 0x06, 6: 0x07, 7: 0x08, 8: 0x09, 9: 0x0a, 0: 0x0b, ',': 0x33, '.': 0x34, '-': 0x35, '+': 0x1b, '#': 0x2b, '<': 0x56 };
+
+// Abweichungen der Buchstabentasten je Layout der Verbindung ("de" und "qwertz" haben keine; "en" ist der alte Name von "qwerty")
+const QWERTY = { y: 0x15, z: 0x2c };
+const LETTER_OVERRIDES = { qwerty: QWERTY, en: QWERTY, azerty: { y: 0x15, z: 0x11, w: 0x2c, a: 0x10, q: 0x1e, m: 0x27 } };
 
 // Zeichen, die nur die deutsche Belegung kennt: [Scancode, Umschalt, AltGr]. Manche Server (xrdp) nehmen fuer solche Zeichen keine
 // Unicode-Eingabe an, deshalb gehen sie ueber ihre Taste; alles andere geht als Unicode.
@@ -541,7 +546,8 @@ export class StreamClient {
     if (this.mods.ctrl || this.mods.alt || this.mods.super) {
       let low = char.toLowerCase();
       let code = LETTER_SCANCODES[low];
-      if (code !== undefined && this.layout !== 'de') { if (low === 'y') code = 0x15; else if (low === 'z') code = 0x2c; }
+      const over = LETTER_OVERRIDES[this.layout];
+      if (code !== undefined && over && over[low] !== undefined) code = over[low];
       if (code !== undefined) { this.key(code, 0, pressed); return; }
     }
     const german = this.layout === 'de' ? GERMAN_KEYS[char] : undefined;

@@ -15,6 +15,8 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 - Eingabe: Die Zurück- und Vorwärts-Taste der Maus erreichen jetzt das Ziel (Taste 3 und 4), das Mausrad geht auch waagerecht und in feinen Schritten durch (Windows-Einheiten statt fester Rasten), und beim Fokusverlust oder Tab-Wechsel werden alle gedrückten Tasten und Maustasten am Ziel losgelassen (kein hängendes Alt mehr nach Alt+Tab). Im Vollbild werden Systemtasten (Esc, Alt+Tab, Windows-Taste, Strg+W/T/N) mit der Tastatursperre des Browsers (Chrome, Edge) an das Ziel gegeben.
 
+- Verbindungsfelder: Domäne (Desktop), Notizen und Tastaturlayout des Ziels (Desktop: Deutsch, Deutsch Österreich/Schweiz, Englisch USA/UK, Französisch, Spanisch, Italienisch; Standard Deutsch wie bisher) im Verbindungsdialog. Das Layout geht als Windows-Kennung an den RDP-Server statt fest `0x407` und bestimmt, welche Taste der Browser für Strg-Kombinationen nimmt. Migration 009 (rückwärtskompatibel, Standardwerte); API und Auszüge älterer Versionen funktionieren unverändert.
+
 ### Geändert
 - Dockerfile: die SDK-Stufe läuft mit `--platform=$BUILDPLATFORM`, der arm64-Bau braucht dafür keine Emulation mehr.
 

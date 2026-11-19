@@ -34,7 +34,7 @@ function client() {
   sent.length = 0;
   return { c, sent };
 }
-const OUT = { button: 3, wheel: 4, key: 5 };
+const OUT = { button: 3, wheel: 4, key: 5, unicode: 6 };
 
 test('back and forward are sent as buttons 3 and 4, once per change', () => {
   const { c, sent } = client();
@@ -74,9 +74,10 @@ test('losing the focus releases held keys and mouse buttons at the target', () =
   sent.length = 0;
   fire('window', 'blur');
   assert.deepEqual(sent, [], 'nothing held: nothing sent');
-  // a letter with Ctrl no longer counts Ctrl as held
+  // Ctrl is no longer counted as held: a letter is typed as a character, not as a Ctrl key chord
   c.sendKeyEvent(true, 0x63);
-  assert.equal(sent.some((m) => m[0] === OUT.unicode), false);
+  assert.equal(sent.some((m) => m[0] === OUT.unicode), true);
+  assert.equal(sent.some((m) => m[0] === OUT.key), false);
 });
 
 test('a hidden tab releases too, a visible one does not, and a closed client stops listening', () => {
@@ -92,4 +93,42 @@ test('a hidden tab releases too, a visible one does not, and a closed client sto
   sent.length = 0;
   fire('window', 'blur');
   assert.deepEqual(sent, [], 'after disconnect the listeners are gone');
+});
+
+// Tastaturlayout der Verbindung (docs/ARCHITECTURE.md): Strg+Buchstabe nimmt die Taste, die der Buchstabe auf dem Layout des Ziels hat
+function ctrlLetter(layout, letter) {
+  const c = new StreamClient('ws://x/screen', layout);
+  c.connect('a=1');
+  const sent = FakeSocket.last.sent; sent.length = 0;
+  c.sendKeyEvent(true, 0xffe3);                       // Ctrl
+  c.sendKeyEvent(true, letter.codePointAt(0));
+  const keys = sent.filter((m) => m[0] === OUT.key).map((m) => m[1]);
+  c.disconnect();
+  return keys[1];                                     // the scancode after Ctrl's own
+}
+
+test('Ctrl plus a letter picks the key of the target layout', () => {
+  assert.equal(ctrlLetter('de', 'z'), 0x15);          // QWERTZ: z is where QWERTY has y
+  assert.equal(ctrlLetter('qwertz', 'z'), 0x15);
+  assert.equal(ctrlLetter('qwerty', 'z'), 0x2c);
+  assert.equal(ctrlLetter('qwerty', 'y'), 0x15);
+  assert.equal(ctrlLetter('en', 'y'), 0x15);          // old name of qwerty
+  assert.equal(ctrlLetter('azerty', 'a'), 0x10);      // AZERTY: a sits on the key of q
+  assert.equal(ctrlLetter('azerty', 'q'), 0x1e);
+  assert.equal(ctrlLetter('azerty', 'w'), 0x2c);
+  assert.equal(ctrlLetter('azerty', 'z'), 0x11);
+  assert.equal(ctrlLetter('azerty', 'm'), 0x27);
+  assert.equal(ctrlLetter('azerty', 'c'), 0x2e);      // the rest is where it always is
+});
+
+test('umlauts go through their German keys only on the German layout, otherwise as characters', () => {
+  const press = (layout) => {
+    const c = new StreamClient('ws://x/screen', layout); c.connect('a=1');
+    const sent = FakeSocket.last.sent; sent.length = 0;
+    c.sendKeyEvent(true, 'ü'.codePointAt(0));
+    c.disconnect();
+    return sent.map((m) => m[0]);
+  };
+  assert.ok(press('de').includes(OUT.key) && !press('de').includes(OUT.unicode));
+  assert.ok(press('qwertz').includes(OUT.unicode) && !press('qwertz').includes(OUT.key));
 });

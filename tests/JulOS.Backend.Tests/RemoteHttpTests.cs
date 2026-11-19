@@ -918,4 +918,69 @@ public sealed class RemoteHttpTests
         }
     }
 
+    [Fact]
+    public async Task Domain_notes_and_keyboard_layout_are_saved_checked_and_kept_when_not_sent()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db);
+        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (cookie, _) = await SignedInAsync(app, c, db);
+
+        var plain = await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "Alt", kind = "desktop", host = "ziel", port = 3389, username = "u" }, cookie)));
+        Assert.Equal("", plain.GetProperty("domain").GetString() ?? "");           // old clients send none of the new fields: empty, empty, German
+        Assert.Equal("de", plain.GetProperty("layout").GetString());
+
+        var made = await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "Firma", kind = "desktop", host = "ziel", port = 3389, username = "u", domain = "CORP", notes = "Zeile 1\r\nZeile 2", layout = "fr" }, cookie));
+        Assert.Equal(HttpStatusCode.OK, made.StatusCode);
+        var created = await Json(made);
+        Assert.Equal("CORP", created.GetProperty("domain").GetString());
+        Assert.Equal("Zeile 1\nZeile 2", created.GetProperty("notes").GetString());
+        Assert.Equal("fr", created.GetProperty("layout").GetString());
+        var id = created.GetProperty("id").GetGuid();
+
+        // a change that does not mention them keeps them (a client from before the fields must not wipe them)
+        var rename = await Json(await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{id}", new { name = "Firma 2", kind = "desktop", host = "ziel", port = 3389, username = "u" }, cookie)));
+        Assert.Equal(("CORP", "Zeile 1\nZeile 2", "fr"), (rename.GetProperty("domain").GetString(), rename.GetProperty("notes").GetString(), rename.GetProperty("layout").GetString()));
+        var cleared = await Json(await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{id}", new { name = "Firma 2", kind = "desktop", host = "ziel", port = 3389, username = "u", domain = "", notes = "", layout = "de" }, cookie)));
+        Assert.Equal("", cleared.GetProperty("domain").GetString() ?? "");
+        Assert.Equal("de", cleared.GetProperty("layout").GetString());
+
+        foreach (var bad in new object[]
+        {
+            new { name = "x", kind = "desktop", host = "ziel", username = "u", layout = "klingon" },
+            new { name = "x", kind = "desktop", host = "ziel", username = "u", domain = "CORP\\user" },
+            new { name = "x", kind = "desktop", host = "ziel", username = "u", domain = new string('d', 65) },
+            new { name = "x", kind = "desktop", host = "ziel", username = "u", notes = new string('n', 501) },
+            new { name = "x", kind = "desktop", host = "ziel", username = "u", notes = "a\u0007b" },
+        })
+            Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Send(HttpMethod.Post, "/api/connections", bad, cookie))).StatusCode);
+
+        // domain and layout belong to the desktop: a terminal drops them, notes stay
+        var term = await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "T", kind = "terminal", host = "ziel", username = "u", domain = "CORP", layout = "fr", notes = "ssh" }, cookie)));
+        Assert.Equal(("", "de", "ssh"), (term.GetProperty("domain").GetString() ?? "", term.GetProperty("layout").GetString(), term.GetProperty("notes").GetString()));
+    }
+
+    [Fact]
+    public async Task A_desktop_ticket_carries_the_domain_and_the_layout_of_the_connection()
+    {
+        Assert.SkipUnless(JulOS.Integrations.Display.ScreenStream.IsAvailable, "libopenh264 fehlt: ohne Kodierer gibt es keine Desktop-Verbindung");
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db);
+        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (cookie, userId) = await SignedInAsync(app, c, db);
+        var store = new ConnectionStore(db.Data);
+        async Task<(string Layout, JulOS.Integrations.Display.ScreenTarget Target)> Ticket(Guid connection)
+        {
+            var response = await c.SendAsync(Post("/api/remote/ticket", new { connection, password = "x", width = 800, height = 600 }, cookie));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var json = await Json(response);
+            var target = app.Services.GetRequiredService<JulOS.Integrations.Display.ScreenTickets>().Take(json.GetProperty("ticket").GetString()!, userId)!;
+            return (json.GetProperty("layout").GetString()!, target);
+        }
+        var german = await Ticket((await store.CreateAsync(userId, "de", "desktop", "ziel", 3389, "u")).Id);
+        Assert.Equal(("de", 0x407u, ""), (german.Layout, german.Target.Options.KeyboardLayout, german.Target.Options.Domain));
+        var french = await Ticket((await store.CreateAsync(userId, "fr", "desktop", "ziel", 3389, "u", domain: "CORP", layout: "fr")).Id);
+        Assert.Equal(("azerty", 0x40Cu, "CORP"), (french.Layout, french.Target.Options.KeyboardLayout, french.Target.Options.Domain));
+    }
+
 }

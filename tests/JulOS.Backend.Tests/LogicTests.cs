@@ -175,4 +175,38 @@ public sealed class LogicTests
         Assert.False(ConnectionRules.Validate("PC", "terminal", "ziel", null, "u", null, null, true, true).Value!.DriveShare);
         Assert.False(ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", false, null, true, true).Value!.DriveWrite);
     }
+
+    [Fact]
+    public void Domain_notes_and_layout_have_defaults_belong_to_desktops_and_keep_the_earlier_value_when_not_given()
+    {
+        var plain = ConnectionRules.Validate("PC", "desktop", "ziel", null, "u").Value!;
+        Assert.Equal(("", "", "de"), (plain.Domain, plain.Notes, plain.Layout));
+        var set = ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", domain: " CORP ", notes: " a\r\nb ", layout: "en-us").Value!;
+        Assert.Equal(("CORP", "a\nb", "en-us"), (set.Domain, set.Notes, set.Layout));
+        var kept = ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", currentDomain: "CORP", currentNotes: "n", currentLayout: "fr").Value!;
+        Assert.Equal(("CORP", "n", "fr"), (kept.Domain, kept.Notes, kept.Layout));
+        var term = ConnectionRules.Validate("PC", "terminal", "ziel", null, "u", domain: "CORP", notes: "n", layout: "fr").Value!;
+        Assert.Equal(("", "n", "de"), (term.Domain, term.Notes, term.Layout));
+        Assert.Null(ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", layout: "xx").Value);
+        Assert.Null(ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", domain: "a b").Value);
+        Assert.Null(ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", notes: new string('x', ConnectionRules.MaxNotes + 1)).Value);
+        Assert.NotNull(ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", notes: new string('x', ConnectionRules.MaxNotes)).Value);
+    }
+
+    [Theory]
+    [InlineData("de", 0x407u, "de")]
+    [InlineData("de-at", 0xC07u, "de")]
+    [InlineData("de-ch", 0x807u, "qwertz")]
+    [InlineData("en-us", 0x409u, "qwerty")]
+    [InlineData("en-gb", 0x809u, "qwerty")]
+    [InlineData("fr", 0x40Cu, "azerty")]
+    [InlineData("es", 0x40Au, "qwerty")]
+    [InlineData("it", 0x410u, "qwerty")]
+    [InlineData("unbekannt", 0x407u, "de")]      // a code from a later version is German, never an error at connect time
+    public void Every_layout_maps_to_a_windows_id_and_a_key_style(string code, uint windows, string client)
+    {
+        Assert.Equal(windows, KeyboardLayouts.WindowsId(code));
+        Assert.Equal(client, KeyboardLayouts.ClientKey(code));
+        Assert.Equal(code != "unbekannt", KeyboardLayouts.IsKnown(code));
+    }
 }

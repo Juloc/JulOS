@@ -690,7 +690,7 @@ export class RemoteSession extends Session {
       return this.streamFailed('Dieser Browser kann das Bild nicht dekodieren (H.264 mit WebCodecs, die Seite braucht HTTPS). Bitte einen aktuellen Browser nutzen und „Neu verbinden“ tippen.');
     }
     if (stale()) return;
-    let ticket, driveMode = null;
+    let ticket, driveMode = null, keyLayout = 'de';
     // Eine erhaltene Sitzung des Servers wieder aufnehmen: kein Ticket, kein Passwort, kein neuer Login am Ziel (der Server nimmt das Token, siehe resume.js)
     const resumeToken = this.everConnected && this.resume.usable() ? this.resume.token : null;
     if (!resumeToken) try {
@@ -701,7 +701,7 @@ export class RemoteSession extends Session {
       if (stale()) return;
       if (resp.status === 401) return this.requestClose('Die Sitzung ist abgelaufen. Bitte neu anmelden.', 'auth');
       if (!resp.ok) throw new Error(data.error || 'Fehler ' + resp.status);
-      ticket = data.ticket; driveMode = data.drive || null;
+      ticket = data.ticket; driveMode = data.drive || null; keyLayout = data.layout || 'de';
     } catch (e) {
       if (stale()) return;
       const msg = e.name === 'TimeoutError' || e.name === 'TypeError' ? 'Keine Verbindung zum Server. Netz prüfen.' : e.message;
@@ -711,7 +711,7 @@ export class RemoteSession extends Session {
     }
 
     const wsBase = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
-    const client = new StreamClient(wsBase + '/api/remote/screen');
+    const client = new StreamClient(wsBase + '/api/remote/screen', keyLayout);
     this.wireAudio(client);
     client.onsession = (o) => { if (this.client === client) this.resume.offered(o.token, o.keep); };
     // Der Server kennt das Token nicht mehr (abgelaufen, Neustart, Sitzung dort beendet): ganz normal neu aufbauen, mit Ticket und neuem Login

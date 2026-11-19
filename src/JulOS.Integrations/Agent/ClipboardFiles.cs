@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 
 namespace JulOS.Integrations.Agent;
 
-public enum FileOutcome { Ok, Empty, TooBig, BadName, Blocked, FolderNotWritable, HelperFailed, HelperSilent }
+public enum FileOutcome { Ok, Empty, TooBig, BadName, Blocked, FolderNotWritable, HelperFailed, HelperSilent, QuotaExceeded }
 
 public sealed record FileResult(FileOutcome Outcome, string? Detail = null);
 
@@ -15,7 +15,9 @@ public sealed record FileResult(FileOutcome Outcome, string? Detail = null);
 public sealed class ClipboardFileUploader(UploadOptions options)
 {
     public const int MaxBytes = 64 * 1024 * 1024;
+    public const long DefaultQuota = 2L * 1024 * 1024 * 1024;
     private static readonly TimeSpan Poll = TimeSpan.FromMilliseconds(50);
+    private static readonly TimeSpan PruneAfter = TimeSpan.FromDays(1);
 
     public async Task<FileResult> SaveAsync(string? name, ReadOnlyMemory<byte> data, CancellationToken ct, TimeSpan? wait = null)
     {
@@ -25,6 +27,7 @@ public sealed class ClipboardFileUploader(UploadOptions options)
         if (ClipboardNames.BlockedExtension(safe) is { } blocked) return new FileResult(FileOutcome.Blocked, blocked);
 
         var root = Path.GetFullPath(Path.Combine(options.Directory, "files"));
+        if (!HasRoomFor(root, data.Length)) return new FileResult(FileOutcome.QuotaExceeded);
         var id = $"{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}-{Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(4))}";
         var finalDir = Path.Combine(root, id);
         var tempDir = finalDir + ".tmp";
@@ -63,6 +66,28 @@ public sealed class ClipboardFileUploader(UploadOptions options)
         catch (OperationCanceledException) { TryDeleteDir(finalDir); throw; }
         TryDeleteDir(finalDir);
         return new FileResult(FileOutcome.HelperSilent);
+    }
+
+    /// <summary>Ob unter <paramref name="root"/> noch Platz im Kontingent ist; wenn nicht, werden zuerst Ordner geloescht, die aelter als ein Tag sind.</summary>
+    private bool HasRoomFor(string root, long bytes)
+    {
+        var quota = options.FilesQuota ?? DefaultQuota;
+        if (!Directory.Exists(root)) return bytes <= quota;
+        if (UsedBytes(root) + bytes <= quota) return true;
+        foreach (var dir in Directory.EnumerateDirectories(root).Where(d => DateTime.UtcNow - Directory.GetLastWriteTimeUtc(d) > PruneAfter).OrderBy(Directory.GetLastWriteTimeUtc))
+        {
+            TryDeleteDir(dir);
+            if (UsedBytes(root) + bytes <= quota) return true;
+        }
+        return false;
+    }
+
+    private static long UsedBytes(string root)
+    {
+        long total = 0;
+        try { foreach (var f in new DirectoryInfo(root).EnumerateFiles("*", SearchOption.AllDirectories)) total += f.Length; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { /* was nicht lesbar ist, zaehlt nicht mit */ }
+        return total;
     }
 
     private static void TryDeleteDir(string path) { try { Directory.Delete(path, true); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { } }

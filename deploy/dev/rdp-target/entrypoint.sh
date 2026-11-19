@@ -9,7 +9,9 @@ if ! id ubuntu >/dev/null 2>&1; then
   echo 'xfce4-session' > /home/ubuntu/.xsession
   chown ubuntu:ubuntu /home/ubuntu/.xsession
 fi
-mkdir -p /home/ubuntu/julos-uploads
+mkdir -p /home/ubuntu/julos-uploads /run/user/1020
+chown ubuntu:ubuntu /run/user/1020
+chmod 700 /run/user/1020
 chown ubuntu:ubuntu /home/ubuntu /home/ubuntu/julos-uploads
 rm -f /var/run/xrdp/*.pid /var/run/xrdp-sesman.pid
 /usr/sbin/xrdp-sesman

@@ -13,11 +13,20 @@ public abstract record ScreenEvent;
 /// <summary>Der Desktop hat diese Groesse; ab jetzt kommen Bilder in dieser Groesse (das naechste ist ein Schluesselbild).</summary>
 public sealed record ScreenSize(int Width, int Height) : ScreenEvent;
 
-/// <summary>Ein Bild als H.264 (Annex B, SPS und PPS vor jedem Schluesselbild). Der Browser bestaetigt jedes Bild.</summary>
-public sealed record ScreenPicture(int Sequence, bool IsKey, byte[] Data) : ScreenEvent;
+/// <summary>Ein Bild als H.264 oder H.265 (Annex B, SPS und PPS, bei H.265 auch VPS, vor jedem Schluesselbild). Der Browser bestaetigt jedes Bild.</summary>
+public sealed record ScreenPicture(int Sequence, bool IsKey, byte[] Data, VideoCodec Codec = VideoCodec.H264) : ScreenEvent;
+
+/// <summary>Welcher Kodierer gerade arbeitet (nach jedem Neuaufbau); der Browser zeigt es in seinen Zahlen.</summary>
+public sealed record ScreenEncoderInfo(VideoCodec Codec, bool Hardware, string Name) : ScreenEvent;
 
 /// <summary>Der ferne Rechner hat Text kopiert.</summary>
 public sealed record ScreenClipboardText(string Text) : ScreenEvent;
+
+/// <summary>Es liegt Ton bereit: <see cref="ScreenStream.Audio"/> hat ihn (nur ein Zeichen, der Ton selbst wartet dort in einer begrenzten Warteschlange).</summary>
+public sealed record ScreenAudioReady : ScreenEvent;
+
+/// <summary>Der Ton der Sitzung hat sich geaendert (Ausgabe verfuegbar, Mikrofon angeboten oder verlangt).</summary>
+public sealed record ScreenAudioStatus(AudioStatus Status) : ScreenEvent;
 
 /// <summary>Der ferne Rechner hat ein Bild kopiert (Format 1 PNG, 2 BMP).</summary>
 public sealed record ScreenClipboardImage(byte Format, byte[] Data) : ScreenEvent;
@@ -78,13 +87,22 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
     private readonly ClipboardChannel _clipboardChannel = new();
     private readonly ClipboardBridge _clipboard;
+    private readonly SoundChannel _soundChannel = new();
+    private readonly AudioInputChannel _microphoneChannel = new();
     private RdpClient? _rdp;
     private DisplayControlChannel? _display;
-    private H264Encoder? _encoder;
+    private readonly EncoderSelector _selector;
+    private IVideoEncoder? _encoder;
+    private IEncoderBackend? _encoderBackend;
     private I420Frame? _frame;
     private volatile TileRefiner? _refiner;
     private double _refineCredit;
     private long _refineAt;
+
+    // Was der Browser dekodieren kann (unter _gate); eine Aenderung baut den Kodierer neu auf (zum Beispiel zurueck auf H.264).
+    private VideoCodecs _clientCodecs;
+    private bool _codecChanged;
+    private bool _noHardware;
 
     // Alles, was sich seit dem letzten Bild geaendert hat: ein Rechteck und eine grobe Zaehlung der Pixel (unter _gate).
     private bool _dirty;
@@ -107,7 +125,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
     private readonly CertificateTrust? _trust;
 
-    public ScreenStream(RdpOptions options, int maxKilobitsPerSecond = 16_000, ILogger? log = null, CertificateTrust? trust = null)
+    public ScreenStream(RdpOptions options, int maxKilobitsPerSecond = 16_000, ILogger? log = null, EncoderSelector? encoders = null, VideoCodecs clientCodecs = VideoCodecs.H264, CertificateTrust? trust = null)
     {
         _trust = trust;
         _options = options;
@@ -115,6 +133,8 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         _kilobits = maxKilobitsPerSecond;
         _pacer = new LinkPacer(maxKilobitsPerSecond);
         _log = log;
+        _selector = encoders ?? DefaultSelector;
+        _clientCodecs = clientCodecs == VideoCodecs.None ? VideoCodecs.H264 : clientCodecs;
         _clipboard = new ClipboardBridge(_clipboardChannel, new ClipboardSink
         {
             Text = text => _events.Writer.TryWrite(new ScreenClipboardText(text)),
@@ -123,9 +143,18 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
             FileChunk = (batch, index, flags, data) => _events.Writer.TryWrite(new ScreenFileChunk(batch, index, flags, data)),
             Result = (id, code, message) => _events.Writer.TryWrite(new ScreenTransferResult(id, code, message)),
         });
+        Audio = new AudioBridge(_soundChannel, _microphoneChannel);
+        Audio.Ready += () => _events.Writer.TryWrite(new ScreenAudioReady());
+        Audio.StatusChanged += status => _events.Writer.TryWrite(new ScreenAudioStatus(status));
     }
 
-    /// <summary>Ob H.264 auf dieser Maschine kodiert werden kann (libopenh264 vorhanden).</summary>
+    /// <summary>Der Ton der Sitzung: pro Verbindung aus, bis der Browser ihn einschaltet.</summary>
+    public AudioBridge Audio { get; }
+
+    /// <summary>Die Auswahl, wenn der Aufrufer keine mitgibt: nur der Software-Kodierer (so verhalten sich Tests ohne GPU und ohne Umgebung).</summary>
+    public static EncoderSelector DefaultSelector { get; } = new([new SoftwareBackend()], new EncoderSettings(EncoderMode.Software));
+
+    /// <summary>Ob H.264 auf dieser Maschine kodiert werden kann (libopenh264 vorhanden); er ist der Rueckfall fuer jede GPU.</summary>
     public static bool IsAvailable => H264Encoder.IsAvailable;
 
     public static string? UnavailableReason => H264Encoder.UnavailableReason;
@@ -145,8 +174,12 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         var channels = new DynamicChannels();
         var display = new DisplayControlChannel();
         channels.Register(display);
+        channels.Register(_microphoneChannel);
         rdp.AddChannel(channels);
         rdp.AddChannel(_clipboardChannel);
+        rdp.AddChannel(_soundChannel);
+        // Windows spricht auf "rdpsnd" nur mit einem Client, der auch "rdpdr" meldet (ohne Geraete); fuer den Ton also noetig
+        rdp.AddChannel(new RdpdrChannel());
         _display = display;
         try
         {
@@ -271,6 +304,27 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Was der Browser dekodieren kann (er meldet es beim Verbinden und noch einmal, wenn ein Dekodierer nicht ging, dann ohne H.265).
+    /// Passt der laufende Kodierer nicht mehr, kommt der naechste mit einem Schluesselbild.
+    /// </summary>
+    public void SetClientCodecs(VideoCodecs codecs)
+    {
+        codecs = (codecs & (VideoCodecs.H264 | VideoCodecs.Hevc)) == 0 ? VideoCodecs.H264 : codecs;
+        lock (_gate)
+        {
+            if (codecs == _clientCodecs)
+            {
+                return;
+            }
+
+            _clientCodecs = codecs;
+            _codecChanged = true;
+        }
+
+        Wake();
+    }
+
     /// <summary>Ein Schluesselbild als naechstes (der Browser hat den Faden verloren).</summary>
     public void RequestKeyFrame()
     {
@@ -349,6 +403,12 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
             {
                 Rebuild(size.Width, size.Height);
                 _events.Writer.TryWrite(new ScreenSize(_frame!.Width, _frame.Height));
+                needKey = true;
+                encodedAny = false;
+            }
+            else if (TakeCodecChange() && _frame is not null && _encoder is { } current && !ClientCodecs.Has(current.Codec))
+            {
+                ReplaceEncoder();
                 needKey = true;
                 encodedAny = false;
             }
@@ -503,7 +563,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         {
             _log?.LogDebug("Leitung: Bitrate {From} -> {To} kbit/s, Fenster {Window}", _kilobits, kilobits, window);
             _kilobits = kilobits;
-            _encoder?.SetBitrate(kilobits);
+            _encoder?.TrySetBitrate(kilobits);
         }
 
         _window.Max = window;
@@ -612,9 +672,29 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         }
     }
 
-    private bool Send(H264Encoder encoder, I420Frame frame, bool forceKey)
+    private bool Send(IVideoEncoder encoder, I420Frame frame, bool forceKey)
     {
-        var data = encoder.Encode(frame, forceKey, out var isKey);
+        ReadOnlyMemory<byte> data;
+        bool isKey;
+        try
+        {
+            data = encoder.Encode(frame, forceKey, out isKey);
+        }
+        catch (Exception e) when (encoder.IsHardware && e is not OperationCanceledException)
+        {
+            // Die GPU hat mitten in der Sitzung aufgegeben: ab jetzt Software (H.264), mit einem Schluesselbild. Die Sitzung geht weiter.
+            _log?.LogWarning(e, "Der Hardware-Kodierer {Encoder} ist ausgefallen; die Sitzung geht mit dem Software-Kodierer weiter.", encoder.Name);
+            if (_encoderBackend is { } backend)
+            {
+                _selector.ReportFailure(backend, e);
+            }
+
+            _noHardware = true;
+            _forceKey = true;
+            ReplaceEncoder();
+            return false;
+        }
+
         if (data.IsEmpty)
         {
             return false;
@@ -629,7 +709,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         }
 
         Volatile.Write(ref _lastSentAt, tick);
-        _events.Writer.TryWrite(new ScreenPicture(sequence, isKey, data.ToArray()));
+        _events.Writer.TryWrite(new ScreenPicture(sequence, isKey, data.ToArray(), encoder.Codec));
         return true;
     }
 
@@ -649,11 +729,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         }
 
         _frame = new I420Frame(evenWidth, evenHeight);
-        _encoder = new H264Encoder(evenWidth, evenHeight, FramesPerSecond, _maxKilobitsPerSecond);
-        if (_kilobits != _maxKilobitsPerSecond)
-        {
-            _encoder.SetBitrate(_kilobits);
-        }
+        MakeEncoder(evenWidth, evenHeight);
         _frame.MarkChanged();
         var refiner = new TileRefiner(evenWidth, evenHeight);
         refiner.Mark(0, 0, evenWidth, evenHeight, Environment.TickCount64);
@@ -666,6 +742,69 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
             _dirtyRight = evenWidth;
             _dirtyBottom = evenHeight;
             _dirtyPixels = (long)evenWidth * evenHeight;
+        }
+    }
+
+    // Ein anderer Kodierer fuer dasselbe Bild (der Browser kann ein Codec nicht, oder die GPU ist ausgefallen). Die naechste Runde sendet
+    // ein Schluesselbild des ganzen Bildes; was noch unterwegs war, wird nicht mehr erwartet.
+    private void ReplaceEncoder()
+    {
+        var frame = _frame;
+        if (frame is null)
+        {
+            return;
+        }
+
+        _encoder?.Dispose();
+        _encoder = null;
+        _window.Reset();
+        MakeEncoder(frame.Width, frame.Height);
+        frame.MarkChanged();
+        lock (_gate)
+        {
+            _dirty = true;
+            _dirtyLeft = 0;
+            _dirtyTop = 0;
+            _dirtyRight = frame.Width;
+            _dirtyBottom = frame.Height;
+            _dirtyPixels = (long)frame.Width * frame.Height;
+            _forceKey = true;
+        }
+    }
+
+    private void MakeEncoder(int width, int height)
+    {
+        var choice = _selector.Choose(new EncoderRequest(width, height, FramesPerSecond, _kilobits, ClientCodecs), _noHardware);
+        _encoder = choice.Encoder;
+        _encoderBackend = choice.Backend;
+        foreach (var line in choice.Skipped)
+        {
+            _log?.LogInformation("Kodierer uebersprungen: {Reason}", line);
+        }
+
+        _log?.LogInformation("Kodierer: {Name} ({Codec}, {Kind}), {Width} x {Height}", choice.Encoder.Name, choice.Encoder.Codec.Label(),
+            choice.Encoder.IsHardware ? "GPU" : "CPU", width, height);
+        _events.Writer.TryWrite(new ScreenEncoderInfo(choice.Encoder.Codec, choice.Encoder.IsHardware, choice.Encoder.Name));
+    }
+
+    internal VideoCodecs ClientCodecs
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _clientCodecs;
+            }
+        }
+    }
+
+    private bool TakeCodecChange()
+    {
+        lock (_gate)
+        {
+            var value = _codecChanged;
+            _codecChanged = false;
+            return value;
         }
     }
 

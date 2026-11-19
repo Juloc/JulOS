@@ -65,7 +65,7 @@ internal sealed record H264EncoderOptions
 // the caller should wait before a picture in which that much is new.
 //
 // One encoder is used by one thread at a time; any number of encoders work side by side.
-public sealed unsafe class H264Encoder : IDisposable
+public sealed unsafe class H264Encoder : IVideoEncoder
 {
     // The smallest side OpenH264 takes.
     public const int MinSize = 16;
@@ -168,6 +168,28 @@ public sealed unsafe class H264Encoder : IDisposable
 
     public int Height { get; }
 
+    public VideoCodec Codec => VideoCodec.H264;
+
+    public string Name => "OpenH264 " + (LibraryVersion ?? "?");
+
+    public bool IsHardware => false;
+
+    public int KilobitsPerSecond => _kilobitsPerSecond;
+
+    // The caller found the connection slower or faster than the bit rate given at the start: the rate controller works with the new one
+    // from the next picture on (it changes how coarse pictures are and when the caller is asked to wait, not the stream's format).
+    // With the library's own rate control (tests) there is nothing to change.
+    public bool TrySetBitrate(int kilobitsPerSecond)
+    {
+        if (kilobitsPerSecond < 1 || _rate is null)
+        {
+            return false;
+        }
+
+        _rate.SetBitrate(kilobitsPerSecond);
+        return true;
+    }
+
     // True when the picture the viewer has is as sharp as this encoder makes it: encoding the same frame
     // once more would change nothing. After a change or a key frame it is false until the picture has been
     // encoded again often enough - once or twice where the bit rate is generous, more often where it is not.
@@ -206,14 +228,6 @@ public sealed unsafe class H264Encoder : IDisposable
     {
         ObjectDisposedException.ThrowIf(_encoder == null, this);
         return _rate?.Interval(Math.Clamp((double)changedPixels / ((long)Width * Height), 0.0, 1.0)) ?? 0;
-    }
-
-    // The caller found the connection slower or faster than the bit rate given at the start: the rate controller works with the new one
-    // from the next picture on (it changes how coarse pictures are and when the caller is asked to wait, not the stream's format).
-    public void SetBitrate(int maxKilobitsPerSecond)
-    {
-        ArgumentOutOfRangeException.ThrowIfLessThan(maxKilobitsPerSecond, 1);
-        _rate?.SetBitrate(maxKilobitsPerSecond);
     }
 
     // One picture in, one access unit out: Annex B with start codes, and SPS and PPS in front of every key

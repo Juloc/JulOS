@@ -247,4 +247,15 @@ public sealed class FileBrowserTests : IDisposable
         Assert.Equal(Path.Combine(_root, "Projects", "plan.md"), FileBrowser.RealPath(Path.Combine(_root, "Media", "p", "plan.md")));
         Assert.Equal(_root, FileBrowser.RealPath(Path.Combine(_root, "Media", "..")));
     }
+
+    [Fact]
+    public async Task A_named_pipe_in_the_folder_is_not_opened_and_does_not_block_a_thread()
+    {
+        using (var mkfifo = System.Diagnostics.Process.Start("mkfifo", Path.Combine(_root, "rohr"))) { mkfifo.WaitForExit(); Assert.Equal(0, mkfifo.ExitCode); }
+        var open = Task.Run(() => Browser().OpenRead("rohr"));
+        // open(2) auf einen FIFO ohne Schreiber wartet sonst fuer immer
+        Assert.Same(open, await Task.WhenAny(open, Task.Delay(TimeSpan.FromSeconds(10))));
+        Assert.Null(await open);
+        Assert.Equal("hallo", Text(Browser().OpenRead("notiz.txt")));          // gewoehnliche Dateien gehen weiter
+    }
 }

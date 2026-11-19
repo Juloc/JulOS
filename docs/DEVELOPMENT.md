@@ -13,9 +13,22 @@ deploy/dev/smoke.sh     # walk-through on the running instance: setup, login, wi
 - The SSH target is reachable from the server container as `test-ssh:2222` with user `tester` and the password `DEV_TARGET_PASSWORD` from `deploy/dev/.env`, and for the tests on `127.0.0.1:42222` (local only; `JULOS_TEST_SSH`, set by `test.sh`). The SSH tests (`RealSshTests`, `RemoteHttpTests` terminal tests) run the real SSH client against it; without `JULOS_TEST_SSH` they are skipped.
 - The RDP target is an xrdp + XFCE desktop (`rdp-target:3389`, throwaway login `ubuntu` / `ubuntu`, no published port). It behaves like the Linux VM, including reusing a disconnected session when you connect again.
 - `guacd` is published on `127.0.0.1:44822` (local only) so the tests can talk to a real one.
+- The test desktop has sound and a microphone: PipeWire is started in the session by `deploy/dev/rdp-target/julos-audio.sh` (autostart; a real VM has systemd for that) and `pipewire-module-xrdp` adds the devices `xrdp-sink` and `xrdp-source`. It takes a few seconds after the first login of a fresh container before audio works. `deploy/dev/play-tone.sh` plays a 440 Hz tone in the session and `deploy/dev/record-mic.sh` records the microphone to stdout (both are run with `docker exec -i -u ubuntu <rdp-target> bash -s < script`).
 - The test desktop also runs the real agent and clipboard helper from `tools/` (autostart when a session logs in), and shares a folder with the server (`/uploads` there, `~/julos-uploads` in the desktop), like the live setup. The server runs as the desktop user (`user: "1020:1020"`).
 - The RDP target gets `/dev/fuse` and `SYS_ADMIN` (throwaway container, local only) and has `fuse3`: xrdp mounts the files of a client's clipboard through FUSE, which the clipboard tests for files need. xrdp's `chansrv` keeps the capabilities of the last connected client, so after a Guacamole connection it offers no file streaming to the stream engine until it restarts (`docker restart` of the target, or a new session); see [CLIPBOARD.md](CLIPBOARD.md).
 - Stop with `docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/.env down` (add `-v` to also drop the database).
+
+## Testing the agent link (agent on another machine)
+
+The default test instance shares a folder between server and desktop, so it uses the Unix socket. To check the outbound link, run a **second compose project** (own name and ports; do not touch
+`julos-dev`) whose server does **not** share the folder (`JULOS_AGENT_SOCKET` pointing nowhere, no shared volume) and whose `rdp-target` has none either:
+
+1. start it, set up a throwaway account, add a desktop connection to `rdp-target`, connect once (this starts the agent in socket mode);
+2. in the connection dialog choose **Agent einrichten**; in the desktop container, as the desktop user and with `DISPLAY=:10`, download the files from `http://<server>:8080/agent-files/` and run
+   `bash install-linux-agent.sh --server http://<server>:8080 --code CODE --allow-http` (`--allow-http` is only for this plain-HTTP test network);
+3. reconnect in the browser: the window bar, the launcher, the photo button and "Bild aus der VM holen" now work over the link; the dialog shows **Verbunden**.
+
+`AgentLinkTests` (enrolment, tokens, routing, transfers with a fake agent in memory) run with `deploy/dev/test.sh`.
 
 ## First start and accounts on the test instance
 
@@ -63,6 +76,7 @@ shown as "bald verfügbar" (see `IDEAS.md`).
 On a wide screen with a mouse the remote picture is requested 1:1 in device pixels (zoom 1, shown at exactly 1 / `devicePixelRatio`); the phone keeps 0.8. A browser that does not report a fine pointer (some test panes) gets 0.8: set `localStorage` `pd.k` to `1` to see the PC rendering.
 The display tests run against your own compose project with `JULOS_DEV_NETWORK=my-ui_default deploy/dev/test-display.sh`.
 `deploy/dev/test-display.sh` runs the display tests (RDP client, H.264, the clipboard bridge against xrdp) in a container on the network of the test instance; with `JULOS_DEV_PROJECT=<project>` it uses another compose project's network.
+The encoder selection, the libva structure layouts (`Vaapi/LayoutTests`, numbers from `layout.c` against the real libva headers: `gcc -I<libva-dev include> layout.c`), the headers of the GPU encoder and the codec strings need neither a GPU nor xrdp; one test lets ffmpeg read the headers (skipped without ffmpeg). The GPU path itself only runs on a machine with a render node: `dotnet JulOS.dll diag encoders`, see [ENCODERS.md](ENCODERS.md).
 To test next to other sessions, start your own compose project with other ports and your `wwwroot` mounted over `/app/wwwroot` (no rebuild after
 frontend changes), for example an override file with `ports: !override ["127.0.0.1:18280:8080"]` and `docker compose -p my-ui -f deploy/dev/compose.yaml -f override.yaml up -d`.
 Cookies belong to the host name, not the port: two stacks opened as `127.0.0.1:...` in one browser overwrite each other's login, so open yours as
@@ -70,6 +84,10 @@ Cookies belong to the host name, not the port: two stacks opened as `127.0.0.1:.
 To test a terminal change without a rebuild, mount your `wwwroot` as described above and open a Terminal connection to `test-ssh` (the server image must contain the SSH relay, so rebuild once after backend changes). A changed host key can be provoked by editing `connections.host_key` in the database; the dialog and the confirmation path are then visible.
 To connect, add a Desktop connection to `rdp-target` (login `ubuntu` / `ubuntu`) and a Terminal connection to `test-ssh` port `2222`
 (user `tester`, password `DEV_TARGET_PASSWORD` from `deploy/dev/.env`).
+
+## Display tests against the test desktop
+
+`deploy/dev/test-display.sh` runs `tests/JulOS.Display.Tests` in an SDK container on the test network (`JULOS_DEV_NET` names another compose project's network, for example `julos-xyz_default`). The integration tests (`ScreenStreamTests`) are skipped without `JULOS_TEST_RDP_HOST`; the script sets it and also plays a tone and records the microphone in the desktop in the background, which the sound test (PCM blocks arrive, loud enough) and the microphone test (a 600 Hz tone sent as the browser would arrives in the recording) check. Close any browser tab connected to the same desktop first: a second client takes the xrdp session over.
 
 ## Build and test without Docker
 
@@ -85,7 +103,7 @@ dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj    # 
 | `JULOS_DB` | PostgreSQL connection string (required) |
 | `JULOS_GUACD` | `host:port` of guacd, default `guacd:4822` |
 | `JULOS_ALLOWED_HOSTS` | optional comma-separated list of hosts the signed-in user may connect to; empty means any host the server can reach |
-| `JULOS_AGENT_SOCKET` | Unix socket of the agent, default `/uploads/.agent/agent.sock` |
+| `JULOS_AGENT_SOCKET` | Unix socket of the agent on the same machine, default `/uploads/.agent/agent.sock` (agents on other machines connect outbound, no setting needed; see AGENT_API.md) |
 | `JULOS_UPLOAD_DIR` | shared folder for photo uploads, default `/uploads`; its disk is the one the system overview shows |
 | `JULOS_FILES_ROOT` | the one folder the read-only file browser shows, default `JULOS_UPLOAD_DIR`; `off` disables the file browser |
 | `JULOS_SETUP_CODE` | optional fixed setup code (otherwise a random one is logged while no account exists) |

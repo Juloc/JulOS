@@ -219,8 +219,68 @@ function editDialog(c, kind) {
       ? 'Ein Passwort ist verschlüsselt gespeichert und wird nie angezeigt. Ein neues hier überschreibt es. Ändert sich Adresse, Port, Art oder Benutzer, wird es gelöscht.'
       : 'Auf Wunsch wird es verschlüsselt auf dem Server gespeichert, dann genügt ein Tipp zum Verbinden. Leer lassen: du tippst es jedes Mal.';
   setMsg($('#connMsg'), '');
+  showAgentBox(c);
   $('#connDlg').showModal();
 }
+
+/* ---------- Agent auf dem Ziel einrichten (docs/AGENT_API.md) ---------- */
+const agentWhen = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); };
+
+/** Der Befehl fuer das Ziel: die Dateien kommen vom Server selbst (passend zu seiner Version), der Code gilt einmal. */
+function agentCommands(code) {
+  const origin = location.origin;
+  const http = origin.startsWith('http:') && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(origin);
+  return [
+    'mkdir -p ~/julos && cd ~/julos',
+    `for f in julos-agent.py julos-clip.py install-linux-agent.sh; do curl -fsSLO ${origin}/agent-files/$f; done`,
+    `bash install-linux-agent.sh --server ${origin} --code ${code}${http ? ' --allow-http' : ''}`,
+  ].join('\n');
+}
+
+async function showAgentBox(c) {
+  const box = $('#connAgent');
+  $('#connAgentCode').hidden = true; $('#connAgentCmd').textContent = ''; $('#connAgentCodeText').textContent = '';
+  box.hidden = !(c && c.kind === 'desktop');
+  if (box.hidden) return;
+  const stateEl = $('#connAgentState'), setup = $('#connAgentSetup'), remove = $('#connAgentRemove');
+  stateEl.textContent = 'Wird geladen …'; remove.hidden = true; setup.disabled = true;
+  let a = null;
+  try { a = ((await api('/api/agents')).agents || []).find((x) => x.connection === c.id) || null; }
+  catch (e) { stateEl.textContent = e.message; setup.disabled = false; return; }
+  if (state.editing !== c) return;                    // der Dialog zeigt inzwischen etwas anderes
+  setup.disabled = false;
+  if (!a) { stateEl.textContent = 'Nicht eingerichtet'; setup.textContent = 'Agent einrichten'; return; }
+  const what = [a.version && 'Agent ' + a.version, a.platform].filter(Boolean).join(', ');
+  stateEl.textContent = (a.online ? 'Verbunden' : 'Getrennt' + (a.lastSeen ? ' (zuletzt ' + agentWhen(a.lastSeen) + ')' : '')) + (what ? ' – ' + what : '') + (a.outdated ? ' – zu alt, bitte neu einrichten' : '');
+  setup.textContent = 'Neu einrichten'; remove.hidden = false;
+}
+
+$('#connAgentSetup').addEventListener('click', async (e) => {
+  const c = state.editing; if (!c) return;
+  const b = e.currentTarget; b.disabled = true; setMsg($('#connMsg'), '');
+  try {
+    const r = await api(`/api/connections/${c.id}/agent/code`, { method: 'POST', body: {} });
+    $('#connAgentCodeText').textContent = r.code;
+    $('#connAgentCmd').textContent = agentCommands(r.code);
+    $('#connAgentCode').hidden = false;
+  } catch (err) { setMsg($('#connMsg'), err.message); }
+  finally { b.disabled = false; }
+});
+
+$('#connAgentCopy').addEventListener('click', async () => {
+  const text = $('#connAgentCmd').textContent;
+  try { await navigator.clipboard.writeText(text); setMsg($('#connMsg'), 'Befehle kopiert.', true); }
+  catch { const r = document.createRange(); r.selectNodeContents($('#connAgentCmd')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); setMsg($('#connMsg'), 'Bitte markiert kopieren (Kopieren nicht erlaubt).'); }
+});
+
+// Entfernen braucht ein zweites Tippen (das Token gilt danach nicht mehr, der Agent trennt sich sofort)
+$('#connAgentRemove').addEventListener('click', async (e) => {
+  const b = e.currentTarget, c = state.editing; if (!c) return;
+  if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = 'Wirklich entfernen?'; setTimeout(() => { b.dataset.sure = ''; b.textContent = 'Agent entfernen'; }, 3000); return; }
+  b.dataset.sure = ''; b.textContent = 'Agent entfernen';
+  try { await api(`/api/connections/${c.id}/agent`, { method: 'DELETE' }); await showAgentBox(c); if (M) M.snack('Agent entfernt'); }
+  catch (err) { setMsg($('#connMsg'), err.message); }
+});
 
 $('#connForm').addEventListener('submit', async (e) => {
   e.preventDefault();

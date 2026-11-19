@@ -15,6 +15,7 @@ using JulOS.Frontend.SystemInfo;
 using JulOS.Integrations;
 using JulOS.Integrations.Agent;
 using JulOS.Integrations.Display;
+using JulOS.Integrations.Display.Video;
 using JulOS.Integrations.Guacamole;
 using JulOS.Integrations.Ssh;
 using JulOS.Workers;
@@ -23,6 +24,8 @@ using Npgsql;
 
 // Konsolenwerkzeug: dotnet JulOS.dll user ...
 if (args.Length > 0 && args[0] == "user") return await UserCli.RunAsync(args[1..]);
+// Diagnose ohne Datenbank: dotnet JulOS.dll diag encoders
+if (args.Length > 0 && args[0] == "diag") return DiagCli.Run(args[1..]);
 
 var builder = WebApplication.CreateSlimBuilder(args);
 builder.WebHost.ConfigureKestrel(o => o.AddServerHeader = false);
@@ -57,11 +60,22 @@ builder.Services.AddSingleton(new GuacdOptions(guacd[0], guacd.Length > 1 ? int.
 // Obergrenze offener Fernsteuer-Sitzungen pro Benutzer (alle Arten zusammen), siehe docs/SESSIONS.md
 builder.Services.AddSingleton(new SessionRegistry(int.TryParse(builder.Configuration["JULOS_MAX_SESSIONS_PER_USER"], out var maxSessions) ? maxSessions : SessionRegistry.DefaultMaxPerUser));
 builder.Services.AddSingleton<GuacRelay>();
+// Bildkodierer: JULOS_ENCODER (auto, software, vaapi) und JULOS_CODEC (auto, h264, h265), siehe docs/ENCODERS.md
+builder.Services.AddSingleton(sp =>
+{
+    var encoderLog = sp.GetRequiredService<ILoggerFactory>().CreateLogger("JulOS.Encoder");
+    var settings = EncoderSettings.Parse(builder.Configuration["JULOS_ENCODER"], builder.Configuration["JULOS_CODEC"], message => encoderLog.LogWarning("{Message}", message));
+    return EncoderSelector.CreateDefault(settings, encoderLog);
+});
 builder.Services.AddSingleton<ScreenRelay>();
 builder.Services.AddSingleton<SshRelay>(sp => new SshRelay(sp.GetRequiredService<ILogger<SshRelay>>(), registry: sp.GetRequiredService<SessionRegistry>()));
 // Agent in der Sitzung der Ziel-Maschine (Unix-Socket) und der gemeinsame Ordner fuer Foto-Uploads, beide vom Host eingebunden
 builder.Services.AddSingleton(new AgentOptions(builder.Configuration["JULOS_AGENT_SOCKET"] ?? "/uploads/.agent/agent.sock"));
 builder.Services.AddSingleton<AgentClient>();
+// Agenten, die sich von der Ziel-Maschine aus melden (WebSocket): Einrichtung, Verbindungen, Weg eines Aufrufs
+builder.Services.AddSingleton<AgentStore>();
+builder.Services.AddSingleton<AgentLinks>();
+builder.Services.AddSingleton<AgentRouter>();
 builder.Services.AddSingleton(new UploadOptions(builder.Configuration["JULOS_UPLOAD_DIR"] ?? "/uploads"));
 builder.Services.AddSingleton<ClipboardUploader>();
 builder.Services.AddSingleton<ClipboardFileUploader>();
@@ -90,6 +104,11 @@ var log = app.Logger;
 app.UseForwardedHeaders();
 
 await MigrateWithRetryAsync(app.Services.GetRequiredService<Migrator>(), log);
+
+if (!app.Services.GetRequiredService<SecretBox>().Enabled)
+    log.LogWarning("Passwörter speichern ist aus: kein Schlüssel. JULOS_SECRET_KEY setzen oder dafür sorgen, dass der Server in JULOS_DATA schreiben darf (dort legt er secret.key an).");
+// Was der Bildkodierer kann, einmal ins Log (Einzelheiten: dotnet JulOS.dll diag encoders)
+foreach (var line in EncoderReport.Summary(app.Services.GetRequiredService<EncoderSelector>())) log.LogInformation("Bildkodierer: {Line}", line);
 
 var auth = app.Services.GetRequiredService<AuthService>();
 if (await auth.SetupNeededAsync())
@@ -137,6 +156,7 @@ app.MapAbout(info);
 app.MapRemote();
 app.MapConnections();
 app.MapAgent();
+app.MapAgentLink(info);
 app.MapSystem();
 app.MapFiles();
 

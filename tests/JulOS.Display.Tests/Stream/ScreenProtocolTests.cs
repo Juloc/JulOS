@@ -1,4 +1,6 @@
 using System.Buffers.Binary;
+using JulOS.Integrations.Display.Rdp;
+using JulOS.Integrations.Display.Video;
 
 namespace JulOS.Integrations.Display.Tests;
 
@@ -96,5 +98,69 @@ public sealed class ScreenProtocolTests
         {
             Assert.False(ScreenProtocol.MayBeLong(type));
         }
+    }
+
+    [Fact]
+    public void A_picture_says_in_its_flags_whether_it_is_hevc_and_the_old_bits_stay()
+    {
+        var buffer = new byte[16];
+        ScreenProtocol.WritePicture(buffer, 1, true, [1], VideoCodec.Hevc);
+        Assert.Equal(3, buffer[1]);                                                // Bit0 Schluesselbild, Bit1 H.265
+        ScreenProtocol.WritePicture(buffer, 1, false, [1], VideoCodec.Hevc);
+        Assert.Equal(2, buffer[1]);
+        ScreenProtocol.WritePicture(buffer, 1, true, [1]);
+        Assert.Equal(1, buffer[1]);                                                // wie bisher: H.264
+    }
+
+    [Fact]
+    public void The_old_message_numbers_did_not_move_and_the_new_ones_start_at_30()
+    {
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], new[]
+        {
+            ScreenProtocol.ToBrowserPicture, ScreenProtocol.ToBrowserCursor, ScreenProtocol.ToBrowserSize, ScreenProtocol.ToBrowserError, ScreenProtocol.ToBrowserTaken,
+            ScreenProtocol.ToBrowserClipboard, ScreenProtocol.ToBrowserImage, ScreenProtocol.ToBrowserFiles, ScreenProtocol.ToBrowserFileChunk, ScreenProtocol.ToBrowserResult,
+        }.Select(b => (int)b));
+        Assert.Equal(16, ScreenProtocol.FromBrowserPause);
+        Assert.Equal(30, ScreenProtocol.ToBrowserEncoder);
+        Assert.Equal(30, ScreenProtocol.FromBrowserCodecs);
+    }
+
+    [Fact]
+    public void The_encoder_message_names_codec_kind_and_encoder()
+    {
+        var message = ScreenProtocol.Encoder(VideoCodec.Hevc, true, "VAAPI Intel iHD");
+        Assert.Equal([30, 2, 1], message[..3]);
+        Assert.Equal("VAAPI Intel iHD", System.Text.Encoding.UTF8.GetString(message, 3, message.Length - 3));
+        Assert.Equal([30, 1, 0], ScreenProtocol.Encoder(VideoCodec.H264, false, "")[..3]);
+    }
+
+    [Theory]
+    [InlineData(null, VideoCodecs.H264)]
+    [InlineData("", VideoCodecs.H264)]
+    [InlineData("x", VideoCodecs.H264)]
+    [InlineData("0", VideoCodecs.H264)]
+    [InlineData("1", VideoCodecs.H264)]
+    [InlineData("3", VideoCodecs.H264 | VideoCodecs.Hevc)]
+    [InlineData("2", VideoCodecs.Hevc)]
+    [InlineData("255", VideoCodecs.H264 | VideoCodecs.Hevc)]
+    [InlineData("4", VideoCodecs.H264)]                 // nothing we know: H.264
+    public void The_codecs_in_the_address_are_read_leniently(string? text, VideoCodecs expected)
+    {
+        Assert.Equal(expected, ScreenProtocol.ParseCodecs(text));
+    }
+
+    [Fact]
+    public async Task The_codecs_message_from_the_browser_changes_what_the_stream_may_send()
+    {
+        await using var stream = new ScreenStream(new RdpOptions { Host = "unused", UserName = "u", Password = "p" });
+        Assert.Equal(VideoCodecs.H264, stream.ClientCodecs);
+        ScreenRelay.Handle(stream, [ScreenProtocol.FromBrowserCodecs, 3]);
+        Assert.Equal(VideoCodecs.H264 | VideoCodecs.Hevc, stream.ClientCodecs);
+        ScreenRelay.Handle(stream, [ScreenProtocol.FromBrowserCodecs, 1]);          // the HEVC decoder failed: back to H.264
+        Assert.Equal(VideoCodecs.H264, stream.ClientCodecs);
+        ScreenRelay.Handle(stream, [ScreenProtocol.FromBrowserCodecs, 0]);          // nonsense means H.264
+        Assert.Equal(VideoCodecs.H264, stream.ClientCodecs);
+        ScreenRelay.Handle(stream, [ScreenProtocol.FromBrowserCodecs]);             // too short: ignored
+        Assert.Equal(VideoCodecs.H264, stream.ClientCodecs);
     }
 }

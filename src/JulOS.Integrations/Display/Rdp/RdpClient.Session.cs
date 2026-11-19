@@ -10,6 +10,7 @@ public sealed partial class RdpClient
 {
     // The largest picture update, put together from fragments, this client accepts. Announced to the server.
     private const int MaxFragmented = 8 * 1024 * 1024;
+    private const long MaxPixels = 40_000_000;
     private const int PointerCacheSize = 32;
 
     private readonly uint[] _palette = new uint[256];
@@ -217,7 +218,8 @@ public sealed partial class RdpClient
             }
         }
 
-        if (width < 1 || height < 1 || width > 16384 || height > 16384)
+        // 40 Mio. Bildpunkte sind knapp ueber 8K (33 Mio.) und 160 MB Bildpuffer; was ein Ziel darueber meldet, ist kein Bildschirm
+        if (width < 1 || height < 1 || width > 16384 || height > 16384 || (long)width * height > MaxPixels)
         {
             throw new RdpProtocolException("a desktop of impossible size");
         }

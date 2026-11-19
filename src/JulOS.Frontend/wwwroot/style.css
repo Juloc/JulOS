@@ -96,6 +96,12 @@ dialog label { margin-bottom: 10px; }
 .row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .row button { flex: 1 1 auto; }
 .hint { color: var(--muted); font-size: .85rem; margin: 4px 0 8px; }
+/* Agent einrichten (Verbindungsdialog) */
+.agentbox { border-top: 1px solid rgba(127,127,127,.3); margin-top: 10px; padding-top: 6px; }
+.agentbox h3 { margin: 6px 0 2px; font-size: 1rem; }
+.agentstate { margin: 2px 0; font-weight: 600; }
+.agentcode { font: 700 1.5rem/1.2 ui-monospace, monospace; letter-spacing: .12em; text-align: center; margin: 6px 0; user-select: all; }
+.agentcmd { white-space: pre-wrap; word-break: break-all; font: .78rem/1.4 ui-monospace, monospace; background: rgba(127,127,127,.15); border-radius: 8px; padding: 8px; margin: 4px 0 8px; user-select: all; }
 .close { width: 100%; }
 .swatches { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0 14px; }
 .swatches .sw { width: 44px; height: 44px; border-radius: 50%; border: 3px solid transparent; cursor: pointer; flex: 0 0 auto; }
@@ -245,6 +251,13 @@ label.check input { width: auto; }
 .connkey { display: inline-flex; vertical-align: -3px; margin-left: 6px; color: var(--muted); }
 .connkey svg { width: 14px; height: 14px; fill: currentColor; }
 .row .k.add svg { width: 18px; height: 18px; margin-right: 4px; }
+
+/* Anzeige, solange das Mikrofon an ist; Antippen beendet es */
+#micLive { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 8px); left: 50%; transform: translateX(-50%); z-index: 60; display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border: 0; border-radius: 999px; background: #b3261e; color: #fff; font: 600 .85rem/1 system-ui, sans-serif; box-shadow: 0 2px 8px rgba(0,0,0,.35); cursor: pointer; }
+#micLive[hidden] { display: none; }
+#micLive .dot { width: 9px; height: 9px; border-radius: 50%; background: #fff; animation: micpulse 1.2s ease-in-out infinite; }
+@keyframes micpulse { 50% { opacity: .25; } }
+.mi[hidden] { display: none; }
 
 /* Bilder und Dateien in der Zwischenablage */
 .sv-toast.tap { pointer-events: auto; cursor: pointer; }

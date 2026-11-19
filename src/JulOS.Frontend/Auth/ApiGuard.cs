@@ -18,15 +18,26 @@ internal sealed class ApiGuard(RequestDelegate next, AuthService auth)
         "/api/health", "/api/auth/me", "/api/auth/login", "/api/setup/status", "/api/setup/begin", "/api/setup/finish",
     };
 
+    public const long MaxSmallBody = 64 * 1024;
+
+    /// <summary>Die Wege, die grosse Koerper annehmen (Foto und Datei fuer die Zwischenablage); jeder prueft seine Grenze selbst.</summary>
+    private static readonly HashSet<string> LargeBodyPaths = new(StringComparer.Ordinal) { "/api/upload", "/api/upload-file" };
+
     public async Task InvokeAsync(HttpContext ctx)
     {
         if (!ctx.Request.Path.StartsWithSegments("/api")) { await next(ctx); return; }
+
+        // Der Agent auf der Ziel-Maschine ist kein Browser: er hat weder Cookie noch Origin. Seine Wege pruefen Code und Token selbst (Agent/AgentLinkEndpoints.cs).
+        if (Agent.AgentLinkEndpoints.IsAgentPath(ctx.Request.Path)) { await next(ctx); return; }
 
         if (!HttpMethods.IsGet(ctx.Request.Method) && !HttpMethods.IsHead(ctx.Request.Method))
         {
             if (ctx.Request.Headers["X-JulOS"] != "1" || !SameOrigin(ctx.Request)) { await Reject(ctx, 403, "Anfrage abgelehnt."); return; }
             var small = ctx.Request.Path.StartsWithSegments("/api/auth") || ctx.Request.Path.StartsWithSegments("/api/setup");
             if (small && ctx.Request.ContentLength is null or > 4096) { await Reject(ctx, 413, "Anfrage zu groß."); return; }
+            // Alles ausser den Uploads (die setzen ihre eigene Grenze) sind kleine JSON-Koerper; Kestrel erlaubt sonst 30 MB je Anfrage
+            if (!LargeBodyPaths.Contains(ctx.Request.Path.Value ?? "") && ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
+                limit.MaxRequestBodySize = MaxSmallBody;
         }
 
         if (PublicPaths.Contains(ctx.Request.Path.Value ?? "")) { await next(ctx); return; }

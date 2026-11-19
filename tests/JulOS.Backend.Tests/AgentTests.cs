@@ -202,6 +202,25 @@ public sealed class ClipboardFileUploaderTests : IDisposable
     }
 
     [Fact]
+    public async Task The_files_folder_has_a_quota_old_folders_make_room_and_new_ones_are_kept()
+    {
+        var root = Path.Combine(_dir, "files");
+        var old = Directory.CreateDirectory(Path.Combine(root, "alt")); File.WriteAllBytes(Path.Combine(old.FullName, "a.bin"), new byte[600]);
+        old.LastWriteTimeUtc = DateTime.UtcNow.AddDays(-2);
+        var fresh = Directory.CreateDirectory(Path.Combine(root, "neu")); File.WriteAllBytes(Path.Combine(fresh.FullName, "b.bin"), new byte[300]);
+        var up = new ClipboardFileUploader(new UploadOptions(_dir, TimeSpan.FromMilliseconds(100), FilesQuota: 1000));
+
+        // 900 Bytes liegen schon, 200 neue passen nicht: der Ordner von vorgestern wird geraeumt, danach ist Platz (kein Helfer: Ergebnis "keine Antwort")
+        Assert.Equal(FileOutcome.HelperSilent, (await up.SaveAsync("c.bin", new byte[200], CancellationToken.None)).Outcome);
+        Assert.False(Directory.Exists(old.FullName));
+        Assert.True(Directory.Exists(fresh.FullName));
+
+        // 800 neue passen neben den 300 frischen Bytes nicht: abgelehnt, nichts wird geschrieben, der frische Ordner bleibt
+        Assert.Equal(FileOutcome.QuotaExceeded, (await up.SaveAsync("d.bin", new byte[800], CancellationToken.None)).Outcome);
+        Assert.Equal([fresh.FullName], Directory.GetDirectories(root));
+    }
+
+    [Fact]
     public async Task Empty_too_big_and_nameless_files_are_rejected()
     {
         var up = new ClipboardFileUploader(new UploadOptions(_dir));

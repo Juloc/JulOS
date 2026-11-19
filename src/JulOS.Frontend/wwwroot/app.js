@@ -1,5 +1,6 @@
 import Guacamole from '/lib/guacamole-common.min.js';
 import { StreamClient } from './stream.js';
+import { StreamAudio } from './stream-audio.js';
 import { SizeGate, LayoutLog } from './layoutlog.js';
 import { Session, Sessions } from './sessions.js';
 import { LIMITS, fmtSize, bmpFromImage, pngFromBytes, filesFromTransfer, xhrUpload, saveBlob } from './clip.js';
@@ -24,6 +25,8 @@ const store = {
 
 /* ---------- Material-Icons (inline SVG, 24 px) ---------- */
 const ICONS = {
+  volume: 'M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z',
+  mic: 'M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z',
   keyboard: 'M20 5H4c-1.1 0-1.99.9-1.99 2L2 17c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zm-1 2H5v-2h2v2zm0-3H5V8h2v2zm9 7H8v-2h8v2zm0-4h-2v-2h2v2zm0-3h-2V8h2v2zm3 3h-2v-2h2v2zm0-3h-2V8h2v2z',
   zoom_in: 'M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14zm2.5-4h-2v2H9v-2H7V9h2V7h1v2h2v1z',
   zoom_out: 'M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14zM7 9h5v1H7z',
@@ -356,8 +359,14 @@ let appsTarget = null;
 async function openApps(session) {
   appsTarget = session;
   $('#appsDlg').showModal(); $('#appsSearch').value = '';
-  if (!session.W.apps) { try { session.W.apps = (await agent('/apps')).apps || []; } catch (e) { session.toast('Programme: ' + e.message); session.W.apps = []; } }
+  if (!session.W.apps) { try { session.W.apps = (await agent(session.conn.id, '/apps')).apps || []; } catch (e) { session.toast('Programme: ' + e.message); session.W.apps = []; } }
   renderApps('');
+}
+/** Symbol vom Agenten (Base64 eines PNG) als Bild. Nie in HTML-Text einsetzen: der Wert kommt aus der Sitzung der Ziel-Maschine. */
+function iconImg(b64) {
+  if (typeof b64 !== 'string' || !b64 || b64.length > 200000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(b64)) return null;
+  const img = document.createElement('img'); img.alt = ''; img.src = 'data:image/png;base64,' + b64;
+  return img;
 }
 function renderApps(q) {
   const s = appsTarget; if (!s) return;
@@ -365,10 +374,11 @@ function renderApps(q) {
   const f = (s.W.apps || []).filter((a) => a.name.toLowerCase().includes(q.toLowerCase())).slice(0, 80);
   for (const a of f) {
     const d = document.createElement('div'); d.className = 'appitem'; d.setAttribute('role', 'button');
-    d.innerHTML = (a.icon ? `<img alt="" src="data:image/png;base64,${a.icon}">` : '<span style="width:32px"></span>') + `<span></span>`; d.lastChild.textContent = a.name;
+    const name = document.createElement('span'); name.textContent = a.name;
+    d.append(iconImg(a.icon) || Object.assign(document.createElement('span'), { style: 'width:32px' }), name);
     d.addEventListener('click', async () => {
       $('#appsDlg').close();
-      try { await agent('/apps/launch', 'POST', { id: a.id }); s.toast('Starte ' + a.name + ' …', 2200); setTimeout(() => s.pollWindows(), 1500); } catch (e) { s.toast('Start: ' + e.message); }
+      try { await agent(s.conn.id, '/apps/launch', 'POST', { id: a.id }); s.toast('Starte ' + a.name + ' …', 2200); setTimeout(() => s.pollWindows(), 1500); } catch (e) { s.toast('Start: ' + e.message); }
     });
     list.appendChild(d);
   }
@@ -410,8 +420,9 @@ const ERROR_TEXT = {
   797: null,        // zu viele Sitzungen: der Server schickt den Text selbst ("Es sind schon 8 Sitzungen offen ...")
 };
 
-async function agent(path, method = 'GET', body = null) {
-  const r = await fetch('/api/agent' + path, { method, headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, body: body ? JSON.stringify(body) : undefined });
+/** Anfrage an den Agenten der Verbindung `connId` (die Verbindung ist bei jedem Aufruf dabei: ein Agent gehoert zu genau einer Verbindung, docs/AGENT_API.md). */
+async function agent(connId, path, method = 'GET', body = null) {
+  const r = await fetch('/api/agent' + path + '?c=' + encodeURIComponent(connId), { method, headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, body: body ? JSON.stringify(body) : undefined });
   if (!r.ok) throw new Error('Agent ' + r.status);
   return r.json();
 }
@@ -510,12 +521,59 @@ export class RemoteSession extends Session {
   setVisible(on) {
     on = !!on;
     this.visible = on; this.element.hidden = !on;
-    this.applyPause();
+    this.applyPause(); this.applyAudio();
     if (on) {
       this.fitDisplay(); this.scheduleSize(80); if (this.W.available) this.pollWindows(); this.refreshAll();
       if (cur() === this && prevValue) { setKbVal(''); prevValue = ''; }       // Text, der fuer die vorige Sitzung im Eingabefeld stand, nicht in diese uebertragen
     }
     else { this.closeMenu(); this.closeWinSheet(); }
+  }
+  /* ---------- Ton (nur beim Stream; jede Sitzung hat ihr eigenes Audio, siehe stream-audio.js) ---------- */
+  audioOf() { return this.client instanceof StreamClient ? this.client.audio : null; }
+  wireAudio(client) {
+    const a = client.audio;
+    a.label = this.title;
+    a.onchange = () => { if (this.client === client) this.updateAudioMenu(); };
+    a.onmicwait = (offered) => this.toast(offered ? 'Das Mikrofon ist an, aber im Desktop nimmt noch kein Programm auf.'
+      : 'Das Mikrofon ist an. Der Desktop meldet noch keinen Mikrofon-Kanal; er wird erst geöffnet, wenn dort ein Programm aufnimmt.', 5200);
+    a.setActive(this.visible && Sessions.active === this);
+  }
+  startAudio(client) {
+    // Wie zuletzt: Ton an, wenn der Benutzer ihn nicht ausgeschaltet hat. Ohne Eingabe seit dem Laden der Seite bleibt der Browser stumm,
+    // bis die erste Eingabe kommt (stream-audio.js wartet darauf).
+    const a = client.audio;
+    a.setVolume(store.get('volume', 1));
+    this.applyAudio();
+    if (store.get('audio', true)) a.enable().then(() => a.connected(), (e) => this.toast(e.message, 3600));
+    this.updateAudioMenu();
+  }
+  /** Ton nur fuer die sichtbare und aktive Sitzung; die anderen bekommen vom Server nichts geschickt. */
+  applyAudio() { const a = this.audioOf(); if (a) a.setActive(this.visible && Sessions.active === this); }
+  updateAudioMenu() {
+    const a = this.audioOf();
+    for (const act of ['sound', 'volume', 'mic']) { const row = this.el.menu.querySelector(`[data-act="${act}"]`); if (row) row.hidden = !a; }
+    if (!a) return;
+    const set = (c, t) => { const n = this.el.menu.querySelector(c); if (n) n.textContent = t; };
+    set('.mv-sound', !a.remote.output ? 'kein Ton vom Rechner' : !a.wanted ? 'aus' : a.state === 'running' ? 'an' : 'bitte antippen');
+    set('.mv-volume', Math.round(a.volume * 100) + ' %');
+    set('.mv-mic', !a.micOn ? (StreamAudio.micOwner && StreamAudio.micOwner !== a ? 'läuft in „' + (StreamAudio.micOwner.label || 'anderer Sitzung') + '“' : 'aus')
+      : a.remote.recording ? 'an, nimmt auf' : 'an, wartet auf Programm');
+  }
+  async audioAction(act) {
+    const a = this.audioOf(); if (!a) return;
+    a.label = this.title;
+    try {
+      if (act === 'sound') {
+        if (a.wanted && a.state === 'running') { a.disable(); store.set('audio', false); }
+        else { store.set('audio', true); await a.enable(); a.connected(); }
+      } else if (act === 'volume') {
+        const next = a.volume > 0.8 ? 0.6 : a.volume > 0.5 ? 0.3 : a.volume > 0.2 ? 0 : 1;
+        a.setVolume(next); store.set('volume', next);
+      } else if (act === 'mic') {
+        if (a.micOn) a.stopMic(); else await a.startMic();
+      }
+    } catch (e) { this.toast(e.message, 4800); }
+    this.updateAudioMenu();
   }
   applyPause() { if (this.client instanceof StreamClient) this.client.setPaused(!this.visible || document.hidden); }
   refreshAll() { this.updateMenuLabels(); this.renderRows(); }
@@ -584,6 +642,7 @@ export class RemoteSession extends Session {
     this.stopWindowBar(); this.el.topbar.hidden = true;
     this.el.display.replaceChildren();
     this.resetMods();
+    this.updateAudioMenu();
   }
 
   /** Der Stream kam nicht zustande (es wurde nie ein Bild gezeichnet): einmal mit Guacamole neu verbinden, statt einen Fehler zu zeigen.
@@ -647,6 +706,7 @@ export class RemoteSession extends Session {
     const tunnel = isStream ? null : new Guacamole.WebSocketTunnel(wsBase + '/api/remote/ws');
     const client = isStream ? new StreamClient(wsBase + '/api/remote/screen') : new Guacamole.Client(tunnel);
     this.engine = engine;
+    if (isStream) this.wireAudio(client);
     const display = client.getDisplay();
     this.tunnel = tunnel; this.client = client; this.display = display; this.lastSent = { w, h }; this.gate = new SizeGate();
     this.lay.note('conn', { engine });
@@ -669,6 +729,7 @@ export class RemoteSession extends Session {
         if (this.hasSibling()) this.toast('Hinweis: Eine andere Sitzung läuft zum selben Ziel und Benutzer. Ein RDP-Ziel gibt je Benutzer nur einen Desktop her, die Sitzungen übernehmen ihn gegenseitig.', 6000);
         this.startWindowBar(); this.fitDisplay(); this.pushSize(); this.waitForFrame(client); this.applyPause();
         if (cur() === this) focusKbForHardware();
+        if (isStream) this.startAudio(client);
         if (isStream) setTimeout(() => { if (this.client === client && !client.drawn) this.fallBackFromStream(client); }, 10000);   // Groesse gemeldet, aber nie ein Bild: der Dekodierer geht nicht
         // Die Zaehler der Wiederholung gelten erst als zurueckgesetzt, wenn die Verbindung wirklich haelt (sonst endlos: verbunden, sofort getrennt, neu ...)
         setTimeout(() => { if (this.client === client && this.connected) { this.firstLogin = false; this.retry = 0; } }, 12000);
@@ -890,7 +951,7 @@ export class RemoteSession extends Session {
     const gen = this.gen, W = this.W;
     W.available = false;
     // Der Agent gehoert zur Maschine, neben der der Server laeuft: nur fuer Desktop-Verbindungen anbieten
-    if (this.conn.kind === 'desktop') { try { const h = await (await fetch('/api/agent/health')).json(); W.available = !!h.available; } catch { W.available = false; } }
+    if (this.conn.kind === 'desktop') { try { const h = await (await fetch('/api/agent/health?c=' + encodeURIComponent(this.conn.id))).json(); W.available = !!h.available; } catch { W.available = false; } }
     if (gen !== this.gen || this.disposed) return;
     this.dbg('agent', { available: W.available });
     if (this.conn.kind === 'desktop') store.set('winbar.' + this.conn.id, W.available);
@@ -904,7 +965,7 @@ export class RemoteSession extends Session {
     if (!this.connected || !W.available || document.hidden || !this.visible) return;     // im Hintergrund wird nicht abgefragt
     const gen = this.gen;
     try {
-      const d = await agent('/windows');
+      const d = await agent(this.conn.id, '/windows');
       if (gen !== this.gen) return;
       W.list = d.windows || []; W.mode = d.mode || 'desktop';
       this.renderWindows(); this.applyProfile();
@@ -944,9 +1005,9 @@ export class RemoteSession extends Session {
     mode.addEventListener('click', () => this.toggleMode()); row.appendChild(mode);
     for (const w of W.list) {
       const c = document.createElement('div'); c.className = 'chip' + (w.active ? ' active' : '') + (w.minimized ? ' min' : ''); c.setAttribute('role', 'button');
-      const img = w.icon ? `<img alt="" src="data:image/png;base64,${w.icon}">` : '';
       const t = document.createElement('span'); t.textContent = (w.title || w.app || '?').slice(0, 40);
-      c.innerHTML = img; c.appendChild(t);
+      const img = iconImg(w.icon); if (img) c.appendChild(img);
+      c.appendChild(t);
       let timer = null, longDone = false;
       c.addEventListener('pointerdown', () => { longDone = false; timer = setTimeout(() => { longDone = true; this.openWinSheet(w); }, 480); });
       const cancel = () => clearTimeout(timer);
@@ -959,11 +1020,11 @@ export class RemoteSession extends Session {
     row.scrollLeft = keepScroll;
   }
   async activateWindow(id, maximize) {
-    try { await agent(`/windows/${id}/activate`, 'POST', { maximize }); setTimeout(() => this.pollWindows(), 350); } catch (e) { this.toast('Fenster: ' + e.message); }
+    try { await agent(this.conn.id, `/windows/${id}/activate`, 'POST', { maximize }); setTimeout(() => this.pollWindows(), 350); } catch (e) { this.toast('Fenster: ' + e.message); }
   }
   async toggleMode() {
     const W = this.W;
-    try { const d = await agent('/mode', 'POST', { mode: W.mode === 'apps' ? 'desktop' : 'apps' }); W.mode = d.mode; W.lastCls = null; this.renderWindows(); this.toast(W.mode === 'apps' ? 'Programm-Modus: Taskleiste der VM ausgeblendet' : 'Desktop-Modus', 2200); setTimeout(() => this.pollWindows(), 500); }
+    try { const d = await agent(this.conn.id, '/mode', 'POST', { mode: W.mode === 'apps' ? 'desktop' : 'apps' }); W.mode = d.mode; W.lastCls = null; this.renderWindows(); this.toast(W.mode === 'apps' ? 'Programm-Modus: Taskleiste der VM ausgeblendet' : 'Desktop-Modus', 2200); setTimeout(() => this.pollWindows(), 500); }
     catch (e) { this.toast('Modus: ' + e.message); }
   }
   openWinSheet(w) {
@@ -971,8 +1032,8 @@ export class RemoteSession extends Session {
     const item = (ic, text, fn) => { const d = document.createElement('div'); d.className = 'mi'; d.setAttribute('role', 'menuitem'); d.innerHTML = `<span class="mic">${ico(ic)}</span><span class="mt">${text}</span>`; d.addEventListener('click', () => { this.closeWinSheet(); fn(); }); sh.appendChild(d); };
     item('window', 'Nach vorn und maximieren', () => this.activateWindow(w.id, true));
     item('window', 'Nach vorn (Größe lassen)', () => this.activateWindow(w.id, false));
-    item('minimize', 'Minimieren', async () => { try { await agent(`/windows/${w.id}/minimize`, 'POST', {}); setTimeout(() => this.pollWindows(), 300); } catch (e) { this.toast(e.message); } });
-    item('close', 'Schließen', async () => { try { await agent(`/windows/${w.id}/close`, 'POST', {}); setTimeout(() => this.pollWindows(), 500); } catch (e) { this.toast(e.message); } });
+    item('minimize', 'Minimieren', async () => { try { await agent(this.conn.id, `/windows/${w.id}/minimize`, 'POST', {}); setTimeout(() => this.pollWindows(), 300); } catch (e) { this.toast(e.message); } });
+    item('close', 'Schließen', async () => { try { await agent(this.conn.id, `/windows/${w.id}/close`, 'POST', {}); setTimeout(() => this.pollWindows(), 500); } catch (e) { this.toast(e.message); } });
     item('palette', 'Anzeigegröße für dieses Programm merken', () => { profiles[w.class] = this.k; store.set('profiles', profiles); this.toast('Gemerkt: ' + this.zoomPercent() + ' % für ' + (w.app || w.class)); });
     sh.hidden = false; this.el.scrim.hidden = false;
   }
@@ -1123,6 +1184,7 @@ export class RemoteSession extends Session {
     set('.mv-autokb', S.autoKb ? 'an' : 'aus');
     set('.mv-autopaste', S.autoPaste ? 'an' : 'aus');
     set('.mv-count', String(Sessions.count));
+    this.updateAudioMenu();
   }
   openMenu() { applyKbMode(); this.updateMenuLabels(); this.el.menu.hidden = false; this.el.scrim.hidden = false; this.setActOn('menu', true); }
   closeMenu() { this.el.menu.hidden = true; if (this.el.winSheet.hidden) this.el.scrim.hidden = true; this.setActOn('menu', false); }
@@ -1130,6 +1192,7 @@ export class RemoteSession extends Session {
   onMenuClick(e) {
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (!act) return;
+    if (['sound', 'volume', 'mic'].includes(act)) { this.audioAction(act); return; }
     if (['kbMode', 'autoKb', 'touchMode', 'autoPaste'].includes(act)) {
       if (act === 'kbMode') S.kbMode = S.kbMode === 'rich' ? 'normal' : S.kbMode === 'normal' ? 'direct' : 'rich';
       if (act === 'autoKb') S.autoKb = !S.autoKb;
@@ -1224,7 +1287,7 @@ export class RemoteSession extends Session {
         let r;
         if (this.nativeClip()) r = await this.client.sendTransfer(2, f, f.name, i, files.length, progress, ctl.signal);
         else {
-          const x = await xhrUpload('/api/upload-file', { 'X-JulOS': '1', 'X-File-Name': encodeURIComponent(f.name), 'Content-Type': 'application/octet-stream' }, f, progress, ctl.signal);
+          const x = await xhrUpload('/api/upload-file?c=' + encodeURIComponent(this.conn.id), { 'X-JulOS': '1', 'X-File-Name': encodeURIComponent(f.name), 'Content-Type': 'application/octet-stream' }, f, progress, ctl.signal);
           r = { code: x.status === 200 ? 0 : 4, text: (x.body && x.body.error) || 'Fehler ' + x.status };
         }
         if (ctl.signal.aborted) return false;
@@ -1649,7 +1712,7 @@ $('#pullImgBtn').addEventListener('click', async () => {
   const s = cur(); if (!s) return;
   s.showXfer('Hole das Bild aus der VM …', null);
   try {
-    const r = await fetch('/api/clipboard/pull', { method: 'POST', headers: { 'X-JulOS': '1' } });
+    const r = await fetch('/api/clipboard/pull?c=' + encodeURIComponent(s.conn.id), { method: 'POST', headers: { 'X-JulOS': '1' } });
     if (r.status === 204) { toast('In der Zwischenablage der VM liegt kein Bild', 3200); return; }
     if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'Fehler ' + r.status); }
     await s.showRemoteImage(await r.blob(), 'pull');
@@ -1832,7 +1895,7 @@ async function uploadPhoto(file) {
     if (!blob) throw new Error('Bild konnte nicht umgewandelt werden');
   }
   toast('Foto wird hochgeladen …', 6000);
-  const r = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': blob.type || 'image/jpeg', 'X-JulOS': '1' }, body: blob });
+  const r = await fetch('/api/upload?c=' + encodeURIComponent(s.conn.id), { method: 'POST', headers: { 'Content-Type': blob.type || 'image/jpeg', 'X-JulOS': '1' }, body: blob });
   if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'Fehler ' + r.status); }
   dbg('photo', { kb: Math.round(blob.size / 1024), auto: S.autoPaste });
   if (S.autoPaste) { await sleep(250); await s.sendChord([KS.ctrl, charKeysym('v')]); toast('Foto eingefügt (Strg+V)'); }
@@ -1939,3 +2002,19 @@ export const remoteApi = {
   blurKeys: () => { if (kbFocused()) el.kb.blur(); },
   hasKeys: () => kbFocused(),
 };
+
+/* ---------- Ton mehrerer Sitzungen: nur die aktive spielt, das Mikrofon hat eine, eine Anzeige fuer alle ---------- */
+const applyAllAudio = () => { for (const x of Sessions.list()) if (x instanceof RemoteSession) x.applyAudio(); };
+Sessions.addEventListener('activated', applyAllAudio);
+Sessions.addEventListener('closed', applyAllAudio);
+const micPill = document.getElementById('micLive');
+if (micPill) {
+  const showMic = () => {
+    const owner = StreamAudio.micOwner;
+    micPill.hidden = !(owner && owner.micOn);
+    if (!micPill.hidden) micPill.lastChild.textContent = owner.label ? 'Mikrofon an · ' + owner.label : 'Mikrofon an';
+    for (const x of Sessions.list()) if (x instanceof RemoteSession) x.updateAudioMenu();
+  };
+  StreamAudio.watchMic(showMic);
+  micPill.addEventListener('click', () => StreamAudio.stopMic());
+}

@@ -107,7 +107,7 @@ Sessions.addEventListener('opened' | 'closed' | 'activated' | 'statechange' | 's
 
 ## Grenzen (Stand heute)
 
-- Das Fensterleisten-/Programm-Modus-Backend (Agent) gehört zu dem Rechner neben dem Server: jede Desktop-Sitzung zeigt seine Fenster, auch wenn sie
-  zu einem anderen Ziel verbunden ist.
+- Das Fensterleisten-/Programm-Modus-Backend (Agent) gehört zu genau einer Verbindung: ist für sie ein Agent eingerichtet (er meldet sich vom Ziel aus beim
+  Server, siehe AGENT_API.md), zeigt jede Sitzung dieser Verbindung dessen Fenster. Ohne eingerichteten Agenten gilt wie bisher der lokale Socket (derselbe Rechner).
 - Die Sitzungen leben im Speicher der Seite: nach einem Neuladen (oder einem beendeten PWA-Prozess) sind sie weg und werden neu geöffnet.
 - Obergrenze pro Benutzer: `JULOS_MAX_SESSIONS_PER_USER` (Standard 8), global 16 je Engine.

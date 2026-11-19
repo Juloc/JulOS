@@ -4,12 +4,34 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
-## [Unveröffentlicht]
+## [Unreleased]
 
 ### Neu
 - Stream-Engine: Vertrauen bei erster Nutzung für das RDP-Zertifikat statt „Zertifikat ignorieren“: der Fingerabdruck wird je Verbindung gemerkt; ändert er sich, kommt vor dem Senden des Passworts eine Warnung mit altem und neuem Fingerabdruck (Abbrechen oder bestätigen). Guacamole verhält sich wie bisher.
 - Stream-Engine: auf langsamer Leitung (WLAN, Mobilfunk, WAN) passt sich die Bitrate an die gemessene Liefergeschwindigkeit an und das Fenster der unbestätigten Bilder wird kleiner; Klicks reagieren dort nach etwa 0,3 s statt nach über 1 s.
 - Stream-Engine: ruhende Bildteile (Text, Farbe) werden zusätzlich verlustfrei nachgeliefert und liegen pixelgenau über dem Video, farbiger Text ist damit so scharf wie bei Guacamole.
+- Der Agent meldet sich von der Ziel-Maschine aus beim Server (WebSocket über HTTPS, ausgehend): Fensterleiste, Programmstart sowie Foto-, Datei- und Zwischenablage-Übertragung gehen jetzt auch, wenn der Server auf einem anderen Rechner läuft.
+- „Agent einrichten“ und „Agent entfernen“ im Verbindungsdialog: einmaliger Code (10 Minuten) und fertige Befehle für das Ziel; Status je Verbindung (verbunden, getrennt, Version).
+- Der Agent bleibt eine einzige Python-Datei ohne Zusatzpakete; der Unix-Socket-Weg für denselben Rechner funktioniert weiter.
+
+### Geändert
+- Die Aufrufe der App an Agent, Foto-Upload, Datei-Upload und „Bild aus der VM holen“ nennen die Verbindung (`?c=`); ohne Angabe gilt wie bisher der lokale Socket.
+
+## [0.2.0] - 2026-11-19
+
+### Neu
+- Mehrere Sitzungen gleichzeitig: beliebig viele RDP- und SSH-Verbindungen nebeneinander (Desktop: ein Fenster je Sitzung, Handy: Sitzungswechsler), pro Nutzer standardmäßig bis zu 8.
+- Natives SSH-Terminal im Browser (xterm.js, kein Bildstrom): Auswahl, Kopieren und Einfügen, Scrollen, Größenänderung, Tastenleiste auch am Handy.
+- Hostschlüssel werden beim ersten Verbinden gemerkt und danach geprüft; ein geänderter Schlüssel braucht eine ausdrückliche Bestätigung.
+- Je Sitzung eigenes Wiederverbinden bei Verbindungsabbruch; Hintergrund-Sitzungen pausieren den Bildstrom.
+
+### Geändert
+- Wird dasselbe RDP-Ziel ein zweites Mal geöffnet, zeigt die ältere Sitzung „übernommen“ statt eines falschen Anmeldefehlers.
+- Die Fernsteuerung in `app.js` ist in Sitzungsobjekte aufgeteilt (`sessions.js`).
+## [Unveröffentlicht]
+
+### Neu
+- Der Bildstrom kann auf einer Grafikkarte kodiert werden (VAAPI, zum Beispiel Intel QuickSync), wenn der Container `/dev/dri` sieht; sonst und bei jedem Fehler kodiert wie bisher die CPU (H.264). Dazu ein optionaler H.265-Strom, wenn Browser und Grafikkarte ihn können. `JULOS_ENCODER` (auto, software, vaapi) und `JULOS_CODEC` (auto, h264, h265); Prüfung auf dem Server mit `dotnet JulOS.dll diag encoders`, Anleitung in [docs/ENCODERS.md](docs/ENCODERS.md). Auf einer echten Grafikkarte noch nicht erprobt.
 
 ## [0.1.0] - 2026-11-19
 
@@ -28,4 +50,5 @@ Erste Version unter eigener Zählung (davor gab es Vorabversionen `1.0.0-beta.1`
 - Der Bildstrom konnte nach einigen hundert Bildern stehen bleiben; Bestätigungen laufen jetzt über Folgenummern, dazu ein Wachhund.
 - Am PC wird das Bild 1:1 gezeichnet statt hochskaliert (schärfer).
 
+[0.2.0]: https://github.com/Juloc/JulOS/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Juloc/JulOS/releases/tag/v0.1.0

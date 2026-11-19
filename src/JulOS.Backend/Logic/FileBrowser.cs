@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 
 namespace JulOS.Backend.Logic;
 
@@ -17,7 +19,7 @@ public sealed record FileSearchResult(FileItem[] Results, bool Truncated);
 /// </list>
 /// Nur fuer Linux gedacht (Pfadtrenner "/"). Nicht erkannt werden Hardlinks (eine zweite Verzeichnisstelle derselben Datei).
 /// </summary>
-public sealed class FileBrowser
+public sealed partial class FileBrowser
 {
     public const int MaxEntries = 2000, MaxResults = 200, MaxVisited = 50_000, MaxDepth = 16, MaxSegments = 64, MaxPathLength = 4096, MaxLinkHops = 40;
 
@@ -200,19 +202,34 @@ public sealed class FileBrowser
         FileStream? stream = null;
         try
         {
-            stream = new FileStream(real, new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.ReadWrite, Options = FileOptions.Asynchronous | FileOptions.SequentialScan, BufferSize = 1 });
             if (OperatingSystem.IsLinux())
             {
+                // Mit O_NONBLOCK oeffnen: ein benannter Pipe (FIFO) im Ordner liesse open(2) sonst fuer immer warten und einen Thread blockieren.
+                var fd = OpenNonBlocking(real, ReadOnly | NonBlocking | CloseOnExec);
+                if (fd < 0) return null;
+                var handle = new SafeFileHandle(fd, ownsHandle: true);
+                try { stream = new FileStream(handle, FileAccess.Read, bufferSize: 1, isAsync: false); }
+                catch { handle.Dispose(); throw; }
+                // Nur gewoehnliche Dateien: Pipes lassen sich nicht positionieren
+                if (!stream.CanSeek) { stream.Dispose(); return null; }
                 // Wohin zeigt der geoeffnete Deskriptor wirklich? Faengt ab, dass ein Ordner zwischen Pruefung und Oeffnen durch einen Symlink ersetzt wurde.
                 var actual = new FileInfo("/proc/self/fd/" + stream.SafeFileHandle.DangerousGetHandle()).LinkTarget;
                 if (actual is null || !Inside(actual, root)) { stream.Dispose(); return null; }
+                return stream;
             }
+
+            stream = new FileStream(real, new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.ReadWrite, Options = FileOptions.Asynchronous | FileOptions.SequentialScan, BufferSize = 1 });
             return stream;
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
         {
             stream?.Dispose();
             return null;
         }
     }
+
+    private const int ReadOnly = 0, NonBlocking = 0x800, CloseOnExec = 0x80000;     // Linux (x86-64 und arm64)
+
+    [LibraryImport("libc", EntryPoint = "open", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
+    private static partial int OpenNonBlocking(string path, int flags);
 }

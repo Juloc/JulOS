@@ -343,7 +343,7 @@ html.desktop .sv .sv-overlay .box { border-radius: 20px; background: var(--dk-ov
 .dk-keys svg.dk-i { width: 14px; height: 14px; }
 .dk-keys.on { color: var(--dk-accent-strong); background: var(--dk-sel); font-weight: 600; }
 .dk-win.keys { box-shadow: 0 0 0 2px var(--dk-accent-ring), var(--dk-shadow); }
-.dk-win.keys .dk-wh .dk-wt span:last-child::after { content: "Tastatur"; margin-left: 9px; padding: 2px 7px; border-radius: 99px; font-size: 10.5px; font-weight: 600; background: var(--dk-sel); color: var(--dk-accent-strong); vertical-align: 1px; }
+.dk-win.keys .dk-wh .dk-wt span:last-child::after { content: attr(data-keys-label); margin-left: 9px; padding: 2px 7px; border-radius: 99px; font-size: 10.5px; font-weight: 600; background: var(--dk-sel); color: var(--dk-accent-strong); vertical-align: 1px; }
 
 /* Ueber JulOS */
 .dk-about { padding: 20px 26px 18px; text-align: center; }

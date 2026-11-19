@@ -7,6 +7,8 @@
  * (einmal je Sekunde, nur solange sie sichtbar ist).
  * ===================================================================== */
 
+import { t, fmtNumber } from './i18n.js';
+
 /** Wie lange nach einer Eingabe ein neues Bild noch als deren Antwort gilt; spaeter kommende Bilder haben mit ihr nichts zu tun. */
 export const REACTION_WINDOW_MS = 1500;
 const KEEP = 9;                 // so viele Reaktionszeiten gehen in den Mittelwert (Median)
@@ -66,7 +68,7 @@ export class StreamPerf {
 export function formatRate(kbps) {
   if (!(kbps >= 0.5)) return '0 kbit/s';
   if (kbps < 1000) return Math.round(kbps) + ' kbit/s';
-  return (kbps / 1000).toFixed(kbps < 10000 ? 1 : 0).replace('.', ',') + ' Mbit/s';
+  return fmtNumber(kbps / 1000, kbps < 10000 ? 1 : 0) + ' Mbit/s';
 }
 
 /**
@@ -76,21 +78,21 @@ export function formatRate(kbps) {
 export function perfItems(info) {
   const s = info.sample || { fps: 0, kbps: 0, reaction: null };
   return [
-    { id: 'fps', label: 'Bilder/s', value: String(Math.round(s.fps)), title: 'Bilder, die in der letzten Sekunde gezeichnet wurden' },
-    { id: 'reaction', label: 'Reaktion', value: s.reaction === null ? '–' : s.reaction + ' ms', title: 'Zeit von Klick oder Taste bis zum nächsten Bild (Mittel der letzten Eingaben)' },
-    { id: 'rate', label: 'Daten', value: formatRate(s.kbps), title: 'Empfangene Datenmenge je Sekunde' },
-    { id: 'size', label: 'Auflösung', value: info.width && info.height ? `${info.width}×${info.height}` : '–', title: 'Größe des Desktops am Ziel' },
-    { id: 'encoder', label: 'Kodierer', value: info.encoder || '–', title: 'Womit der Server das Bild kodiert' },
-    { id: 'quality', label: 'Bildrate', value: info.quality || 'Automatisch', title: 'Gewählte Stufe der Bildrate' },
+    { id: 'fps', label: t('statusbar.perfFps'), value: String(Math.round(s.fps)), title: t('statusbar.perfFpsTip') },
+    { id: 'reaction', label: t('statusbar.perfReaction'), value: s.reaction === null ? '–' : s.reaction + ' ms', title: t('statusbar.perfReactionTip') },
+    { id: 'rate', label: t('statusbar.perfRate'), value: formatRate(s.kbps), title: t('statusbar.perfRateTip') },
+    { id: 'size', label: t('statusbar.perfSize'), value: info.width && info.height ? `${info.width}×${info.height}` : '–', title: t('statusbar.perfSizeTip') },
+    { id: 'encoder', label: t('statusbar.perfEncoder'), value: info.encoder || '–', title: t('statusbar.perfEncoderTip') },
+    { id: 'quality', label: t('statusbar.perfQuality'), value: info.quality || t('statusbar.qAuto'), title: t('statusbar.perfQualityTip') },
   ];
 }
 
 /* ---------- Stufen der Bildrate (Nachricht 31) ---------- */
 export const QUALITIES = [
-  { id: 'auto', label: 'Automatisch', byte: 0, hint: 'wie bisher: das Netz bestimmt das Tempo' },
-  { id: '60', label: '60 Bilder/s', byte: 1, hint: 'höchstens 60 Bilder/s, volle Bitrate' },
-  { id: '30', label: '30 Bilder/s', byte: 2, hint: 'höchstens 30 Bilder/s, volle Bitrate' },
-  { id: 'eco', label: 'Sparsam', byte: 3, hint: '15 Bilder/s und weniger Daten (Mobilfunk, Akku)' },
+  { id: 'auto', label: t('statusbar.qAuto'), byte: 0, hint: t('statusbar.qAutoHint') },
+  { id: '60', label: t('statusbar.q60'), byte: 1, hint: t('statusbar.q60Hint') },
+  { id: '30', label: t('statusbar.q30'), byte: 2, hint: t('statusbar.q30Hint') },
+  { id: 'eco', label: t('statusbar.qEco'), byte: 3, hint: t('statusbar.qEcoHint') },
 ];
 
 export const normalizeQuality = (id) => (QUALITIES.some((q) => q.id === id) ? id : 'auto');

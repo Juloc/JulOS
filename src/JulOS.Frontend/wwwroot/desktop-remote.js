@@ -1,4 +1,5 @@
 import { remoteApi as R } from './app.js';
+import { t, tk } from './i18n.js';
 
 /* =====================================================================
  * Menues der oberen Leiste fuer das aktive Fernfenster (Desktop oder Terminal). Sie ersetzen die Tastenleiste unten, die auf dem PC nicht mehr steht.
@@ -7,54 +8,57 @@ import { remoteApi as R } from './app.js';
  * deps: { win: () => Fenster des Fernfensters (maximized, toggleMax, el), toggleMax, notify }
  * ===================================================================== */
 
-const MODS = [['ctrl', 'Strg'], ['alt', 'Alt'], ['shift', 'Umschalt'], ['super', 'Windows']];
-const MOD_STATE = { off: 'aus', once: 'nächste Taste', lock: 'gesperrt' };
+const MODS = [['ctrl', tk('desktop.keyCtrl')], ['alt', tk('desktop.keyAlt')], ['shift', tk('desktop.keyShift')], ['super', tk('desktop.keyWindows')]];
+const MOD_STATE = { off: tk('desktop.off'), once: tk('desktop.modOnce'), lock: tk('desktop.modLock') };
 const ZOOMS = [75, 100, 125, 150, 200];
 
-export function remoteMenuNames(kind) { return kind === 'desktop' ? ['Tasten', 'Kombinationen', 'Ansicht', 'Fenster'] : ['Tasten', 'Kombinationen', 'Ansicht']; }
+/** Kennungen der Menues (Reihenfolge der Leiste); die Beschriftung kommt aus remoteMenuLabel */
+export function remoteMenuNames(kind) { return kind === 'desktop' ? ['keys', 'combos', 'view', 'windows'] : ['keys', 'combos', 'view']; }
+const MENU_LABELS = { keys: tk('desktop.menuKeys'), combos: tk('desktop.menuCombos'), view: tk('desktop.menuView'), windows: tk('desktop.menuWindows') };
+export const remoteMenuLabel = (name) => t(MENU_LABELS[name]);
 
 /** Menue "<Name der Verbindung>": die Sitzung als Ganzes (wie das Programm-Menue am Mac) */
 export function sessionMenu(deps) {
   const funcs = R.group('funcs');
   return [
-    { label: 'Neu verbinden', icon: 'play', run: () => R.reconnect() },
-    ...(R.canPopOut() ? [{ label: R.popped() ? 'Wieder anheften' : 'In eigenem Fenster öffnen', icon: 'blank', run: () => R.popOut() }] : []),
+    { label: t('desktop.reconnect'), icon: 'play', run: () => R.reconnect() },
+    ...(R.canPopOut() ? [{ label: R.popped() ? t('desktop.pinBack') : t('desktop.openOwnWindow'), icon: 'blank', run: () => R.popOut() }] : []),
     { sep: true },
     ...(funcs ? funcs.items.filter((d) => d.type === 'action').map((d) => ({ label: d.label.startsWith(':') ? d.value : d.label, icon: 'blank', run: () => R.press(d) })) : []),
     { sep: true },
-    { label: 'Verbindung beenden', icon: 'power', run: () => deps.end() },
+    { label: t('desktop.endConnection'), icon: 'power', run: () => deps.end() },
   ];
 }
 
 function keysMenu() {
   const mods = MODS.map(([n, label]) => {
     const st = R.mod(n) || 'off';
-    return { label: label + ' halten', icon: st === 'off' ? 'blank' : 'check', hint: MOD_STATE[st], run: () => R.cycleMod(n) };
+    return { label: t('desktop.holdKey', { key: t(label) }), icon: st === 'off' ? 'blank' : 'check', hint: t(MOD_STATE[st]), run: () => R.cycleMod(n) };
   });
   const fkeys = Array.from({ length: 12 }, (_, i) => ({ label: 'F' + (i + 1), icon: 'blank', run: () => R.keys('f' + (i + 1)) }));
   return [
     { label: 'Esc', icon: 'blank', run: () => R.keys('esc') },
     { label: 'Tab', icon: 'blank', run: () => R.keys('tab') },
-    { label: 'Windows-Taste', icon: 'blank', run: () => R.keys('win') },
-    { label: 'Strg+Alt+Entf', icon: 'blank', run: () => R.keys('ctrl+alt+delete') },
+    { label: t('desktop.windowsKey'), icon: 'blank', run: () => R.keys('win') },
+    { label: t('desktop.ctrlAltDel'), icon: 'blank', run: () => R.keys('ctrl+alt+delete') },
     { sep: true },
-    { cap: 'Für die nächste Taste' },
+    { cap: t('desktop.forNextKey') },
     ...mods,
     { sep: true },
-    { label: 'F-Tasten', icon: 'blank', sub: fkeys },
+    { label: t('desktop.fKeys'), icon: 'blank', sub: fkeys },
   ];
 }
 
 function combosMenu() {
   const g = R.group('combos');
-  if (!g) return [{ label: 'Keine Kombinationen', disabled: true }];
+  if (!g) return [{ label: t('desktop.noCombos'), disabled: true }];
   const label = (d) => (String(d.label).startsWith(':') ? d.value : d.label);
   return [
     ...g.items.map((d) => ({ label: label(d), icon: 'blank', run: () => R.press(d) })),
     { sep: true },
-    { label: 'Neue Kombination …', icon: 'plus', run: () => R.editKey(g.index, -1) },
-    ...(g.items.length ? [{ label: 'Kombination bearbeiten', icon: 'edit', sub: g.items.map((d, i) => ({ label: label(d), icon: 'blank', run: () => R.editKey(g.index, i) })) }] : []),
-    { label: 'Auf Standard zurücksetzen …', icon: 'blank', run: () => R.resetKeys() },
+    { label: t('desktop.newCombo'), icon: 'plus', run: () => R.editKey(g.index, -1) },
+    ...(g.items.length ? [{ label: t('desktop.editCombo'), icon: 'edit', sub: g.items.map((d, i) => ({ label: label(d), icon: 'blank', run: () => R.editKey(g.index, i) })) }] : []),
+    { label: t('desktop.resetCombos'), icon: 'blank', run: () => R.resetKeys() },
   ];
 }
 
@@ -62,19 +66,19 @@ function viewMenu(deps) {
   const pct = R.zoomPercent();
   const w = deps.win();
   return [
-    { cap: `Zoom ${pct} %` },
-    { label: 'Vergrößern', icon: 'blank', run: () => R.zoomIn() },
-    { label: 'Verkleinern', icon: 'blank', run: () => R.zoomOut() },
-    ...ZOOMS.map((p) => ({ label: p + ' %', icon: Math.abs(pct - p) <= 3 ? 'check' : 'blank', run: () => R.setZoomPercent(p) })),
+    { cap: t('desktop.zoomCap', { n: pct }) },
+    { label: t('desktop.zoomIn'), icon: 'blank', run: () => R.zoomIn() },
+    { label: t('desktop.zoomOut'), icon: 'blank', run: () => R.zoomOut() },
+    ...ZOOMS.map((p) => ({ label: t('desktop.percent', { n: p }), icon: Math.abs(pct - p) <= 3 ? 'check' : 'blank', run: () => R.setZoomPercent(p) })),
     { sep: true },
-    { label: 'An Fenstergröße anpassen', icon: 'blank', run: () => R.fit() },
+    { label: t('desktop.fitWindow'), icon: 'blank', run: () => R.fit() },
     { sep: true },
-    { label: 'Statusleiste', icon: R.perfShown() ? 'check' : 'blank', hint: R.perfShown() ? 'an' : 'aus', run: () => R.setPerf(!R.perfShown()) },
-    { label: 'Bildrate', icon: 'blank', hint: (R.qualities.find((q) => q.id === R.quality()) || R.qualities[0]).label,
-      sub: R.qualities.map((q) => ({ label: q.label, icon: R.quality() === q.id ? 'check' : 'blank', hint: q.id === 'auto' ? 'Standard' : '', run: () => R.setQuality(q.id) })) },
+    { label: t('desktop.statusBar'), icon: R.perfShown() ? 'check' : 'blank', hint: R.perfShown() ? t('desktop.on') : t('desktop.off'), run: () => R.setPerf(!R.perfShown()) },
+    { label: t('desktop.frameRate'), icon: 'blank', hint: (R.qualities.find((q) => q.id === R.quality()) || R.qualities[0]).label,
+      sub: R.qualities.map((q) => ({ label: q.label, icon: R.quality() === q.id ? 'check' : 'blank', hint: q.id === 'auto' ? t('desktop.default') : '', run: () => R.setQuality(q.id) })) },
     { sep: true },
-    { label: w && w.maximized ? 'Fenster wiederherstellen' : 'Fenster maximieren', icon: 'blank', run: () => deps.toggleMax() },
-    { label: document.fullscreenElement ? 'Vollbild beenden' : 'Vollbild', icon: 'blank', run: () => deps.fullscreen() },
+    { label: w && w.maximized ? t('desktop.restoreWindow') : t('desktop.maximizeWindow'), icon: 'blank', run: () => deps.toggleMax() },
+    { label: document.fullscreenElement ? t('desktop.exitFullscreen') : t('desktop.fullscreen'), icon: 'blank', run: () => deps.fullscreen() },
   ];
 }
 
@@ -82,18 +86,18 @@ function viewMenu(deps) {
 async function windowsMenu() {
   try { await Promise.race([R.refreshWindows(), new Promise((r) => setTimeout(r, 900))]); } catch { /* alte Liste */ }
   const s = R.windows();
-  if (!s.available) return [{ label: 'Kein Agent auf diesem Ziel', disabled: true }, { label: 'Fensterliste und Programm-Modus brauchen den Agenten', disabled: true }];
+  if (!s.available) return [{ label: t('desktop.noAgent'), disabled: true }, { label: t('desktop.noAgentHint'), disabled: true }];
   const items = [
-    { label: s.mode === 'apps' ? 'Zum Desktop-Modus wechseln' : 'Zum Programm-Modus wechseln', icon: s.mode === 'apps' ? 'monitor' : 'grid', run: () => R.toggleMode() },
-    { label: 'Programm starten …', icon: 'plus', run: () => R.openApps() },
+    { label: s.mode === 'apps' ? t('desktop.toDesktopMode') : t('desktop.toAppMode'), icon: s.mode === 'apps' ? 'monitor' : 'grid', run: () => R.toggleMode() },
+    { label: t('desktop.startProgram'), icon: 'plus', run: () => R.openApps() },
     { sep: true },
-    { cap: s.list.length ? 'Offene Fenster der Ziel-Maschine' : 'Keine offenen Fenster' },
+    { cap: s.list.length ? t('desktop.openWindows') : t('desktop.noOpenWindows') },
   ];
-  for (const w of s.list) items.push({ label: (w.title || w.app || '?').slice(0, 48), icon: w.active ? 'check' : 'blank', hint: w.minimized ? 'minimiert' : '', run: () => R.activateWindow(w.id) });
+  for (const w of s.list) items.push({ label: (w.title || w.app || '?').slice(0, 48), icon: w.active ? 'check' : 'blank', hint: w.minimized ? t('desktop.minimized') : '', run: () => R.activateWindow(w.id) });
   return items;
 }
 
 /** Eintraege eines Menues der Leiste (kann ein Versprechen sein, weil die Fensterliste geholt wird) */
 export function remoteMenuItems(name, deps) {
-  return { Tasten: () => keysMenu(), Kombinationen: () => combosMenu(), Ansicht: () => viewMenu(deps), Fenster: () => windowsMenu() }[name]();
+  return { keys: () => keysMenu(), combos: () => combosMenu(), view: () => viewMenu(deps), windows: () => windowsMenu() }[name]();
 }

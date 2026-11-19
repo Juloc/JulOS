@@ -43,6 +43,7 @@ namespace JulOS.Frontend;
 [JsonSerializable(typeof(ConnectionDto))]
 [JsonSerializable(typeof(ConnectionsResponse))]
 [JsonSerializable(typeof(ConnectionRequest))]
+[JsonSerializable(typeof(ProgramTileRequest))]
 [JsonSerializable(typeof(TicketRequest))]
 [JsonSerializable(typeof(TicketResponse))]
 [JsonSerializable(typeof(AgentEnrollRequest))]

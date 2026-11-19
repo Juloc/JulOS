@@ -21,7 +21,7 @@ internal static class ApiKit
     internal static async Task<Guid> Insert(TestDb db, string sql, params object?[] args) => await db.ScalarAsync<Guid>(sql, args);
     internal static JsonElement J(string json) => JsonDocument.Parse(json).RootElement.Clone();
 
-    internal sealed class Server(TestDb db, string? allowed = null, List<string>? log = null) : WebApplicationFactory<Program>
+    internal sealed class Server(TestDb db, string? allowed = null, List<string>? log = null, string? secretKey = null) : WebApplicationFactory<Program>
     {
         public HttpClient Http() => CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
 
@@ -30,6 +30,7 @@ internal static class ApiKit
             builder.UseSetting("JULOS_DB", db.ConnectionString);
             builder.UseSetting("JULOS_SETUP_CODE", SetupCode);
             if (allowed is not null) builder.UseSetting("JULOS_ALLOWED_HOSTS", allowed);
+            if (secretKey is not null) builder.UseSetting("JULOS_SECRET_KEY", secretKey);
             builder.ConfigureServices(s => s.AddTransient<IStartupFilter, LoopbackFilter>());
             if (log is not null) builder.ConfigureTestServices(s => s.AddLogging(b => b.SetMinimumLevel(LogLevel.Trace).AddProvider(new Capture(log))));
         }

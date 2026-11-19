@@ -1,0 +1,10 @@
+#!/bin/sh
+# Attrappe fuer Claude Code im Wegwerf-Ziel der Browser-Tests (deploy/dev/e2e/compose.override.yaml haengt sie als /usr/local/bin/claude ein):
+# meldet Arbeitsverzeichnis und Argumente, zeigt eine Eingabeaufforderung und gibt jede Zeile zurueck. "/exit" und Strg+D beenden sie.
+echo "fake-claude-start cwd=$(pwd) args=$*"
+while printf 'claude> '; IFS= read -r line; do
+  [ "$line" = "/exit" ] && break
+  echo "echo: $line"
+done
+echo
+echo "fake-claude-ende"

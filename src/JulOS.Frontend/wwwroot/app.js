@@ -254,7 +254,7 @@ const DEFAULT_ROWS = [
     ITEM('Pos1', 'chord', 'home'), ITEM('Ende', 'chord', 'end'), ITEM('Bild↑', 'chord', 'pageup'), ITEM('Bild↓', 'chord', 'pagedown'), ITEM('⇧Tab', 'chord', 'shift+tab') ] },
   { id: 'combos', title: 'Combos', icon: 'bolt', items: [
     ITEM('Strg+C', 'chord', 'ctrl+c'), ITEM('Strg+V', 'chord', 'ctrl+v'), ITEM('Strg+X', 'chord', 'ctrl+x'), ITEM('Strg+A', 'chord', 'ctrl+a'),
-    ITEM('Strg+Z', 'chord', 'ctrl+z'), ITEM('Strg+F', 'chord', 'ctrl+f'), ITEM('Alt+Tab', 'chord', 'alt+tab'), ITEM('Strg+⇧+T', 'chord', 'ctrl+shift+t') ] },
+    ITEM('Strg+Z', 'chord', 'ctrl+z'), { ...ITEM('Strg+D', 'chord', 'ctrl+d'), scope: 'terminal' }, ITEM('Strg+F', 'chord', 'ctrl+f'), ITEM('Alt+Tab', 'chord', 'alt+tab'), ITEM('Strg+⇧+T', 'chord', 'ctrl+shift+t') ] },
   { id: 'funcs', title: 'Funktionen', icon: 'apps', items: [
     ITEM('Bild einfügen', 'action', 'pasteimg'), ITEM('Text einfügen', 'action', 'pastetext'), ITEM('Foto wählen', 'action', 'photo'), ITEM('Datei senden', 'action', 'sendfile'), ITEM('Ordner senden', 'action', 'sendfolder'), ITEM('Text senden', 'action', 'clip'), ITEM('Passwort', 'action', 'password') ] },
   // die Leiste: immer sichtbar, eine Zeile, ganz unten
@@ -269,7 +269,7 @@ const clone = (o) => JSON.parse(JSON.stringify(o));
 const ROW_TITLES = { keys: ['Tasten', tk('app.keys')], combos: ['Combos', tk('app.rowCombos')], funcs: ['Funktionen', tk('app.rowFuncs')], bar: ['Leiste', tk('app.rowBar')] };
 const KEY_LABELS = {
   Entf: tk('app.keyDel'), Pos1: tk('app.keyHome'), Ende: tk('app.keyEnd'), 'Bild↑': tk('app.keyPgUp'), 'Bild↓': tk('app.keyPgDn'), Strg: tk('app.keyCtrl'),
-  'Strg+C': tk('app.keyCtrlC'), 'Strg+V': tk('app.keyCtrlV'), 'Strg+X': tk('app.keyCtrlX'), 'Strg+A': tk('app.keyCtrlA'), 'Strg+Z': tk('app.keyCtrlZ'),
+  'Strg+C': tk('app.keyCtrlC'), 'Strg+V': tk('app.keyCtrlV'), 'Strg+X': tk('app.keyCtrlX'), 'Strg+A': tk('app.keyCtrlA'), 'Strg+Z': tk('app.keyCtrlZ'), 'Strg+D': tk('app.keyCtrlD'),
   'Strg+F': tk('app.keyCtrlF'), 'Strg+⇧+T': tk('app.keyCtrlShiftT'), 'Bild einfügen': tk('app.photoTitle'), 'Text einfügen': tk('clipperm.keyPasteText'), 'Foto wählen': tk('app.keyChoosePhoto'),
   'Datei senden': tk('app.sendFile'), 'Ordner senden': tk('app.sendFolder'), 'Text senden': tk('app.sendText'), Passwort: tk('app.password'),
 };
@@ -1841,6 +1841,7 @@ function focusKbForHardware() {
   const s = cur();
   if (!HW_KB || !s || !s.connected || !s.visible || !keyOwner() || kbFocused()) return;
   if (document.querySelector('dialog[open]') || !s.el.menu.hidden) return;
+  if (document.activeElement && document.activeElement.closest('.term-bar')) return;      // das Textfeld der Eingabeleiste des Terminals behaelt den Fokus (terminal-input.js)
   try { el.kb.focus({ preventScroll: true }); } catch { el.kb.focus(); }
 }
 /** Ein echtes Texteingabefeld (Eingabe, Auswahl, Textbereich, bearbeitbarer Inhalt)? Knoepfe und Haken zaehlen nicht. */

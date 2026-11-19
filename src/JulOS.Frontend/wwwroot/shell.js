@@ -4,6 +4,7 @@ import { agentSummary, hostDetail } from './hosts.js';
 import { loadOrganisation, takeOverLocal, mergePlacements, setFolder, touch, move, folderName } from './folders.js';
 import { initFolderDialog } from './folder-dialog.js';
 import { parseQuickTarget, quickConnection, DEFAULT_PORT as QUICK_PORT } from './quick.js';
+import { launchTarget, validWorkDir, validCustom, programOf } from './terminal-programs.js';
 import { initAccount } from './account.js';
 import { initNetTools } from './nettools.js';
 import { qrSvg } from './qr.js';
@@ -252,7 +253,17 @@ $('#connDriveWrite').addEventListener('change', showDriveChoice);
 $('#addConn').addEventListener('click', () => editDialog(null));
 
 // Domäne und Tastaturlayout gibt es nur beim Desktop (RDP)
-function showDesktopFields() { const on = $('#connKind').value === 'desktop'; $('#connDomainRow').hidden = !on; $('#connLayoutRow').hidden = !on; }
+function showDesktopFields() { const on = $('#connKind').value === 'desktop'; $('#connDomainRow').hidden = !on; $('#connLayoutRow').hidden = !on; showProgramFields(); }
+
+// Startprogramm, Arbeitsverzeichnis und tmux gibt es nur beim Terminal (docs/CLI-SESSIONS.md)
+function showProgramFields() {
+  const term = $('#connKind').value === 'terminal', prog = $('#connProgram').value;
+  $('#connProgRow').hidden = !term;
+  $('#connCustomRow').hidden = prog !== 'custom';
+  $('#connProgHint').textContent = prog === 'custom' ? t('shell.progHintCustom') : prog === 'shell' ? '' : t('shell.progHint');
+  $('#connTileRow').hidden = !(term && state.editing && state.editing.kind === 'terminal');
+}
+$('#connProgram').addEventListener('change', showProgramFields);
 
 function editDialog(c, kind) {
   state.editing = c;
@@ -264,6 +275,8 @@ function editDialog(c, kind) {
   $('#connPort').value = c ? String(c.port) : '';
   $('#connPort').placeholder = DEFAULT_PORT[$('#connKind').value];
   $('#connUser').value = c ? c.username : '';
+  $('#connProgram').value = c && c.program ? c.program : 'shell'; $('#connCustom').value = c ? c.customCommand || '' : '';
+  $('#connWorkdir').value = c ? c.workDir || '' : ''; $('#connKeep').checked = !!(c && c.keepAlive);
   $('#connDomain').value = c ? c.domain || '' : ''; $('#connLayout').value = c && c.layout ? c.layout : 'de'; $('#connNotes').value = c ? c.notes || '' : '';
   showDesktopFields();
   fillHostSelect(c ? c.hostId : undefined);
@@ -452,6 +465,11 @@ $('#connForm').addEventListener('submit', async (e) => {
   if (portText && !/^\d{1,5}$/.test(portText)) return setMsg(msg, t('shell.portNumber'));
   const body = { name: $('#connName').value, kind: $('#connKind').value, host: $('#connHost').value, port: portText ? Number(portText) : null, username: $('#connUser').value, notes: $('#connNotes').value };
   if (body.kind === 'desktop') { body.domain = $('#connDomain').value; body.layout = $('#connLayout').value; }
+  if (body.kind === 'terminal') {
+    body.program = $('#connProgram').value; body.workDir = $('#connWorkdir').value; body.keepAlive = $('#connKeep').checked; body.customCommand = body.program === 'custom' ? $('#connCustom').value : '';
+    if (!validWorkDir(body.workDir)) return setMsg(msg, t('shell.workdirInvalid'));
+    if (body.program === 'custom' && (!body.customCommand.trim() || !validCustom(body.customCommand))) return setMsg(msg, t('shell.customInvalid'));
+  }
   const hostId = $('#connHostSel').value; if (hostId && hostId !== NEW_HOST) body.hostId = hostId;
   const drive = body.kind === 'desktop' && state.driveAvailable && $('#connDrive').checked;
   body.driveShare = drive; body.driveWrite = drive && $('#connDriveWrite').checked;
@@ -481,8 +499,45 @@ $('#connDelete').addEventListener('click', async (e) => {
   catch (err) { setMsg($('#connMsg'), err.message); }
 });
 
+/* ---------- Programm-Kacheln: "Claude auf <Host>", "Codex auf <Host>" (docs/CLI-SESSIONS.md) ---------- */
+const notice = (text) => { if (M) M.snack(text); else if (D && D.toast) D.toast(text); else setMsg($('#homeMsg'), text); };
+
+/** Legt aus einer Terminal-Verbindung eine Kachel fuer Claude oder Codex an (gleiches Ziel, gleiches gespeichertes Passwort; der Server uebernimmt beides). */
+async function createProgramTile(c, program) {
+  const host = state.hosts.find((h) => h.id === c.hostId);
+  const name = t('prog.tileName', { name: program === 'codex' ? 'Codex' : 'Claude', host: host ? host.name : c.name }).slice(0, 60);
+  const saved = await api(`/api/connections/${c.id}/program`, { method: 'POST', body: { program, name } });
+  await loadConnections();
+  return state.connections.find((x) => x.id === saved.id) || saved;
+}
+for (const [id, program] of [['#connTileClaude', 'claude'], ['#connTileCodex', 'codex']]) {
+  $(id).addEventListener('click', async () => {
+    const c = state.editing; if (!c) return;
+    try { const made = await createProgramTile(c, program); $('#connDlg').close(); notice(t('prog.tileCreated', { name: made.name })); }
+    catch (err) { setMsg($('#connMsg'), err.message); }
+  });
+}
+
+/**
+ * Ein Tipp auf "Claude" oder "Codex": eine passende Kachel oeffnet sie, mehrere lassen waehlen (choose bekommt die Liste), keine legt eine aus einer
+ * Terminal-Verbindung an und startet sie, ohne Terminal-Verbindung fuehrt es in den Dialog fuer eine neue.
+ */
+async function launchProgram(program, choose) {
+  const target = launchTarget(state.connections, program);
+  if (target.action === 'open') return startDialog(target.conn);
+  if (target.action === 'choose') return choose ? choose(target.list) : startDialog(target.list[0]);
+  if (target.action === 'create') {
+    try { const made = await createProgramTile(target.from, program); notice(t('prog.tileCreated', { name: made.name })); startDialog(made); }
+    catch (err) { notice(err.message); }
+    return;
+  }
+  notice(t('prog.needTerminal'));
+  editDialog(null, 'terminal');
+  $('#connProgram').value = program; showProgramFields();
+}
+
 /* ---------- Verbinden ---------- */
-const asConn = (c) => ({ id: c.id, name: c.name, kind: c.kind, stored: c.hasPassword ? true : undefined, target: `${c.host}:${c.port}/${c.username}`, domain: c.domain || undefined });
+const asConn = (c) => ({ id: c.id, name: c.name, kind: c.kind, stored: c.hasPassword ? true : undefined, target: `${c.host}:${c.port}/${c.username}`, domain: c.domain || undefined, program: programOf(c), workDir: c.workDir || undefined });
 
 /** opts.extra: bewusst eine weitere Sitzung zum selben Ziel; sonst wird eine schon offene Sitzung nur nach vorn geholt. */
 function startDialog(c, opts = {}) {
@@ -592,8 +647,8 @@ Sessions.addEventListener('switcher', () => { if (M) M.openSwitcher(); else goHo
 
 const openAccount = initAccount({ api, setMsg });
 const openNetTools = initNetTools({ api, setMsg, connections: () => state.connections });
-if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), signOut, home: goHome, account: openAccount, nettools: openNetTools });
-if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), devices: openDevices, account: openAccount, nettools: openNetTools, signOut });
+if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), signOut, home: goHome, account: openAccount, nettools: openNetTools });
+if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), devices: openDevices, account: openAccount, nettools: openNetTools, signOut });
 
 /* ---------- Geraete und Sitzungen ---------- */
 function describeAgent(ua) {

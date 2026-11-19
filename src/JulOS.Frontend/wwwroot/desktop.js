@@ -7,6 +7,7 @@ import { remoteMenuNames, remoteMenuItems, remoteMenuLabel, sessionMenu } from '
 import { serviceState, connectionState, dotClass, stateText, groupConnections, hostDetail, agentSummary, servicesSummary } from './hosts.js';
 import { t, tk, fmtNumber, fmtDate, fmtTime, fmtDay, getPref, LANG_CHOICES } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
+import { tileKind } from './terminal-programs.js';
 
 /* =====================================================================
  * Desktop-Oberflaeche (breite Bildschirme mit Maus): Menueleiste, Dock, Launcher, Home-Fenster und ein Fenster
@@ -38,6 +39,8 @@ const P = {
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
   monitor: '<rect x="2.5" y="3.5" width="19" height="13" rx="2"/><path d="M8 21h8M12 16.5V21"/>',
   terminal: '<path d="m4 17 6-6-6-6M12 19h8"/>',
+  spark: '<path d="M12 3l1.9 5.6L20 10l-6.1 1.4L12 17l-1.9-5.6L4 10l6.1-1.4zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
+  code: '<path d="m8 7-5 5 5 5M16 7l5 5-5 5"/>',
   sliders: '<path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/>',
   folder: '<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"/>',
   server: '<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
@@ -87,6 +90,8 @@ const APPS = [
   { id: 'desktop', name: t('desktop.desktop'), sub: 'RDP', ic: 'monitor', g: ['#3a99dc', '#2f5fe0'] },
   { id: 'vnc', name: t('desktop.vnc'), sub: t('desktop.desktop'), ic: 'monitor', g: ['#2a8f8a', '#25758f'] },
   { id: 'terminal', name: t('desktop.terminal'), sub: 'SSH', ic: 'terminal', g: ['#5b6275', '#2c3142'] },
+  { id: 'claude', name: t('prog.claude'), sub: 'SSH', ic: 'spark', g: ['#c0683a', '#94491f'] },
+  { id: 'codex', name: t('prog.codex'), sub: 'SSH', ic: 'code', g: ['#3f8a76', '#2c6a5c'] },
   { id: 'settings', name: t('desktop.settings'), ic: 'sliders', g: ['#7d849f', '#555b78'] },
   { id: 'files', name: t('desktop.files'), ic: 'folder', g: ['#c28418', '#a86408'] },
   { id: 'hosts', name: t('desktop.hosts'), sub: t('desktop.hostsSub'), ic: 'server', g: ['#2fa08c', '#1c7a70'] },
@@ -97,7 +102,12 @@ const APPS = [
   { id: 'monitor', name: t('desktop.monitor'), ic: 'activity', g: ['#cf5fae', '#8c45d6'] },
 ];
 const appById = (id) => APPS.find((a) => a.id === id);
+const appOf = (c) => appById(tileKind(c));     // Kachel einer Verbindung: Desktop, Terminal, Claude oder Codex
+const isProg = (c) => c.kind === 'terminal' && tileKind(c) !== 'terminal';
+/** Kurzer Hinweis fuer shell.js (Kachel angelegt, Fehler). */
+export const toast = (msg) => notify(msg);
 const kindName = (kind) => (kind === 'terminal' ? t('desktop.terminal') : kind === 'vnc' ? t('desktop.vnc') : t('desktop.desktop'));
+const subName = (c) => (isProg(c) ? appOf(c).name : kindName(c.kind));      // Untertitel einer Verbindung: Programm oder Art
 let modules = { caddy: false, ddns: false, services: false };   // vom Server (GET /api/modules), nach der Anmeldung geladen
 const shownApps = () => APPS.filter((a) => !a.mod || modules[a.mod]);
 const tile = (g, icon) => `<span class="dk-ti" style="--g1:${g[0]};--g2:${g[1]}">${ic(icon)}</span>`;
@@ -369,6 +379,8 @@ const MENUS = () => ({
     { label: t('desktop.connectDesktopDots'), icon: 'monitor', run: () => pickConnection('desktop', $('[data-menu="Apps"]', root)) },
     { label: t('desktop.connectVncDots'), icon: 'monitor', run: () => pickConnection('vnc', $('[data-menu="Apps"]', root)) },
     { label: t('desktop.connectTerminalDots'), icon: 'terminal', run: () => pickConnection('terminal', $('[data-menu="Apps"]', root)) },
+    { label: t('prog.claude'), icon: 'spark', run: () => runApp('claude', $('[data-menu="Apps"]', root)) },
+    { label: t('prog.codex'), icon: 'code', run: () => runApp('codex', $('[data-menu="Apps"]', root)) },
     { sep: true },
     ...shownApps().filter((a) => a.mod).map((a) => ({ label: a.name, icon: a.ic, run: () => runApp(a.id) })),
     ...APPS.filter((a) => a.soon).map((a) => ({ label: a.name, icon: a.ic, hint: t('desktop.soonAvail'), disabled: true })),
@@ -520,6 +532,8 @@ function buildDock() {
     item('desktop', t('desktop.desktopRdp'), appById('desktop')),
     item('vnc', t('desktop.desktopVnc'), appById('vnc')),
     item('terminal', t('desktop.terminalSsh'), appById('terminal')),
+    item('claude', t('prog.claude'), appById('claude')),
+    item('codex', t('prog.codex'), appById('codex')),
     modDock(item),
     el('div', 'dk-dsep'),
     item('settings', t('desktop.settings'), appById('settings')),
@@ -553,7 +567,7 @@ function renderDock() {
   const files = wins.get('files'); if (files) state.files = files;
   if (wins.get('home') && nav.view === 'hosts') state.hosts = wins.get('home');
   for (const id of ['caddy', 'ddns']) { const w = wins.get(id); if (w) state[id] = w; }
-  for (const w of sessWins.values()) { const k = w.session.kind; if (!state[k] || (state[k].minimized && !w.minimized)) state[k] = w; }
+  for (const w of sessWins.values()) { const k = tileKind(w.session.conn); if (!state[k] || (state[k].minimized && !w.minimized)) state[k] = w; }
   for (const b of root.querySelectorAll('.dk-di[data-dock]')) {
     const w = state[b.dataset.dock];
     b.classList.toggle('run', !!w); b.classList.toggle('hid', !!w && w.minimized);
@@ -629,6 +643,13 @@ function runApp(id, anchor) {
   if (id === 'hosts') return openHome('hosts');
   if (a && a.mod) return modules[a.mod] ? openModule(id) : notify(t('desktop.moduleOff', { name: a.name }));
   if (id === 'desktop' || id === 'terminal' || id === 'vnc') return pickConnection(id, anchor);
+  if (id === 'claude' || id === 'codex') return ctx.program(id, (list) => chooseProgram(id, list, anchor));
+}
+
+/** Mehrere Kacheln mit diesem Programm: Menue zur Auswahl (ein Tipp auf "Claude" oeffnet sonst direkt). */
+function chooseProgram(id, list, anchor) {
+  showMenu(anchor, [{ cap: t('desktop.connectKindTo', { kind: appById(id).name }) }, ...list.map((c) => ({ label: c.name, icon: appById(id).ic, hint: Sessions.find(c.id).length ? t('desktop.nOpen', { n: Sessions.find(c.id).length }) : c.host, run: () => ctx.connect(c) }))],
+    anchor && anchor.classList.contains('dk-di') ? 'above' : 'below');
 }
 
 /** Verbindung fuer Desktop oder Terminal waehlen: eine = direkt, mehrere = Menue, keine = neue anlegen */
@@ -674,7 +695,7 @@ function openLauncher() {
     }
     hits = [
       ...shownApps().filter((a) => a.name.toLowerCase().includes(q) || (a.sub || '').toLowerCase().includes(q)).map((a) => ({ name: a.name, sub: a.soon ? t('desktop.soonAvail') : a.sub || t('desktop.program'), g: a.g, ic: a.ic, soon: a.soon, run: (anchor) => runApp(a.id, anchor) })),
-      ...ctx.state.connections.filter((c) => (c.name + ' ' + c.host).toLowerCase().includes(q)).map((c) => ({ name: c.name, sub: kindName(c.kind), g: appById(c.kind).g, ic: appById(c.kind).ic, run: () => ctx.connect(c) })),
+      ...ctx.state.connections.filter((c) => (c.name + ' ' + c.host).toLowerCase().includes(q)).map((c) => ({ name: c.name, sub: subName(c), g: appOf(c).g, ic: appOf(c).ic, run: () => ctx.connect(c) })),
       // Sieht die Eingabe nach einer Adresse aus: Quick Connect ohne Speichern anbieten
       ...(looksLikeAddress(input.value) ? [{ name: t('desktop.quickConnectTo', { address: input.value.trim() }), sub: t('desktop.withoutSaving'), g: appById('desktop').g, ic: 'plus', run: () => ctx.quick(input.value) }] : []),
     ];
@@ -764,8 +785,8 @@ function renderHome() {
 
 const connTile = (c) => {
   const n = Sessions.find(c.id).length, open = n > 0;
-  const a = appById(c.kind);
-  return `<button type="button" class="dk-b dk-tile" data-conn="${ctx.esc(c.id)}">${tile(a.g, a.ic)}<span class="dk-tt"><b><span class="dk-sd ${dotClass(connectionState(ctx.state.hosts, c))}" title="${stateText(connectionState(ctx.state.hosts, c))}"></span>${ctx.esc(c.name)}</b><i class="${open ? 'on' : ''}">${open ? (n > 1 ? t('desktop.sessionsNOpen', { n }) : t('desktop.sessionOpen')) : kindName(c.kind) + ' · ' + ctx.esc(c.host)}</i></span></button>`;
+  const a = appOf(c);
+  return `<button type="button" class="dk-b dk-tile" data-conn="${ctx.esc(c.id)}">${tile(a.g, a.ic)}<span class="dk-tt"><b><span class="dk-sd ${dotClass(connectionState(ctx.state.hosts, c))}" title="${stateText(connectionState(ctx.state.hosts, c))}"></span>${ctx.esc(c.name)}</b><i class="${open ? 'on' : ''}">${open ? (n > 1 ? t('desktop.sessionsNOpen', { n }) : t('desktop.sessionOpen')) : subName(c) + ' · ' + ctx.esc(c.host)}</i></span></button>`;
 };
 function renderStart(m) {
   const conns = [...ctx.state.connections.filter((c) => c.favorite), ...ctx.state.connections.filter((c) => !c.favorite)];     // Favoriten (vom Server) zuerst
@@ -783,6 +804,8 @@ function renderStart(m) {
       <button type="button" class="dk-b" data-act="quick">${ic('monitor')}<span>${t('desktop.quickConnect')}</span></button>
       <button type="button" class="dk-b" data-act="desktop">${ic('monitor')}<span>${t('desktop.connectDesktop')}</span></button>
       <button type="button" class="dk-b" data-act="terminal">${ic('terminal')}<span>${t('desktop.openTerminal')}</span></button>
+      <button type="button" class="dk-b" data-act="claude">${ic('spark')}<span>${t('prog.claude')}</span></button>
+      <button type="button" class="dk-b" data-act="codex">${ic('code')}<span>${t('prog.codex')}</span></button>
       <button type="button" class="dk-b" data-act="devices">${ic('shield')}<span>${t('desktop.devicesShort')}</span></button>
       <button type="button" class="dk-b" data-act="settings">${ic('sliders')}<span>${t('desktop.settings')}</span></button>
     </div>
@@ -857,8 +880,8 @@ function renderSystem(m) {
 }
 const hostFilter = { id: '' };      // leer = alle Hosts (Auswahl in der Dienste-Ansicht, nur solange das Fenster lebt)
 const serviceRow = (c) => {
-  const a = appById(c.kind), n = Sessions.find(c.id).length, open = n > 0, st = connectionState(ctx.state.hosts, c);
-  return `<div class="dk-row">${tile(a.g, a.ic)}<span class="dk-tt"><b><span class="dk-sd ${dotClass(st)}" title="${stateText(st)}"></span>${ctx.esc(c.name)}${open ? ` <span class="dk-tag">${n > 1 ? t('desktop.sessionsN', { n }) : t('desktop.sessionOpen')}</span>` : ''}</b><i>${c.kind === 'terminal' ? t('desktop.terminalSsh') : c.kind === 'vnc' ? t('desktop.desktopVnc') : t('desktop.desktopRdp')} · ${ctx.esc(c.username ? c.username + '@' : '')}${ctx.esc(c.host)}:${c.port}${folderName(ctx.state.folders || [], c) ? ' · ' + ctx.esc(folderName(ctx.state.folders, c)) : ''}${c.hasPassword ? ' · ' + t('desktop.passwordSaved') : ''}</i></span>
+  const a = appOf(c), n = Sessions.find(c.id).length, open = n > 0, st = connectionState(ctx.state.hosts, c);
+  return `<div class="dk-row">${tile(a.g, a.ic)}<span class="dk-tt"><b><span class="dk-sd ${dotClass(st)}" title="${stateText(st)}"></span>${ctx.esc(c.name)}${open ? ` <span class="dk-tag">${n > 1 ? t('desktop.sessionsN', { n }) : t('desktop.sessionOpen')}</span>` : ''}</b><i>${isProg(c) ? appOf(c).name + ' (SSH)' : c.kind === 'terminal' ? t('desktop.terminalSsh') : c.kind === 'vnc' ? t('desktop.desktopVnc') : t('desktop.desktopRdp')} · ${ctx.esc(c.username ? c.username + '@' : '')}${ctx.esc(c.host)}:${c.port}${folderName(ctx.state.folders || [], c) ? ' · ' + ctx.esc(folderName(ctx.state.folders, c)) : ''}${c.hasPassword ? ' · ' + t('desktop.passwordSaved') : ''}</i></span>
     <button type="button" class="dk-b dk-btn sq dk-star${c.favorite ? ' on' : ''}" data-fav="${ctx.esc(c.id)}" aria-pressed="${!!c.favorite}" aria-label="${c.favorite ? t('desktop.unfavorite') : t('desktop.pinFavorite')}" title="${c.favorite ? t('desktop.favoriteEverywhere') : t('desktop.pinFavorite')}">${ic('star')}</button>
     <button type="button" class="dk-b dk-btn pri" data-conn="${ctx.esc(c.id)}">${ic('play')}${open ? t('desktop.open') : t('desktop.connect')}</button>
     ${open ? `<button type="button" class="dk-b dk-btn sq" data-extra="${ctx.esc(c.id)}" aria-label="${t('desktop.anotherSession')}" title="${t('desktop.anotherSessionTarget')}">${ic('plus')}</button>` : ''}
@@ -943,6 +966,7 @@ function onMainClick(e) {
   else if (t.dataset.act === 'signout') ctx.signOut();
   else if (t.dataset.act === 'settings') goto('einstellungen');
   else if (t.dataset.act === 'desktop' || t.dataset.act === 'terminal' || t.dataset.act === 'vnc') pickConnection(t.dataset.act, t);
+  else if (t.dataset.act === 'claude' || t.dataset.act === 'codex') runApp(t.dataset.act, t);
 }
 
 
@@ -1009,7 +1033,7 @@ async function openAbout() {
  *  Sitzungsfenster: jede Sitzung (app.js, sessions.js) haengt in einem eigenen Fenster
  * ===================================================================== */
 const SESSION_RECT = { w: 1000, h: 680 };
-const sessionIcon = (c) => { const a = appById(c.kind === 'terminal' ? 'terminal' : 'desktop'); return `<span class="dk-ti" style="--g1:${a.g[0]};--g2:${a.g[1]};width:22px;height:22px;border-radius:7px">${ic(a.ic)}</span>`; };
+const sessionIcon = (c) => { const a = appOf(c); return `<span class="dk-ti" style="--g1:${a.g[0]};--g2:${a.g[1]};width:22px;height:22px;border-radius:7px">${ic(a.ic)}</span>`; };
 const stateClass = (st) => (st === 'connected' ? 'ok' : st === 'connecting' || st === 'reconnecting' ? 'busy' : 'bad');
 /** Wird bei jeder neuen Sitzung gerufen (vom Verwalter, vor dem Verbinden): Fenster anlegen, Sitzung einhaengen. n = wie viele Sitzungen es jetzt gibt. */
 export function sessionOpened(session, n) {

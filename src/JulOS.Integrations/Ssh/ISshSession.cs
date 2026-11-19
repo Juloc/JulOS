@@ -42,4 +42,10 @@ public interface ISshSession : IAsyncDisposable
 
     /// <summary>Fenstergroesse geaendert (SSH "window-change").</summary>
     void Resize(int cols, int rows);
+
+    /// <summary>
+    /// Fuehrt einen Befehl in einem eigenen kurzen Kanal ohne Pseudo-Terminal aus (neben der Shell) und liefert seine Standardausgabe;
+    /// null bei Fehler oder wenn die Frist <paramref name="timeout"/> ablaeuft. Dient der Pruefung vor dem Start eines Programms (siehe <see cref="SshLaunchRules"/>).
+    /// </summary>
+    Task<string?> ExecAsync(string command, TimeSpan timeout, CancellationToken ct) => Task.FromResult<string?>(null);
 }

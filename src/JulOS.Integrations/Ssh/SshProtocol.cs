@@ -8,7 +8,9 @@ namespace JulOS.Integrations.Ssh;
 /// WebSocket-Protokoll des Terminals (/api/remote/ssh), binaer, erstes Byte = Art. Browser -> Server:
 /// 1 Daten (Bytes fuer die Shell), 2 Groesse (u16 Spalten, u16 Zeilen, big endian), 3 Lebenszeichen (leer),
 /// 4 Pause und 5 Weiter (der Browser kommt mit dem Zeichnen nicht nach: der Server liest die Shell nicht weiter, das SSH-Fenster bremst das Ziel).
-/// Server -> Browser: 1 Daten (Ausgabe der Shell), 2 Bereit (JSON: hostKey "new" | "known" | "changed-accepted", fingerprint), 3 Ende (JSON: code, message,
+/// Server -> Browser: 1 Daten (Ausgabe der Shell), 2 Bereit (JSON: hostKey "new" | "known" | "changed-accepted", fingerprint; bei einer Programm-Sitzung
+/// zusaetzlich program = was wirklich laeuft ("shell" | "claude" | "codex" | "custom"), keep = "tmux" wenn die Sitzung in tmux laeuft, notice = Hinweise, durch Leerzeichen
+/// getrennt: program-missing, dir-missing, tmux-missing, probe-failed), 3 Ende (JSON: code, message,
 /// bei Code 800 zusaetzlich fingerprint und previous). Nach "Ende" schliesst der Server.
 /// </summary>
 public static class SshProtocol
@@ -26,7 +28,17 @@ public static class SshProtocol
 
     public static int Clamp(int value, int min, int max) => Math.Min(max, Math.Max(min, value));
 
-    public static byte[] Ready(string hostKeyState, string fingerprint) => Json(FromReady, ("hostKey", hostKeyState), ("fingerprint", fingerprint));
+    public static byte[] Ready(string hostKeyState, string fingerprint, SshStartPlan? plan = null)
+    {
+        var fields = new List<(string, object)> { ("hostKey", hostKeyState), ("fingerprint", fingerprint) };
+        if (plan is not null)
+        {
+            fields.Add(("program", plan.Program));
+            if (plan.Tmux) fields.Add(("keep", "tmux"));
+            if (plan.Notices.Count > 0) fields.Add(("notice", plan.NoticeText));
+        }
+        return Json(FromReady, [.. fields]);
+    }
 
     public static byte[] End(int code, string message, string? fingerprint = null, string? previous = null)
     {

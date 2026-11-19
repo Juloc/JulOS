@@ -191,6 +191,22 @@
         <label data-i18n="app.address">Adresse <input id="connHost" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Name oder IP-Adresse" data-i18n-placeholder="app.addressPh" required></label>
         <label>Port <input id="connPort" type="text" inputmode="numeric" autocomplete="off" placeholder="3389"></label>
         <label data-i18n="app.userOnTarget">Benutzername auf dem Ziel <input id="connUser" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
+        <div id="connProgRow" hidden>
+          <label><span data-i18n="app.progLabel">Startprogramm</span>
+            <select id="connProgram">
+              <option value="shell" data-i18n="prog.shell">Shell</option><option value="claude" data-i18n="prog.claude">Claude Code</option>
+              <option value="codex" data-i18n="prog.codex">Codex</option><option value="custom" data-i18n="prog.custom">Eigener Befehl</option>
+            </select>
+          </label>
+          <label id="connCustomRow" hidden><span data-i18n="app.customCmd">Befehl</span> <input id="connCustom" type="text" maxlength="500" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="claude --continue" data-i18n-placeholder="app.customCmdPh"></label>
+          <label id="connWorkdirRow"><span data-i18n="app.workdir">Arbeitsverzeichnis <span class="opt" data-i18n="app.optional">(optional)</span></span> <input id="connWorkdir" type="text" maxlength="200" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="~/projekte/app" data-i18n-placeholder="app.workdirPh"></label>
+          <label id="connKeepRow" class="check" data-i18n="app.keepAlive"><input id="connKeep" type="checkbox"> Sitzung am Leben halten (tmux)</label>
+          <p id="connProgHint" class="hint"></p>
+          <div id="connTileRow" class="row" hidden>
+            <button id="connTileClaude" type="button" class="ghost" data-i18n="app.tileClaude">Kachel „Claude“ anlegen</button>
+            <button id="connTileCodex" type="button" class="ghost" data-i18n="app.tileCodex">Kachel „Codex“ anlegen</button>
+          </div>
+        </div>
         <label id="connDomainRow"><span data-i18n="app.domain">Domäne <span class="opt" data-i18n="app.optionalDesktopOnly">(optional, nur Desktop)</span></span> <input id="connDomain" type="text" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="leer = keine Windows-Domäne" data-i18n-placeholder="app.domainPh"></label>
         <label id="connLayoutRow"><span data-i18n="app.layoutLabel">Tastaturlayout des Ziels <span class="opt" data-i18n="app.desktopOnly">(nur Desktop)</span></span>
           <select id="connLayout">

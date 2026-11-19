@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using System.Text;
 using Microsoft.Extensions.Logging;
 
 namespace JulOS.Integrations.Ssh;
@@ -13,6 +14,7 @@ namespace JulOS.Integrations.Ssh;
 public sealed class SshRelay(ILogger<SshRelay> log, Func<ISshSession>? factory = null, int maxSessions = 32, SessionRegistry? registry = null)
 {
     public static readonly TimeSpan SessionCheck = TimeSpan.FromSeconds(60);
+    public static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(5);
 
     private readonly Func<ISshSession> _factory = factory ?? (() => new SshNetSession());
     private readonly SemaphoreSlim _slots = new(maxSessions);
@@ -83,7 +85,8 @@ public sealed class SshRelay(ILogger<SshRelay> log, Func<ISshSession>? factory =
         byte[]? last = null;
         try
         {
-            await ws.SendAsync(SshProtocol.Ready(decision switch { HostKeyDecision.FirstUse => "new", HostKeyDecision.AcceptedChange => "changed-accepted", _ => "known" }, key.Fingerprint),
+            var plan = await StartProgramAsync(session, target, stop.Token).ConfigureAwait(false);
+            await ws.SendAsync(SshProtocol.Ready(decision switch { HostKeyDecision.FirstUse => "new", HostKeyDecision.AcceptedChange => "changed-accepted", _ => "known" }, key.Fingerprint, plan),
                 WebSocketMessageType.Binary, true, ct).ConfigureAwait(false);
             log.LogInformation("SSH-Verbindung offen");
             var flow = new Flow();
@@ -115,6 +118,24 @@ public sealed class SshRelay(ILogger<SshRelay> log, Func<ISshSession>? factory =
         {
             log.LogInformation("SSH-Verbindung beendet nach {Seconds} s{Replaced}", (Environment.TickCount64 - started) / 1000, lease.Replaced ? " (von einer neuen Verbindung abgelöst)" : "");
         }
+    }
+
+    /// <summary>
+    /// Programm-Sitzung (docs/CLI-SESSIONS.md): pruefen, ob Programm, Verzeichnis und tmux auf dem Ziel da sind (kurzer Exec-Kanal, hoechstens <see cref="ProbeTimeout"/>), dann die
+    /// Startzeile in die Shell schreiben. Die Ausgabe der Shell wartet im Kanal, bis die Pumpe startet. Ohne Programm (gewoehnliche Shell) geschieht nichts. Die Zeile
+    /// enthaelt unter Umstaenden den eigenen Befehl des Besitzers: sie wird nicht geloggt.
+    /// </summary>
+    private async Task<SshStartPlan?> StartProgramAsync(ISshSession session, SshTarget target, CancellationToken ct)
+    {
+        var launch = target.Launch;
+        if (launch is null || launch.IsPlain) return null;
+        SshProbe? probe = null;
+        try { probe = SshLaunchRules.ParseProbe(await session.ExecAsync(SshLaunchRules.ProbeCommand(launch), ProbeTimeout, ct).ConfigureAwait(false)); }
+        catch (Exception e) when (e is not OperationCanceledException) { /* keine Pruefung moeglich: Plan faellt auf die Shell zurueck */ }
+        var plan = SshLaunchRules.Plan(launch, target.ConnectionName, target.ConnectionId, probe);
+        if (plan.Line is not null) await session.WriteAsync(Encoding.UTF8.GetBytes(plan.Line), ct).ConfigureAwait(false);
+        log.LogInformation("Programm-Sitzung: {Program}{Tmux}{Notice}", plan.Program, plan.Tmux ? " (tmux)" : "", plan.Notices.Count > 0 ? " Hinweis: " + plan.NoticeText : "");
+        return plan;
     }
 
     private static byte[] FailureMessage(SshException e, ISshSession session, SshTarget target) => e.Failure switch

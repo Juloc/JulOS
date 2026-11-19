@@ -36,7 +36,7 @@ public sealed class SshNetSession : ISshSession
         {
             foreach (var p in e.Prompts) p.Response = p.Request.Contains("assword", StringComparison.OrdinalIgnoreCase) ? password : "";
         };
-        var info = new ConnectionInfo(o.Host, o.Port, o.User, plain, interactive) { Timeout = o.ConnectTimeout, MaxSessions = 1 };
+        var info = new ConnectionInfo(o.Host, o.Port, o.User, plain, interactive) { Timeout = o.ConnectTimeout, MaxSessions = 2 };   // Shell und ein kurzer Exec-Kanal fuer die Pruefung vor einem Programmstart
         var client = new SshClient(info) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
         client.HostKeyReceived += (_, e) =>
         {
@@ -119,6 +119,27 @@ public sealed class SshNetSession : ISshSession
         if (_shell is null || (cols == _cols && rows == _rows)) return;
         _cols = cols; _rows = rows;
         _shell.ChangeWindowSize((uint)cols, (uint)rows, 0, 0);
+    }
+
+    public async Task<string?> ExecAsync(string command, TimeSpan timeout, CancellationToken ct)
+    {
+        var client = _client;
+        if (client is null || !client.IsConnected) return null;
+        try
+        {
+            // SSH.NET fuehrt den Befehl blockierend aus: in einem eigenen Thread, mit der Frist des Aufrufers (auch als Obergrenze fuer das Warten)
+            return await Task.Run(() =>
+            {
+                using var cmd = client.CreateCommand(command);
+                cmd.CommandTimeout = timeout;
+                var output = cmd.Execute();
+                return output;
+            }, ct).WaitAsync(timeout + TimeSpan.FromMilliseconds(500), ct).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            return null;                                              // Zeitueberschreitung oder Fehler: der Aufrufer fragt nicht weiter nach, er faellt auf die Shell zurueck
+        }
     }
 
     private SshException Translate(Exception e, CancellationToken ct)

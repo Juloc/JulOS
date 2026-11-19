@@ -73,6 +73,10 @@ Target for runtime NuGet packages: **three** (Npgsql, the Argon2 library and SSH
 - **Headers:** strict CSP, `nosniff`, `frame-ancestors 'none'`, HSTS over HTTPS, no referrer.
 - **The first account is created on the setup screen**, guarded by the one-time setup code from the server log, so only whoever can read the log can claim the instance. Setup closes after the first account. The console tool (`tools/julos-user.sh`) is the recovery path; passwords are typed in the terminal, never passed as an argument.
 
+## Backup
+
+`BackupWorker` (in the server process, no extra container) writes a dump of the database and a copy of `secret.key` as separate files into a mounted folder every day, keeps them for a set time, and `dotnet JulOS.dll backup restore` reads a dump back (all or nothing, in one transaction). The dump is text made by the server itself (`DbDump`: `COPY` blocks of every table in foreign-key order from one snapshot), not `pg_dump`: the image has no client that matches PostgreSQL 18 and `pg_dump` refuses a newer server. The schema is not in the dump; the migrations build it, and a dump naming a migration the server does not know is refused. Setup, settings and restore: [BACKUP.md](BACKUP.md).
+
 ## Test instance (a mirror of live, used for every change)
 
 `deploy/dev/compose.yaml` starts the same stack as production with its own PostgreSQL volume, `guacd`, the server built from the same

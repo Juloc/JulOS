@@ -4,6 +4,12 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unreleased]
+
+### Neu
+- Tägliches Backup: der Server schreibt die Datenbank (komprimiert) und eine Kopie des Schlüssels für gespeicherte Passwörter als getrennte Dateien in einen Backup-Ordner (`/backup`, im Compose-Beispiel `~/julos-backup`), mit Aufbewahrung (Standard 14 Tage), Uhrzeit und Schalter per Umgebungsvariable (`JULOS_BACKUP`, `JULOS_BACKUP_TIME`, `JULOS_BACKUP_KEEP_DAYS`, `JULOS_BACKUP_KEY`). Ohne eingebundenen Ordner wird nichts geschrieben, sondern laut gewarnt. Kein zusätzlicher Container.
+- Wiederherstellung auf der Konsole: `dotnet JulOS.dll backup restore DATEI --key SCHLÜSSELDATEI` (alles oder nichts, prüft am Ende, dass sich gespeicherte Passwörter entschlüsseln lassen); `backup create` sichert sofort. „Über JulOS“ zeigt das letzte Backup mit Zeit und Größe. Anleitung: [docs/BACKUP.md](docs/BACKUP.md).
+
 ## [0.4.0] - 2026-11-19
 
 ### Neu

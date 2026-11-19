@@ -4,6 +4,11 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Neu
+- Stream-Engine: ruhende Bildteile (Text, Farbe) werden zusätzlich verlustfrei nachgeliefert und liegen pixelgenau über dem Video, farbiger Text ist damit so scharf wie bei Guacamole.
+
 ## [0.1.0] - 2026-11-19
 
 Erste Version unter eigener Zählung (davor gab es Vorabversionen `1.0.0-beta.1` bis `1.0.0-beta.4`).

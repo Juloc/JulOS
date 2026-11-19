@@ -76,6 +76,40 @@ public sealed class ScreenStreamTests
     }
 
     [Fact]
+    public async Task A_desktop_that_stands_still_is_followed_by_lossless_refinements_inside_the_screen()
+    {
+        var host = Host();
+        await using var stream = new ScreenStream(Options(host, 1280, 720));
+        using var cts = new CancellationTokenSource(Wait);
+        var run = stream.RunAsync(cts.Token);
+        var size = await NextAsync<ScreenSize>(stream, cts.Token);
+
+        // Der Browser bestaetigt alles, was kommt; irgendwann steht der Bildschirm still und die Nachbesserung folgt
+        ScreenRefine? refine = null;
+        while (refine is null && await stream.Events.WaitToReadAsync(cts.Token))
+        {
+            while (stream.Events.TryRead(out var evt))
+            {
+                if (evt is ScreenPicture picture)
+                {
+                    stream.Acknowledge(picture.Sequence);
+                }
+                else if (evt is ScreenRefine found)
+                {
+                    refine = found;
+                }
+            }
+        }
+
+        Assert.NotNull(refine);
+        Assert.True(refine!.X >= 0 && refine.Y >= 0 && refine.Width > 0 && refine.Height > 0, $"{refine.X},{refine.Y} {refine.Width}x{refine.Height}");
+        Assert.True(refine.X + refine.Width <= size.Width && refine.Y + refine.Height <= size.Height);
+        Assert.Equal([0x89, 0x50, 0x4E, 0x47], refine.Png[..4]);
+        await cts.CancelAsync();
+        await run;
+    }
+
+    [Fact]
     public async Task The_desktop_follows_a_new_window_size()
     {
         var host = Host();

@@ -17,6 +17,8 @@ namespace JulOS.Integrations.Display;
 ///   8 Dateien        stapel(4) anzahl(1) dann je Datei groesse(8, -1 unbekannt) namenlaenge(2) Name (UTF-8)   (anzahl 0: Auswahl weg)
 ///   9 Dateistueck    stapel(4) nummer(1) flags(1: Bit0 letztes, Bit1 gescheitert) Bytes ...   (bei Scheitern der Grund als Text)
 ///  10 Ergebnis       nummer(4) code(1: 0 ok, 1 zu gross, 2 nicht erlaubt, 3 keine Zwischenablage in der VM, 4 sonst) Text ...
+///  40 Nachbesserung x(2) y(2) breite(2) hoehe(2) PNG ...   (dieses Rechteck verlustfrei, steht still; der Browser legt es ueber das Video)
+///  41 Nachbesserung weg anzahl(2) dann je Rechteck x(2) y(2) breite(2) hoehe(2)   (dort hat sich der Bildschirm wieder geaendert: Ueberlagerung entfernen)
 /// Browser an Server:
 ///   1 Bestaetigung   folge(4)   (alle Bilder bis zu dieser Folgenummer sind dekodiert oder verworfen; ohne Nummer: ein Bild)
 ///   2 Maus bewegt    x(2) y(2)
@@ -38,7 +40,8 @@ namespace JulOS.Integrations.Display;
 public static class ScreenProtocol
 {
     public const byte ToBrowserPicture = 1, ToBrowserCursor = 2, ToBrowserSize = 3, ToBrowserError = 4, ToBrowserTaken = 5, ToBrowserClipboard = 6,
-        ToBrowserImage = 7, ToBrowserFiles = 8, ToBrowserFileChunk = 9, ToBrowserResult = 10;
+        ToBrowserImage = 7, ToBrowserFiles = 8, ToBrowserFileChunk = 9, ToBrowserResult = 10,
+        ToBrowserRefine = 40, ToBrowserRefineClear = 41;
     public const byte FromBrowserAck = 1, FromBrowserMove = 2, FromBrowserButton = 3, FromBrowserWheel = 4, FromBrowserKey = 5,
         FromBrowserUnicode = 6, FromBrowserResize = 7, FromBrowserKeyFrame = 8, FromBrowserClipboard = 9,
         FromBrowserSendBegin = 10, FromBrowserSendChunk = 11, FromBrowserSendEnd = 12, FromBrowserSendCancel = 13,
@@ -75,6 +78,39 @@ public static class ScreenProtocol
         }
 
         return length;
+    }
+
+    public const int RefineHeader = 9;
+    public const int MaxClearRects = 4000;
+
+    public static int WriteRefine(Span<byte> target, ScreenRefine refine)
+    {
+        target[0] = ToBrowserRefine;
+        BinaryPrimitives.WriteUInt16BigEndian(target[1..], (ushort)refine.X);
+        BinaryPrimitives.WriteUInt16BigEndian(target[3..], (ushort)refine.Y);
+        BinaryPrimitives.WriteUInt16BigEndian(target[5..], (ushort)refine.Width);
+        BinaryPrimitives.WriteUInt16BigEndian(target[7..], (ushort)refine.Height);
+        refine.Png.CopyTo(target[RefineHeader..]);
+        return RefineHeader + refine.Png.Length;
+    }
+
+    public static int WriteRefineClear(Span<byte> target, int[] rects)
+    {
+        // Mehr als MaxClearRects Rechtecke gibt es nur bei riesigen Bildschirmen: dann wird alles gestrichen (besser zu viel als stehengebliebenes Altes)
+        if (rects.Length / 4 > MaxClearRects)
+        {
+            rects = [0, 0, 65535, 65535];
+        }
+
+        var count = rects.Length / 4;
+        target[0] = ToBrowserRefineClear;
+        BinaryPrimitives.WriteUInt16BigEndian(target[1..], (ushort)count);
+        for (var i = 0; i < count * 4; i++)
+        {
+            BinaryPrimitives.WriteUInt16BigEndian(target[(3 + i * 2)..], (ushort)rects[i]);
+        }
+
+        return 3 + count * 8;
     }
 
     public static int WriteSize(Span<byte> target, int width, int height)

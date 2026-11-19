@@ -135,6 +135,14 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                         buffer = pool.Rent(ScreenProtocol.PictureHeader + picture.Data.Length);
                         length = ScreenProtocol.WritePicture(buffer, picture.Sequence, picture.IsKey, picture.Data);
                         break;
+                    case ScreenRefine refine:
+                        buffer = pool.Rent(ScreenProtocol.RefineHeader + refine.Png.Length);
+                        length = ScreenProtocol.WriteRefine(buffer, refine);
+                        break;
+                    case ScreenRefineClear clear:
+                        buffer = pool.Rent(3 + Math.Min(clear.Rects.Length / 4, ScreenProtocol.MaxClearRects) * 8);
+                        length = ScreenProtocol.WriteRefineClear(buffer, clear.Rects);
+                        break;
                     case ScreenCursor cursor:
                         buffer = pool.Rent(ScreenProtocol.CursorHeader + (cursor.Rgba?.Length ?? 0));
                         length = ScreenProtocol.WriteCursor(buffer, cursor);

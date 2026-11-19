@@ -40,6 +40,17 @@ services:
       JULOS_BACKUP_TIME: "${JULOS_BACKUP_TIME:-}"
       JULOS_BACKUP_KEEP_DAYS: "${JULOS_BACKUP_KEEP_DAYS:-}"
       JULOS_BACKUP_KEY: "${JULOS_BACKUP_KEY:-}"
+      # Zweites Ziel ausserhalb des Rechners (optional, Standard aus, docs/BACKUP.md): off | path | sftp. Keine Passwoerter hier, nur Pfade von Dateien (im Container).
+      JULOS_BACKUP_COPY: "${JULOS_BACKUP_COPY:-off}"
+      JULOS_BACKUP_COPY_PATH: "${JULOS_BACKUP_COPY_PATH:-}"
+      JULOS_BACKUP_SFTP_HOST: "${JULOS_BACKUP_SFTP_HOST:-}"
+      JULOS_BACKUP_SFTP_PORT: "${JULOS_BACKUP_SFTP_PORT:-}"
+      JULOS_BACKUP_SFTP_USER: "${JULOS_BACKUP_SFTP_USER:-}"
+      JULOS_BACKUP_SFTP_PATH: "${JULOS_BACKUP_SFTP_PATH:-}"
+      JULOS_BACKUP_SFTP_KEY_FILE: "${JULOS_BACKUP_SFTP_KEY_FILE:-}"
+      JULOS_BACKUP_SFTP_KEY_PASSPHRASE_FILE: "${JULOS_BACKUP_SFTP_KEY_PASSPHRASE_FILE:-}"
+      JULOS_BACKUP_SFTP_PASSWORD_FILE: "${JULOS_BACKUP_SFTP_PASSWORD_FILE:-}"
+      JULOS_BACKUP_SFTP_HOST_KEY: "${JULOS_BACKUP_SFTP_HOST_KEY:-}"
       # optional, nur lesen, standardmaessig aus (docs/MODULES.md): Caddy (Domains und Ziele) und DDNS (Adresse und Namen)
       JULOS_CADDY: "${JULOS_CADDY:-off}"
       JULOS_CADDYFILE: "${JULOS_CADDYFILE:-}"
@@ -63,6 +74,10 @@ services:
       - ${HOME}/julos-uploads:/uploads
       # Backup-Ordner: vorher anlegen (mkdir -m 700 ~/julos-backup), er gehoert dem Benutzer des Servers; Ablageort ausserhalb dieses Rechners mitnehmen
       - ${JULOS_BACKUP_PATH:-${HOME}/julos-backup}:/backup
+      # Zweites Backup-Ziel, Beispiele (docs/BACKUP.md): eingebundenes NAS (JULOS_BACKUP_COPY=path, JULOS_BACKUP_COPY_PATH=/backup-copy), das Ziel gehoert dem Server-Benutzer, Rechte 0700
+      # - /mnt/nas/julos-backup:/backup-copy
+      # oder SFTP mit privatem Schluessel (JULOS_BACKUP_COPY=sftp, JULOS_BACKUP_SFTP_KEY_FILE=/run/secrets/julos-backup-sftp-key), die Datei nur lesend (0600, lesbar fuer JULOS_UID)
+      # - ${HOME}/julos-backup-key:/run/secrets/julos-backup-sftp-key:ro
       # Caddy-Modul ueber das Caddyfile: die Datei nur lesend einbinden und JULOS_CADDYFILE=/etc/julos/Caddyfile setzen
       # - /pfad/zum/Caddyfile:/etc/julos/Caddyfile:ro
     # BIND_IP = LAN-Adresse des Docker-Hosts (nur Heimnetz); Standard ist nur lokal (127.0.0.1)

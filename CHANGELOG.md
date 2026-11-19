@@ -4,7 +4,7 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
-## [Unveröffentlicht]
+## [0.13.0] - 2026-11-19
 
 ### Neu
 - **Host-Agent, Stufe 3: Aktionen, jede bestätigt, nie still** (Agent 0.6.0, [docs/HOST-AGENT.md](docs/HOST-AGENT.md), Abschnitt „Actions“): Updates installieren (ein Paket aus der Liste oder alle, mit Fortschritt und Neustart-Hinweis) und Paketlisten aktualisieren, Neustart und Ausschalten, systemd-Dienste auflisten, starten, stoppen und neu starten, Docker-Container starten, stoppen und neu starten, Image neu holen, Logs lesen (10 bis 200 Zeilen, nur auf Anforderung).

@@ -160,6 +160,10 @@ session or a compromised target machine can reach.
 - Compose: PostgreSQL and guacd have no published port; the server is published on loopback unless `BIND_IP` is set; the database password is required (`:?`).
 - Caddy examples: HSTS, `nosniff`, no referrer, `-Server`, WebSocket and long timeouts, optional mTLS (`tools/make-client-cert.sh` keeps the CA key out of the repo via `.gitignore` for `pki/` and `.env`), a LAN-only first stage. Missing in the examples: a rate limit (Caddy needs a plugin) and the trusted-proxy hint from finding 3.
 
+## Files on hosts over SFTP (added with the Files app)
+
+Review of the new surface ([FILES.md](FILES.md)), not a full audit: everything sits behind the session, `X-JulOS` and the origin check; writing is off by default and every write needs the page's confirmation (`confirm`); the host key must be confirmed including the first one; paths are absolute and normalised (no `..`, no control characters); listings, copy and delete have count, depth and size limits checked before anything changes; transfers are streamed and counted; downloads are `attachment` with `application/octet-stream` and the text view is returned as a JSON value and set with `textContent`; links are never followed in recursion and never replaced; the pool keeps no password; the history holds paths and codes only. Checked against a real SFTP target in the dev stack (listing, read, write, rename, delete, links, errors, a large folder, a changed host key, cancel). **Open by design:** with writing on, a signed-in session can change anything the saved SSH user can on every host with a saved or typed password; that is the feature, the switch and the confirmations are the guard. The SFTP library follows links on path calls (see the note in FILES.md); that is worked around, not fixed upstream.
+
 ## Not verified here
 
 - The desktop layout, terminal, remote picture and clipboard were not driven in a browser (no permission to type credentials for a target; the relays are covered by the existing integration tests against real guacd, SSH and RDP containers).

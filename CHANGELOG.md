@@ -4,7 +4,7 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
-## [Unveröffentlicht]
+## [0.10.1] - 2026-11-19
 
 ### Behoben
 - Ton und Mikrofon am PC: die Oberfläche für den PC (Menüleiste oben) hatte keinen einzigen Knopf für Ton, Lautstärke und Mikrofon (sie standen nur im Menü der Handy-Ansicht, das am PC nicht angezeigt wird). Neu: Menü „Ton“ in der Menüleiste (Ton vom Rechner, Lautstärke, Mikrofon, Diagnose), für RDP und VNC.

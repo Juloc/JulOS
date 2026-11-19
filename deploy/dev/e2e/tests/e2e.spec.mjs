@@ -210,3 +210,24 @@ test('6 Handy- und Desktop-Oberfläche laden ohne Konsolenfehler', async ({ brow
     await context.close();
   }
 });
+
+test('7 Sprache: auf Englisch umschalten, Überschrift und Kachel sind englisch, danach zurück auf Deutsch', async ({ browser }) => {
+  const { context, page, errors } = await signedIn(browser);
+  await page.goto('/?desktop');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'de');
+  await page.locator('#desktop [data-go="einstellungen"], #desktop [data-nav="einstellungen"]').first().click();
+  await expect(page.locator('#desktop h3', { hasText: 'Einstellungen' })).toBeVisible();
+  await page.locator('#desktop [data-lang="en"]').click();                       // lädt die Seite neu
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.locator('#desktop')).toBeVisible();
+  await expect(page.locator('#desktop .dk-tile', { hasText: 'Add connection' }).first()).toBeVisible();
+  await expect.poll(async () => (await (await page.request.get('/api/settings')).json()).settings.lang?.lang, { message: 'der Server hat die Sprache gemerkt' }).toBe('en');
+  await page.locator('#desktop [data-go="einstellungen"], #desktop [data-nav="einstellungen"]').first().click();
+  await expect(page.locator('#desktop h3', { hasText: 'Settings' })).toBeVisible();
+  await page.locator('#desktop [data-lang="de"]').click();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'de');
+  await expect(page.locator('#desktop .dk-tile', { hasText: 'Verbindung hinzufügen' }).first()).toBeVisible();
+  await expect.poll(async () => (await (await page.request.get('/api/settings')).json()).settings.lang?.lang).toBe('de');
+  expect(errors).toEqual([]);
+  await context.close();
+});

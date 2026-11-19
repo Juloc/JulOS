@@ -5,7 +5,8 @@ Zwei Betriebsarten, eine Datei, eine Verbindung zum Server:
 - Desktop-Modus (Standard, wenn GTK/Wnck da sind): laeuft in der grafischen Sitzung, siehe unten.
 - Host-Modus (--host, oder automatisch ohne GTK/Wnck): fuer Rechner ohne Desktop (Docker-VM, Proxmox-Host, Debian/Ubuntu-Server).
   Nur Python-Standardbibliothek, laeuft als eigener Benutzer ohne Anmeldung (tools/install-host-agent.sh). Er meldet seine Faehigkeiten
-  (sysinfo, updates, services, docker) und beantwortet die LESENDEN Anfragen /v1/host/* (docs/HOST-AGENT.md). Schreibaktionen gibt es noch nicht.
+  (sysinfo, updates, services, docker) und beantwortet die LESENDEN Anfragen /v1/host/* (docs/HOST-AGENT.md). Dazu kommen ab 0.6.0 die Schreib-Aktionen
+  (Updates, Neustart, Dienste, Container, Logs): nur mit lokaler Erlaubnis je Aktionsart (/etc/julos-agent/permissions) und nur auf bestaetigte Auftraege des Servers.
 
 Desktop-Modus: laeuft in der grafischen Sitzung und stellt dem Server die "Agent-API v1" bereit
 (siehe docs/AGENT_API.md): Fensterliste, Fenster aktivieren/schliessen, Programmliste und
@@ -39,7 +40,7 @@ if sys.version_info < MIN_PYTHON:
 import argparse, base64, hashlib, hmac, http.client, http.server, json, logging, logging.handlers, os, queue, random, re, shutil, signal, socket, socketserver, ssl, stat, struct, subprocess, tempfile, threading, time
 import urllib.error, urllib.parse, urllib.request
 
-AGENT_VERSION = "0.5.0"      # der Server lehnt aeltere ab (AgentLinks.MinAgentVersion); ab 0.4.0 aktualisiert er sich auf Anweisung selbst; ab 0.5.0 gibt es den Host-Modus
+AGENT_VERSION = "0.6.0"      # der Server lehnt aeltere ab (AgentLinks.MinAgentVersion); ab 0.4.0 aktualisiert er sich auf Anweisung selbst; ab 0.5.0 gibt es den Host-Modus; ab 0.6.0 Schreib-Aktionen
 API_VERSION = 1
 PLATFORM = "linux-x11"         # im Host-Modus "linux-host" (HOST_PLATFORM)
 HOST_PLATFORM = "linux-host"
@@ -597,12 +598,10 @@ def apply_update(server, message, script=None, allow_http=False, opener=None, cu
 
 
 # ---------------------------------------------------------------- Host-Modus (Rechner ohne Desktop; nur Standardbibliothek, siehe docs/HOST-AGENT.md)
-# Alles hier LIEST nur: Systemwerte, Update-Liste, fehlgeschlagene Dienste, Docker-Container. Schreibaktionen (Updates installieren, Neustart) kommen
-# mit Stufe 3; die Rechtepruefung dafuer (lokale Datei oder Aufrufparameter) und die Nachrichtenform stehen schon, damit sie dort anschliessen koennen.
+# Lesen: Systemwerte, Update-Liste, fehlgeschlagene Dienste, Docker-Container. Schreiben (Stufe 3, Abschnitt "Schreib-Aktionen" weiter unten): nur feste Pfade,
+# nur mit lokaler Erlaubnis je Aktionsart, nur ein Auftrag zugleich.
 HOST_CAPS_ALL = ("sysinfo", "updates", "services", "docker")
-# Schreibaktionen (Stufe 3): Pfad -> Recht. Bis dahin antwortet der Agent mit 403 (nicht erlaubt) oder 501 (erlaubt, aber noch nicht gebaut).
-CONTROL_PATHS = {"/v1/host/updates/install": "updates", "/v1/host/reboot": "reboot"}
-CONTROL_RIGHTS = ("updates", "reboot")
+CONTROL_RIGHTS = ("updates", "reboot", "services", "docker", "logs")
 PERMISSIONS_FILE = os.environ.get("JULOS_AGENT_PERMISSIONS") or "/etc/julos-agent/permissions"
 DOCKER_SOCKET = os.environ.get("JULOS_AGENT_DOCKER_SOCKET") or "/var/run/docker.sock"
 CMD_TIMEOUT = 30
@@ -637,7 +636,7 @@ def read_text(path, limit=1024 * 1024):
 
 # ---- Rechte (Stufe 3): am Server nach Stufe 'control' geprueft, hier noch einmal lokal
 def parse_permissions(text):
-    """Die Datei /etc/julos-agent/permissions: je Zeile ein Recht (updates, reboot), '#' beginnt einen Kommentar. Unbekanntes wird ignoriert."""
+    """Die Datei /etc/julos-agent/permissions: je Zeile ein Recht (updates, reboot, services, docker, logs), '#' beginnt einen Kommentar. Unbekanntes wird ignoriert."""
     out = set()
     for line in text.splitlines():
         word = line.split("#", 1)[0].strip().lower()
@@ -1143,8 +1142,13 @@ def summarize_containers(items):
         if not isinstance(c, dict):
             continue
         names = c.get("Names") if isinstance(c.get("Names"), list) else []
-        out.append({"id": clean(str(c.get("Id", ""))[:12], 12), "name": clean((names[0] if names else "").lstrip("/"), 64), "image": clean(c.get("Image"), 100),
-                    "state": clean(c.get("State"), 16), "status": clean(c.get("Status"), 64)})
+        entry = {"id": clean(str(c.get("Id", ""))[:12], 12), "name": clean((names[0] if names else "").lstrip("/"), 64), "image": clean(c.get("Image"), 100),
+                 "state": clean(c.get("State"), 16), "status": clean(c.get("Status"), 64)}
+        labels = c.get("Labels") if isinstance(c.get("Labels"), dict) else {}
+        project = clean(labels.get("com.docker.compose.project"), 40)       # Compose-Projekt: der Server warnt, wenn es JulOS selbst ist
+        if project:
+            entry["project"] = project
+        out.append(entry)
     running = sum(1 for c in out if c["state"] == "running")
     restarting = sum(1 for c in out if c["state"] == "restarting")        # Container in einer Neustart-Schleife
     out.sort(key=lambda c: (c["state"] != "running", c["name"]))
@@ -1191,24 +1195,556 @@ HOST_READS = {          # Pfad -> (Faehigkeit, Funktion); die Funktionen werden 
 }
 
 
-def host_api(method, path, body):
-    """Die Anfragen an einen Host-Agenten (docs/HOST-AGENT.md). Gibt (Status, Objekt) zurueck. Nur feste Pfade; ein Desktop-Pfad ist hier 404."""
+# ---------------------------------------------------------------- Schreib-Aktionen (Stufe 3, docs/HOST-AGENT.md)
+# Der Agent fuehrt nur aus, was der Server nach der Bestaetigung des Benutzers schickt, und nur, wenn die lokale Datei /etc/julos-agent/permissions das Wort der Aktionsart enthaelt.
+# Feste Pfade, geprueftes Ziel (Paket aus der Update-Liste, Dienst aus der Dienstliste, Container aus der Containerliste), kein freier Befehl, keine Shell.
+# Was root braucht (apt, systemctl, journalctl, reboot), laeuft NICHT hier, sondern ueber den kleinen Helfer tools/julos-agent-helper.py (root-eigen, Socket-Dienst): der Agent
+# bleibt ein Benutzer ohne Rechte und ohne sudo. Docker geht ueber den Socket, den die Lese-Funktionen schon benutzen. Eine schreibende Aktion zugleich (409 busy).
+HELPER_SOCKET = os.environ.get("JULOS_AGENT_HELPER_SOCKET") or "/run/julos-agent-helper.sock"
+JOB_FILE = os.path.join(STATE_DIR, "jobs.json")
+JOB_KEEP = 20
+JOB_RE = re.compile(r"^[0-9a-f]{32}\Z")
+# Alle Muster enden mit \Z, nicht mit $ ($ liesse einen Zeilenumbruch am Ende durch).
+# Debian-Paketname; kein '-' am Ende (apt-get install paket- ENTFERNT das Paket), keine '=', '/' oder Leerzeichen (Version, Release)
+PKG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9+.\-]*[a-z0-9+.])?(?::[a-z0-9]+)?\Z")
+UNIT_RE = re.compile(r"^(?!-)[A-Za-z0-9:_.@\-]{1,100}\.service\Z")
+CONTAINER_RE = re.compile(r"^[0-9a-f]{12}\Z")
+IMAGE_RE = re.compile(r"^[a-z0-9][a-zA-Z0-9._/:\-]{0,199}\Z")
+MAX_UNITS = 300
+MAX_PACKAGES_PER_ACTION = 20
+LOG_LINES_MIN, LOG_LINES_MAX, LOG_LINES_DEFAULT = 10, 200, 100
+LOG_LINE_WIDTH = 400
+OUTPUT_TAIL = 4000           # Zeichen der Ausgabe eines Programms, die ein Ergebnis hoechstens mitbringt
+POWER_DELAY = 5              # Sekunden zwischen "angenommen" und dem Neustart: der Server soll die Antwort noch bekommen
+# (Pfad -> (Recht, Aktion)): die einzigen schreibenden Pfade
+WRITE_ROUTES = {
+    "/v1/host/updates/refresh": ("updates", "updates.refresh"),
+    "/v1/host/updates/install": ("updates", "updates.install"),
+    "/v1/host/reboot": ("reboot", "power.reboot"),
+    "/v1/host/poweroff": ("reboot", "power.poweroff"),
+    "/v1/host/service/start": ("services", "service.start"),
+    "/v1/host/service/stop": ("services", "service.stop"),
+    "/v1/host/service/restart": ("services", "service.restart"),
+    "/v1/host/docker/start": ("docker", "docker.start"),
+    "/v1/host/docker/stop": ("docker", "docker.stop"),
+    "/v1/host/docker/restart": ("docker", "docker.restart"),
+    "/v1/host/docker/pull": ("docker", "docker.pull"),
+    "/v1/host/logs/unit": ("logs", "logs.unit"),
+    "/v1/host/logs/container": ("logs", "logs.container"),
+}
+WRITE_LOCK = threading.Lock()
+_JOBS = None
+
+
+def clean_lines(text, count, width=LOG_LINE_WIDTH):
+    """Die letzten count Zeilen eines Textes, jede nur aus druckbaren Zeichen und hoechstens width lang."""
+    lines = [clean(l.rstrip("\r"), width) for l in str(text or "").split("\n")]
+    while lines and not lines[-1]:
+        lines.pop()
+    return lines[-count:] if count > 0 else []
+
+
+def tail_text(lines, limit=OUTPUT_TAIL):
+    return "\n".join(lines)[-limit:]
+
+
+class JobStore:
+    """Die letzten Auftraege (laufend und fertig) mit Ergebnis, im Speicher und in einer Datei des Dienstbenutzers: so kann der Server das Ergebnis nach einem Verbindungsabbruch
+    abholen (GET /v1/host/jobs). Logs (Inhalt) werden nie gespeichert. Ein Auftrag, der beim Start noch als laufend in der Datei steht, ist unterbrochen."""
+
+    def __init__(self, path, keep=JOB_KEEP):
+        self.path, self.keep, self.lock = path, keep, threading.Lock()
+        self.items = []
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            for j in (data.get("jobs") if isinstance(data, dict) else None) or []:
+                if isinstance(j, dict) and isinstance(j.get("job"), str) and JOB_RE.match(j["job"]):
+                    if j.get("state") == "running":
+                        j["state"], j["status"], j["result"] = "interrupted", 0, {"error": "interrupted"}
+                    self.items.append(j)
+        except (OSError, ValueError):
+            pass
+        self.items = self.items[-keep:]
+
+    def _save(self):
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            tmp = self.path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"jobs": self.items}, f)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, self.path)
+        except OSError as e:
+            log.warning("Auftragsliste nicht gespeichert: %s", e)
+
+    def has(self, job):
+        with self.lock:
+            return any(j["job"] == job for j in self.items)
+
+    def start(self, job, action, target):
+        rec = {"job": job, "action": action, "target": target, "state": "running", "startedAt": int(time.time()), "progress": ""}
+        with self.lock:
+            self.items.append(rec)
+            del self.items[:-self.keep]
+            self._save()
+
+    def progress(self, job, text, done=None, total=None):
+        with self.lock:
+            for j in self.items:
+                if j["job"] == job:
+                    j["progress"] = clean(text, 160)
+                    if done is not None:
+                        j["done"], j["total"] = int(done), int(total or 0)
+
+    def finish(self, job, status, result, state=None):
+        with self.lock:
+            for j in self.items:
+                if j["job"] == job:
+                    j.update(state=state or ("done" if status == 200 else "failed"), status=int(status), result=result, finishedAt=int(time.time()))
+            self._save()
+
+    def snapshot(self):
+        with self.lock:
+            return [dict(j) for j in reversed(self.items)]
+
+
+def job_store():
+    global _JOBS
+    if _JOBS is None:
+        _JOBS = JobStore(JOB_FILE)
+    return _JOBS
+
+
+def helper_call(request, on_line=None, timeout=3600, path=None):
+    """Schickt dem root-Helfer (tools/julos-agent-helper.py) EINE Anfrage und liest, bis er ein Ergebnis oder "angenommen" meldet. None, wenn der Helfer nicht erreichbar ist.
+    Zeilen "p" sind Fortschritt (an on_line), "a" heisst angenommen (Neustart folgt), "r" ist das Ergebnis. Der Helfer prueft Recht und Werte selbst noch einmal."""
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(30)
+    try:
+        s.connect(path or HELPER_SOCKET)
+    except OSError:
+        s.close()
+        return None
+    try:
+        s.sendall(json.dumps(request, separators=(",", ":")).encode() + b"\n")
+        s.settimeout(timeout)
+        f = s.makefile("rb")
+        end = time.time() + timeout
+        while time.time() < end:
+            raw = f.readline(262144)
+            if not raw:
+                return {"ok": False, "code": "helper_closed"}
+            try:
+                msg = json.loads(raw.decode("utf-8", "replace"))
+            except ValueError:
+                continue
+            if not isinstance(msg, dict):
+                continue
+            if isinstance(msg.get("p"), str):
+                if on_line:
+                    on_line(msg["p"])
+            elif msg.get("a"):
+                return {"ok": True, "accepted": True}
+            elif isinstance(msg.get("r"), dict):
+                return msg["r"]
+        return {"ok": False, "code": "timeout"}
+    except (OSError, socket.timeout):
+        return {"ok": False, "code": "helper_closed"}
+    finally:
+        s.close()
+
+
+def docker_call(method, path, timeout=30, limit=4 * 1024 * 1024, socket_path=None):
+    """Eine Anfrage an die Docker-Schnittstelle (derselbe Socket wie beim Lesen). (Status, Bytes); None, wenn der Socket fehlt; Status 'denied' ohne Zugriff, 'error' bei Fehlern."""
+    sock = socket_path or getattr(ARGS, "docker_socket", None) or DOCKER_SOCKET
+    if not os.path.exists(sock):
+        return None
+    conn = _UnixHTTP(sock, timeout=timeout)
+    try:
+        conn.request(method, path, headers={"Host": "docker", "User-Agent": "julos-agent/" + AGENT_VERSION})
+        r = conn.getresponse()
+        return r.status, r.read(limit)
+    except PermissionError:
+        return "denied", b""
+    except (OSError, http.client.HTTPException):
+        return "error", b""
+    finally:
+        conn.close()
+
+
+class Ctx:
+    """Was eine laufende Aktion braucht: ihre Auftragsnummer und den Fortschrittskanal zum Server (emit(text, done, total))."""
+
+    def __init__(self, job, emit):
+        self.job, self.emit = job, emit
+        self.last = 0.0
+
+    def line(self, text, done=None, total=None):
+        job_store().progress(self.job, text, done, total)
+        now = time.time()
+        if now - self.last >= 0.4:          # nicht jede Zeile von apt schicken
+            self.last = now
+            try:
+                self.emit(clean(text, 160), done, total)
+            except Exception:  # noqa: BLE001  # ein Fortschritt darf nie die Aktion stoeren
+                pass
+
+
+def err(status, code, **extra):
+    return status, {"error": code, **extra}
+
+
+def from_helper(r, **extra):
+    """Das Ergebnis des Helfers als (Status, Objekt): ok -> 200, sonst ein kurzer Fehlercode (nie freier Text des Helfers)."""
+    if r is None:
+        return err(503, "helper_unavailable")
+    if r.get("ok"):
+        out = {"ok": True, **extra}
+        if r.get("accepted"):
+            out["accepted"] = True
+        if isinstance(r.get("lines"), list):
+            out["lines"] = [clean(l, LOG_LINE_WIDTH) for l in r["lines"][:LOG_LINES_MAX] if isinstance(l, str)]
+        if isinstance(r.get("output"), str):
+            out["output"] = tail_text(clean_lines(r["output"], 40))
+        return 200, out
+    code = r.get("code") if isinstance(r.get("code"), str) and re.match(r"^[a-z_]{1,32}$", r["code"]) else "action_failed"
+    out = {"error": code, **extra}
+    if isinstance(r.get("output"), str):
+        out["output"] = tail_text(clean_lines(r["output"], 40))
+    return (403 if code == "not_permitted" else 500), out
+
+
+def int_in(value, low, high, default):
+    return max(low, min(high, value)) if isinstance(value, int) and not isinstance(value, bool) else default
+
+
+# ---- Listen, aus denen Ziele stammen duerfen
+def parse_units(text):
+    out = []
+    for line in text.splitlines():
+        parts = line.lstrip("●* ").split(None, 4)
+        if len(parts) >= 4 and UNIT_RE.match(parts[0]) and parts[1] == "loaded":
+            out.append({"unit": clean(parts[0], 100), "active": clean(parts[2], 16), "sub": clean(parts[3], 24), "description": clean(parts[4] if len(parts) > 4 else "", 100)})
+    out.sort(key=lambda u: u["unit"])
+    return out
+
+
+def collect_units():
+    """Die geladenen systemd-Dienste (nur lesen). Das ist die Liste, aus der Dienstnamen fuer Aktionen stammen muessen."""
+    if not systemd_running():
+        return 404, {"error": "unsupported", "detail": "kein systemd"}
+    r = run_cmd(["systemctl", "list-units", "--type=service", "--all", "--no-legend", "--plain", "--no-pager"], 20)
+    if r is None or r[0] != 0:
+        return 500, {"error": "systemctl_failed"}
+    units = parse_units(r[1])
+    return 200, {"units": units[:MAX_UNITS], "count": len(units), "truncated": len(units) > MAX_UNITS, "checkedAt": int(time.time())}
+
+
+def known_units():
+    status, body = collect_units()
+    return {u["unit"] for u in body["units"]} if status == 200 else None
+
+
+def known_containers():
+    """{Id (12 Zeichen): Eintrag} der Containerliste des Agenten; None, wenn Docker nicht lesbar ist."""
+    status, body = collect_docker()
+    if status != 200 or not body.get("available"):
+        return None
+    return {c["id"]: c for c in body["containers"]}
+
+
+def protected_unit(unit):
+    """Dienste, die der Agent nicht stoppen oder neu starten darf: er selbst und sein Helfer (sonst waere die Verbindung weg und niemand koennte ihn wieder starten)."""
+    return unit.startswith("julos-agent") or unit == UNIT_NAME
+
+
+def reboot_required(exists=os.path.exists):
+    return exists("/var/run/reboot-required")
+
+
+def apt_progress(ctx, total):
+    state = {"done": 0}
+
+    def on_line(text):
+        if text.startswith("Setting up "):
+            state["done"] += 1
+        ctx.line(text, min(state["done"], total) if total else None, total or None)
+    return on_line
+
+
+# ---- Die Aktionen
+def act_updates_refresh(body, ctx):
+    if update_manager() != "apt":
+        return err(501, "not_implemented", detail="nur apt")
+    ctx.line("apt-get update")
+    return from_helper(helper_call({"verb": "apt.refresh"}, ctx.line, 600), summary="refreshed")
+
+
+def act_updates_install(body, ctx):
+    packages = body.get("packages")
+    everything = body.get("all") is True
+    if everything == (packages is not None):
+        return err(400, "invalid_request", field="packages")            # genau eins von beiden
+    if update_manager() != "apt":
+        return err(501, "not_implemented", detail="nur apt")
+    status, upd = collect_updates()
+    if status != 200:
+        return err(500, "update_check_failed")
+    listed = {p["name"] for p in upd.get("packages", [])}
+    if not everything:
+        if not isinstance(packages, list) or not 1 <= len(packages) <= MAX_PACKAGES_PER_ACTION or not all(isinstance(p, str) and PKG_RE.match(p) for p in packages):
+            return err(400, "invalid_request", field="packages")
+        if any(p not in listed for p in packages):
+            return err(404, "unknown_target")                          # nur Pakete der Update-Liste
+        packages = list(dict.fromkeys(packages))
+    total = len(packages) if not everything else int(upd.get("count") or 0)
+    ctx.line("apt-get " + ("upgrade" if everything else "install --only-upgrade"), 0, total or None)
+    req = {"verb": "apt.upgrade"}
+    if not everything:
+        req["packages"] = packages
+    r = helper_call(req, apt_progress(ctx, total), 3600)
+    return from_helper(r, rebootRequired=reboot_required(), count=total)
+
+
+def act_power(op):
+    def run(body, ctx):
+        ctx.line(op)
+        return from_helper(helper_call({"verb": "power", "op": op, "delay": POWER_DELAY}, None, 30), delay=POWER_DELAY)
+    return run
+
+
+def act_service(op):
+    def run(body, ctx):
+        unit = body.get("unit")
+        if not isinstance(unit, str) or not UNIT_RE.match(unit):
+            return err(400, "invalid_request", field="unit")
+        if not systemd_running():
+            return err(404, "unsupported")
+        units = known_units()
+        if units is None:
+            return err(500, "systemctl_failed")
+        if unit not in units:
+            return err(404, "unknown_target")                          # nur Dienste aus der gemeldeten Liste
+        if op != "start" and protected_unit(unit):
+            return err(409, "protected_unit")
+        ctx.line("systemctl %s %s" % (op, unit))
+        return from_helper(helper_call({"verb": "service", "op": op, "unit": unit}, None, 120), unit=unit)
+    return run
+
+
+def act_logs_unit(body, ctx):
+    unit = body.get("unit")
+    if not isinstance(unit, str) or not UNIT_RE.match(unit):
+        return err(400, "invalid_request", field="unit")
+    if not systemd_running():
+        return err(404, "unsupported")
+    units = known_units()
+    if units is None:
+        return err(500, "systemctl_failed")
+    if unit not in units:
+        return err(404, "unknown_target")
+    n = int_in(body.get("lines"), LOG_LINES_MIN, LOG_LINES_MAX, LOG_LINES_DEFAULT)
+    return from_helper(helper_call({"verb": "journal", "unit": unit, "lines": n}, None, 60), unit=unit)
+
+
+def demux_docker_log(data, tty):
+    """Die Ausgabe von /containers/{id}/logs: ohne TTY in Rahmen (8 Byte Kopf: Strom, Laenge), mit TTY der blanke Text."""
+    if tty:
+        return data.decode("utf-8", "replace")
+    out, i = [], 0
+    while i + 8 <= len(data):
+        size = struct.unpack(">I", data[i + 4:i + 8])[0]
+        out.append(data[i + 8:i + 8 + size].decode("utf-8", "replace"))
+        i += 8 + size
+    return "".join(out)
+
+
+def _container(body):
+    """(Eintrag, None) fuer eine Container-Id aus der eigenen Liste, sonst (None, Fehlerantwort)."""
+    cid = body.get("id")
+    if not isinstance(cid, str) or not CONTAINER_RE.match(cid):
+        return None, err(400, "invalid_request", field="id")
+    known = known_containers()
+    if known is None:
+        return None, err(503, "docker_unavailable")
+    if cid not in known:
+        return None, err(404, "unknown_target")                        # nur Container der eigenen Liste
+    return known[cid], None
+
+
+def docker_result(r, ok=(204,), **extra):
+    if r is None:
+        return err(503, "docker_unavailable")
+    if r[0] in ("denied", 403):
+        return err(403, "docker_denied")
+    if r[0] == "error":
+        return err(500, "docker_failed")
+    if r[0] in ok:
+        return 200, {"ok": True, **extra}
+    if r[0] == 304:
+        return 200, {"ok": True, "already": True, **extra}
+    if r[0] == 404:
+        return err(404, "unknown_target")
+    return err(500, "docker_failed")
+
+
+def act_logs_container(body, ctx):
+    c, bad = _container(body)
+    if bad:
+        return bad
+    n = int_in(body.get("lines"), LOG_LINES_MIN, LOG_LINES_MAX, LOG_LINES_DEFAULT)
+    info = docker_call("GET", "/containers/%s/json" % c["id"], 15)
+    tty = False
+    if info and info[0] == 200:
+        try:
+            tty = bool(json.loads(info[1].decode("utf-8", "replace")).get("Config", {}).get("Tty"))
+        except (ValueError, AttributeError):
+            pass
+    r = docker_call("GET", "/containers/%s/logs?stdout=1&stderr=1&tail=%d" % (c["id"], n), 30, 512 * 1024)
+    if not r or r[0] != 200:
+        return docker_result(r, ok=())
+    return 200, {"ok": True, "container": c["name"], "lines": clean_lines(demux_docker_log(r[1], tty), n)}
+
+
+def act_docker(op):
+    def run(body, ctx):
+        c, bad = _container(body)
+        if bad:
+            return bad
+        ctx.line("docker %s %s" % (op, c["name"]))
+        suffix = "" if op == "start" else "?t=10"
+        return docker_result(docker_call("POST", "/containers/%s/%s%s" % (c["id"], op, suffix), 90), container=c["name"])
+    return run
+
+
+def image_ref(image):
+    """(Name, Tag) eines Images aus der Containerliste; None bei einer blossen Id oder unbrauchbarem Text: dort gibt es nichts zu holen. '@' (Digest) ist im Muster nicht erlaubt."""
+    if not isinstance(image, str) or not IMAGE_RE.match(image) or re.fullmatch(r"(sha256:)?[0-9a-f]{12,64}", image):
+        return None
+    name, tag = image, "latest"
+    if ":" in image.rsplit("/", 1)[-1]:
+        name, tag = image.rsplit(":", 1)
+    return (name, tag) if name and tag else None
+
+
+def act_docker_pull(body, ctx):
+    c, bad = _container(body)
+    if bad:
+        return bad
+    ref = image_ref(c["image"])
+    if not ref:
+        return err(409, "no_registry_image")
+    name, tag = ref
+    full = "%s:%s" % (name, tag)
+
+    def image_id():
+        r = docker_call("GET", "/images/%s/json" % urllib.parse.quote(full, safe="/:"), 15)
+        try:
+            return json.loads(r[1].decode()).get("Id") if r and r[0] == 200 else None
+        except (ValueError, AttributeError):
+            return None
+    before = image_id()
+    ctx.line("docker pull " + full)
+    r = docker_call("POST", "/images/create?fromImage=%s&tag=%s" % (urllib.parse.quote(name, safe="/"), urllib.parse.quote(tag)), 900, 4 * 1024 * 1024)
+    if r is None or r[0] in ("denied", "error"):
+        return docker_result(r)
+    if r[0] != 200:
+        return err(404 if r[0] == 404 else 500, "pull_failed")
+    if any('"error"' in line for line in r[1].decode("utf-8", "replace").splitlines()):      # der Strom meldet Fehler als Zeile mit Status 200
+        return err(500, "pull_failed")
+    after = image_id()
+    return 200, {"ok": True, "container": c["name"], "image": full, "updated": bool(after and after != before)}
+
+
+ACTIONS = {
+    "updates.refresh": act_updates_refresh,
+    "updates.install": act_updates_install,
+    "power.reboot": act_power("reboot"),
+    "power.poweroff": act_power("poweroff"),
+    "service.start": act_service("start"),
+    "service.stop": act_service("stop"),
+    "service.restart": act_service("restart"),
+    "docker.start": act_docker("start"),
+    "docker.stop": act_docker("stop"),
+    "docker.restart": act_docker("restart"),
+    "docker.pull": act_docker_pull,
+    "logs.unit": act_logs_unit,
+    "logs.container": act_logs_container,
+}
+KEEP_BUSY_AFTER = {"power.reboot", "power.poweroff"}       # der Rechner faehrt herunter: bis dahin keine weitere schreibende Aktion
+
+
+def target_label(action, body):
+    if action == "updates.install":
+        return "all" if body.get("all") is True else ",".join(str(p) for p in (body.get("packages") if isinstance(body.get("packages"), list) else [])[:MAX_PACKAGES_PER_ACTION])[:200]
+    return clean(body.get("unit") or body.get("id") or "", 100)
+
+
+def perform(action, body, emit=None):
+    """Eine schreibende Aktion: Auftragsnummer pruefen, die Sperre nehmen (eine Aktion zugleich), ausfuehren, das Ergebnis merken. (Status, Objekt)"""
+    emit = emit or (lambda *a, **k: None)
+    if not isinstance(body, dict):
+        return err(400, "invalid_request")
+    job = body.get("job")
+    if not isinstance(job, str) or not JOB_RE.match(job):
+        return err(400, "invalid_request", field="job")
+    jobs = job_store()
+    if jobs.has(job):
+        return err(409, "duplicate_job")                               # ein Auftrag laeuft nur einmal (Wiederholung einer Anfrage tut nichts)
+    if not WRITE_LOCK.acquire(blocking=False):
+        running = next((j for j in jobs.snapshot() if j.get("state") == "running"), {})
+        return err(409, "busy", job=running.get("job"), action=running.get("action"))
+    release = True
+    try:
+        jobs.start(job, action, target_label(action, body))
+        try:
+            status, res = ACTIONS[action](body, Ctx(job, emit))
+        except Exception as e:  # noqa: BLE001
+            log.error("Aktion %s fehlgeschlagen: %s", action, e)
+            status, res = err(500, "failed")
+        res = dict(res, job=job, action=action)
+        stored = {k: v for k, v in res.items() if k != "lines"}         # der Inhalt von Logs wird nicht gespeichert
+        jobs.finish(job, status, stored, state="accepted" if status == 200 and res.get("accepted") else None)
+        release = not (status == 200 and action in KEEP_BUSY_AFTER)
+        return status, res
+    finally:
+        if release:
+            WRITE_LOCK.release()
+        else:
+            threading.Timer(120, WRITE_LOCK.release).start()
+
+
+def public_jobs():
+    keys = ("job", "action", "target", "state", "startedAt", "finishedAt", "progress", "done", "total", "status", "result")
+    return {"jobs": [{k: v for k, v in j.items() if k in keys} for j in job_store().snapshot()]}
+
+
+def host_api(method, path, body, emit=None):
+    """Die Anfragen an einen Host-Agenten (docs/HOST-AGENT.md). Gibt (Status, Objekt) zurueck. Nur feste Pfade; ein Desktop-Pfad ist hier 404.
+    emit(text, done, total) meldet den Fortschritt einer langen Aktion an den Server."""
     path = path.split("?")[0]
     try:
         if method == "GET":
             if path == "/v1/health":
                 return 200, {"ok": True, "api": API_VERSION, "platform": HOST_PLATFORM, "mode": "host", "caps": host_caps(), "allow": sorted(permissions())}
+            if path == "/v1/host/jobs":
+                return 200, public_jobs()
+            if path == "/v1/host/units":
+                if "services" not in permissions():
+                    return 403, {"error": "not_permitted", "need": "services"}
+                return collect_units()
             hit = HOST_READS.get(path)
             if hit:
                 if hit[0] not in host_caps():
                     return 404, {"error": "unsupported"}
                 return hit[1]()
             return 404, {"error": "unbekannt"}
-        if method == "POST" and path in CONTROL_PATHS:
-            need = CONTROL_PATHS[path]
+        if method == "POST" and path in WRITE_ROUTES:
+            need, action = WRITE_ROUTES[path]
             if need not in permissions():
                 return 403, {"error": "not_permitted", "need": need}
-            return 501, {"error": "not_implemented"}                 # Stufe 3
+            return perform(action, body, emit)
         return 404, {"error": "unbekannt"}
     except Exception as e:  # noqa: BLE001
         log.error("Host-Anfrage %s fehlgeschlagen: %s", path, e)
@@ -1790,11 +2326,13 @@ def ask_clipboard_image():
 class Link:
     """Haelt die ausgehende WebSocket-Verbindung zum Server (mit Wiederverbinden) und beantwortet seine Anfragen."""
 
-    def __init__(self, cfg, handler=None, hello=None, restart=None, transfers=True):
+    def __init__(self, cfg, handler=None, hello=None, restart=None, transfers=True, progress=None):
         """handler: beantwortet "req" (Standard: die Desktop-API api, im Host-Modus host_api); hello: was zusaetzlich im hello steht (Plattform, Faehigkeiten);
-        restart: startet nach einer Aktualisierung neu (Standard: ueber GTK); transfers: Foto, Datei und Zwischenablage (nur Desktop)."""
+        restart: startet nach einer Aktualisierung neu (Standard: ueber GTK); transfers: Foto, Datei und Zwischenablage (nur Desktop);
+        progress: der Handler nimmt als vierten Wert eine Funktion fuer Fortschrittsmeldungen (Standard: ja fuer host_api)."""
         self.cfg = cfg
         self.handler = handler
+        self.progress_ok = progress if progress is not None else handler is host_api
         self.hello_extra = hello
         self.restart = restart
         self.transfers = transfers
@@ -1876,6 +2414,16 @@ class Link:
         except OSError:
             pass
 
+    def progress(self, id, text, done=None, total=None):
+        """Eine Fortschrittsmeldung zu einer laufenden Anfrage (lange Aktionen); geht die Verbindung gerade nicht, ist sie verloren, die Aktion laeuft trotzdem weiter."""
+        msg = {"t": "progress", "id": id, "text": str(text)[:160]}
+        if done is not None:
+            msg["done"], msg["total"] = int(done), int(total or 0)
+        try:
+            self.send(msg)
+        except OSError:
+            pass
+
     def background(self, id, fn):
         """Langsames (GTK-Hauptthread, Helfer abwarten) neben dem Empfang erledigen."""
         if not self.workers.acquire(blocking=False):
@@ -1901,7 +2449,10 @@ class Link:
         elif t == "req" and isinstance(id, int):
             method, path, body = m.get("method"), m.get("path"), m.get("body")
             if method in ("GET", "POST") and isinstance(path, str) and path.startswith("/v1/"):
-                self.background(id, lambda: self.reply(id, *(self.handler or api)(method, path, body)))
+                if self.progress_ok:
+                    self.background(id, lambda: self.reply(id, *self.handler(method, path, body, lambda text, done=None, total=None: self.progress(id, text, done, total))))
+                else:
+                    self.background(id, lambda: self.reply(id, *(self.handler or api)(method, path, body)))
             else:
                 self.reply(id, 400, {"error": "ungueltig"})
         elif t in ("put", "pull") and isinstance(id, int) and not self.transfers:
@@ -2058,7 +2609,7 @@ def run_host(cfg):
     log.info("julos-agent %s laeuft im Host-Modus (API v%d), Faehigkeiten: %s, Server %s", AGENT_VERSION, API_VERSION, ", ".join(host_caps()) or "keine", cfg["server"])
     allowed = permissions()
     if allowed:
-        log.info("Lokal erlaubte Schreibrechte: %s (wirken erst mit Stufe 3)", ", ".join(sorted(allowed)))
+        log.info("Lokal erlaubte Aktionen (nur auf bestaetigten Auftrag des Servers): %s", ", ".join(sorted(allowed)))
     Link(cfg, handler=host_api, hello=host_hello, restart=restart_agent, transfers=False).run()
 
 

@@ -143,16 +143,17 @@ desktop_stack() {
   "$PYTHON" -c 'import gi; gi.require_version("Gtk", "3.0"); gi.require_version("Wnck", "3.0")' >/dev/null 2>&1
 }
 
-# A graphical session of this user (X11 or Wayland, per logind); without logind the display variables of the caller count.
+# A graphical session of this user (X11 or Wayland, per logind). Without one registered there (a VNC or remote session, no logind), a LOCAL display in the caller's
+# environment counts (":0", ":10.0"; sudo keeps DISPLAY); a forwarded one over SSH ("localhost:10.0") does not.
 graphical_session() {
   case "${JULOS_INSTALL_FAKE_DESKTOP:-}" in 1) return 0 ;; 0) return 1 ;; *) ;; esac
   if have loginctl; then
     for sid in $(loginctl list-sessions --no-legend 2>/dev/null | awk -v u="$1" '$3 == u { print $1 }'); do
       case "$(loginctl show-session "$sid" -p Type --value 2>/dev/null)" in x11|wayland|mir) return 0 ;; *) ;; esac
     done
-    return 1
   fi
-  [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]
+  case "${DISPLAY:-}" in :*) return 0 ;; *) ;; esac
+  [ -n "${WAYLAND_DISPLAY:-}" ]
 }
 
 # An installation that exists already decides first: a host agent as a system service, or a desktop agent that is started for this user.

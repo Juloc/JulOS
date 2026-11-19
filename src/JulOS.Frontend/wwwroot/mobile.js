@@ -6,8 +6,8 @@ import { t, tp, tk, fmtNumber, fmtTime, fmtDay, getPref, LANG_CHOICES } from './
 import { looksLikeAddress } from './quick.js';
 import { tileKind, KIND_KEY, withProgram } from './terminal-programs.js';
 import { favouriteList, recentList, filterByFolder, groupByFolder, folderIconSvg, folderName, setFavorite } from './folders.js';
-import { cardLines, wantsInfo } from './hostinfo.js';
-import { connectionState, dotClass as hostDot, stateText, serviceState, hostDetail, agentSummary, servicesSummary } from './hosts.js';
+import { hostCardHtml, menuOpen } from './hostview.js';
+import { connectionState, dotClass as hostDot, stateText } from './hosts.js';
 import { connLabels } from './conn-names.js';
 
 /* =====================================================================
@@ -178,9 +178,9 @@ export function userChanged(name, message) {
 }
 export function connectionsChanged() { if (root) renderAll(); }
 /** Neue Zustaende der Hosts (alle 30 s): die Seite neu zeichnen, die sie zeigt */
-export function hostsChanged() { if (root) renderAll(); }
+export function hostsChanged() { if (root && !menuOpen()) renderAll(); }
 /** Neue Systemwerte oder Updates eines Hosts (hostinfo.js): nur die Seite Server neu zeichnen, wenn sie gerade zu sehen ist */
-export function hostInfoChanged() { if (root && current === 'server') renderServer(); }
+export function hostInfoChanged() { if (root && current === 'server' && !menuOpen()) renderServer(); }
 
 /** Merkt sich (nur auf diesem Geraet), was gestartet wurde, fuer "Aktivitaeten"; Haeufigkeit und letzte Benutzung zaehlt der Server (shell.js). */
 export function started(c) {
@@ -478,18 +478,11 @@ function soonHtml(ic, title, text) {
   return `<div class="m3-h" data-head><h1>${title}</h1></div>
     <div class="m3-card soon"><span class="big">${icon(ic)}</span><span class="m3-chip status"><span class="m3-dot"></span>${t('mobile.comingSoon')}</span><p>${text}</p></div>`;
 }
-/** Die Hosts mit Zustand, Agent und Diensten (docs/HOSTS.md); der Agent wird je Host eingerichtet */
+/** Die Hosts als Karten mit Zustand, Art des Agenten, Kennzahlen, Hinweisen und Verbindungen (docs/HOSTS.md, Karte: hostview.js); der Agent wird je Host eingerichtet */
 function hostsHtml() {
   ctx.info.ensure(hosts());              // nur die Seite Server fragt nach Systemwerten und Updates (hoechstens alle 55 s), sonst niemand
-  // Zeilen zum Host-Agenten: Modus, Systemwerte, Updates; warn faerbt, was Aufmerksamkeit braucht
-  const lines = (h) => { const ls = cardLines(h, ctx.info.get(h.id)); return ls.length ? `<div class="m3-rows">${ls.map((l) => `<div class="m3-row${l.warn ? ' bad' : ''}"><div class="rt">${esc(l.text)}</div>${l.warn ? `<div class="rc"><span class="m3-chip status"><span class="m3-dot bad"></span>${t('hostinfo.attention')}</span></div>` : ''}</div>`).join('')}</div>` : ''; };
-  const rows = hosts().map((h) => `<div class="m3-card host" data-host-card="${esc(h.id)}">
-      <div class="m3-li static"><span class="lead">${icon('dns')}</span><span class="txt"><span class="hl"><span class="m3-dot hdot ${hostDot(h.online)}"></span>${esc(h.name)} <small>${stateText(h.online)}</small></span><span class="sl">${esc([hostDetail(h), agentSummary(h), servicesSummary(h)].filter(Boolean).join(' · '))}</span></span></div>
-      ${lines(h)}
-      <div class="svcs">${h.services.map((s) => { const c = byId(s.connection); return c ? `<button type="button" class="mb m3-chip m3-state" data-act="start" data-conn="${esc(c.id)}"><span class="m3-dot hdot ${hostDot(serviceState(h, c.id))}"></span>${esc(c.name)}</button>` : ''; }).join('')}</div>
-      <div class="acts-row">${wantsInfo(h) ? `<button type="button" class="mb m3-btn tonal m3-state" data-act="hostinfo" data-host="${esc(h.id)}">${icon('info')}${t('mobile.hostDetails')}</button>` : ''}<button type="button" class="mb m3-btn tonal m3-state" data-act="hostagent" data-host="${esc(h.id)}">${icon('download')}${h.agent ? t('mobile.agentManage') : t('shell.agentSetup')}</button>
-        <button type="button" class="mb m3-btn text m3-state" data-act="hostedit" data-host="${esc(h.id)}">${icon('edit')}${t('common.edit')}</button></div></div>`).join('');
-  return `<div class="m3-sec">${icon('dns')}<span>${t('mobile.hosts')}</span><span class="sp"></span><button type="button" class="mb m3-btn text m3-state" data-act="addhost">${icon('add')}${t('mobile.addHost')}</button></div>${rows || `<p class="empty-hint">${t('mobile.noHost')}</p>`}`;
+  const cards = hosts().map((h) => hostCardHtml(h, ctx.info.get(h.id), { esc, connection: byId })).join('');
+  return `<div class="m3-sec">${icon('dns')}<span>${t('mobile.hosts')}</span><span class="sp"></span><button type="button" class="mb m3-btn text m3-state" data-act="addhost">${icon('add')}${t('mobile.addHost')}</button></div>${cards ? `<div class="hu-grid">${cards}</div>` : `<p class="empty-hint">${t('mobile.noHost')}</p>`}`;
 }
 function renderServer() {
   const pg = $('#pg-server');

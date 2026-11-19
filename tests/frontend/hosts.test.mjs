@@ -1,7 +1,7 @@
 // Hilfen fuer Hosts (hosts.js): Zustand, Gruppierung, Texte. Reine Logik, kein Browser noetig.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { serviceState, connectionState, dotClass, stateText, groupConnections, hostDetail, agentSummary, servicesSummary, hostById } from '../../src/JulOS.Frontend/wwwroot/hosts.js';
+import { serviceState, connectionState, dotClass, stateText, groupConnections, hostDetail, agentSummary, hostById } from '../../src/JulOS.Frontend/wwwroot/hosts.js';
 
 const host = (id, extra = {}) => ({ id, name: 'H' + id, online: false, services: [], ...extra });
 const conn = (id, hostId) => ({ id, hostId, name: 'C' + id });
@@ -49,12 +49,6 @@ test('host details and the agent sentence', () => {
   assert.equal(agentSummary(host('a', { agent: { online: true, version: '0.3.0', platform: 'linux-x11', outdated: false, updateAvailable: true, latest: '0.4.0' } })), 'Agent verbunden – Agent 0.3.0, linux-x11 – Update verfügbar (0.4.0)');
   assert.doesNotMatch(agentSummary(host('a', { agent: { online: true, version: '0.4.0', outdated: false, updateAvailable: false, latest: '0.4.0' } })), /Update/);
   assert.doesNotMatch(agentSummary(host('a', { agent: { online: true, version: '0.2.0', outdated: true, updateAvailable: true, latest: '0.4.0' } })), /Update verfügbar/);   // zu alt: erst neu einrichten
-});
-
-test('the service summary counts reachable services', () => {
-  assert.equal(servicesSummary(host('a')), 'Keine Verbindungen');
-  assert.equal(servicesSummary(host('a', { services: [{ online: true }] })), '1 von 1 Dienst erreichbar');
-  assert.equal(servicesSummary(host('a', { services: [{ online: true }, { online: false }, {}] })), '1 von 3 Diensten erreichbar');
 });
 
 test('ein Host-Agent: der Satz zum Agenten bleibt gleich, Modus und Faehigkeiten stehen in hostinfo.js', () => {

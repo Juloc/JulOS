@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="terminal.css">
   <link rel="stylesheet" href="widgets.css">
+  <link rel="stylesheet" href="hostui.css">
   <title>JulOS</title>
 </head>
 <body>
@@ -302,19 +303,21 @@
     </dialog>
 
     <!-- Host-Details: Systemwerte, Updates, Dienste, Container (docs/HOST-AGENT.md) -->
-    <dialog id="hostInfoDlg">
-      <h2 id="hostInfoTitle">Host</h2>
-      <p id="hostInfoSub" class="hint"></p>
-      <div id="hostInfoBody"></div>
-      <p id="hostInfoMsg" class="msg" role="alert"></p>
-      <div class="row">
-        <button id="hostInfoRefresh" type="button" class="primary" data-i18n="hostinfo.refresh">Neu lesen</button>
-        <button class="ghost close" data-act="close" type="button" data-i18n="common.close">Schließen</button>
+    <dialog id="hostInfoDlg" class="hu-dlg" aria-labelledby="hostInfoTitle">
+      <header class="hu-dh">
+        <div class="hu-dt"><div class="hu-dtt"><h2 id="hostInfoTitle">Host</h2><span id="hostInfoState" class="hu-state off"></span></div><p id="hostInfoSub" class="hu-dsub"></p></div>
+        <button id="hostInfoRefresh" type="button" class="hu-btn icon" data-i18n-aria-label="hostinfo.refresh" data-i18n-title="hostinfo.refresh" aria-label="Neu lesen" title="Neu lesen"><svg class="hu-i" viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
+        <button type="button" class="hu-btn icon" data-act="close" data-i18n-aria-label="common.close" data-i18n-title="common.close" aria-label="Schließen" title="Schließen"><svg class="hu-i" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
+      </header>
+      <div class="hu-db">
+        <nav id="hostInfoNav" class="hu-nav" role="tablist" aria-orientation="vertical" data-i18n-aria-label="hostview.sections" aria-label="Abschnitte"></nav>
+        <div id="hostInfoBody" class="hu-panels"></div>
       </div>
+      <p id="hostInfoMsg" class="msg" role="alert"></p>
     </dialog>
 
     <!-- Bestaetigung einer Aktion auf einem Host (Stufe 3): erst sagt der Server, was geschaehe, dann folgt die Ausfuehrung -->
-    <dialog id="hostActDlg">
+    <dialog id="hostActDlg" class="hu-dlg hu-act">
       <h2 id="hostActTitle">Host</h2>
       <div id="hostActBody"></div>
       <p id="hostActMsg" class="msg" role="alert"></p>

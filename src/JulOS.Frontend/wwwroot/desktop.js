@@ -5,11 +5,11 @@ import { Sessions } from './sessions.js';
 import { looksLikeAddress } from './quick.js';
 import { filterByFolder, groupByFolder, recentList, folderIconSvg, folderName, setFavorite } from './folders.js';
 import { remoteMenuNames, remoteMenuItems, remoteMenuLabel, sessionMenu } from './desktop-remote.js';
-import { serviceState, connectionState, dotClass, stateText, groupConnections, hostDetail, agentSummary, servicesSummary } from './hosts.js';
+import { connectionState, dotClass, stateText, groupConnections } from './hosts.js';
 import { t, tk, fmtNumber, fmtDate, fmtTime, fmtDay, getPref, LANG_CHOICES } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
 import { tileKind } from './terminal-programs.js';
-import { cardLines, wantsInfo } from './hostinfo.js';
+import { hostCardHtml, menuOpen } from './hostview.js';
 
 /* =====================================================================
  * Desktop-Oberflaeche (breite Bildschirme mit Maus): Menueleiste, Dock, Launcher, Home-Fenster und ein Fenster
@@ -734,6 +734,9 @@ const NAV = [
 const nav = { view: 'start', back: [], fwd: [] };
 const greeting = () => { const h = new Date().getHours(); return h < 5 ? t('desktop.greetNight') : h < 11 ? t('desktop.greetMorning') : h < 17 ? t('desktop.greetDay') : h < 22 ? t('desktop.greetEvening') : t('desktop.greetNight'); };
 
+/** Groesse des Start-Fensters aus der Anzeige: gut vier Fuenftel in der Breite und Hoehe, mindestens 960 x 640 und hoechstens 1280 x 860 (eine gemerkte Groesse gilt weiter) */
+const homeSize = () => { const v = viewport(); return [Math.max(960, Math.min(1280, Math.round(v.w * 0.82))), Math.max(640, Math.min(860, Math.round(v.h * 0.82)))]; };
+
 function openHome(view) {
   let w = wins.get('home');
   if (!w) {
@@ -747,7 +750,7 @@ function openHome(view) {
     back.addEventListener('click', () => { if (nav.back.length) { nav.fwd.push(nav.view); nav.view = nav.back.pop(); renderHome(); } });
     fwd.addEventListener('click', () => { if (nav.fwd.length) { nav.back.push(nav.view); nav.view = nav.fwd.pop(); renderHome(); } });
     w = createWindow({ id: 'home', title: t('desktop.start'), icon: `<span class="dk-ti" style="--g1:#7b78ee;--g2:#5160e6;width:22px;height:22px;border-radius:7px">${ic('home')}</span>`,
-      rect: defaultRect('home', 960, 640, -30, 0), minW: 640, minH: 420, head, onClose: () => { stopOverview(); nav.view = 'start'; nav.back = []; nav.fwd = []; } });
+      rect: defaultRect('home', ...homeSize(), -30, 0), minW: 640, minH: 420, head, onClose: () => { stopOverview(); nav.view = 'start'; nav.back = []; nav.fwd = []; } });
     w.head.querySelector('.dk-wt').style.minWidth = '60px';
     w.body.innerHTML = `<div class="dk-home"><nav class="dk-side" aria-label="${t('desktop.areas')}"></nav><div class="dk-main"></div></div>`;
     w.side = $('.dk-side', w.body); w.main = $('.dk-main', w.body);
@@ -914,21 +917,14 @@ function renderServices(m) {
       <div class="dk-list">${g.connections.map(serviceRow).join('') || `<p class="dk-lead">${t('desktop.noConnectionsOnHost')}</p>`}</div>`).join('')}`;
 }
 
-/** Hosts: Rechner und Server mit Zustand, Agent und Diensten; hier wird auch der Agent je Host eingerichtet */
+/** Hosts: Rechner und Server als Karten (Zustand, Art des Agenten, Kennzahlen, Hinweise, Verbindungen); hier wird auch der Agent je Host eingerichtet. Karte: hostview.js */
 function renderHosts(m) {
   const hosts = ctx.state.hosts;
   ctx.info.ensure(hosts);                // nur diese Ansicht fragt nach Systemwerten und Updates (hoechstens alle 55 s), sonst niemand
-  // Zeilen zum Host-Agenten: Modus, Systemwerte, Updates; warn faerbt, was Aufmerksamkeit braucht (voller Speicher, Sicherheitsupdates, Neustart)
-  const lines = (h) => cardLines(h, ctx.info.get(h.id)).map((l) => `<p class="dk-hm dk-hl${l.warn ? ' warn' : ''}">${ctx.esc(l.text)}</p>`).join('');
+  const connection = (id) => ctx.state.connections.find((x) => x.id === id);
   m.innerHTML = `<h3 style="margin-top:14px">${t('desktop.hosts')} <button type="button" class="dk-b dk-btn pri" style="margin-left:auto" data-act="addhost">${ic('plus')}${t('desktop.addHost')}</button></h3>
     ${hosts.length ? '' : `<p class="dk-lead">${t('desktop.noHosts')}</p>`}
-    <div class="dk-list">${hosts.map((h) => `<div class="dk-card dk-host">
-      <div class="dk-hh"><span class="dk-sd ${dotClass(h.online)}" title="${stateText(h.online)}"></span><b>${ctx.esc(h.name)}</b><span class="dk-tag">${stateText(h.online)}</span>
-        ${wantsInfo(h) ? `<button type="button" class="dk-b dk-btn" style="margin-left:auto" data-hostinfo="${ctx.esc(h.id)}">${ic('info')}${t('desktop.hostDetails')}</button>` : ''}
-        <button type="button" class="dk-b dk-btn"${wantsInfo(h) ? '' : ' style="margin-left:auto"'} data-hostagent="${ctx.esc(h.id)}">${ic('download')}${h.agent ? t('desktop.manageAgent') : t('desktop.setUpAgent')}</button>
-        <button type="button" class="dk-b dk-btn sq" data-hostedit="${ctx.esc(h.id)}" aria-label="${t('desktop.editHost')}" title="${t('desktop.editHost')}">${ic('edit')}</button></div>
-      <p class="dk-hm">${ctx.esc([hostDetail(h), agentSummary(h), servicesSummary(h)].filter(Boolean).join(' · '))}</p>${lines(h)}
-      <div class="dk-svc">${h.services.map((s) => { const c = ctx.state.connections.find((x) => x.id === s.connection); return c ? `<button type="button" class="dk-b dk-chip" data-conn="${ctx.esc(c.id)}" title="${ctx.esc(c.host)}:${c.port} – ${stateText(serviceState(h, c.id))}"><span class="dk-sd ${dotClass(serviceState(h, c.id))}"></span>${ctx.esc(c.name)}</button>` : ''; }).join('')}</div></div>`).join('')}</div>`;
+    <div class="hu-grid">${hosts.map((h) => hostCardHtml(h, ctx.info.get(h.id), { esc: ctx.esc, connection })).join('')}</div>`;
 }
 function renderAppsView(m) {
   m.innerHTML = `<h3 style="margin-top:14px">${t('desktop.apps')}</h3><div class="dk-grid">${shownApps().map((a) => `<button type="button" class="dk-b dk-app" data-app="${a.id}"${a.soon ? ` aria-disabled="true" title="${t('desktop.soonTitle')}"` : ''}>${tile(a.g, a.ic)}<span class="dk-n">${a.name}</span>${a.soon ? `<span class="dk-tag">${t('desktop.soon')}</span>` : ''}</button>`).join('')}</div>
@@ -1183,7 +1179,7 @@ export function userChanged(user, message) {
 export function connectionsChanged() { if (root) renderHome_ifOpen(); }
 /** Neue Zustaende der Hosts (kommen alle 30 s): die Ansichten, die sie zeigen, neu zeichnen, ohne dass das Fenster nach oben springt */
 export function hostsChanged() {
-  if (!root) return;
+  if (!root || menuOpen()) return;       // ein offenes Menue einer Host-Karte wuerde beim Neuzeichnen zuklappen
   const w = wins.get('home');
   if (w && ['start', 'dienste', 'hosts'].includes(nav.view)) { const top = w.main.scrollTop; renderHome(); w.main.scrollTop = top; }
   if (menuEl && menuOwner?.dataset.menu === 'Hosts') { const o = menuOwner; closeMenu(); o.click(); }
@@ -1191,7 +1187,7 @@ export function hostsChanged() {
 /** Neue Systemwerte oder Updates eines Hosts (hostinfo.js): die Host-Ansicht neu zeichnen, ohne dass das Fenster nach oben springt */
 export function hostInfoChanged() {
   const w = wins.get('home');
-  if (root && w && nav.view === 'hosts') { const top = w.main.scrollTop; renderHome(); w.main.scrollTop = top; }
+  if (root && w && nav.view === 'hosts' && !menuOpen()) { const top = w.main.scrollTop; renderHome(); w.main.scrollTop = top; }
 }
 /** Abgemeldet oder Anmeldung noetig: alle Fenster zu */
 export function reset() {

@@ -15,7 +15,7 @@ function el(id) {
     addEventListener(type, fn) { (listeners[type] ||= []).push(fn); },
     fire(type, ev = {}) { for (const fn of listeners[type] || []) fn(ev); },
     showModal() { e.open = true; }, close() { e.open = false; e.fire('close'); }, focus() {},
-    querySelector() { return null; },
+    querySelector() { return null; }, setAttribute(k, v) { e['@' + k] = v; }, getAttribute(k) { return e['@' + k]; }, scrollTop: 0, tabIndex: 0,
   };
   return e;
 }
@@ -121,19 +121,40 @@ test('Host-Details: Tasten oeffnen nur den Bestaetigungsdialog; Stufe und Pause 
     return {};
   };
   const opened = [];
-  let reloads = 0;
-  const open = initHostInfoDialog({ state, api, esc, store: { load() {} }, openAction: (...a) => { opened.push(a.slice(0, 3)); }, reloadHosts: async () => { reloads++; } });
+  let lastOpts = null, reloads = 0;
+  const open = initHostInfoDialog({ state, api, esc, store: { load() {} }, openAction: (...a) => { opened.push(a.slice(0, 3)); lastOpts = a[3]; }, reloadHosts: async () => { reloads++; } });
   open(host);
   await new Promise((r) => setTimeout(r, 30));
   const body = els.get('#hostInfoBody');
-  assert.match(els.get('#hostInfoBody [data-kind="updates"] .hi-body').innerHTML, /data-hact="updates.install" data-htarget="libc6"/);    // der Abschnitt wurde mit Tasten gezeichnet
-  assert.match(body.innerHTML, /data-hact-open="history"/);
-  assert.match(body.innerHTML, /id="hostActLevel"/);
+  assert.match(els.get('#hostInfoBody [data-panel="updates"]').innerHTML, /data-hact="updates.install" data-htarget="libc6"/);    // der Abschnitt wurde mit Tasten gezeichnet
+  assert.match(els.get('#hostInfoNav').innerHTML, /data-tab="updates"/);                 // die Navigation kennt die Abschnitte
+  const goTo = (tab) => { els.get('#hostInfoNav').fire('click', { target: { closest: (sel) => (sel === '[data-tab]' ? { dataset: { tab } } : null) } }); };
+  goTo('actions');
+  assert.match(els.get('#hostInfoBody [data-panel="actions"]').innerHTML, /id="hostActLevel"/);
+  goTo('history');
+  await new Promise((r) => setTimeout(r, 30));
+  assert.match(els.get('#hostInfoBody [data-panel="history"]').innerHTML, /data-hact-open="history"/);
+  assert.match(els.get('#hostInfoBody [data-panel="history"]').innerHTML, /Aktualisieren|Neu lesen/);
   const reads = calls.length;
   body.fire('click', click({ hact: 'updates.install', htarget: 'libc6' }));
   assert.deepEqual(opened, [[host, 'updates.install', 'libc6']]);
   assert.equal(calls.length, reads);                                                     // die Taste selbst schickt nichts an den Server
   assert.ok(calls.every((c) => c[0] === 'GET'));
+
+  // Logs: die Auswahl kommt aus der Liste des Agenten, die Zeilenzahl wird auf 10 bis 200 begrenzt, danach geht es ueber die Bestaetigung
+  goTo('logs');
+  await new Promise((r) => setTimeout(r, 30));
+  assert.match(els.get('#hostInfoBody [data-panel="logs"]').innerHTML, /<option value="nginx.service">/);
+  assert.ok(!/type="text"/.test(els.get('#hostInfoBody [data-panel="logs"]').innerHTML));       // keine freie Namenseingabe
+  const dq = (sel) => globalThis.document.querySelector(sel);
+  dq('#hostLogUnit').value = 'nginx.service'; dq('#hostLogLines').value = '5000';
+  body.fire('click', { target: { closest: (sel) => (sel === '[data-hlogs]' ? { dataset: { hlogs: '1' } } : null), id: '' } });
+  assert.deepEqual(opened[1], [host, 'logs.unit', 'nginx.service']);
+  assert.equal(lastOpts.lines, 200);                                                     // 5000 wird auf 200 begrenzt
+  assert.equal(calls.length, reads + 1);                                                 // nur die Einheitenliste wurde gelesen (GET), die Taste selbst nichts
+  dq('#hostLogUnit').value = '';
+  body.fire('click', { target: { closest: (sel) => (sel === '[data-hlogs]' ? { dataset: { hlogs: '1' } } : null), id: '' } });
+  assert.equal(opened.length, 2);                                                        // ohne Auswahl wird nichts geoeffnet
 
   body.fire('change', { target: { id: 'hostActLevel', value: 'updates' } });
   await new Promise((r) => setTimeout(r, 30));
@@ -148,5 +169,5 @@ test('Host-Details: Tasten oeffnen nur den Bestaetigungsdialog; Stufe und Pause 
   state.hosts = [readOnly];
   open(readOnly);
   await new Promise((r) => setTimeout(r, 30));
-  assert.ok(!els.get('#hostInfoBody').innerHTML.includes('data-hact="') && !els.get('#hostInfoBody [data-kind="updates"] .hi-body').innerHTML.includes('data-hact="'));
+  assert.ok(!els.get('#hostInfoBody [data-panel="updates"]').innerHTML.includes('data-hact="'));
 });

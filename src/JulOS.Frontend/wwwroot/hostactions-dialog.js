@@ -29,7 +29,7 @@ export function initHostActionDialog({ api, esc }) {
     const alive = () => my === session;
     const dlg = $('#hostActDlg');
     $('#hostActTitle').textContent = host.name;
-    body(`<p class="hint">${esc(t('hostinfo.stLoading'))}</p>`);
+    body(`<p class="hu-note">${esc(t('hostinfo.stLoading'))}</p>`);
     msg('');
     confirmBtn().hidden = true;
     $('#hostActClose').textContent = t('common.cancel');

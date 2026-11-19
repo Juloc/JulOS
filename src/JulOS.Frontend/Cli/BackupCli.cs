@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
 using JulOS.Backend.Services;
+using JulOS.Workers;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 
@@ -42,10 +43,17 @@ internal static class BackupCli
 
     private static async Task<int> CreateAsync(NpgsqlDataSource db)
     {
-        var o = BackupOptions.Parse(Env("JULOS_BACKUP"), Env("JULOS_BACKUP_DIR"), Env("JULOS_BACKUP_TIME"), Env("JULOS_BACKUP_KEEP_DAYS"), Env("JULOS_BACKUP_KEY"), Env("JULOS_DATA"));
+        var o = BackupOptions.FromSettings(Env);
         if (o.Off) { Console.Error.WriteLine("JULOS_BACKUP=off: die Sicherung ist abgeschaltet."); return 1; }
-        var path = await new BackupService(db, o, TimeProvider.System, NullLogger<BackupService>.Instance).RunAsync();
+        var svc = new BackupService(db, o, TimeProvider.System, NullLogger<BackupService>.Instance, BackupTargets.Factory(o, NullLogger.Instance));
+        svc.Initialize();
+        var path = await svc.RunAsync();
         Console.WriteLine($"Backup geschrieben: {path} ({new FileInfo(path).Length} Byte)");
+        switch (svc.Status.Copy)
+        {
+            case { State: "ok" } c: Console.WriteLine($"Zweites Ziel {c.Target}: kopiert."); break;
+            case { State: "failed" } c: Console.Error.WriteLine($"WARNUNG: Zweites Ziel {c.Target}: {c.Message} (das lokale Backup ist in Ordnung)."); break;
+        }
         return 0;
     }
 

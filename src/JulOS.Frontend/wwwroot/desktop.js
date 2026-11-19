@@ -959,6 +959,9 @@ async function openModule(id) {
 /* ---------- Ueber JulOS ---------- */
 const backupText = (b) => !b ? '' : b.state === 'ok' ? `${new Date(b.lastAt).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' })}, ${b.bytes < 1048576 ? Math.max(1, Math.round(b.bytes / 1024)) + ' KB' : (b.bytes / 1048576).toFixed(1) + ' MB'}`
   : b.state === 'off' ? 'Aus' : b.state === 'pending' ? `Noch keins (geplant ${b.time})` : b.state === 'failed' ? `Fehlgeschlagen: ${b.message || ''}` : `Nicht eingerichtet: ${b.message || ''}`;
+const copyText = (b) => { const c = b && b.copy; if (!c || c.state === 'off') return '';
+  const at = c.lastAt ? new Date(c.lastAt).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  return c.state === 'ok' ? `OK, ${at}` : c.state === 'failed' ? `Fehler: ${c.message || ''}${at ? ` (zuletzt OK ${at})` : ''}` : 'Noch nicht kopiert'; };
 async function openAbout() {
   const old = wins.get('about'); if (old) return old.minimized ? restoreWin(old) : focusWin(old);
   const w = createWindow({ id: 'about', title: 'Über JulOS', icon: LOGO, rect: defaultRect('about', 420, 460), minW: 340, minH: 340 });
@@ -971,7 +974,7 @@ async function openAbout() {
   w.body.innerHTML = `<div class="dk-about"><div class="dk-ab-logo">${LOGO}</div><h2>JulOS</h2>
     <p class="dk-lead">${a ? 'Version ' + e(a.version) : 'Version unbekannt'}</p>
     <p class="dk-lead">Dein Server-Arbeitsplatz im Browser: Desktop und Terminal deiner Rechner, an einem Ort.</p>
-    <div class="dk-ab-rows">${row('Build', a && [a.commit, built].filter(Boolean).join(' · '))}${row('Bildübertragung', stream)}${row('Letztes Backup', a && backupText(a.backup))}${row('Laufzeit', a && a.runtime)}${row('System', a && a.os)}${row('Lizenz', a && a.license + ' (siehe Lizenzen)')}</div>
+    <div class="dk-ab-rows">${row('Build', a && [a.commit, built].filter(Boolean).join(' · '))}${row('Bildübertragung', stream)}${row('Letztes Backup', a && backupText(a.backup))}${row('Zweites Ziel', a && copyText(a.backup))}${row('Laufzeit', a && a.runtime)}${row('System', a && a.os)}${row('Lizenz', a && a.license + ' (siehe Lizenzen)')}</div>
     <p class="dk-ab-links"><a href="/licenses.txt" target="_blank" rel="noopener">Lizenzen</a><a href="${a ? e(a.repository) : 'https://github.com/Juloc/JulOS'}" target="_blank" rel="noopener">Quelltext und Dokumentation</a></p></div>`;
 }
 

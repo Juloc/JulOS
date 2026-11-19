@@ -370,6 +370,20 @@ public sealed class AgentLinkTests
         Assert.Equal(0, await db.ScalarAsync<long>("select count(*) from agents"));
     }
 
+    [Fact]
+    public async Task The_server_hands_out_only_the_three_agent_files()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db);
+        var c = app.Http();
+        var agent = await c.GetAsync("/agent-files/julos-agent.py");
+        Assert.Equal(HttpStatusCode.OK, agent.StatusCode);
+        Assert.Contains("AGENT_VERSION", await agent.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.OK, (await c.GetAsync("/agent-files/install-linux-agent.sh")).StatusCode);
+        foreach (var name in new[] { "julos-user.sh", "..%2Fappsettings.json", "%2e%2e/JulOS.dll", "agent.json", "" })
+            Assert.NotEqual(HttpStatusCode.OK, (await c.GetAsync("/agent-files/" + name)).StatusCode);
+    }
+
     private static Task Eventually(Func<bool> condition) => Eventually(() => Task.FromResult(condition()));
 
     private static async Task Eventually(Func<Task<bool>> condition)

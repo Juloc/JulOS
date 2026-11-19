@@ -10,6 +10,7 @@ namespace JulOS.Backend.Tests;
 internal sealed class FakeLinkAgent : IAsyncDisposable
 {
     public sealed record Put(int Id, string Kind, string Name, long Size, MemoryStream Data);
+    public sealed record UpdateRequest(int Id, string Path, string Sha256, string Version);
 
     private const string Empty = "{}";
     private readonly WebSocket _ws;
@@ -21,6 +22,9 @@ internal sealed class FakeLinkAgent : IAsyncDisposable
     public List<(string Method, string Path, string Body)> Requests { get; } = [];
     public List<Put> Finished { get; } = [];
     public List<int> Cancelled { get; } = [];
+    public List<UpdateRequest> Updates { get; } = [];
+    /// <summary>Wie der Agent auf "update" antwortet (Status, Body). Ohne Angabe: angenommen.</summary>
+    public Func<UpdateRequest, Task<(int Status, string Body)>>? OnUpdate { get; set; }
     public bool Closed { get; private set; }
     /// <summary>Was der Agent auf das Ende einer Uebertragung antwortet (Status, Body). Null: gar nicht (der Server wartet).</summary>
     public (int Status, string Body)? PutAnswer { get; set; } = (200, """{"ok":true}""");
@@ -113,6 +117,14 @@ internal sealed class FakeLinkAgent : IAsyncDisposable
                     ("POST", _) => (200, """{"ok":true}"""),
                     _ => (404, """{"error":"unbekannt"}"""),
                 };
+                await Reply($$"""{"t":"res","id":{{id}},"status":{{status}},"body":{{body}}}""");
+                break;
+            }
+            case "update":
+            {
+                var u = new UpdateRequest(id, root.GetProperty("path").GetString()!, root.GetProperty("sha256").GetString()!, root.GetProperty("version").GetString()!);
+                lock (Updates) Updates.Add(u);
+                var (status, body) = OnUpdate is { } h ? await h(u) : (200, $$"""{"ok":true,"version":"{{u.Version}}","restarting":true}""");
                 await Reply($$"""{"t":"res","id":{{id}},"status":{{status}},"body":{{body}}}""");
                 break;
             }

@@ -27,7 +27,7 @@ saw one machine; now the desktop interface and the phone shell list several, eac
 
 ```json
 { "hosts": [ { "id": "…", "name": "Heimserver", "online": true, "hostname": "werkbank-01", "os": "Debian GNU/Linux 13 (trixie)",
-    "agent": { "online": true, "lastSeen": "…", "version": "0.3.0", "platform": "linux-x11", "outdated": false },
+    "agent": { "online": true, "lastSeen": "…", "version": "0.3.0", "platform": "linux-x11", "outdated": false, "latest": "0.4.0", "updateAvailable": true, "canUpdate": false, "autoUpdate": false },
     "services": [ { "connection": "…", "kind": "terminal", "online": true } ] } ] }
 ```
 

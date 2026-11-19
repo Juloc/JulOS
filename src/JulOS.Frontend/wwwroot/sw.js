@@ -1,6 +1,6 @@
 /* Service Worker: haelt die App-Huelle bereit (schneller Start, laeuft auch bei kurzem Netzausfall) und holt Updates zuerst
  * aus dem Netz. API-Aufrufe und WebSocket-Verbindungen werden nie zwischengespeichert. */
-const VERSION = 'pd-v40';
+const VERSION = 'pd-v41';
 const SHELL = ['/', '/app.js', '/stream.js', '/mouse.js', '/stream-audio.js', '/stream-audio-worklet.js', '/codecs.js', '/sessions.js', '/resume.js', '/terminal.js', '/terminal-session.js', '/terminal.css', '/clip.js', '/layoutlog.js', '/kbpan.js', '/shell.js', '/hosts.js', '/desktop.js', '/desktop-files.js', '/desktop-modules.js', '/modules.js', '/mobile-modules.js', '/desktop-remote.js', '/desktop.css', '/mobile.js', '/mobile.css', '/m3.css', '/style.css', '/lib/guacamole-common.min.js', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (e) => {

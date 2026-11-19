@@ -12,7 +12,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace JulOS.Backend.Tests;
 
 /// <summary>Der Agent meldet sich von der Ziel-Maschine aus beim Server: Einrichtung, Token, Weg der Aufrufe, Uebertragung von Foto und Datei (echte Middleware und Datenbank, der Agent ist ein Fake im Speicher).</summary>
-public sealed class AgentLinkTests
+public sealed partial class AgentLinkTests
 {
     private const string Password = "korrektes pferd batterie";
     private const string SetupCode = "TEST-CODE-0000";

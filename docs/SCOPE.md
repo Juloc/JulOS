@@ -36,7 +36,7 @@ They are the point of JulOS later (see the vision), but they come after 1.0.
 4. **No new service, dependency or protocol** without writing down why milestone 1 cannot be done without it.
 5. **Security is never traded for convenience.** No exposure to the internet without the app's own login (or an equivalent second layer).
 6. **Done means tested on the phone**, not just built.
-7. **Everything is tested on the test instance first** (`deploy/dev`, a mirror of the live setup with its own database, `guacd`, and throwaway SSH and RDP targets). No change is called done before it ran there.
+7. **Everything is tested on the test instance first** (`deploy/dev`, a mirror of the live setup with its own database and throwaway SSH and RDP targets). No change is called done before it ran there.
 
 ## Next steps, in order
 

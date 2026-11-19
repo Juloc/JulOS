@@ -149,7 +149,7 @@ public sealed class BackupTests : IDisposable
         old = string.Join('\n', lines).Replace("-- migrations ", "-- migrations ").Replace(",002_session_ids", "").Replace("002_session_ids,", "");
         await using var dst = await TestDb.CreateAsync();
         await DbDump.RestoreAsync(dst.Data, new StringReader(old), false, TestContext.Current.CancellationToken);
-        Assert.Equal("guac", await dst.ScalarAsync<string>("select engine from connections"));
+        Assert.Equal("guac", await dst.ScalarAsync<string>("select engine from connections"));   // die Spalte engine ist ein Rest aus der Zeit mit zwei Engines und behaelt ihren Standardwert
     }
 
     [Fact]

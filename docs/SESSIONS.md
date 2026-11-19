@@ -17,7 +17,7 @@ das native Terminal in `terminal-session.js`).
 
 - `POST /api/remote/ticket` nimmt zusätzlich `"sid"` (optional; fehlt sie, gilt wie bisher ein Slot je Verbindung).
 - `SessionRegistry` (`JulOS.Integrations/SessionRegistry.cs`) verwaltet die Slots: `TryOpen(userId, slot, onReplaced)` gibt eine
-  `SessionLease` zurück (zum Beenden `Dispose()`), `null` bei erreichter Obergrenze. **Jeder WebSocket-Relay (Guacamole, Stream, native
+  `SessionLease` zurück (zum Beenden `Dispose()`), `null` bei erreichter Obergrenze. **Jeder WebSocket-Relay (Stream, native
   SSH) nutzt sie**, damit die Obergrenze für alle Arten zusammen gilt.
 - Fehlertext bei Obergrenze: „Es sind schon 8 Sitzungen offen. Schließe eine, um eine neue zu öffnen.“ (Code 797, die Seite zeigt den Text des Servers; die Sitzung schließt sich damit).
 
@@ -28,7 +28,7 @@ Jede Sitzungsart ist eine Klasse, die `Session` erweitert (ein `EventTarget`).
 ```js
 class Session extends EventTarget {
   id           // string, sid (siehe oben)
-  conn         // { id, name, kind: 'desktop'|'terminal', engine, stored, target } (target = "host:port/user", fuer Schwestersitzungen)
+  conn         // { id, name, kind: 'desktop'|'terminal', stored, target } (target = "host:port/user", fuer Schwestersitzungen)
   kind         // 'desktop' | 'terminal'
   title        // Anzeigename ("Server" oder "Server 2" bei der zweiten Sitzung zum selben Ziel)
   state        // 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'error' | 'taken'
@@ -93,9 +93,9 @@ Sessions.addEventListener('opened' | 'closed' | 'activated' | 'statechange' | 's
 ## Hintergrund und Ausfälle
 
 - **Im Hintergrund** (andere Sitzung vorn, Fenster minimiert, Seite versteckt, Startseite offen): `setVisible(false)`. Die Ansicht ist ausgeblendet,
-  es werden keine Größen gemeldet (eine versteckte Bildfläche hat Größe 0 und wird ignoriert), die Fensterleiste fragt nicht ab. Die Stream-Engine
+  es werden keine Größen gemeldet (eine versteckte Bildfläche hat Größe 0 und wird ignoriert), die Fensterleiste fragt nicht ab. Die Ansicht
   schickt dem Server die Nachricht „Pause“: er kodiert nichts, der Browser dekodiert nichts; beim Zurückkommen kommt alles, was sich geändert hat,
-  als nächstes Bild. Guacamole bleibt verbunden (es gibt keine Pause im Protokoll), die Ansicht ist nur ausgeblendet.
+  als nächstes Bild.
 - **Gemessen** (Test-Instanz, zwei Stream-Sitzungen, beide mit Bewegung auf dem Desktop): Server-CPU mit einer aktiven und einer pausierten
   Sitzung ≈ 16 bis 17 %, genauso viel wie mit einer aktiven allein; mit beiden aktiv ≈ 26 %. Die pausierte Sitzung bekam in 12 s kein Bild
   (0 gegenüber 124 bei der sichtbaren). Hintergrundsitzungen wachsen also nicht mit der Zahl.
@@ -128,7 +128,7 @@ Desktop bleiben, sofort ein Schlüsselbild. Die Überlagerung zeigt „Verbindun
   wartet (5 s weniger als der Server); das `online`-Ereignis löst sofort einen aus.
 - **Sicherheit:** das Token gehört einem Benutzer und gilt nur, solange die Sitzung wartet; es steht in der Adresse des WebSockets (wie das Ticket)
   und nirgends sonst. Der WebSocket braucht weiterhin die App-Sitzung und denselben Ursprung. Ein wartender Desktop läuft weiter: wer ihn
-  nicht fünf Minuten offen lassen will, stellt die Zeit kleiner. Guacamole und SSH haben diesen Erhalt nicht.
+  nicht fünf Minuten offen lassen will, stellt die Zeit kleiner. SSH hat diesen Erhalt nicht.
 
 ## Grenzen (Stand heute)
 

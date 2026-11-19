@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Browser-Tests (Playwright in Docker, nichts auf dem Host noetig) gegen einen eigenen, frisch aufgesetzten Stack aus diesem Arbeitsordner:
-# Datenbank, guacd, Server, SSH-Ziel und RDP-Desktop in einem eigenen Compose-Projekt "julos-e2e" ohne veroeffentlichte Ports.
+# Datenbank, Server, SSH-Ziel und RDP-Desktop in einem eigenen Compose-Projekt "julos-e2e" ohne veroeffentlichte Ports.
 # Aufruf: deploy/dev/e2e.sh [Playwright-Optionen, z. B. -g Terminal]    Stack danach stehen lassen: E2E_KEEP=1    Aufraeumen: deploy/dev/e2e.sh down
 # Fehlerbilder und Traces landen ausserhalb des Repos in $JULOS_E2E_STATE (Standard ~/.cache/julos-e2e/out).
 set -euo pipefail
@@ -25,7 +25,7 @@ rm -rf "$E2E_OUT"; mkdir -p "$E2E_OUT"; : > "$state/stack.log"
 trap teardown EXIT
 quiet dc up -d --build --quiet-pull
 quiet dc --profile e2e build e2e
-# frische Datenbank bei jedem Lauf (die Ersteinrichtung ist Teil der Tests); Ziele und guacd bleiben stehen
+# frische Datenbank bei jedem Lauf (die Ersteinrichtung ist Teil der Tests); die Ziele bleiben stehen
 quiet dc stop julos
 quiet dc exec -T postgres psql -q -U julos -d julos -c 'drop schema public cascade; create schema public;'
 since=$(date -u +%Y-%m-%dT%H:%M:%SZ)

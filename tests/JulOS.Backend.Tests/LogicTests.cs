@@ -157,23 +157,22 @@ public sealed class LogicTests
     }
 
     [Fact]
-    public void Drive_switches_default_to_off_belong_to_the_stream_and_writing_needs_the_share()
+    public void Drive_switches_default_to_off_belong_to_desktops_and_writing_needs_the_share()
     {
-        var plain = ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", "stream").Value!;
+        var plain = ConnectionRules.Validate("PC", "desktop", "ziel", null, "u").Value!;
         Assert.False(plain.DriveShare);
         Assert.False(plain.DriveWrite);
-        var share = ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", "stream", driveShare: true).Value!;
+        var share = ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", driveShare: true).Value!;
         Assert.True(share.DriveShare);
         Assert.False(share.DriveWrite);
-        var both = ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", "stream", driveShare: true, driveWrite: true).Value!;
+        var both = ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", driveShare: true, driveWrite: true).Value!;
         Assert.True(both is { DriveShare: true, DriveWrite: true });
-        Assert.False(ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", "stream", driveWrite: true).Value!.DriveWrite);
-        Assert.False(ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", "guac", driveShare: true, driveWrite: true).Value!.DriveShare);
+        Assert.False(ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", driveWrite: true).Value!.DriveWrite);
         Assert.False(ConnectionRules.Validate("PC", "terminal", "ziel", null, "u", driveShare: true).Value!.DriveShare);
 
         // without an answer the earlier value stays (a rename must not turn a switch off or on) - but only while it still applies
-        Assert.True(ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", null, "stream", null, null, true, true).Value is { DriveShare: true, DriveWrite: true });
-        Assert.False(ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", "guac", "stream", null, null, true, true).Value!.DriveShare);
-        Assert.False(ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", null, "stream", false, null, true, true).Value!.DriveWrite);
+        Assert.True(ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", null, null, true, true).Value is { DriveShare: true, DriveWrite: true });
+        Assert.False(ConnectionRules.Validate("PC", "terminal", "ziel", null, "u", null, null, true, true).Value!.DriveShare);
+        Assert.False(ConnectionRules.Validate("PC", "desktop", "ziel", null, "u", false, null, true, true).Value!.DriveWrite);
     }
 }

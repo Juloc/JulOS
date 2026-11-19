@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Durchlauf gegen die laufende Test-Instanz: Ersteinrichtung, Anmeldung, Agent (Fensterliste), Foto-Upload, Client-Log.
 # Setzt dazu die Datenbank der Test-Instanz zurueck (alle Konten weg) und startet den Server neu; der Test-Desktop bleibt unberuehrt.
-# Voraussetzung: eine angemeldete Sitzung am Test-Desktop (zum Beispiel einmal deploy/dev/test.sh --filter-class "*RealGuacdTests"
-# laufen lassen), damit der Agent dort laeuft.
+# Voraussetzung: eine angemeldete Sitzung am Test-Desktop (zum Beispiel einmal im Browser mit dem Test-Desktop
+# verbinden), damit der Agent dort laeuft.
 set -euo pipefail
 cd "$(dirname "$0")"
 BASE=http://127.0.0.1:18080

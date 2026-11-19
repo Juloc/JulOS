@@ -20,7 +20,7 @@ desktop.example.com {
 		-Server
 	}
 
-	# WebSocket (guacamole) wird von reverse_proxy automatisch durchgereicht
+	# WebSocket (Bildschirm, Terminal) wird von reverse_proxy automatisch durchgereicht
 	reverse_proxy <IP-des-Docker-Hosts>:8080 {
 		flush_interval -1
 		transport http {

@@ -15,8 +15,8 @@ not (see "Limits"). Whatever goes wrong, the session falls back to the engine's 
 | --- | --- | --- |
 | `JULOS_RDP_GFX` | unset (default) or anything else: off; `on` (also `1`, `true`, `yes`): on | Offer the graphics pipeline with H.264 to the RDP server in every stream session. |
 
-The variable is read when the server starts. In the dev stack `DEV_RDP_GFX=on` in the environment of `deploy/dev/up.sh` sets it. The same variable also
-switches the graphics pipeline of the Guacamole engine on (`guacd`, only the value `on`); the two do not depend on each other.
+The variable is read when the server starts. In the dev stack `DEV_RDP_GFX=on` in the environment of `deploy/dev/up.sh` sets it. (The removed Guacamole engine
+read the same variable; it is gone, and the own engine is the only reader.)
 
 Where the setting is not on, the RDP client does not even announce the pipeline and behaves exactly as before.
 

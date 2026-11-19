@@ -1,19 +1,20 @@
 # Clipboard: images and files
 
-Text has always travelled both ways (see [ARCHITECTURE.md](ARCHITECTURE.md), display engines). This page is about images and files. The
+Text has always travelled both ways (see [ARCHITECTURE.md](ARCHITECTURE.md), display engine). This page is about images and files. The
 text path is unchanged.
 
-## What each engine carries
+## What the stream carries
 
-| | Guacamole (`guac`) | Own stream (`stream`) |
-| --- | --- | --- |
-| Browser to remote, image | upload helper (`POST /api/upload` + `tools/julos-clip.py`, as for photos) | RDP clipboard channel, `CF_DIB` (the browser sends a 24-bit BMP) |
-| Browser to remote, file | `POST /api/upload-file`: the file lands in `~/julos-uploads/files/<id>/<name>`, the helper offers it as a file list (`x-special/gnome-copied-files`, `text/uri-list`); one file at a time | RDP clipboard channel, `FileGroupDescriptorW`; the remote reads the bytes when it pastes; up to 10 files at a time |
-| Remote to browser, image | on request: "Bild aus der VM holen" asks the helper (`POST /api/clipboard/pull`, answer PNG) | sent as soon as the remote copies (`PNG`, else `CF_DIB`) |
-| Remote to browser, file | not possible (guacd has no file clipboard; its drive needs a folder configured) | the remote's file list is shown (name, size); a file is fetched when the user taps "Laden" |
+| | Own stream |
+| --- | --- |
+| Browser to remote, image | RDP clipboard channel, `CF_DIB` (the browser sends a 24-bit BMP) |
+| Browser to remote, file | RDP clipboard channel, `FileGroupDescriptorW`; the remote reads the bytes when it pastes; up to 10 files at a time |
+| Remote to browser, image | sent as soon as the remote copies (`PNG`, else `CF_DIB`) |
+| Remote to browser, file | the remote's file list is shown (name, size); a file is fetched when the user taps "Laden" |
 
-Why two paths: guacd 1.6.0 forwards only text on the RDP clipboard (checked against the test desktop: an `image/png` clipboard stream
-does not change the remote clipboard).
+Earlier versions also had a second path for the removed Guacamole engine: its guacd (1.6.0) forwarded only text on the RDP clipboard, so images and
+files went through the session helper (`POST /api/upload`, `POST /api/upload-file`, `POST /api/clipboard/pull` and `tools/julos-clip.py`). The app does
+not use that path any more; the endpoints and the helper stay because they are part of the agent API (see [AGENT_API.md](AGENT_API.md)).
 
 What the remote application sees: an image is a normal clipboard image (Ctrl+V in any program); a file is a file on the clipboard
 (Ctrl+V in the file manager or Explorer copies it). Priorities when the remote announces several formats: file list, then text (as before),
@@ -22,11 +23,10 @@ then image.
 ## Limits and errors (all texts in German, shown as a toast)
 
 - **Image:** at most 40 MB as picked on the phone; the browser decodes it, shrinks it to at most 3200 px on the long side and sends a BMP
-  of at most 32 MiB (server limit, message "Bild zu groß (höchstens 40 MB)."). On the Guacamole path the photo is downscaled to 2000 px and
-  sent as JPEG/PNG as before (server limit 14 MB).
+  of at most 32 MiB (server limit, message "Bild zu groß (höchstens 40 MB).").
 - **File:** at most **64 MB** per file, at most **10 files** and 64 MB in all per drop. Checked in the browser before anything is sent and
   again on the server ("Datei zu groß (höchstens 64 MB).", "Zu viele Dateien (höchstens 10).", "Die Datei ist leer."). Folders are skipped
-  ("Ordner werden nicht übertragen"). Guacamole: one file at a time ("Mit dieser Bildübertragung geht nur eine Datei auf einmal.").
+  ("Ordner werden nicht übertragen").
 - **Cancel:** the bar "Sende … Abbrechen" stops a transfer in both directions (a cancel message; the server drops what it has). A transfer with
   no data for 60 s and a closed connection drop it as well. A download that the remote does not answer for 30 s fails ("Die VM antwortet nicht.").
 - **No file support on the remote:** "Die VM unterstützt keine Dateien in der Zwischenablage." and "Die VM hat keine Zwischenablage (Kanal fehlt)." (chansrv dead, see DEVELOPMENT.md).
@@ -46,10 +46,10 @@ then image.
   somebody opens them in the remote file manager. "Dateityp nicht erlaubt (.exe)."
 - Sizes are checked against the declared size while data arrives (more than declared drops the transfer); chunks are at most 256 kB; the server
   holds at most one upload and one download per session in memory (at most 64 MB each).
-- A BMP from the browser is checked on its header (`DeviceIndependentBitmap.FromBmp`), the images of the Guacamole path on their file header
+- A BMP from the browser is checked on its header (`DeviceIndependentBitmap.FromBmp`), the images of the helper path on their file header
   (png, jpg, webp, gif), never on the type the sender claims.
 - Files from the remote are only listed (name, size) until the user asks for one; the browser saves it under the cleaned name.
-- The pull answers only to the signed-in session, only when the user pressed the button, only with an image (never files or paths), at most
+- The helper path: the pull answers only to the signed-in session, only when the user pressed the button, only with an image (never files or paths), at most
   14 MB, 30 requests per minute and user. Uploads: 20 per minute and user, and at most four uploads run at the same time (each one is held in memory).
 - Files in `~/julos-uploads/files/` stay for 7 days (the helper deletes older ones); photos for 30 minutes, as before. The folder `files/` is capped at 2 GiB: when a new file would not fit, folders older than one day are removed first, and if it still does not fit the upload is refused (HTTP 507, "Der Ordner für Dateien ist voll").
 
@@ -66,8 +66,7 @@ messages on the other).
 ## Browser
 
 - `Ctrl+V` of an image or file, drag and drop of files onto the picture, "Datei senden" (menu row "Funktionen" and the clipboard dialog; a
-  file picker that also works on the phone) and the existing photo actions all go through `sendToRemote` in `app.js`, which picks the
-  engine's path (`client.nativeClipboard` is true for the stream client).
+  file picker that also works on the phone) and the existing photo actions all go through `sendToRemote` in `app.js`, which sends it over the stream (`client.sendTransfer`).
 - A single image is treated like a copied image and pasted with Ctrl+V when "Foto einfügen" is on (`autoPaste`); files are not pasted
   automatically, the toast says where to paste.
 - Images and files from the remote arrive in a card in the clipboard dialog (preview, "Bild kopieren", "Speichern", or a file list with "Laden").
@@ -79,12 +78,11 @@ messages on the other).
 - xrdp converts only `image/bmp` on the remote side: an image copied as `image/png` alone does not reach the browser (GTK, as used by the
   helper, offers BMP next to PNG; other programs were not checked).
 - File streaming needs `/dev/fuse` and `fuse3` in the target (xrdp mounts the client's files as `~/thinclient_drives/.clipboard`); the test
-  target has both now. xrdp's `chansrv` keeps the capabilities of the **last connected client**: after a Guacamole (guacd) connection it
-  offers no file streaming to the next client until `chansrv` restarts (new session or container restart). The stream engine then answers "Die VM
+  target has both now. xrdp's `chansrv` keeps the capabilities of the **last connected client**: after a client that did not ask for files it
+  offers no file streaming to the next client until `chansrv` restarts (new session or container restart). The stream then answers "Die VM
   unterstützt keine Dateien in der Zwischenablage." Images and text are not affected.
 
 ## Not verified
 
 Android Chrome (file picker, share, permission prompts of `navigator.clipboard.write`), a real Windows host (Explorer paste of a file list, `CF_DIB`
-into Office, copying files in Explorer) and a Linux VM other than the xrdp test desktop. Remote image to browser over Guacamole was checked with the
-helper only (GTK clipboard), not with other Linux programs.
+into Office, copying files in Explorer) and a Linux VM other than the xrdp test desktop. The helper path (kept for the agent API) was checked with GTK only, not with other Linux programs.

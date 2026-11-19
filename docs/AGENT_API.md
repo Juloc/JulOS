@@ -106,7 +106,7 @@ to run as **that same user** (`user:` in the compose file), otherwise it cannot 
 20 per minute and user). The server writes it into the shared folder; the clipboard helper (`tools/julos-clip.py`) in the session
 puts it on the clipboard and answers with `<file>.ok` or `<file>.err`. No answer within 8 s gives `504` and the file is removed again.
 
-## File upload and clipboard pull (Guacamole engine)
+## File upload and clipboard pull (helper path)
 
 `POST /api/upload-file` takes any file as the request body (up to 64 MB, 20 per minute and user) and its name URL-encoded in the header
 `X-File-Name`. The name is cleaned to a plain file name and names that would run when opened (`.exe`, `.desktop`, `.lnk` ...) are refused

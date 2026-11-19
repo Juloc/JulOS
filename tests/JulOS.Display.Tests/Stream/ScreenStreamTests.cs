@@ -528,7 +528,7 @@ public sealed class ScreenStreamTests
         Assert.True(result.Code == ClipboardBridge.ResultOk, $"Bild: Code {result.Code} {result.Message} (laeuft xrdp-chansrv? siehe docs/DEVELOPMENT.md)");
 
         // Dateien nimmt xrdp nur an, wenn es sie per FUSE einhaengen kann (compose.yaml: /dev/fuse beim rdp-target) und wenn der letzte Client sie
-        // wollte: chansrv behaelt die Faehigkeiten des zuletzt verbundenen Clients, und guacd schaltet sie ab (siehe docs/DEVELOPMENT.md)
+        // wollte: chansrv behaelt die Faehigkeiten des zuletzt verbundenen Clients (siehe docs/DEVELOPMENT.md)
         byte[] content = [1, 2, 3, 4, 5];
         stream.BeginTransfer(2, ClipboardBridge.KindFile, 0, 1, content.Length, "Test Übung.bin");
         stream.TransferChunk(2, content);
@@ -538,7 +538,7 @@ public sealed class ScreenStreamTests
         {
             await cts.CancelAsync();
             await run;
-            Assert.Skip("xrdp bietet keine Dateien an (kein /dev/fuse, oder zuletzt war ein Guacamole-Client verbunden: Ziel neu starten).");
+            Assert.Skip("xrdp bietet keine Dateien an (kein /dev/fuse, oder der zuletzt verbundene Client hat keine Dateien verlangt: Ziel neu starten).");
         }
 
         Assert.True(result.Code == ClipboardBridge.ResultOk, $"Datei: Code {result.Code} {result.Message}");

@@ -932,7 +932,7 @@ async function openAbout() {
   const e = ctx.esc;
   const row = (k, v) => v ? `<div class="dk-ab-row"><span>${k}</span><b>${e(v)}</b></div>` : '';
   const built = a && a.built ? new Date(a.built).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : '';
-  const stream = a ? (a.engines.stream ? `Stream (${a.engines.encoder || 'H.264'}) und Guacamole` : 'Guacamole (Stream nicht verfügbar)') : '';
+  const stream = a ? (a.engines.stream ? `Stream (${a.engines.encoder || 'H.264'})` : 'Nicht verfügbar') : '';
   w.body.innerHTML = `<div class="dk-about"><div class="dk-ab-logo">${LOGO}</div><h2>JulOS</h2>
     <p class="dk-lead">${a ? 'Version ' + e(a.version) : 'Version unbekannt'}</p>
     <p class="dk-lead">Dein Server-Arbeitsplatz im Browser: Desktop und Terminal deiner Rechner, an einem Ort.</p>

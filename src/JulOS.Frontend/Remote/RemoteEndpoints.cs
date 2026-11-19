@@ -9,14 +9,12 @@ using JulOS.Integrations;
 using JulOS.Integrations.Display;
 using JulOS.Integrations.Display.Rdp;
 using JulOS.Integrations.Display.Rdp.Drive;
-using JulOS.Integrations.Guacamole;
 using JulOS.Integrations.Ssh;
 
 namespace JulOS.Frontend.Remote;
 
 internal static class RemoteEndpoints
 {
-    public const string WebSocketPath = "/api/remote/ws";
     public const string ScreenWebSocketPath = "/api/remote/screen";
     public const string SshWebSocketPath = "/api/remote/ssh";
 
@@ -26,7 +24,7 @@ internal static class RemoteEndpoints
     public static void MapRemote(this IEndpointRouteBuilder app)
     {
         // Schritt 1: Verbindung waehlen und das Passwort tippen -> Einmal-Ticket (30 s, nur im Speicher)
-        app.MapPost("/api/remote/ticket", async (TicketRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, GuacTickets tickets, ScreenTickets screenTickets, SshTickets sshTickets, SecretBox box, DriveRoot drives) =>
+        app.MapPost("/api/remote/ticket", async (TicketRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, ScreenTickets screenTickets, SshTickets sshTickets, SecretBox box, DriveRoot drives) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (body.Connection is not { } connectionId) return Error(400, "Verbindung fehlt.");
@@ -59,55 +57,23 @@ internal static class RemoteEndpoints
             // Remote-Aufloesung: Breite Vielfaches von 4, Hoehe von 2, sinnvolle Grenzen
             var w = Math.Clamp(body.Width ?? 900, 400, 4096) & ~3;
             var h = Math.Clamp(body.Height ?? 1600, 300, 4096) & ~1;
-            var dpi = Math.Clamp(body.Dpi ?? 96, 72, 288);
-            // Die Engine der Verbindung gilt, ausser die Seite verlangt ausdruecklich eine andere (Test-Schalter im Browser oder Rueckfall nach
-            // einem misslungenen Stream). Der Stream (eigener RDP-Client, H.264) ist nur fuer Desktops und nur, wenn der Kodierer da ist; sonst
-            // bleibt es bei Guacamole, und die Antwort sagt, welche Engine es wurde.
-            var wanted = body.Engine ?? c.Engine;
-            if (c.Kind == "desktop" && string.Equals(wanted, ConnectionRules.EngineStream, StringComparison.Ordinal) && ScreenStream.IsAvailable)
+            // Desktops laufen immer ueber die eigene Strom-Engine (RDP-Client, H.264); ohne Kodierer auf diesem Server gibt es keine Desktop-Verbindung.
+            if (!ScreenStream.IsAvailable) return Error(503, "Die Bildübertragung ist auf diesem Server nicht verfügbar: " + ScreenStream.UnavailableReason);
+            // Zertifikat des Ziels: beim ersten Mal merken, danach muss es dasselbe sein (Warnung mit Bestaetigung im Browser, siehe CertificateTrust)
+            var (user, connectionKey) = (id.UserId, c.Id);
+            var trust = new CertificateTrust(c.CertFingerprint, body.AcceptCert, (fingerprint, ct) => connections.SetCertFingerprintAsync(user, connectionKey, fingerprint, ct));
+            var rdp = new RdpOptions
             {
-                // Zertifikat des Ziels: beim ersten Mal merken, danach muss es dasselbe sein (Warnung mit Bestaetigung im Browser, siehe CertificateTrust)
-                var (user, connectionKey) = (id.UserId, c.Id);
-                var trust = new CertificateTrust(c.CertFingerprint, body.AcceptCert, (fingerprint, ct) => connections.SetCertFingerprintAsync(user, connectionKey, fingerprint, ct));
-                var options = new RdpOptions
-                {
-                    Host = c.Host, Port = c.Port, UserName = c.Username, Password = password, Width = w & ~1, Height = h & ~1,
-                    KeyboardLayout = 0x407, CertificateCheck = trust.Check, Sound = true,
-                };
-                // Laufwerk: nur, wenn die Verbindung es verlangt (beide Schalter standardmaessig aus) und der Server eine Wurzel hat; die Wurzel kommt nur aus der Server-Einstellung
-                var drive = c.DriveShare ? drives.For(c.DriveWrite) : null;
-                var screenTicket = screenTickets.Create(id.UserId, new ScreenTarget(options, SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid), Trust: trust, Drive: drive));
-                return screenTicket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(screenTicket, c.Kind, w & ~1, h & ~1, "stream", drive is null ? null : drive.Writable ? "rw" : "ro"), AppJson.Default.TicketResponse);
-            }
-
-            GuacSpec? spec = c.Kind switch
-            {
-                "desktop" => GuacSpec.Desktop(c.Host, c.Port, c.Username, password, w, h, dpi),
-                _ => null,
+                Host = c.Host, Port = c.Port, UserName = c.Username, Password = password, Width = w & ~1, Height = h & ~1,
+                KeyboardLayout = 0x407, CertificateCheck = trust.Check, Sound = true,
             };
-            if (spec is null) return Error(400, "Diese Art von Verbindung wird noch nicht unterstützt.");
-            spec = spec with { Slot = SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid) };
-            var ticket = tickets.Create(id.UserId, spec);
-            return ticket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(ticket, c.Kind, w, h), AppJson.Default.TicketResponse);
+            // Laufwerk: nur, wenn die Verbindung es verlangt (beide Schalter standardmaessig aus) und der Server eine Wurzel hat; die Wurzel kommt nur aus der Server-Einstellung
+            var drive = c.DriveShare ? drives.For(c.DriveWrite) : null;
+            var screenTicket = screenTickets.Create(id.UserId, new ScreenTarget(rdp, SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid), Trust: trust, Drive: drive));
+            return screenTicket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(screenTicket, c.Kind, w & ~1, h & ~1, "stream", drive is null ? null : drive.Writable ? "rw" : "ro"), AppJson.Default.TicketResponse);
         });
 
-        // Schritt 2: WebSocket mit dem Ticket. Die Sitzung wurde schon vom ApiGuard geprueft (ohne Cookie-Erneuerung).
-        app.Map(WebSocketPath, async (HttpContext ctx, GuacTickets tickets, GuacRelay relay, AuthService auth) =>
-        {
-            if (!ctx.WebSockets.IsWebSocketRequest) return Error(400, "WebSocket erwartet.");
-            // Fremde Seiten duerfen keinen WebSocket mit unserem Cookie aufbauen (zusaetzlich zu SameSite=Strict)
-            if (!ApiGuard.SameOrigin(ctx.Request)) return Error(403, "Anfrage abgelehnt.");
-            var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
-            var spec = tickets.Take(ctx.Request.Query["ticket"].ToString(), id.UserId);
-            if (spec is null) return Error(403, "Ticket ungültig oder abgelaufen.");
-
-            // Der Guacamole-Tunnel im Browser fragt das Unterprotokoll "guacamole" an und bricht ab, wenn der Server keins waehlt
-            var accept = new WebSocketAcceptContext { SubProtocol = ctx.WebSockets.WebSocketRequestedProtocols.Contains("guacamole") ? "guacamole" : null };
-            using var ws = await ctx.WebSockets.AcceptWebSocketAsync(accept);
-            await relay.RunAsync(ws, spec, ct => auth.IsSessionAliveAsync(id.Id, ct), ctx.RequestAborted, owner: id.UserId);
-            return Results.Empty;
-        });
-        // Bildschirm-Stream: dasselbe Ticket-Verfahren, aber ohne Unterprotokoll, nur binaere Nachrichten (siehe ScreenProtocol)
+        // Schritt 2 (Desktop): WebSocket mit dem Ticket, nur binaere Nachrichten (siehe ScreenProtocol). Die Sitzung wurde schon vom ApiGuard geprueft (ohne Cookie-Erneuerung).
         app.Map(ScreenWebSocketPath, async (HttpContext ctx, ScreenTickets tickets, ScreenRelay relay, AuthService auth) =>
         {
             if (!ctx.WebSockets.IsWebSocketRequest) return Error(400, "WebSocket erwartet.");

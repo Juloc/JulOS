@@ -1,7 +1,7 @@
 /* =====================================================================
  * Bildschirm-Stream: der Server verbindet sich per RDP und schickt H.264, der Browser dekodiert es mit WebCodecs.
- * StreamClient spricht dieselbe kleine Schnittstelle wie der Guacamole-Client (connect, sendMouseState, sendKeyEvent, sendSize,
- * disconnect, getDisplay und die Rueckrufe onstatechange/onerror), damit Touch, Tastatur und Menues in app.js unveraendert bleiben.
+ * StreamClient ist die Schnittstelle der Sitzung (app.js) zum Server: connect, sendMouseState, sendKeyEvent, sendSize, disconnect, getDisplay und
+ * die Rueckrufe onstatechange (Zustaende 3 verbunden, 5 getrennt) und onerror ({ code, message }, die Codes stehen in ScreenProtocol.cs).
  *
  * Nachrichten (alle binaer, Zahlen big endian), siehe ScreenProtocol auf dem Server:
  *   Server -> Browser: 1 Bild (flags, folge u32, H.264), 2 Zeiger, 3 Groesse, 4 Fehler, 5 uebernommen, 6 Zwischenablage (UTF-8-Text),
@@ -20,8 +20,7 @@
  *
  * Ton (20 und 21 in beide Richtungen: Ton vom fernen Rechner, Zustand, "Ton an", Mikrofon): siehe stream-audio.js, erreichbar als client.audio.
  *
- * Zwischenablage: Text wie bei Guacamole als Strom (onclipboard(stream, 'text/plain') mit onblob/onend, createClipboardStream() mit sendBlob/sendEnd),
- * damit Guacamole.StringReader und StringWriter in app.js unveraendert funktionieren. Bilder und Dateien haben eigene Rueckrufe
+ * Zwischenablage: Text kommt als onclipboard(text) und geht mit sendClipboardText(text) hinaus. Bilder und Dateien haben eigene Rueckrufe
  * (onclipimage, onclipfiles) und Methoden (sendTransfer, fetchFile); das Format steht in docs/CLIPBOARD.md und ScreenProtocol.cs.
  * ===================================================================== */
 
@@ -173,7 +172,6 @@ export class StreamClient {
     this.onstatechange = null; this.onerror = null; this.onclipboard = null;
     this.onsession = null; this.onresumefailed = null;                            // Sitzungserhalt: Token des Servers, Token abgelehnt (siehe resume.js)
     this.onclipimage = null; this.onclipfiles = null; this.onclipresult = null;   // Bilder, Dateien und Meldungen der VM (siehe docs/CLIPBOARD.md)
-    this.nativeClipboard = true;        // Bilder und Dateien gehen ueber den Stream (app.js fragt danach)
     this.nextTransfer = 1; this.transfers = new Map(); this.fetches = new Map();
     this.state = 0;
     this.socket = null; this.decoder = null; this.codec = '';
@@ -188,7 +186,7 @@ export class StreamClient {
     this.received = 0;                  // Folgenummer des zuletzt empfangenen Bildes (der Server zaehlt aufsteigend, ohne Luecken)
     this.refineOn = !/off/.test(localStorage.getItem('pd.refine') || '');   // zum Vergleichen: localStorage pd.refine = "off" ignoriert die Nachbesserung
     this.paused = false;                // die Ansicht ist im Hintergrund: der Server kodiert dann keine Bilder
-    this.drawn = false;                 // ob schon ein Bild gezeichnet wurde (davor darf app.js auf Guacamole ausweichen)
+    this.drawn = false;                 // ob schon ein Bild gezeichnet wurde (davor meldet ein Dekodierer-Fehler, dass es hier nicht geht)
     this.hevcOk = !!codecSupport.hevc;  // ob H.265 angeboten wird; nach einem Fehler des H.265-Dekodierers nicht mehr
     this.hevc = false;                  // ob der Dekodierer gerade H.265 dekodiert
     this.encoder = null;                // was der Server meldet: { codec, hardware, name }
@@ -320,14 +318,10 @@ export class StreamClient {
     }
   }
 
-  // Text vom fernen Rechner: als Guacamole-artiger Strom (ein Blob, base64, dann Ende) an onclipboard
+  // Text vom fernen Rechner (UTF-8) an onclipboard
   incomingClipboard(bytes) {
     if (!this.onclipboard || !bytes.length) return;
-    let bin = ''; for (let i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode(...bytes.subarray(i, i + 8192));
-    const stream = { onblob: null, onend: null };
-    this.onclipboard(stream, 'text/plain');
-    if (stream.onblob) stream.onblob(btoa(bin));
-    if (stream.onend) stream.onend();
+    this.onclipboard(new TextDecoder().decode(bytes));
   }
 
   // Dateien, die der ferne Rechner kopiert hat: nur die Liste, der Inhalt kommt erst mit fetchFile
@@ -442,7 +436,7 @@ export class StreamClient {
   }
 
   // Der Dekodierer ist ausgestiegen: ein neues Schluesselbild anfordern. Klappt es vor dem ersten gezeichneten Bild mehrmals nicht, geht es
-  // hier nicht (Browser ohne passenden H.264-Dekodierer): dann Fehler melden, damit app.js auf Guacamole ausweichen kann.
+  // hier nicht (Browser ohne passenden H.264-Dekodierer): dann Fehler melden, damit app.js eine klare Meldung zeigt.
   decoderFailed() {
     const wasHevc = this.hevc;
     this.stats.dropped++; this.closeDecoder();
@@ -494,7 +488,7 @@ export class StreamClient {
 
   sendSize(w, h) { const b = new DataView(new ArrayBuffer(5)); b.setUint8(0, OUT.resize); b.setUint16(1, w); b.setUint16(3, h); this.send(b.buffer); }
 
-  // Maus: dieselben Zustandsobjekte wie bei Guacamole (x, y, Tasten, Rad hoch/runter); es gehen nur die Aenderungen hinaus
+  // Maus: Zustandsobjekte { x, y, left, middle, right, up, down } (siehe mouse.js); es gehen nur die Aenderungen hinaus
   sendMouseState(s) {
     const l = this.last;
     const x = Math.max(0, Math.min(65535, Math.round(s.x))), y = Math.max(0, Math.min(65535, Math.round(s.y)));
@@ -541,25 +535,11 @@ export class StreamClient {
 
   key(scancode, extended, pressed) { this.send(Uint8Array.of(OUT.key, scancode, (extended ? 1 : 0) | (pressed ? 2 : 0))); }
 
-  // Text fuer die Zwischenablage des fernen Rechners: die base64-Teile (UTF-8) werden gesammelt und am Ende als eine Nachricht gesendet
-  createClipboardStream(mimetype) {
-    const parts = [];
-    const client = this;
-    return {
-      sendBlob(base64) {
-        if (!/^text\//.test(mimetype || 'text/plain')) return;
-        const bin = atob(base64); const part = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) part[i] = bin.charCodeAt(i);
-        parts.push(part);
-      },
-      sendEnd() {
-        const size = parts.reduce((n, p) => n + p.length, 0);
-        if (!size) return;
-        const message = new Uint8Array(1 + size); message[0] = OUT.clipboard;
-        let at = 1; for (const p of parts) { message.set(p, at); at += p.length; }
-        parts.length = 0;
-        client.send(message);
-      },
-    };
+  // Text fuer die Zwischenablage des fernen Rechners (UTF-8): eine Nachricht, der ferne Rechner holt ihn, wenn er einfuegt
+  sendClipboardText(text) {
+    const bytes = new TextEncoder().encode(text);
+    if (!bytes.length) return;
+    const message = new Uint8Array(1 + bytes.length); message[0] = OUT.clipboard; message.set(bytes, 1);
+    this.send(message);
   }
 }

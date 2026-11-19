@@ -13,7 +13,7 @@ internal static class ConnectionEndpoints
     private static IResult Error(int status, string message) =>
         Results.Text(JsonSerializer.Serialize(new ErrorBody(message), AppJson.Default.ErrorBody), "application/json", Encoding.UTF8, status);
 
-    private static ConnectionDto ToDto(ConnectionRecord c) => new(c.Id, c.Name, c.Kind, c.Host, c.Port, c.Username, c.HasPassword, c.Engine, c.HostId, c.DriveShare, c.DriveWrite);
+    private static ConnectionDto ToDto(ConnectionRecord c) => new(c.Id, c.Name, c.Kind, c.Host, c.Port, c.Username, c.HasPassword, c.HostId, c.DriveShare, c.DriveWrite);
 
     private static string? CheckPassword(string? password, SecretBox box)
     {
@@ -33,7 +33,7 @@ internal static class ConnectionEndpoints
         app.MapPost("/api/connections", async (ConnectionRequest body, HttpContext ctx, ConnectionStore store, HostStore hosts, HostPolicy policy, SecretBox box, DriveRoot drives) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
-            var (v, error) = ConnectionRules.Validate(body.Name, body.Kind, body.Host, body.Port, body.Username, body.Engine, driveShare: body.DriveShare, driveWrite: body.DriveWrite);
+            var (v, error) = ConnectionRules.Validate(body.Name, body.Kind, body.Host, body.Port, body.Username, driveShare: body.DriveShare, driveWrite: body.DriveWrite);
             if (v is null) return Error(400, error!);
             if (v.DriveShare && !drives.Available) return Error(400, "Die Laufwerksfreigabe ist am Server nicht eingerichtet (JULOS_DRIVE_ROOT).");
             if (!policy.Allows(v.Host)) return Error(403, "Dieses Ziel ist nicht erlaubt.");
@@ -42,7 +42,7 @@ internal static class ConnectionEndpoints
             if (await store.CountAsync(id.UserId, ctx.RequestAborted) >= ConnectionRules.MaxPerUser) return Error(400, "Zu viele Verbindungen.");
             // Der Host muss dem Benutzer gehoeren; ohne Angabe kommt die Verbindung auf seinen ersten Host
             if (body.HostId is { } wanted && await hosts.GetAsync(id.UserId, wanted, ctx.RequestAborted) is null) return Error(404, "Host nicht gefunden.");
-            var c = await store.CreateAsync(id.UserId, v.Name, v.Kind, v.Host, v.Port, v.Username, v.Engine, body.HostId, ctx.RequestAborted, v.DriveShare, v.DriveWrite);
+            var c = await store.CreateAsync(id.UserId, v.Name, v.Kind, v.Host, v.Port, v.Username, body.HostId, ctx.RequestAborted, v.DriveShare, v.DriveWrite);
             if (!string.IsNullOrEmpty(body.Password))
             {
                 await store.SetSecretAsync(id.UserId, c.Id, box.Encrypt(body.Password, c.Id), ctx.RequestAborted);
@@ -56,14 +56,14 @@ internal static class ConnectionEndpoints
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             var before = await store.GetAsync(id.UserId, connection, ctx.RequestAborted);
             if (before is null) return Error(404, "Verbindung nicht gefunden.");
-            var (v, error) = ConnectionRules.Validate(body.Name, body.Kind, body.Host, body.Port, body.Username, body.Engine, before.Engine, body.DriveShare, body.DriveWrite, before.DriveShare, before.DriveWrite);
+            var (v, error) = ConnectionRules.Validate(body.Name, body.Kind, body.Host, body.Port, body.Username, body.DriveShare, body.DriveWrite, before.DriveShare, before.DriveWrite);
             if (v is null) return Error(400, error!);
             if (v.DriveShare && !before.DriveShare && !drives.Available) return Error(400, "Die Laufwerksfreigabe ist am Server nicht eingerichtet (JULOS_DRIVE_ROOT).");
             if (!policy.Allows(v.Host)) return Error(403, "Dieses Ziel ist nicht erlaubt.");
             var passwordError = CheckPassword(body.Password, box);
             if (passwordError is not null) return Error(400, passwordError);
             if (body.HostId is { } moveTo && await hosts.GetAsync(id.UserId, moveTo, ctx.RequestAborted) is null) return Error(404, "Host nicht gefunden.");
-            var c = await store.UpdateAsync(id.UserId, connection, v.Name, v.Kind, v.Host, v.Port, v.Username, v.Engine, body.HostId, ctx.RequestAborted, v.DriveShare, v.DriveWrite);
+            var c = await store.UpdateAsync(id.UserId, connection, v.Name, v.Kind, v.Host, v.Port, v.Username, body.HostId, ctx.RequestAborted, v.DriveShare, v.DriveWrite);
             if (c is null) return Error(404, "Verbindung nicht gefunden.");
 
             // Ein gespeichertes Passwort gehoert zu genau diesem Ziel: wer Adresse, Port, Art oder Benutzer aendert, schickt es sonst an ein anderes Ziel

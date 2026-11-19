@@ -37,7 +37,7 @@ Every session logs `Kodierer: <name> (H.265, GPU), 1920 x 1080` when it starts.
 3. Every picture message says in its flags (bit 1) which codec it is. On a key frame the browser reads the codec string from the stream's SPS
    (`avc1.640028`, `hvc1.1.6.L123.90`) and configures the decoder from it; a change of codec reopens the decoder.
 4. If the HEVC decoder fails or holds pictures back, the browser sends message 30 (codecs = H.264 only) and a key frame request; the server swaps to H.264
-   with a key frame. The browser never falls back to Guacamole because of HEVC.
+   with a key frame. The browser never gives up the stream because of HEVC.
 
 Messages: server to browser `30` encoder (codec, GPU yes/no, name; for display only), browser to server `30` codecs. Numbers 1 to 16 did not change. See `ScreenProtocol.cs`.
 

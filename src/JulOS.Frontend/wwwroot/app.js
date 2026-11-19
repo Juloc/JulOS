@@ -1,15 +1,15 @@
-import Guacamole from '/lib/guacamole-common.min.js';
 import { StreamClient } from './stream.js';
+import { MouseInput, mouseState } from './mouse.js';
 import { Resume } from './resume.js';
 import { StreamAudio } from './stream-audio.js';
 import { SizeGate, LayoutLog } from './layoutlog.js';
 import { Session, Sessions } from './sessions.js';
-import { LIMITS, fmtSize, bmpFromImage, pngFromBytes, filesFromTransfer, xhrUpload, saveBlob } from './clip.js';
+import { LIMITS, fmtSize, bmpFromImage, pngFromBytes, filesFromTransfer, saveBlob } from './clip.js';
 
 /* =====================================================================
  * JulOS – Fernsteuerung
  *  - RemoteSession: eine Sitzung (eigene Verbindung, Anzeige, Eingabe, Tastenleiste, Fensterleiste), siehe docs/SESSIONS.md
- *  - Verbindung (guacamole-common-js, RDP und SSH ueber guacd; oder der eigene Stream, stream.js)
+ *  - Verbindung (Strom-Engine: RDP, H.264, WebCodecs, stream.js)
  *  - dynamische Aufloesung (Fenstergroesse, Tastatur, Drehen, Zoom)
  *  - Touch: Tippen, Langdruecken, Ziehen, Zwei-Finger-Scrollen, Pinch-Zoom
  *  - Android-Tastatur ohne Autokorrektur + eigene, anpassbare Sondertasten
@@ -332,7 +332,6 @@ function toggleFullscreen() {
 function openClipDlg() {
   const s = cur();
   el.remoteClip.value = (s && s.clipText) || '';
-  $('#pullImgBtn').hidden = !!(s && s.nativeClip());
   renderRemoteItem();
   el.clipDlg.showModal();
 }
@@ -413,7 +412,7 @@ const mid2 = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 const profiles = store.get('profiles', {});                   // Anzeigegroesse je Programm (Klasse), nur im Programm-Modus
 const defaultProfile = (cls) => (/claude/i.test(cls || '') ? 0.56 : null);   // Claude schmal: dann zeigt die App Burger-Menue statt Seitenleiste
 const PROFILE = { stablePolls: 2, minGap: 8000 };
-/** Verstaendliche Texte zu den Statuscodes, die guacd (oder der Stream-Server) mit einem Fehler schickt (Guacamole-Protokoll). */
+/** Verstaendliche Texte zu den Statuscodes, die der Server mit einem Fehler schickt (siehe ScreenProtocol.cs). */
 const ERROR_TEXT = {
   513: 'Der Server ist gerade ausgelastet.', 514: 'Das Ziel antwortet nicht (Zeitüberschreitung).', 515: 'Die Verbindung zum Ziel ist fehlgeschlagen.',
   519: 'Das Ziel wurde nicht gefunden.', 520: 'Das Ziel ist nicht erreichbar.', 769: 'Anmeldung am Ziel abgelehnt. Bitte Benutzername und Passwort prüfen.',
@@ -432,9 +431,9 @@ export class RemoteSession extends Session {
   constructor(conn, opts = {}) {
     super({ id: opts.sid, conn, title: opts.title });
     this.password = opts.password || null;         // nur im Arbeitsspeicher dieser Seite
-    this.client = null; this.tunnel = null; this.display = null; this.mouse = null;
+    this.client = null; this.display = null; this.mouse = null;
     this.connected = false; this.everConnected = false; this.intentional = false; this.fatal = false; this.disposed = false;
-    this.firstLogin = true; this.forceGuac = false; this.streamWorked = false; this.engine = 'guac';
+    this.firstLogin = true; this.streamWorked = false;   // streamWorked: auf dieser Verbindung kam schon einmal ein Bild
     this.resume = new Resume();                    // Sitzungserhalt des Streams: Token, Zeitfenster, Versuche (siehe resume.js)
     this.gen = 0;                                  // zaehlt jeden Verbindungsversuch: spaete Antworten eines alten Versuchs werden verworfen
     this.k = clamp(store.get('k.' + conn.id, store.get('k', pcDefaultK())), 0.35, 1.8);   // Remote-Pixel pro Handy-Pixel (kleiner = Inhalt groesser), je Verbindung gemerkt
@@ -447,7 +446,6 @@ export class RemoteSession extends Session {
     this.actOn = {};
     this.clipText = '';
     this.xferAbort = null; this.xferCancelExtra = null; this.remoteItem = { image: null, imageUrl: null, files: null };
-    this.counts = { instr: 0 };                    // Zaehler fuer Tests (Anweisungen von guacd)
     this.stageW = 0; this.stageH = 0; this.lastStage = null;
     this.W = { available: false, list: [], mode: 'desktop', timer: null, lastCls: null, candCls: null, candN: 0, profileAt: 0, apps: null };
     this.winSig = '';
@@ -629,7 +627,7 @@ export class RemoteSession extends Session {
   /** Vertrag: startet die Verbindung (ein neues Passwort ersetzt das alte). Fehler zeigt die Sitzung selbst, hier gibt es keine Ausnahme. */
   async connect(password) {
     if (password) this.password = password;
-    this.retry = 0; this.everConnected = false; this.firstLogin = true; this.forceGuac = false; this.streamWorked = false; this.resume.reset();
+    this.retry = 0; this.everConnected = false; this.firstLogin = true; this.streamWorked = false; this.resume.reset();
     return this.start();
   }
 
@@ -639,7 +637,7 @@ export class RemoteSession extends Session {
     // einen neuen Wiederholungs-Timer setzen, der die frische Verbindung nach 1,5/3/4,5 s wieder abschiesst.
     this.gen++;
     const old = this.client;
-    this.client = null; this.tunnel = null; this.display = null; this.mouse = null; this.connected = false;
+    this.client = null; this.display = null; this.mouse = null; this.connected = false;
     try { old && old.disconnect(keep); } catch { /* egal */ }
     clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); clearTimeout(this.resizeTimer);
     this.stopWindowBar(); this.el.topbar.hidden = true;
@@ -648,19 +646,12 @@ export class RemoteSession extends Session {
     this.updateAudioMenu();
   }
 
-  /** Der Stream kam nicht zustande (es wurde nie ein Bild gezeichnet): einmal mit Guacamole neu verbinden, statt einen Fehler zu zeigen.
-      Gilt bis die Verbindung verlassen wird. Keine Ausweichung bei Fehlern, die Guacamole genauso haette (Anmeldung abgelehnt, uebernommen, zu viele). */
-  fallBackFromStream(client, err) {
-    if (!(client instanceof StreamClient)) return false;
-    if (client.drawn) this.streamWorked = true;
-    if (this.streamWorked || this.forceGuac || this.intentional || this.client !== client) return false;
-    if (err && [513, 769, 777, 797, 800].includes(err.code)) return false;
-    this.forceGuac = true;
-    this.dbg('stream-fallback', { code: err ? err.code : 0, message: err && err.message ? String(err.message).slice(0, 80) : '' });
-    this.toast('Der schnelle Stream geht hier nicht, verbinde mit Guacamole …', 3200);
-    this.teardown();                       // den Stream sofort abkoppeln: seine spaeteren Ereignisse zaehlen nicht mehr
-    setTimeout(() => { if (!this.disposed) this.start(); }, 0);
-    return true;
+  /** Der Stream kam nicht zustande (Verbindung nie aufgebaut, kein Bild, Dekodierer geht nicht): eine klare Meldung mit "Neu verbinden", kein Ausweichen auf etwas anderes. */
+  streamFailed(message) {
+    this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer);
+    this.connected = false;
+    this.setState('error', 'Keine Verbindung');
+    this.showOverlay(message);
   }
 
   async start() {
@@ -669,7 +660,7 @@ export class RemoteSession extends Session {
     this.teardown(true);                   // der Server haelt eine Stream-Sitzung weiter, die nehmen wir gleich wieder auf (sonst endet sie dort nach Ablauf)
     const gen = this.gen;
     const stale = () => gen !== this.gen || this.disposed;
-    const resuming = this.everConnected && this.engine === 'stream' && this.resume.usable();
+    const resuming = this.everConnected && this.resume.usable();
     const busyText = resuming ? 'Verbindung wird wiederhergestellt …' : this.everConnected ? 'Verbinde neu …' : 'Verbinde …';
     this.setState(this.everConnected ? 'reconnecting' : 'connecting', busyText);
     this.showBusy(busyText);
@@ -684,24 +675,24 @@ export class RemoteSession extends Session {
     for (let i = 0; i < 12 && kbOpen && mine; i++) await sleep(50);
     if (stale()) return;
     const { w, h } = this.computeRemote();
-    // Welche Engine: der Test-Schalter pd.engine (localStorage, JSON) hat Vorrang vor der Wahl der Verbindung; der eigene Stream (H.264 im Browser)
-    // nur fuer Desktops und nur, wenn der Browser ihn dekodieren kann; sonst Guacamole (auch nach einem misslungenen Stream, siehe fallBackFromStream)
-    const choice = this.forceGuac ? 'guac' : store.get('engine', null) || this.conn.engine || 'guac';
-    const wantStream = this.conn.kind === 'desktop' && choice === 'stream' && await StreamClient.supported();
+    // Ohne H.264-Dekodierer im Browser (WebCodecs, braucht HTTPS oder localhost) gibt es keine Bildschirmverbindung: das sagt die Sitzung klar, statt etwas anderes zu versuchen
+    if (!(await StreamClient.supported())) {
+      if (stale()) return;
+      return this.streamFailed('Dieser Browser kann das Bild nicht dekodieren (H.264 mit WebCodecs, die Seite braucht HTTPS). Bitte einen aktuellen Browser nutzen und „Neu verbinden“ tippen.');
+    }
     if (stale()) return;
-    let ticket, engine = 'guac', driveMode = null;
+    let ticket, driveMode = null;
     // Eine erhaltene Sitzung des Servers wieder aufnehmen: kein Ticket, kein Passwort, kein neuer Login am Ziel (der Server nimmt das Token, siehe resume.js)
-    const resumeToken = wantStream && this.everConnected && this.resume.usable() ? this.resume.token : null;
-    if (resumeToken) engine = 'stream';
-    else try {
+    const resumeToken = this.everConnected && this.resume.usable() ? this.resume.token : null;
+    if (!resumeToken) try {
       const acceptCert = this.acceptCert; this.acceptCert = null;      // gilt nur fuer diesen einen Versuch (siehe certDialog)
       const resp = await fetch('/api/remote/ticket', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, signal: AbortSignal.timeout(10000),
-        body: JSON.stringify({ connection: this.conn.id, sid: this.id, password: this.password || undefined, width: w, height: h, dpi: 96, engine: wantStream ? 'stream' : 'guac', acceptCert: wantStream ? acceptCert || undefined : undefined }) });
+        body: JSON.stringify({ connection: this.conn.id, sid: this.id, password: this.password || undefined, width: w, height: h, acceptCert: acceptCert || undefined }) });
       const data = await resp.json().catch(() => ({}));
       if (stale()) return;
       if (resp.status === 401) return this.requestClose('Die Sitzung ist abgelaufen. Bitte neu anmelden.', 'auth');
       if (!resp.ok) throw new Error(data.error || 'Fehler ' + resp.status);
-      ticket = data.ticket; engine = data.engine || 'guac'; driveMode = data.drive || null;
+      ticket = data.ticket; driveMode = data.drive || null;
     } catch (e) {
       if (stale()) return;
       const msg = e.name === 'TimeoutError' || e.name === 'TypeError' ? 'Keine Verbindung zum Server. Netz prüfen.' : e.message;
@@ -711,26 +702,21 @@ export class RemoteSession extends Session {
     }
 
     const wsBase = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
-    const isStream = engine === 'stream';
-    const tunnel = isStream ? null : new Guacamole.WebSocketTunnel(wsBase + '/api/remote/ws');
-    const client = isStream ? new StreamClient(wsBase + '/api/remote/screen') : new Guacamole.Client(tunnel);
-    this.engine = engine;
-    if (isStream) {
-      this.wireAudio(client);
-      client.onsession = (o) => { if (this.client === client) this.resume.offered(o.token, o.keep); };
-      // Der Server kennt das Token nicht mehr (abgelaufen, Neustart, Sitzung dort beendet): ganz normal neu aufbauen, mit Ticket und neuem Login
-      client.onresumefailed = () => {
-        if (this.client !== client) return;
-        this.dbg('resume-failed', {});
-        this.resume.refused();
-        this.teardown();
-        if (this.hasSibling()) return this.takenBySibling();      // eine andere Sitzung hat den Desktop uebernommen: nicht zurueckholen
-        setTimeout(() => { if (!this.disposed && !this.intentional) this.start(); }, 0);
-      };
-    }
+    const client = new StreamClient(wsBase + '/api/remote/screen');
+    this.wireAudio(client);
+    client.onsession = (o) => { if (this.client === client) this.resume.offered(o.token, o.keep); };
+    // Der Server kennt das Token nicht mehr (abgelaufen, Neustart, Sitzung dort beendet): ganz normal neu aufbauen, mit Ticket und neuem Login
+    client.onresumefailed = () => {
+      if (this.client !== client) return;
+      this.dbg('resume-failed', {});
+      this.resume.refused();
+      this.teardown();
+      if (this.hasSibling()) return this.takenBySibling();      // eine andere Sitzung hat den Desktop uebernommen: nicht zurueckholen
+      setTimeout(() => { if (!this.disposed && !this.intentional) this.start(); }, 0);
+    };
     const display = client.getDisplay();
-    this.tunnel = tunnel; this.client = client; this.display = display; this.lastSent = { w, h }; this.gate = new SizeGate();
-    this.lay.note('conn', { engine });
+    this.client = client; this.display = display; this.lastSent = { w, h }; this.gate = new SizeGate();
+    this.lay.note('conn', { engine: 'stream' });
     this.el.display.appendChild(display.getElement());
     display.onresize = () => { this.fitDisplay(); const dw = display.getWidth(), dh = display.getHeight(); this.lay.note('remote', { w: dw, h: dh }); this.dbg('remote-size', { w: dw, h: dh }); };
     // Textfeld-Erkennung: Der Mauszeiger der VM wird zum "I-Balken" (schmal, hoch, Hotspot mittig)
@@ -739,7 +725,6 @@ export class RemoteSession extends Session {
       if (c.sig !== this.cursor.sig && cursorLogN++ < 40) this.dbg('cursor', { w: c.w, h: c.h, bw: c.bw, bh: c.bh, hx: c.hx, hy: c.hy, ibeam: c.ibeam });
       this.cursor = c;
     };
-    if (tunnel) { const inner = tunnel.oninstruction; tunnel.oninstruction = (o, p) => { this.counts.instr++; inner(o, p); }; }   // nur zaehlen (Tests)
 
     client.onstatechange = (st) => {
       if (this.client !== client) return;
@@ -751,14 +736,14 @@ export class RemoteSession extends Session {
         if (this.hasSibling()) this.toast('Hinweis: Eine andere Sitzung läuft zum selben Ziel und Benutzer. Ein RDP-Ziel gibt je Benutzer nur einen Desktop her, die Sitzungen übernehmen ihn gegenseitig.', 6000);
         this.startWindowBar(); this.fitDisplay(); this.pushSize(); this.waitForFrame(client); this.applyPause();
         if (cur() === this) focusKbForHardware();
-        if (isStream) this.startAudio(client);
-        if (isStream) setTimeout(() => { if (this.client === client && !client.drawn) this.fallBackFromStream(client); }, 10000);   // Groesse gemeldet, aber nie ein Bild: der Dekodierer geht nicht
+        this.startAudio(client);
+        setTimeout(() => { if (this.client === client && !client.drawn && !this.streamWorked) this.streamFailed('Es kommt kein Bild an. Der Browser kann das Bild vielleicht nicht dekodieren. „Neu verbinden“ tippen.'); }, 10000);   // Groesse gemeldet, aber nie ein Bild: der Dekodierer geht nicht
         // Die Zaehler der Wiederholung gelten erst als zurueckgesetzt, wenn die Verbindung wirklich haelt (sonst endlos: verbunden, sofort getrennt, neu ...)
         setTimeout(() => { if (this.client === client && this.connected) { this.firstLogin = false; this.retry = 0; } }, 12000);
       } else if (st === 5) { // getrennt
         this.connected = false;
-        if (client.drawn) this.resume.confirm();      // die Sitzung am Ziel gibt es wirklich: ein Token darf sie wieder aufnehmen
-        if (!client.closing && this.fallBackFromStream(client)) return;   // ohne Fehlermeldung getrennt, bevor ein Bild kam
+        if (client.drawn) { this.streamWorked = true; this.resume.confirm(); }      // die Sitzung am Ziel gibt es wirklich: ein Token darf sie wieder aufnehmen
+        if (!client.closing && !this.streamWorked && !this.intentional && !this.fatal) return this.streamFailed('Die Verbindung wurde getrennt, bevor ein Bild kam. „Neu verbinden“ tippen.');   // ohne Fehlermeldung getrennt
         if (this.intentional || this.fatal) return;
         if (!this.everConnected) return; // Fehler wird von onerror gemeldet
         if (this.hasSibling() && !this.resume.usable()) return this.takenBySibling();
@@ -769,8 +754,6 @@ export class RemoteSession extends Session {
     };
     client.onerror = (err) => {
       if (this.client !== client) return;
-      // guacd meldet meist nur "Aborted. See logs."; der Statuscode sagt mehr
-      if (this.fallBackFromStream(client, err)) return;
       if (err && err.code === 520 && this.everConnected && this.resume.usable()) return;   // Leitung weg (Netzwechsel): das Schliessen des Sockets plant den naechsten Versuch (scheduleReconnect)
       if (err && err.code === 800) { this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); return this.certDialog(err); }   // Zertifikat des Ziels geaendert: der Benutzer entscheidet
       const code = err && err.code;
@@ -784,34 +767,20 @@ export class RemoteSession extends Session {
       else if (this.firstLogin && Date.now() - this.connectedAt < 12000) this.requestClose('Anmeldung fehlgeschlagen. Bitte Passwort prüfen.');
       else { this.setState('error', 'Fehler'); this.showOverlay(msg); }
     };
-    if (tunnel) tunnel.onerror = (st) => {
-      if (this.client !== client) return;
-      if (!this.everConnected) return this.requestClose('Keine Verbindung zum Server: ' + (st && st.message ? st.message : ''));
-      // Die Leitung riss ab (Netz weg), ohne dass guacd etwas gemeldet hat: nur diese Sitzung verbindet neu, die anderen laufen weiter
-      if (this.connected && !this.intentional && !this.fatal) { this.connected = false; this.scheduleReconnect(); }
-    };
-    client.onclipboard = (stream, mimetype) => {
-      if (!/^text\//.test(mimetype)) return;
-      const reader = new Guacamole.StringReader(stream);
-      let data = '';
-      reader.ontext = (t) => { data += t; };
-      reader.onend = () => {
-        this.clipText = data;
-        if (cur() === this) el.remoteClip.value = data;
-        // Strg+C / Strg+X in der VM: Text gleich in die Zwischenablage dieses Browsers legen (braucht HTTPS oder localhost und eine eben erfolgte Eingabe).
-        // Nur fuer die aktive Sitzung: eine im Hintergrund darf die Zwischenablage nicht ueberschreiben.
-        if (cur() !== this) return;
-        if (navigator.clipboard && navigator.clipboard.writeText && document.hasFocus()) navigator.clipboard.writeText(data).then(() => this.toast('Kopiert', 1200), () => this.toast('Text aus der VM kopiert (Symbol Zwischenablage)', 2200));
-        else this.toast('Text aus der VM kopiert (Symbol Zwischenablage)', 2200);
-      };
+    client.onclipboard = (data) => {
+      this.clipText = data;
+      if (cur() === this) el.remoteClip.value = data;
+      // Strg+C / Strg+X in der VM: Text gleich in die Zwischenablage dieses Browsers legen (braucht HTTPS oder localhost und eine eben erfolgte Eingabe).
+      // Nur fuer die aktive Sitzung: eine im Hintergrund darf die Zwischenablage nicht ueberschreiben.
+      if (cur() !== this) return;
+      if (navigator.clipboard && navigator.clipboard.writeText && document.hasFocus()) navigator.clipboard.writeText(data).then(() => this.toast('Kopiert', 1200), () => this.toast('Text aus der VM kopiert (Symbol Zwischenablage)', 2200));
+      else this.toast('Text aus der VM kopiert (Symbol Zwischenablage)', 2200);
     };
 
-    // Bilder und Dateien: der eigene Stream meldet sie selbst; bei Guacamole holt der Knopf im Dialog das Bild ueber den Helfer
-    if (client.nativeClipboard) {
-      client.onclipimage = (format, bytes) => this.onRemoteImage(format, bytes);
-      client.onclipfiles = (batch, files) => this.onRemoteFiles(batch, files);
-      client.onclipresult = (r) => { if (r.text) this.toast(r.text, 3600); };
-    }
+    // Bilder und Dateien der VM meldet der Stream selbst
+    client.onclipimage = (format, bytes) => this.onRemoteImage(format, bytes);
+    client.onclipfiles = (batch, files) => this.onRemoteFiles(batch, files);
+    client.onclipresult = (r) => { if (r.text) this.toast(r.text, 3600); };
 
     this.setupMouse(client, display);
     client.connect(resumeToken ? 'resume=' + encodeURIComponent(resumeToken) : 'ticket=' + encodeURIComponent(ticket));
@@ -820,24 +789,15 @@ export class RemoteSession extends Session {
     this.connectTimer = setTimeout(() => {
       if (this.client !== client || this.connected) return;
       if (resumeToken && this.resume.usable()) { try { client.disconnect(true); } catch { /* egal */ } this.client = null; this.scheduleReconnect(); return; }
-      if (this.fallBackFromStream(client)) return;
-      this.fatal = true; try { client.disconnect(); } catch { /* egal */ }
-      this.setState('error', 'Keine Verbindung');
-      this.showOverlay('Die Verbindung kommt nicht zustande. Netz prüfen und „Neu verbinden“ tippen.');
+      try { client.disconnect(); } catch { /* egal */ }
+      this.streamFailed('Die Verbindung kommt nicht zustande. Netz prüfen und „Neu verbinden“ tippen.');
     }, resumeToken ? 8000 : 20000);
   }
 
-  /* Nach dem Verbinden bleibt die Ladeanzeige stehen, bis wirklich ein Bild da ist (sonst ist alles schwarz).
-     Kommt keins, fordert eine kleine Groessenaenderung vom Server ein neues Vollbild an. */
-  nudgeSize(delta = 2) {
-    if (!this.client || !this.connected) return;
-    const { w, h } = this.computeRemote();
-    this.sendRemoteSize(w, h - delta, 'nudge');
-    setTimeout(() => { if (this.client && this.connected) this.sendRemoteSize(w, h, 'nudge'); }, 350);
-  }
+  /* Nach dem Verbinden bleibt die Ladeanzeige stehen, bis die VM eine Bildgroesse gemeldet hat (hoechstens 4 s); danach prueft die Schleife, ob wirklich Inhalt da ist. */
   waitForFrame(client) {
     const started = Date.now();
-    let nudges = 0, probes = 0, sizedAt = 0, released = false;
+    let probes = 0, sizedAt = 0, released = false;
     this.showBusy('Bild wird geladen …');
     const probe = document.createElement('canvas'); probe.width = probe.height = 8;
     const pc = probe.getContext('2d', { willReadFrequently: true });
@@ -854,25 +814,17 @@ export class RemoteSession extends Session {
       } catch { return true; }                                // Pruefung nicht moeglich: nicht blockieren
     };
     // Die Ladeanzeige geht weg, sobald die VM eine Bildgroesse gemeldet hat (oder nach 4 s): Bedienung und Tastenleiste sollen
-    // nicht auf ein "nicht schwarzes" Bild warten. Die Anstupser laufen danach unsichtbar weiter, bis Inhalt da ist.
+    // nicht auf ein "nicht schwarzes" Bild warten. Die Pruefung laeuft danach unsichtbar weiter, bis Inhalt da ist.
     const release = (why) => { if (released) return; released = true; this.dbg('overlay-weg', { ms: Date.now() - started, why }); this.el.overlay.hidden = true; this.el.spinner.hidden = true; };
     const tick = () => {
       if (this.client !== client || !this.connected) return;
       const age = Date.now() - started;
       const ok = hasContent();
       if (seen.w > 0 && !sizedAt) sizedAt = Date.now();
-      if (probes++ % 4 === 0 && probes < 120) this.dbg('frameprobe', { ms: age, nudges, ...seen });
+      if (probes++ % 4 === 0 && probes < 120) this.dbg('frameprobe', { ms: age, ...seen });
       if (sizedAt || age > 4000) release(sizedAt ? 'groesse' : 'zeit');
       if (ok) this.frameSeen = true;
-      if (ok || age > 25000) { this.frameSeen = true; this.dbg('firstframe', { ms: age, nudges, ok, ...seen }); release('bild'); return; }
-      // Anstupsen (die VM zeichnet nach einer echten Groessenaenderung alles neu) erst, wenn es eine Bildgroesse gibt:
-      // vorher geht die Aenderung ins Leere, weil die VM noch gar nicht verbunden ist
-      if (sizedAt && this.engine !== 'stream') {
-        const since = Date.now() - sizedAt;
-        // erst warten (das Ziel braucht beim Wiederverbinden mehrere Sekunden), dann hoechstens zwei sanfte Anstupser
-        if (nudges === 0 && since > 8000) { nudges = 1; this.nudgeSize(2); }
-        else if (nudges === 1 && since > 16000) { nudges = 2; this.nudgeSize(64); }
-      }
+      if (ok || age > 25000) { this.frameSeen = true; this.dbg('firstframe', { ms: age, ok, ...seen }); release('bild'); return; }
       setTimeout(tick, 250);
     };
     tick();
@@ -882,7 +834,7 @@ export class RemoteSession extends Session {
     // Der Server haelt die Sitzung (JULOS_STREAM_KEEP_SECONDS): so lange wiederholen, wie sie wartet, ohne die drei Versuche zu verbrauchen.
     // Netzwechsel am Handy dauern oft laenger; nichts geht verloren, das Fenster und alles darin bleiben.
     this.resume.lost();
-    if (this.engine === 'stream' && this.resume.usable()) {
+    if (this.resume.usable()) {
       const wait = this.resume.nextDelay();
       this.setState('reconnecting', 'Verbindung wird wiederhergestellt …');
       this.showBusy('Verbindung wird wiederhergestellt …');
@@ -1113,8 +1065,7 @@ export class RemoteSession extends Session {
   }
   // Text in die Zwischenablage der VM legen und danach die Einfuege-Taste druecken (die Pause laesst die Zwischenablage-Meldung ankommen)
   pasteToRemote(txt, keys) {
-    const stream = this.client.createClipboardStream('text/plain');
-    const w = new Guacamole.StringWriter(stream); w.sendText(txt); w.sendEnd();
+    this.client.sendClipboardText(txt);
     this.enqueue(async () => { await sleep(180); });
     this.sendChord(keys, 8);
   }
@@ -1258,16 +1209,16 @@ export class RemoteSession extends Session {
     return { x: Math.round((cx - r.left) / s), y: Math.round((cy - r.top) / s) };
   }
   mouseSend(x, y, l = false, m = false, r = false, up = false, down = false) {
-    if (this.client) this.client.sendMouseState(new Guacamole.Mouse.State(x, y, l, m, r, up, down));
+    if (this.client) this.client.sendMouseState(mouseState(x, y, l, m, r, up, down));
   }
   setupMouse(client, display) {
     // echte Maus (nur Desktop-Browser); Touch laeuft ueber die eigene Gestenlogik
-    const mouse = new Guacamole.Mouse(this.el.touch);
+    const mouse = new MouseInput(this.el.touch);
     this.mouse = mouse;
     const fwd = (state) => {
       if (this.client !== client) return;
       const s = display.getScale() || 1;
-      client.sendMouseState(new Guacamole.Mouse.State(state.x / s, state.y / s, state.left, state.middle, state.right, state.up, state.down));
+      client.sendMouseState(mouseState(state.x / s, state.y / s, state.left, state.middle, state.right, state.up, state.down));
     };
     mouse.onmousedown = mouse.onmouseup = mouse.onmousemove = fwd;
     mouse.onmouseout = () => {};
@@ -1290,10 +1241,8 @@ export class RemoteSession extends Session {
 
   /* =====================================================================
    *  Bilder und Dateien in der Zwischenablage (Entwurf: docs/CLIPBOARD.md), je Sitzung
-   *  Eigener Stream: Bild (BMP) und Dateien gehen ueber den Stream, die VM meldet Bilder und Dateien selbst.
-   *  Guacamole: Bild ueber den Foto-Helfer (uploadPhoto), eine Datei ueber /api/upload-file, ein Bild der VM holt der Knopf im Dialog.
+   *  Bild (BMP) und Dateien gehen ueber den Stream, die VM meldet Bilder und Dateien selbst.
    * ===================================================================== */
-  nativeClip() { return !!(this.client && this.client.nativeClipboard); }
   showXfer(text, cancel) {
     this.el.xferText.textContent = text; this.el.xfer.hidden = false;
     if (cancel !== undefined) this.xferCancelExtra = cancel;
@@ -1312,7 +1261,6 @@ export class RemoteSession extends Session {
     if (files.some((f) => f.size === 0)) { this.toast('Die Datei ist leer.', 3000); return false; }
     const big = files.find((f) => f.size > LIMITS.fileBytes);
     if (big || files.reduce((n, f) => n + f.size, 0) > LIMITS.fileBytes) { this.toast(`Datei zu groß (höchstens ${LIMITS.fileBytes / 1048576} MB).`, 3600); return false; }
-    if (!this.nativeClip() && files.length > 1) { this.toast('Mit dieser Bildübertragung geht nur eine Datei auf einmal.', 3800); return false; }
 
     const ctl = this.xferAbort = new AbortController();
     try {
@@ -1320,12 +1268,7 @@ export class RemoteSession extends Session {
         const f = files[i], label = files.length > 1 ? ` (${i + 1}/${files.length})` : '';
         const progress = (done, total) => this.showXfer(`Sende ${f.name}${label} … ${Math.round(100 * done / total)} %`, null);
         this.showXfer(`Sende ${f.name}${label} …`, null);
-        let r;
-        if (this.nativeClip()) r = await this.client.sendTransfer(2, f, f.name, i, files.length, progress, ctl.signal);
-        else {
-          const x = await xhrUpload('/api/upload-file?c=' + encodeURIComponent(this.conn.id), { 'X-JulOS': '1', 'X-File-Name': encodeURIComponent(f.name), 'Content-Type': 'application/octet-stream' }, f, progress, ctl.signal);
-          r = { code: x.status === 200 ? 0 : 4, text: (x.body && x.body.error) || 'Fehler ' + x.status };
-        }
+        const r = await this.client.sendTransfer(2, f, f.name, i, files.length, progress, ctl.signal);
         if (ctl.signal.aborted) return false;
         if (r.code !== 0) { this.toast(r.text || 'Senden fehlgeschlagen', 4200); this.dbg('file-error', { c: r.code }); return false; }
       }
@@ -1338,7 +1281,6 @@ export class RemoteSession extends Session {
 
   async sendImage(file) {
     if (file.size > LIMITS.imageBytes) { this.toast(`Bild zu groß (höchstens ${LIMITS.imageBytes / 1048576} MB).`, 3600); return false; }
-    if (!this.nativeClip()) { await uploadPhoto(file); return true; }
     const ctl = this.xferAbort = new AbortController();
     try {
       this.showXfer('Bild wird umgewandelt …', null);
@@ -1697,8 +1639,7 @@ el.pasteBtn.addEventListener('click', () => {
   const s = cur();
   if (!s || !s.client || !el.sendText.value) return;
   if (s.pasteText) { s.pasteText(el.sendText.value); toast('Eingefügt', 1400); return; }        // Terminal: als Einfuegen in die Shell
-  const stream = s.client.createClipboardStream('text/plain');
-  const w = new Guacamole.StringWriter(stream); w.sendText(el.sendText.value); w.sendEnd();
+  s.client.sendClipboardText(el.sendText.value);
   toast('In die Zwischenablage der VM gelegt (dort Strg+V)', 2200);
 });
 el.copyBtn.addEventListener('click', async () => {
@@ -1743,18 +1684,6 @@ $('#imgCopyBtn').addEventListener('click', async () => {
   try { await copyImageToLocal(s.remoteItem.image); toast('Bild kopiert'); } catch (e) { toast(e.message || 'Kopieren nicht erlaubt, bitte Speichern', 3600); }
 });
 $('#imgSaveBtn').addEventListener('click', () => { const s = cur(); if (s && s.remoteItem.image) saveBlob(s.remoteItem.image, 'bild-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '') + '.png'); });
-// Guacamole meldet Bilder nicht von selbst: der Helfer in der VM-Sitzung liest sie auf Wunsch aus der Zwischenablage
-$('#pullImgBtn').addEventListener('click', async () => {
-  const s = cur(); if (!s) return;
-  s.showXfer('Hole das Bild aus der VM …', null);
-  try {
-    const r = await fetch('/api/clipboard/pull?c=' + encodeURIComponent(s.conn.id), { method: 'POST', headers: { 'X-JulOS': '1' } });
-    if (r.status === 204) { toast('In der Zwischenablage der VM liegt kein Bild', 3200); return; }
-    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'Fehler ' + r.status); }
-    await s.showRemoteImage(await r.blob(), 'pull');
-  } catch (e) { toast('Bild holen: ' + e.message, 4200); }
-  finally { s.hideXfer(); }
-});
 
 /* =====================================================================
  *  Material-You-Design: Palette aus einer Grundfarbe
@@ -1914,29 +1843,8 @@ new MutationObserver((list) => {
 el.photoInput.addEventListener('change', async () => {
   const f = el.photoInput.files && el.photoInput.files[0];
   if (!f) return;
-  try { await uploadPhoto(f); } catch (e) { toast('Foto: ' + e.message, 4200); dbg('photo-error', { m: String(e.message).slice(0, 20) }); }
+  try { const s = cur(); if (!s) throw new Error('nicht verbunden'); await s.sendToRemote([f]); } catch (e) { toast('Foto: ' + e.message, 4200); dbg('photo-error', { m: String(e.message).slice(0, 20) }); }
 });
-async function uploadPhoto(file) {
-  const s = cur();
-  if (!s || !s.connected) throw new Error('nicht verbunden');
-  toast('Foto wird vorbereitet …', 6000);
-  let blob = file;
-  if (!(file.type === 'image/png' && file.size < 5e6) && file.type !== 'image/gif') {
-    // grosse Handyfotos auf max. 2000 px verkleinern und als JPEG senden
-    const bmp = await createImageBitmap(file);
-    const sc = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
-    const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(bmp.width * sc)); c.height = Math.max(1, Math.round(bmp.height * sc));
-    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
-    blob = await new Promise((res) => c.toBlob(res, 'image/jpeg', 0.9));
-    if (!blob) throw new Error('Bild konnte nicht umgewandelt werden');
-  }
-  toast('Foto wird hochgeladen …', 6000);
-  const r = await fetch('/api/upload?c=' + encodeURIComponent(s.conn.id), { method: 'POST', headers: { 'Content-Type': blob.type || 'image/jpeg', 'X-JulOS': '1' }, body: blob });
-  if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'Fehler ' + r.status); }
-  dbg('photo', { kb: Math.round(blob.size / 1024), auto: S.autoPaste });
-  if (S.autoPaste) { await sleep(250); await s.sendChord([KS.ctrl, charKeysym('v')]); toast('Foto eingefügt (Strg+V)'); }
-  else toast('Foto liegt in der Zwischenablage der VM – dort Strg+V', 3500);
-}
 /* =====================================================================
  *  Passwort per Passwortmanager (Bitwarden) holen und in die VM tippen
  * ===================================================================== */

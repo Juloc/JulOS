@@ -6,6 +6,8 @@ with a throwaway account (own database schema, no Docker, removed afterwards) an
 "Fixed" means committed with this review; "Open" items are written down with a suggested fix and were **not** changed because they
 need a decision, are larger than a local change, or could not be verified here.
 
+Note added later: this review is a snapshot of version 0.2.0. It covers the Guacamole path (guacd, its relay, the vendored JavaScript client), which was removed afterwards; the own display engine is now the only way, so findings and file names that mention Guacamole or guacd describe code that no longer exists and are kept as the record of what was checked.
+
 No finding lets an anonymous visitor do anything beyond the public routes. Every finding that is exploitable at all needs a valid session.
 The server is a single-owner tool, so a session already is the strongest credential; the open items are mostly about what a stolen
 session or a compromised target machine can reach.
@@ -43,7 +45,7 @@ session or a compromised target machine can reach.
 
 ### 2. RDP certificates are not verified (Medium, open)
 
-- **Where:** `src/JulOS.Integrations/Display/Rdp/RdpOptions.cs:26` (`IgnoreCertificate = true`, used at `RdpClient.Connection.cs:68`), `src/JulOS.Integrations/Guacamole/GuacSpec.cs:14` (`ignore-cert=true`).
+- **Where:** `src/JulOS.Integrations/Display/Rdp/RdpOptions.cs:26` (`IgnoreCertificate = true`, used at `RdpClient.Connection.cs:68`), and the former Guacamole engine's `GuacSpec` (`ignore-cert=true`, removed with that engine).
 - **Impact:** someone who can sit between the server and the RDP target (same LAN, ARP/DNS tricks) can read the session and, because NLA is bound to the presented key only, capture the NTLM exchange with the typed password. RDP targets almost always have self-signed certificates, which is why this is the default; SSH has trust on first use, RDP has nothing.
 - **Suggested fix:** trust on first use for RDP as for SSH: store the SHA-256 of the certificate per connection (`connections.cert_hash`), accept silently when equal, ask in the UI when it changes. Needs a migration, both engines (guacd has `ignore-cert` and `cert-fingerprints`), and UI, so not done here.
 

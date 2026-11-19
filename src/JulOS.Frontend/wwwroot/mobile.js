@@ -9,7 +9,7 @@ import { connectionState, dotClass as hostDot, stateText, serviceState, hostDeta
  * diese Oberflaeche aus (setShown), beim Verlassen wieder ein.
  *
  * Echte Daten: Name, gespeicherte Verbindungen, Geraete und Sitzungen, Auslastung nur wenn /api/system/overview antwortet.
- * Nur auf diesem Geraet gemerkt (localStorage, "pd.m.*"): Favoriten, Nutzung, letzte Verbindungen (fuer "Aktivitaeten"), Standard-Engine.
+ * Nur auf diesem Geraet gemerkt (localStorage, "pd.m.*"): Favoriten, Nutzung, letzte Verbindungen (fuer "Aktivitaeten").
  * Platzhalter (klar beschriftet): die Seiten Server (ohne Auslastungs-API) und Monitoring.
  * ===================================================================== */
 
@@ -177,7 +177,6 @@ export function userChanged(name, message) {
 export function connectionsChanged() { if (root) renderAll(); }
 /** Neue Zustaende der Hosts (alle 30 s): die Seite neu zeichnen, die sie zeigt */
 export function hostsChanged() { if (root) renderAll(); }
-export function defaultEngine() { return ls.get('engine', 'guac'); }
 
 /** Merkt sich (nur auf diesem Geraet), was gestartet wurde: Grundlage fuer Favoriten ("meist genutzt"), "Aktivitaeten" und "Zuletzt geoeffnet". */
 export function started(c) {
@@ -449,21 +448,12 @@ function renderProfile() {
       <div class="setrow line"><div class="lab">Server und Monitoring zeigen<small>Seiten, für die es noch keine Daten gibt</small></div><button type="button" class="mb m3-switch m3-state" role="switch" aria-checked="${planned}" id="mPlanned" aria-label="Server und Monitoring zeigen"></button></div>
     </div>
 
-    <div class="grp-t">Verbindungen</div>
-    <div class="m3-card grp">
-      <div class="setrow"><div class="lab">Bildübertragung für neue Desktops<small>Der Stream ist flüssiger, braucht aber H.264 im Browser und HTTPS. Geht er nicht, nimmt die App automatisch den Standard.</small></div>${seg('mEngine', [['guac', 'Standard'], ['stream', 'Stream (H.264)']], ls.get('engine', 'guac'))}</div>
-    </div>
-
-    <div class="grp-t">Geräte und Sitzungen</div>
-    <div class="m3-card grp"><div class="sessions" id="mSessions"><p class="empty-hint">Wird geladen …</p></div></div>
-    <p class="note" id="mSessMsg" role="status"></p>
     <div class="grp-t">Über JulOS</div>
     <div class="m3-card grp" id="mAbout"><div class="setrow"><div class="lab">Version<small>Wird geladen …</small></div></div></div>
     <button type="button" class="mb m3-btn danger block big logout m3-state" id="mOut">${icon('logout')}Abmelden</button>`;
   pg.scrollTop = top;
   $('#mScheme').addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (!b) return; setTheme({ scheme: b.dataset.v }); applyShellTheme(); renderProfile(); });
   $('#mSwatches').addEventListener('click', (e) => { const b = e.target.closest('[data-seed]'); if (!b) return; setTheme({ seed: b.dataset.seed }); applyShellTheme(); renderProfile(); });
-  $('#mEngine').addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (!b) return; ls.set('engine', b.dataset.v); $$('#mEngine .mb').forEach((x) => x.setAttribute('aria-checked', x === b)); });
   $('#mPlanned').addEventListener('click', (e) => { const on = e.currentTarget.getAttribute('aria-checked') !== 'true'; ls.set('planned', on); e.currentTarget.setAttribute('aria-checked', on); renderNav(); });
   $('#mOut').addEventListener('click', () => ctx.signOut());
   if (current === 'profile') { loadSessions(); loadAbout(); }
@@ -477,7 +467,7 @@ async function loadAbout() {
     const built = a.built ? new Date(a.built).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : '';
     const row = (k, v, extra = '') => `<div class="setrow line"><div class="lab">${k}<small>${esc(v)}</small></div>${extra}</div>`;
     box.innerHTML = row('Version', `JulOS ${a.version}`) + (a.commit || built ? row('Build', [a.commit, built].filter(Boolean).join(' · ')) : '')
-      + row('Bildübertragung', a.engines.stream ? `Stream (${a.engines.encoder || 'H.264'}) und Guacamole` : 'Guacamole (Stream nicht verfügbar)')
+      + row('Bildübertragung', a.engines.stream ? `Stream (${a.engines.encoder || 'H.264'})` : 'Nicht verfügbar')
       + row('Letztes Backup', backupText(a.backup))
       + `<div style="padding:4px 12px 10px;display:flex;gap:8px"><a class="mb m3-btn tonal block m3-state" href="/licenses.txt" target="_blank" rel="noopener">Lizenzen</a><a class="mb m3-btn tonal block m3-state" href="${esc(a.repository)}" target="_blank" rel="noopener">Quelltext</a></div>`;
   } catch (e) { box.innerHTML = `<p class="empty-hint">${esc(e.message)}</p>`; }
@@ -579,7 +569,7 @@ function enhanceSheets() {
     const lbl = [...label.childNodes].find((n) => n.nodeType === 3 && n.textContent.trim());
     if (lbl) { const sp = document.createElement('span'); sp.textContent = lbl.textContent.trim(); label.replaceChild(sp, lbl); }
   };
-  segFor($('#connKind')); segFor($('#connEngine'));
+  segFor($('#connKind'));
 }
 
 /* ---------- Thema: Grundfarbe und Theme-Color ---------- */

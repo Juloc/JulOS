@@ -69,7 +69,7 @@ class SessionManager extends EventTarget {
 
   emit(type, detail) { this.dispatchEvent(new CustomEvent(type, { detail })); }
 
-  /** Pro Art eine Fabrik; die zuletzt angemeldete gilt (so ersetzt das native Terminal die Guacamole-Sitzung fuer 'terminal'). */
+  /** Pro Art eine Fabrik; die zuletzt angemeldete gilt (so ersetzt das native Terminal die Desktop-Sitzung fuer 'terminal'). */
   registerFactory(kind, make) { this.factories.set(kind, make); }
 
   list() { return [...this.sessions]; }

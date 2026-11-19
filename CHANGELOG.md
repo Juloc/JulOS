@@ -9,6 +9,11 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 ### Behoben
 - Mikrofon: Die Kopfzeile `Permissions-Policy` sperrte das Mikrofon für die Seite (`microphone=()`); sie erlaubt es jetzt für die eigene Seite (`microphone=(self)`), alle anderen Rechte bleiben gesperrt.
 - Stream-Engine: Der Ton wird dem RDP-Server jetzt als gewünscht gemeldet. Zuvor ging die Option „kein Ton“ an den Server, was auf Windows-Zielen den Ton verhindern kann (xrdp ignorierte sie).
+
+### Entfernt
+- Guacamole entfernt, die Strom-Engine ist der einzige Weg für Desktop-Verbindungen (eigener RDP-Client auf dem Server, H.264 im Browser mit WebCodecs). Weg sind der Relay und das Protokoll für guacd, der JavaScript-Client, die Wahl „Bildübertragung“ im Verbindungsdialog und in den Einstellungen sowie der automatische Rückfall; kann der Browser kein H.264 oder kommt keine Verbindung zustande, zeigt die Sitzung eine klare Meldung mit „Neu verbinden“. Wer einen Desktop aufmacht, ohne dass der Server den Kodierer (libopenh264) laden kann, bekommt die Meldung, dass die Bildübertragung nicht verfügbar ist.
+- Für Betreiber: Der `guacd`-Container und alle `JULOS_GUACD*`-Einstellungen werden nicht mehr gebraucht und können aus der Compose-Datei (und aus `.env`) entfernt werden; wer die mitgelieferten Compose-Dateien nutzt, bekommt sie schon ohne guacd. Gespeicherte Verbindungen bleiben unverändert: alte Einträge mit der Engine „guac“ nutzen jetzt ebenfalls den Strom, die Spalte `engine` der Datenbank bleibt als Rest bestehen, wird nicht mehr gelesen und es gibt keine Migration. Das Laufwerk (`JULOS_DRIVE_ROOT`) steht jetzt jeder Desktop-Verbindung offen, die es einschaltet; die Felder `engine` in der Verbindungs-API und im Ticket-Aufruf entfallen (alte Clients dürfen sie weiter mitschicken, sie werden ignoriert).
+- Die Hilfswege für Guacamole in der App (Foto über den Helfer, „Bild aus der VM holen“) sind weg, Bilder und Dateien gehen über den Strom; die Agent-Schnittstellen `/api/upload`, `/api/upload-file` und `/api/clipboard/pull` bleiben bestehen.
 ## [Unreleased]
 
 ### Neu

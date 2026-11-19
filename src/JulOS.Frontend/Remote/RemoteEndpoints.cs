@@ -110,11 +110,19 @@ internal static class RemoteEndpoints
             if (!ctx.WebSockets.IsWebSocketRequest) return Error(400, "WebSocket erwartet.");
             if (!ApiGuard.SameOrigin(ctx.Request)) return Error(403, "Anfrage abgelehnt.");
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
-            var target = tickets.Take(ctx.Request.Query["ticket"].ToString(), id.UserId);
-            if (target is null) return Error(403, "Ticket ungültig oder abgelaufen.");
+            // Entweder ein Ticket (neue Sitzung) oder das Token einer erhaltenen Sitzung (Wiederaufnahme nach einem Abriss, kein Passwort noetig:
+            // das Token gehoert genau diesem Benutzer, gilt nur solange die Sitzung wartet und ist nicht erratbar)
+            var resume = ctx.Request.Query["resume"].ToString();
+            ScreenTarget? target = null;
+            if (resume.Length is 0 or > 64)
+            {
+                resume = "";
+                target = tickets.Take(ctx.Request.Query["ticket"].ToString(), id.UserId);
+                if (target is null) return Error(403, "Ticket ungültig oder abgelaufen.");
+            }
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
             await relay.RunAsync(ws, target, ct => auth.IsSessionAliveAsync(id.Id, ct), ctx.RequestAborted, owner: id.UserId,
-                clientCodecs: ScreenProtocol.ParseCodecs(ctx.Request.Query["codecs"]));
+                clientCodecs: ScreenProtocol.ParseCodecs(ctx.Request.Query["codecs"]), resume: resume);
             return Results.Empty;
         });
         // Terminal: dasselbe Ticket-Verfahren, binaeres Protokoll (siehe SshProtocol)

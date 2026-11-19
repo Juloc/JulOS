@@ -380,11 +380,76 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     }
 
     void IRdpHandler.Cursor(int hotX, int hotY, int width, int height, ReadOnlySpan<byte> rgba) =>
-        _events.Writer.TryWrite(new ScreenCursor(CursorKind.Shape, hotX, hotY, width, height, rgba.ToArray()));
+        PublishCursor(new ScreenCursor(CursorKind.Shape, hotX, hotY, width, height, rgba.ToArray()));
 
-    void IRdpHandler.CursorHidden() => _events.Writer.TryWrite(new ScreenCursor(CursorKind.Hidden, 0, 0, 0, 0, null));
+    void IRdpHandler.CursorHidden() => PublishCursor(new ScreenCursor(CursorKind.Hidden, 0, 0, 0, 0, null));
 
-    void IRdpHandler.CursorDefault() => _events.Writer.TryWrite(new ScreenCursor(CursorKind.Default, 0, 0, 0, 0, null));
+    void IRdpHandler.CursorDefault() => PublishCursor(new ScreenCursor(CursorKind.Default, 0, 0, 0, 0, null));
+
+    // Die letzte Form wird gemerkt: ein Browser, der sich wieder anhaengt (Resume), hat sie nicht gesehen.
+    private volatile ScreenCursor? _lastCursor;
+    private volatile ScreenEncoderInfo? _lastEncoderInfo;
+
+    private void PublishCursor(ScreenCursor cursor)
+    {
+        _lastCursor = cursor;
+        _events.Writer.TryWrite(cursor);
+    }
+
+    /// <summary>
+    /// Kein Browser mehr dran (die Verbindung riss ab, die Sitzung wird erhalten): nichts kodieren, den Ton aus. Der Desktop laeuft weiter,
+    /// die Aenderungen sammeln sich im Bild. <see cref="Resume"/> holt den neuen Browser auf den Stand.
+    /// </summary>
+    public void Park()
+    {
+        Volatile.Write(ref _paused, true);
+        Audio.OutputOn = false;
+    }
+
+    /// <summary>
+    /// Ein neuer Browser hat sich an die erhaltene Sitzung gehaengt (der Aufrufer liest die Ereignisse noch nicht): was noch unterwegs war, gilt
+    /// als verloren, der Browser bekommt Groesse, Zeigerform und Kodierer neu gemeldet und als naechstes ein Schluesselbild des ganzen Bildes.
+    /// </summary>
+    public void Resume()
+    {
+        // Was der alte Browser noch haette hoeren sollen, ist veraltet
+        while (_events.Reader.TryRead(out _))
+        {
+        }
+
+        lock (_pacerGate)
+        {
+            _window.Reset();
+            _pacer.Reset(Volatile.Read(ref _sequence));
+        }
+
+        var frame = _frame;
+        if (frame is not null)
+        {
+            _events.Writer.TryWrite(new ScreenSize(frame.Width, frame.Height));
+            if (_lastEncoderInfo is { } info)
+            {
+                _events.Writer.TryWrite(info);
+            }
+
+            if (_lastCursor is { } cursor)
+            {
+                _events.Writer.TryWrite(cursor);
+            }
+
+            // Die Ueberlagerung (verlustfreie Teile) des neuen Browsers ist leer: alles wieder nachbessern
+            _refiner?.Mark(0, 0, frame.Width, frame.Height, Environment.TickCount64);
+        }
+
+        Volatile.Write(ref _lastAckAt, Environment.TickCount64);
+        lock (_gate)
+        {
+            _forceKey = true;
+        }
+
+        Volatile.Write(ref _paused, false);
+        Wake();
+    }
 
     // ---- Kodierschleife ----
 
@@ -784,7 +849,9 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
         _log?.LogInformation("Kodierer: {Name} ({Codec}, {Kind}), {Width} x {Height}", choice.Encoder.Name, choice.Encoder.Codec.Label(),
             choice.Encoder.IsHardware ? "GPU" : "CPU", width, height);
-        _events.Writer.TryWrite(new ScreenEncoderInfo(choice.Encoder.Codec, choice.Encoder.IsHardware, choice.Encoder.Name));
+        var info = new ScreenEncoderInfo(choice.Encoder.Codec, choice.Encoder.IsHardware, choice.Encoder.Name);
+        _lastEncoderInfo = info;
+        _events.Writer.TryWrite(info);
     }
 
     internal VideoCodecs ClientCodecs

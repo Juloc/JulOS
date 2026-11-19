@@ -67,7 +67,9 @@ builder.Services.AddSingleton(sp =>
     var settings = EncoderSettings.Parse(builder.Configuration["JULOS_ENCODER"], builder.Configuration["JULOS_CODEC"], message => encoderLog.LogWarning("{Message}", message));
     return EncoderSelector.CreateDefault(settings, encoderLog);
 });
-builder.Services.AddSingleton<ScreenRelay>();
+// Sitzungserhalt: so lange lebt eine RDP-Sitzung ohne Browser weiter (JULOS_STREAM_KEEP_SECONDS, Standard 300, 0 = aus), siehe docs/SESSIONS.md
+builder.Services.AddSingleton(sp => new ScreenRelay(sp.GetRequiredService<ILogger<ScreenRelay>>(), registry: sp.GetRequiredService<SessionRegistry>(),
+    encoders: sp.GetRequiredService<EncoderSelector>(), keep: ScreenRelay.ParseKeep(builder.Configuration["JULOS_STREAM_KEEP_SECONDS"])));
 builder.Services.AddSingleton<SshRelay>(sp => new SshRelay(sp.GetRequiredService<ILogger<SshRelay>>(), registry: sp.GetRequiredService<SessionRegistry>()));
 // Agent in der Sitzung der Ziel-Maschine (Unix-Socket) und der gemeinsame Ordner fuer Foto-Uploads, beide vom Host eingebunden
 builder.Services.AddSingleton(new AgentOptions(builder.Configuration["JULOS_AGENT_SOCKET"] ?? "/uploads/.agent/agent.sock"));

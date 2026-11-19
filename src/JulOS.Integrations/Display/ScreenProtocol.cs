@@ -21,6 +21,8 @@ namespace JulOS.Integrations.Display;
 ///   8 Dateien        stapel(4) anzahl(1) dann je Datei groesse(8, -1 unbekannt) namenlaenge(2) Name (UTF-8)   (anzahl 0: Auswahl weg)
 ///   9 Dateistueck    stapel(4) nummer(1) flags(1: Bit0 letztes, Bit1 gescheitert) Bytes ...   (bei Scheitern der Grund als Text)
 ///  10 Ergebnis       nummer(4) code(1: 0 ok, 1 zu gross, 2 nicht erlaubt, 3 keine Zwischenablage in der VM, 4 sonst) Text ...
+///  11 Sitzung       sekunden(2) Token (ASCII)   (gleich nach dem Verbinden, wenn der Server Sitzungen erhaelt: so lange wartet die Sitzung ohne Browser; mit dem Token kommt der Browser zurueck, Adresse resume=)
+///  12 Nicht wieder  (das Token ist unbekannt, abgelaufen oder fremd: der Browser baut neu auf)
 ///  30 Kodierer      codec(1: 1 H.264, 2 H.265) flags(1: Bit0 = GPU) Name (UTF-8) ...   (nach jedem Neuaufbau des Kodierers; nur zum Anzeigen)
 ///  40 Nachbesserung x(2) y(2) breite(2) hoehe(2) PNG ...   (dieses Rechteck verlustfrei, steht still; der Browser legt es ueber das Video)
 ///  41 Nachbesserung weg anzahl(2) dann je Rechteck x(2) y(2) breite(2) hoehe(2)   (dort hat sich der Bildschirm wieder geaendert: Ueberlagerung entfernen)
@@ -44,18 +46,19 @@ namespace JulOS.Integrations.Display;
 ///  14 Datei holen    stapel(4) nummer(1)
 ///  15 Holen Abbruch  stapel(4)
 ///  16 Pause          an(1: 1 = die Ansicht ist im Hintergrund, es werden keine Bilder kodiert; 0 = weiter)
+///  17 Beenden        (der Benutzer schliesst die Sitzung: der Server haelt sie nicht fuer ein Wiederverbinden)
 ///  30 Codecs         menge(1: Bit0 H.264, Bit1 H.265)   (was der Dekodierer kann; beim Verbinden steht dasselbe in der Adresse als codecs=, und noch einmal
 ///                                                        mit nur H.264, wenn der H.265-Dekodierer nicht geht: der Server wechselt dann mit einem Schluesselbild)
 /// </summary>
 public static class ScreenProtocol
 {
     public const byte ToBrowserPicture = 1, ToBrowserCursor = 2, ToBrowserSize = 3, ToBrowserError = 4, ToBrowserTaken = 5, ToBrowserClipboard = 6,
-        ToBrowserImage = 7, ToBrowserFiles = 8, ToBrowserFileChunk = 9, ToBrowserResult = 10, ToBrowserEncoder = 30,
+        ToBrowserImage = 7, ToBrowserFiles = 8, ToBrowserFileChunk = 9, ToBrowserResult = 10, ToBrowserSession = 11, ToBrowserResumeFailed = 12, ToBrowserEncoder = 30,
         ToBrowserRefine = 40, ToBrowserRefineClear = 41;
     public const byte FromBrowserAck = 1, FromBrowserMove = 2, FromBrowserButton = 3, FromBrowserWheel = 4, FromBrowserKey = 5,
         FromBrowserUnicode = 6, FromBrowserResize = 7, FromBrowserKeyFrame = 8, FromBrowserClipboard = 9,
         FromBrowserSendBegin = 10, FromBrowserSendChunk = 11, FromBrowserSendEnd = 12, FromBrowserSendCancel = 13,
-        FromBrowserFileRequest = 14, FromBrowserFileCancel = 15, FromBrowserPause = 16, FromBrowserCodecs = 30;
+        FromBrowserFileRequest = 14, FromBrowserFileCancel = 15, FromBrowserPause = 16, FromBrowserEnd = 17, FromBrowserCodecs = 30;
 
     /// <summary>Nachrichten, die laenger als eine Eingabe sein duerfen (Text, Dateiname, Stueck einer Datei).</summary>
     public static bool MayBeLong(byte type) => type is FromBrowserClipboard or FromBrowserSendBegin or FromBrowserSendChunk or FromBrowserMicrophone;
@@ -234,6 +237,19 @@ public static class ScreenProtocol
     }
 
     public static byte[] Taken() => [ToBrowserTaken];
+
+    public static byte[] ResumeFailed() => [ToBrowserResumeFailed];
+
+    /// <summary>Das Token der Sitzung und wie lange sie ohne Browser wartet.</summary>
+    public static byte[] Session(string token, int keepSeconds)
+    {
+        var text = System.Text.Encoding.ASCII.GetBytes(token);
+        var result = new byte[3 + text.Length];
+        result[0] = ToBrowserSession;
+        BinaryPrimitives.WriteUInt16BigEndian(result.AsSpan(1), (ushort)Math.Clamp(keepSeconds, 0, ushort.MaxValue));
+        text.CopyTo(result, 3);
+        return result;
+    }
 
     public static byte[] Encoder(VideoCodec codec, bool hardware, string name)
     {

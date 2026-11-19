@@ -4,6 +4,11 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unreleased]
+
+### Neu
+- Stream-Engine: Sitzungserhalt. Bricht die Verbindung zum Browser ab (Handy wechselt das Netz, Tab im Hintergrund), bleibt die RDP-Sitzung auf dem Server `JULOS_STREAM_KEEP_SECONDS` Sekunden (Standard 300, 0 = aus) erhalten; der Browser nimmt sie mit einem Sitzungs-Token wieder auf, ohne neuen Login am Ziel und mit sofortigem Schlüsselbild, und zeigt „Verbindung wird wiederhergestellt …“ statt eines Abbruchs. Schließen in der App, Abmelden, Ablösen und Ablauf beenden die Sitzung wirklich.
+
 ## [0.4.0] - 2026-11-19
 
 ### Neu

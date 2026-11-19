@@ -79,6 +79,8 @@ One card for phone and desktop (`hostview.js`, styles `hostui.css`, building blo
 | Actions | the one calm main action **Details** (or **Agent verwalten** without readable data); in the menu **Agent verwalten** and **Bearbeiten** |
 | Empty | a host without an agent explains what the agent brings and offers **Agent einrichten**; a desktop agent says that the host agent reads system values; a disconnected agent says that values return when it reports in |
 
+Pictures (placeholder names and addresses, light and dark, phone and desktop, before and after): [host-ui-screens](host-ui-screens/).
+
 The numbers come from the cards' own memory (at most one read per host every 55 seconds, only while a card is drawn); nothing here polls the server more than before.
 
 ## Host agent

@@ -68,7 +68,9 @@ export function initHostInfoDialog({ state, api, esc, store, openAction, reloadH
       if (tab) { tab.setAttribute('aria-selected', String(on)); tab.tabIndex = on ? 0 : -1; }
       if (sec) sec.hidden = !on;
     }
-    if (focus) { const tab = $(`#hit-${id}`); if (tab) tab.focus(); }
+    const cur = $(`#hit-${id}`);
+    if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest', inline: 'center' });      // am Handy liegt der Reiter sonst ausserhalb der Reihe
+    if (focus && cur) cur.focus();
     const body = $('#hostInfoBody'); if (body) body.scrollTop = 0;
     if (id === 'logs') loadUnits(host);
     if (id === 'history') loadHistory(host);
@@ -175,6 +177,6 @@ export function initHostInfoDialog({ state, api, esc, store, openAction, reloadH
     $('#hostInfoNav').hidden = nothing;
     if (nothing) $('#hostInfoBody').innerHTML = empty(t('hostview.noAgentTitle'), stateNote({ state: host.agent ? 'offline' : 'no_agent' }), esc, '', 'server');
     $('#hostInfoDlg').showModal();
-    if (!nothing) { select(panel); const tab = $(`#hit-${current}`); if (tab) tab.focus(); load(false); }
+    if (!nothing) { select(panel); load(false); }              // den Fokus setzt der Dialog selbst (erste Taste); die Pfeiltasten wechseln den Abschnitt
   };
 }

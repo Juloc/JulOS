@@ -153,6 +153,10 @@ The Compose files (`docker-compose.yml`, `docker-compose.image.yml`) run the ser
 
 The image is built for amd64 and arm64 by one workflow. The SDK stage is `--platform=$BUILDPLATFORM`: restore and publish run natively on the builder and only the small runtime stage is made for arm64 (the output is plain .NET, no native packages, so it is the same for both). Not verified here: an actual arm64 build (needs the builder, the first run of the workflow shows it).
 
+## Continuous integration
+
+`.github/workflows/tests.yml` runs on every push to `main` and every pull request: the server tests against a PostgreSQL service (throwaway password, set as `JULOS_TEST_DB`), the display engine tests, `node --test tests/frontend` and `py_compile` for the agent scripts. Tests that need a real target (SSH, RDP, GPU) are skipped there; they run with `deploy/dev/test.sh` and `deploy/dev/test-display.sh`. A second job runs `dotnet list package --vulnerable --include-transitive` and only reports (job summary and a warning), it never fails the build.
+
 ## Things learned from the test instance
 
 - Connecting a second time to a disconnected xrdp session ("reconnected session") works, and a full picture (about 80 KB of image data) arrives about 1.3 s after connecting. The browser client hides its loading overlay as soon as the remote reports a picture size, not when the picture is "not black".

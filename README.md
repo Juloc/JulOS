@@ -101,7 +101,7 @@ The app itself no longer needs this path: the stream engine sends images and fil
 - `tools/julos-agent.py` Linux agent (windows, apps, app mode, outbound link to the server), `tools/julos-clip.py` photo clipboard helper
 - `tools/install-linux-agent.sh`, `tools/julos-user.sh`, `tools/make-client-cert.sh`
 - `CHANGELOG.md` and `docs/RELEASING.md` the versions and how to release one, `docs/AGENT_API.md` the agent API, `docs/HOSTS.md` hosts, `docs/ARCHITECTURE.md` the stack and security design, `docs/MODULES.md` the optional read-only Caddy and DDNS modules (off by default), `caddy/Caddyfile.example`
-- `.github/workflows/docker.yml` builds the image for `ghcr.io/<owner>/<repo>` (amd64 + arm64; the SDK stage runs natively, no emulation)
+- `.github/workflows/docker.yml` builds the image for `ghcr.io/<owner>/<repo>` (amd64 + arm64; the SDK stage runs natively, no emulation), `.github/workflows/tests.yml` runs the server tests (with PostgreSQL), the browser-logic tests and a NuGet vulnerability report
 
 ## Roadmap
 

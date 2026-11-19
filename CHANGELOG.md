@@ -8,6 +8,7 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ### Neu
 - Compose: Gesundheitsprüfung für den Dienst `julos` (`dotnet JulOS.dll health` fragt `/api/health` und prüft auch die Datenbank), Datenordner `/data` als benanntes Volume mit einem einmaligen Starter, der es dem Server-Benutzer gibt (damit der Schlüssel für gespeicherte Passwörter wirklich entsteht), `no-new-privileges` und `cap_drop: ALL`; ein schreibgeschütztes Wurzeldateisystem steht als auskommentierte Möglichkeit bereit. Siehe [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+- CI: neuer Ablauf `tests.yml` mit Server-Tests gegen PostgreSQL, Anzeige-Engine-Tests, Browser-Logik-Tests und Agent-Syntaxprüfung sowie einer NuGet-Schwachstellenmeldung (nur melden).
 
 ### Geändert
 - Dockerfile: die SDK-Stufe läuft mit `--platform=$BUILDPLATFORM`, der arm64-Bau braucht dafür keine Emulation mehr.

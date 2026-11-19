@@ -4,6 +4,7 @@ using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
 using JulOS.Backend.Services;
 using JulOS.Frontend;
+using JulOS.Frontend.About;
 using JulOS.Frontend.Agent;
 using JulOS.Frontend.Auth;
 using JulOS.Frontend.Cli;
@@ -111,7 +112,7 @@ app.UseDefaultFiles();
 app.UseStaticFiles(new StaticFileOptions { OnPrepareResponse = c => c.Context.Response.Headers.CacheControl = "no-cache" });
 app.UseMiddleware<ApiGuard>();
 
-var version = typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion?.Split('+')[0] ?? "0";
+var info = AppInfo.From(typeof(Program).Assembly, Environment.GetEnvironmentVariable("JULOS_BUILD_DATE"));
 app.MapGet("/api/health", async (NpgsqlDataSource data, CancellationToken ct) =>
 {
     var dbOk = false;
@@ -123,9 +124,10 @@ app.MapGet("/api/health", async (NpgsqlDataSource data, CancellationToken ct) =>
         dbOk = await cmd.ExecuteScalarAsync(timeout.Token) is not null;
     }
     catch (Exception) { /* Datenbank nicht erreichbar: ok=false */ }
-    return new Health(dbOk, dbOk, version);
+    return new Health(dbOk, dbOk, info.Version);
 });
 app.MapAuth();
+app.MapAbout(info);
 app.MapRemote();
 app.MapConnections();
 app.MapAgent();

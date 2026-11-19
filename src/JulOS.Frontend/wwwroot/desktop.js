@@ -338,7 +338,12 @@ const MENUS = () => ({
     { sep: true },
     { label: 'Abmelden', icon: 'power', run: () => ctx.signOut() },
   ],
-  Hilfe: [{ label: 'Über JulOS', icon: 'info', run: () => openAbout() }],
+  Hilfe: [
+    { label: 'Über JulOS', icon: 'info', run: () => openAbout() },
+    { label: 'Lizenzen', icon: 'info', run: () => window.open('/licenses.txt', '_blank', 'noopener') },
+    { sep: true },
+    { label: 'Quelltext und Dokumentation', icon: 'info', run: () => window.open('https://github.com/Juloc/JulOS', '_blank', 'noopener') },
+  ],
 });
 
 function buildBar() {
@@ -814,10 +819,18 @@ async function openFiles(path, focusSearch) {
 /* ---------- Ueber JulOS ---------- */
 async function openAbout() {
   const old = wins.get('about'); if (old) return old.minimized ? restoreWin(old) : focusWin(old);
-  const w = createWindow({ id: 'about', title: 'Über JulOS', icon: LOGO, rect: defaultRect('about', 380, 250), minW: 320, minH: 220 });
-  let version = '';
-  try { version = (await (await fetch('/api/health')).json()).version || ''; } catch { /* ohne Version */ }
-  w.body.innerHTML = `<div style="padding:22px 26px;text-align:center"><div style="width:64px;margin:0 auto">${LOGO}</div><h2 style="margin:10px 0 2px">JulOS</h2><p class="dk-lead" style="margin:0">${version ? 'Version ' + ctx.esc(version) : ''}</p><p class="dk-lead">Dein Server-Arbeitsplatz im Browser: Desktop und Terminal deiner Rechner, an einem Ort.</p></div>`;
+  const w = createWindow({ id: 'about', title: 'Über JulOS', icon: LOGO, rect: defaultRect('about', 420, 460), minW: 340, minH: 340 });
+  let a = null;
+  try { const r = await fetch('/api/about'); if (r.ok) a = await r.json(); } catch { /* ohne Angaben */ }
+  const e = ctx.esc;
+  const row = (k, v) => v ? `<div class="dk-ab-row"><span>${k}</span><b>${e(v)}</b></div>` : '';
+  const built = a && a.built ? new Date(a.built).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  const stream = a ? (a.engines.stream ? 'Stream (H.264) und Guacamole' : 'Guacamole (Stream nicht verfügbar)') : '';
+  w.body.innerHTML = `<div class="dk-about"><div class="dk-ab-logo">${LOGO}</div><h2>JulOS</h2>
+    <p class="dk-lead">${a ? 'Version ' + e(a.version) : 'Version unbekannt'}</p>
+    <p class="dk-lead">Dein Server-Arbeitsplatz im Browser: Desktop und Terminal deiner Rechner, an einem Ort.</p>
+    <div class="dk-ab-rows">${row('Build', a && [a.commit, built].filter(Boolean).join(' · '))}${row('Bildübertragung', stream)}${row('Laufzeit', a && a.runtime)}${row('System', a && a.os)}${row('Lizenz', a && a.license + ' (siehe Lizenzen)')}</div>
+    <p class="dk-ab-links"><a href="/licenses.txt" target="_blank" rel="noopener">Lizenzen</a><a href="${a ? e(a.repository) : 'https://github.com/Juloc/JulOS'}" target="_blank" rel="noopener">Quelltext und Dokumentation</a></p></div>`;
 }
 
 /* =====================================================================

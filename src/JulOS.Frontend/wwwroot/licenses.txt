@@ -1,0 +1,69 @@
+JulOS: Lizenzen
+===============
+
+JulOS selbst steht unter der MIT-Lizenz (siehe unten). Dieser Text nennt die Bausteine von Dritten, die in JulOS stecken oder mit ihm
+ausgeliefert werden, und ihre Lizenzen. Die vollen Lizenztexte liegen im Quelltext: https://github.com/Juloc/JulOS
+
+
+1. JulOS
+--------
+MIT License
+
+Copyright (c) 2026 The JulOS authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+2. Bildschirm-Engine (RDP-Client und H.264-Kodierung)
+-----------------------------------------------------
+Teile der eigenen Bildschirm-Engine (Quelltext-Ordner src/JulOS.Integrations/Display/Rdp und Video) stehen unter der MIT-Lizenz:
+
+MIT License
+
+Copyright (c) 2026 Matthix
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+3. Weitere Bausteine
+--------------------
+Guacamole-JavaScript-Client (guacamole-common-js), Apache License 2.0
+  Datei: wwwroot/lib (Lizenztext: /lib/LICENSE-guacamole-common-js.txt), Apache Software Foundation.
+guacd (Guacamole-Server, getrennter Container), Apache License 2.0, Apache Software Foundation.
+OpenH264 (libopenh264, Ubuntu-Paket libopenh264-7), BSD 2-Clause License, Cisco Systems.
+Npgsql (PostgreSQL-Treiber fuer .NET), PostgreSQL License.
+Konscious.Security.Cryptography.Argon2 (Passwort-Hash), MIT License.
+.NET und ASP.NET Core (Laufzeit), MIT License, .NET Foundation und Mitwirkende.
+PostgreSQL (Datenbank, getrennter Container), PostgreSQL License.

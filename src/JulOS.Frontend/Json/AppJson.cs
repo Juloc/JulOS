@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using JulOS.Frontend.About;
 using JulOS.Frontend.Auth;
 using JulOS.Frontend.Files;
 using JulOS.Frontend.SystemInfo;
@@ -8,6 +9,7 @@ namespace JulOS.Frontend;
 /// <summary>JSON ohne Reflection: alle Typen, die die API sendet oder empfaengt, stehen hier.</summary>
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(Health))]
+[JsonSerializable(typeof(AboutResponse))]
 [JsonSerializable(typeof(ErrorBody))]
 [JsonSerializable(typeof(SetupStatus))]
 [JsonSerializable(typeof(SetupBeginRequest))]

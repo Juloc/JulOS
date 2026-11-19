@@ -278,3 +278,14 @@ html.desktop #remote #overlay .box { border-radius: 20px; background: rgba(255, 
 .dk-keys.on { color: #3a29b8; background: rgba(106, 88, 230, .16); font-weight: 600; }
 .dk-win.keys { box-shadow: 0 0 0 2px rgba(106, 88, 230, .6), var(--dk-shadow); }
 .dk-win.keys .dk-wh .dk-wt span::after { content: "Tastatur"; margin-left: 9px; padding: 2px 7px; border-radius: 99px; font-size: 10.5px; font-weight: 600; background: rgba(106, 88, 230, .16); color: #3a29b8; vertical-align: 1px; }
+
+/* Ueber JulOS */
+.dk-about { padding: 20px 26px 18px; text-align: center; }
+.dk-ab-logo { width: 60px; margin: 0 auto; }
+.dk-about h2 { margin: 10px 0 2px; }
+.dk-ab-rows { margin: 14px 0 6px; text-align: left; font-size: 13px; border-top: 1px solid rgba(92, 96, 127, .18); }
+.dk-ab-row { display: flex; justify-content: space-between; gap: 14px; padding: 6px 2px; border-bottom: 1px solid rgba(92, 96, 127, .12); }
+.dk-ab-row span { color: #5c607f; flex: none; }
+.dk-ab-row b { font-weight: 500; text-align: right; overflow-wrap: anywhere; }
+.dk-ab-links { display: flex; gap: 18px; justify-content: center; margin: 12px 0 0; font-size: 13px; }
+.dk-ab-links a { color: inherit; text-decoration: underline; }

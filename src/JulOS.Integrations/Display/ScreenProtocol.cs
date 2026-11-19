@@ -11,7 +11,8 @@ namespace JulOS.Integrations.Display;
 ///   1 Bild       flags(1: Bit0 = Schluesselbild, Bit1 = H.265 statt H.264) folge(4) Annex B ...   (Schluesselbild: mit Parametersaetzen davor, H.265 mit VPS, SPS, PPS; der Browser liest den Codec-Text daraus)
 ///   2 Zeiger     art(1: 0 Form, 1 versteckt, 2 Standard) hotX(2) hotY(2) breite(2) hoehe(2) RGBA ...
 ///   3 Groesse    breite(2) hoehe(2)
-///   4 Fehler     code(2) UTF-8-Text ...            (Statuscodes: 769 Anmeldung abgelehnt, 515 Verbindung misslungen ...;
+///   4 Fehler     code(2) UTF-8-Text ...            (Statuscodes: 769 Anmeldung abgelehnt, 770 Anmeldedaten fehlen (der Server verlangt sie, bevor er etwas zeigt): in beiden Faellen fragt der Browser neu und holt ein neues Ticket;
+///                                                    515 Verbindung misslungen ...;
 ///                                                    800 Zertifikat geaendert: Text "<Fingerabdruck jetzt>\n<Fingerabdruck bisher>", es wurde nichts gesendet)
 ///   5 Uebernommen
 ///   6 Zwischenablage UTF-8-Text ...          (der ferne Rechner hat Text kopiert; bis ClipboardBridge.MaxTextBytes)

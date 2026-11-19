@@ -4,6 +4,11 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Neu
+- Anmeldung in der Sitzung: lehnt das Ziel die Anmeldung ab (Fehlercode 769) oder verlangt es Anmeldedaten, bevor es etwas zeigt (neu: 770), fragt die Sitzung in einem Dialog nach Benutzer, Passwort und Domäne und verbindet mit einem neuen Ticket noch einmal, bis zu drei neue Versuche, ohne das Fenster der Sitzung zu verlieren. Das Passwort bleibt im Speicher der Sitzung und wird nirgends gespeichert oder geloggt. Das Ticket kennt dafür die Felder `username` und `domain` (nur für diesen Versuch). Siehe [docs/SESSIONS.md](docs/SESSIONS.md).
+
 ## [0.6.1] - 2026-11-19
 
 ### Neu

@@ -15,6 +15,10 @@ public sealed class RdpException : Exception
 
     public bool IsLogonFailure { get; }
 
+    // Set when the server wants a user name and password before it shows anything (network-level sign-in is required) and
+    // none were given: the caller can ask for them and try again. Also IsLogonFailure.
+    public bool IsCredentialsMissing { get; init; }
+
     // Set when the connection was stopped because the server's certificate is not the one that was trusted (the fingerprint it showed).
     public string? CertificateFingerprint { get; init; }
 }

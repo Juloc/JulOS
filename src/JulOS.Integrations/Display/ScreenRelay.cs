@@ -35,7 +35,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
     public const int MaxKeepSeconds = 3600;
 
     // Statuscodes der Fehlermeldungen (die Seite uebersetzt sie in Texte, siehe statusText in app.js)
-    public const int ErrorBusy = 513, ErrorTimeout = 514, ErrorConnectFailed = 515, ErrorUnreachable = 520, ErrorLogonFailed = 769;
+    public const int ErrorBusy = 513, ErrorTimeout = 514, ErrorConnectFailed = 515, ErrorUnreachable = 520, ErrorLogonFailed = 769, ErrorCredentialsMissing = 770;
 
     private const int ReceiveBuffer = 256;
     private readonly SemaphoreSlim _slots = new(maxSessions);
@@ -377,7 +377,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             log.LogWarning("RDP-Zertifikat des Ziels hat sich geändert: Verbindung nicht aufgebaut, nichts gesendet");
             last = ScreenProtocol.CertificateChanged(e.CertificateFingerprint, live.Target.Trust?.Stored);
         }
-        catch (RdpException e) { last = ScreenProtocol.Error(e.IsLogonFailure ? ErrorLogonFailed : ErrorConnectFailed, e.Message); }
+        catch (RdpException e) { last = ScreenProtocol.Error(e.IsCredentialsMissing ? ErrorCredentialsMissing : e.IsLogonFailure ? ErrorLogonFailed : ErrorConnectFailed, e.Message); }
         catch (Exception e) when (e is SocketException or IOException or TimeoutException)
         {
             last = ScreenProtocol.Error(e is TimeoutException ? ErrorTimeout : ErrorUnreachable,

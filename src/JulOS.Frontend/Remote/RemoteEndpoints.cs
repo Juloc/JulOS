@@ -21,6 +21,9 @@ internal static class RemoteEndpoints
     private static IResult Error(int status, string message) =>
         Results.Text(JsonSerializer.Serialize(new ErrorBody(message), AppJson.Default.ErrorBody), "application/json", Encoding.UTF8, status);
 
+    /// <summary>Benutzer und Domaene aus dem Anmeldedialog: hoechstens 256 Zeichen, keine Steuerzeichen (null: nicht angegeben).</summary>
+    internal static bool ValidLoginPart(string? value) => value is null || (value.Length <= 256 && !value.Any(char.IsControl));
+
     public static void MapRemote(this IEndpointRouteBuilder app)
     {
         // Schritt 1: Verbindung waehlen und das Passwort tippen -> Einmal-Ticket (30 s, nur im Speicher)
@@ -28,6 +31,7 @@ internal static class RemoteEndpoints
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (body.Password is { Length: > 256 }) return Error(400, "Das Passwort ist zu lang.");
+            if (!ValidLoginPart(body.Username) || !ValidLoginPart(body.Domain)) return Error(400, "Benutzer oder Domäne ist ungültig.");
             ConnectionRecord c;
             string? password = body.Password;
             Func<string, CancellationToken, Task> saveHostKey, saveCert;
@@ -83,8 +87,8 @@ internal static class RemoteEndpoints
             var trust = new CertificateTrust(c.CertFingerprint, body.AcceptCert, saveCert);
             var rdp = new RdpOptions
             {
-                Host = c.Host, Port = c.Port, UserName = c.Username, Password = password, Width = w & ~1, Height = h & ~1,
-                Domain = c.Domain, KeyboardLayout = KeyboardLayouts.WindowsId(c.KeyboardLayout), CertificateCheck = trust.Check, Sound = true,
+                Host = c.Host, Port = c.Port, UserName = string.IsNullOrWhiteSpace(body.Username) ? c.Username : body.Username.Trim(), Password = password, Width = w & ~1, Height = h & ~1,
+                Domain = body.Domain is null ? c.Domain : body.Domain.Trim(), KeyboardLayout = KeyboardLayouts.WindowsId(c.KeyboardLayout), CertificateCheck = trust.Check, Sound = true,
             };
             // Laufwerk: nur, wenn die Verbindung es verlangt (beide Schalter standardmaessig aus) und der Server eine Wurzel hat; die Wurzel kommt nur aus der Server-Einstellung
             var drive = c.DriveShare ? drives.For(c.DriveWrite) : null;

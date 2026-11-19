@@ -167,7 +167,7 @@ public sealed partial class RdpClient
                 2 => new RdpException("The RDP server only allows the old RDP encryption, which JulOS's own engine does not support."),
                 3 => new RdpException("The RDP server has no certificate for a secure connection."),
                 // Network Level Authentication is required and this client did not offer it for want of a password.
-                5 when !HasCredentials => new RdpException("The RDP server wants a user name and password before it shows anything.", true),
+                5 when !HasCredentials => new RdpException("The RDP server wants a user name and password before it shows anything.", true) { IsCredentialsMissing = true },
                 5 => new RdpException("The RDP server wants a kind of sign-in JulOS's own engine does not support."),
                 6 => new RdpException("The RDP server wants a client certificate, which JulOS's own engine does not support."),
                 _ => new RdpException("The RDP server and JulOS found no common way to secure the connection."),

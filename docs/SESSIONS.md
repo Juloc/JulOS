@@ -130,6 +130,28 @@ Desktop bleiben, sofort ein Schlüsselbild. Die Überlagerung zeigt „Verbindun
   und nirgends sonst. Der WebSocket braucht weiterhin die App-Sitzung und denselben Ursprung. Ein wartender Desktop läuft weiter: wer ihn
   nicht fünf Minuten offen lassen will, stellt die Zeit kleiner. SSH hat diesen Erhalt nicht.
 
+## Anmeldung in der Sitzung (Stream-Engine)
+
+Lehnt das Ziel die Anmeldung ab oder verlangt es Anmeldedaten, bevor es etwas zeigt, endet die Sitzung nicht mehr mit einer Meldung: der Browser
+fragt in der Sitzung nach **Benutzer, Passwort und Domäne** und verbindet noch einmal, das Fenster (Kachel, Tab) bleibt.
+
+- **Fehlercodes** der Nachricht 4: `769` Anmeldung abgelehnt (falsches Passwort, Benutzer unbekannt, am Ziel nicht erlaubt), `770` Anmeldedaten fehlen
+  (das Ziel verlangt die Netzwerkanmeldung, und Benutzer oder Passwort waren leer). Der Server unterscheidet beide am `RdpException` (`IsLogonFailure`,
+  `IsCredentialsMissing`). Bei xrdp ohne Netzwerkanmeldung gibt es keinen eigenen Code: ein Ziel, das gleich nach dem Verbinden wieder trennt
+  (innerhalb von 12 s, solange noch kein Bild da war), gilt wie bisher als abgelehnte Anmeldung (769 im Browser).
+- **Ablauf:** der Browser zeigt den Dialog (`RemoteSession.loginDialog` in `app.js`, Entscheidungen in `login.js`, `tests/frontend/login.test.mjs`).
+  „Anmelden“ holt ein **neues Ticket** (`POST /api/remote/ticket` mit den neuen Angaben) und öffnet einen neuen WebSocket: derselbe Weg wie beim ersten
+  Verbinden, kein neues Verfahren, der alte Slot der Sitzung ist frei (die abgelehnte Verbindung ist am Server schon beendet). Bis zu **drei neue
+  Versuche** nach dem ersten Fehlschlag; danach schließt die Sitzung mit „Anmeldung am Ziel abgelehnt“. „Abbrechen“ schließt sie sofort. Hält eine
+  Verbindung 12 s, beginnt die Zählung von vorn.
+- **Ticket-Felder:** `username` und `domain` (nur für diesen Versuch, ersetzen die der Verbindung, ändern die gespeicherte Verbindung nicht; höchstens
+  256 Zeichen, keine Steuerzeichen, sonst 400). Eine leere Domäne ist eine Angabe: die gespeicherte gilt dann nicht. Ohne diese Felder bleibt alles wie
+  vorher; auch das Passwort ist weiter Pflicht (400 „Passwort fehlt“), der Dialog verlangt es.
+- **Passwort:** bleibt im Speicher der Sitzung (wie das beim ersten Verbinden getippte, für das Wiederverbinden), geht nur im Ticket zum Server, wird nicht
+  gespeichert (der Dialog bietet das nicht an; gespeichert wird nur im Verbindungsdialog) und steht nirgends im Log.
+- **Nicht dabei:** ein Verbinden ganz ohne Passwort (das Ziel zeigt dann seinen eigenen Anmeldebildschirm) ist weiter nur über die Engine möglich, nicht
+  über die Oberfläche.
+
 ## Eigenes Fenster (Pop-out)
 
 Auf großen Bildschirmen mit Maus (Desktop-Oberfläche) lässt sich eine Stream-Sitzung in ein **eigenes Browserfenster** lösen: Knopf in der Titelleiste des

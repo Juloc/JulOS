@@ -1,6 +1,7 @@
 import { StreamClient } from './stream.js';
 import { MouseInput, mouseState } from './mouse.js';
 import { Resume } from './resume.js';
+import { isLoginError, loginStep, userOfTarget, readLogin } from './login.js';
 import { StatusBar } from './statusbar.js';
 import { openPopout } from './popout-main.js';
 import { QUALITIES, normalizeQuality, qualityOf, nextQuality } from './perf.js';
@@ -463,7 +464,7 @@ const PROFILE = { stablePolls: 2, minGap: 8000 };
 /** Verstaendliche Texte zu den Statuscodes, die der Server mit einem Fehler schickt (siehe ScreenProtocol.cs). */
 const ERROR_TEXT = {
   513: 'Der Server ist gerade ausgelastet.', 514: 'Das Ziel antwortet nicht (Zeitüberschreitung).', 515: 'Die Verbindung zum Ziel ist fehlgeschlagen.',
-  519: 'Das Ziel wurde nicht gefunden.', 520: 'Das Ziel ist nicht erreichbar.', 769: 'Anmeldung am Ziel abgelehnt. Bitte Benutzername und Passwort prüfen.',
+  519: 'Das Ziel wurde nicht gefunden.', 520: 'Das Ziel ist nicht erreichbar.', 769: 'Anmeldung am Ziel abgelehnt. Bitte Benutzername und Passwort prüfen.', 770: 'Das Ziel verlangt Benutzer und Passwort.',
   777: 'Die Sitzung wurde in einem anderen Fenster oder auf einem anderen Gerät übernommen.',
   797: null,        // zu viele Sitzungen: der Server schickt den Text selbst ("Es sind schon 8 Sitzungen offen ...")
 };
@@ -704,6 +705,48 @@ export class RemoteSession extends Session {
     this.el.overlay.hidden = true; this.setState('error', 'Zertifikat geändert');
     cancel.focus();
   }
+  /** Anmeldung am Ziel abgelehnt (769) oder Anmeldedaten verlangt (770): Dialog mit Benutzer, Passwort und Domaene, bis zu drei neue Versuche. Jeder Versuch
+      holt ein neues Ticket mit den neuen Daten; das Passwort bleibt im Speicher dieser Sitzung und wird nirgends gespeichert. Die Sitzung (Fenster) bleibt. */
+  loginDialog(code) {
+    if (this.loginBox || this.disposed) return;
+    this.fatal = true; this.connected = false; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer);
+    this.teardown();
+    const step = loginStep(code, this.loginTries || 0);
+    if (!step.ask) return this.requestClose(step.text);
+    const wrap = document.createElement('div'); wrap.className = 'term-dialog'; this.loginBox = wrap;
+    const form = document.createElement('form'); form.className = 'box'; form.setAttribute('role', 'dialog'); form.autocomplete = 'off';
+    const add = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; n.textContent = text; form.appendChild(n); return n; };
+    add('h2', '', 'Anmeldung am Ziel');
+    add('p', '', step.text);
+    add('p', 'hint', `Versuch ${step.attempt} von ${step.of}. Das Passwort gilt nur für diese Sitzung und wird nicht gespeichert.`);
+    const field = (label, type, value, name) => {
+      const l = document.createElement('label'); l.className = 'login-field'; l.append(Object.assign(document.createElement('span'), { textContent: label }));
+      const i = document.createElement('input'); i.type = type; i.value = value || ''; i.name = name; i.autocomplete = type === 'password' ? 'off' : 'off'; i.spellcheck = false; i.autocapitalize = 'off'; i.maxLength = 256;
+      l.appendChild(i); form.appendChild(l); return i;
+    };
+    const user = field('Benutzer', 'text', this.loginUser ?? userOfTarget(this.conn.target), 'user');
+    const pw = field('Passwort', 'password', '', 'pw');
+    const domain = field('Domäne (optional)', 'text', this.loginDomain ?? this.conn.domain ?? '', 'domain');
+    const msg = add('p', 'hint login-msg', ''); msg.setAttribute('role', 'alert');
+    const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'danger'; cancel.textContent = 'Abbrechen';
+    const ok = document.createElement('button'); ok.type = 'submit'; ok.className = 'primary'; ok.textContent = 'Anmelden';
+    const actions = document.createElement('div'); actions.className = 'actions'; actions.append(cancel, ok); form.appendChild(actions);
+    const done = () => { this.loginBox = null; wrap.remove(); };
+    cancel.addEventListener('click', () => { done(); this.password = null; this.requestClose('Anmeldung abgebrochen.'); });
+    form.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const r = readLogin({ user: user.value, password: pw.value, domain: domain.value });
+      if (r.error) { msg.textContent = r.error; return; }
+      pw.value = '';
+      done();
+      this.password = r.password; this.loginUser = r.user; this.loginDomain = r.domain; this.loginTries = (this.loginTries || 0) + 1;
+      this.retry = 0; this.firstLogin = true; this.streamWorked = false; this.everConnected = false; this.resume.reset();
+      this.start();
+    });
+    wrap.appendChild(form); this.el.stage.appendChild(wrap);
+    this.el.overlay.hidden = true; this.setState('error', 'Anmeldung nötig');
+    (user.value ? pw : user).focus();
+  }
   showBusy(msg) { // Fortschritt mit Animation, ohne Knoepfe
     const e = this.el; e.overlayMsg.textContent = msg; e.spinner.hidden = false; e.overlay.hidden = false; e.reconnectBtn.hidden = true; e.closeBtn.hidden = true;
   }
@@ -715,6 +758,7 @@ export class RemoteSession extends Session {
   async connect(password) {
     if (password) this.password = password;
     this.retry = 0; this.everConnected = false; this.firstLogin = true; this.streamWorked = false; this.resume.reset();
+    this.loginTries = 0; this.loginUser = undefined; this.loginDomain = undefined;
     return this.start();
   }
 
@@ -744,6 +788,7 @@ export class RemoteSession extends Session {
   async start() {
     if (this.popped) { const p = this.popped; this.popped = null; p.stop(); this.el.reconnectBtn.textContent = 'Neu verbinden'; }   // zurueck ins Hauptfenster: das Fenster gibt die Leitung ab
     this.intentional = false; this.fatal = false; this.connectStarted = Date.now();
+    if (this.loginBox) { this.loginBox.remove(); this.loginBox = null; }
     if (this.client && this.client.drawn) this.resume.confirm();      // ein Bild kam schon (zum Beispiel Seite wieder sichtbar, bevor der tote Socket gemeldet wurde): das Token darf die Sitzung aufnehmen
     this.teardown(true);                   // der Server haelt eine Stream-Sitzung weiter, die nehmen wir gleich wieder auf (sonst endet sie dort nach Ablauf)
     const gen = this.gen;
@@ -775,7 +820,7 @@ export class RemoteSession extends Session {
     if (!resumeToken) try {
       const acceptCert = this.acceptCert; this.acceptCert = null;      // gilt nur fuer diesen einen Versuch (siehe certDialog)
       const resp = await fetch('/api/remote/ticket', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, signal: AbortSignal.timeout(10000),
-        body: JSON.stringify({ ...ticketTarget(this.conn), sid: this.id, password: this.password || undefined, width: w, height: h, acceptCert: acceptCert || undefined }) });
+        body: JSON.stringify({ ...ticketTarget(this.conn), sid: this.id, password: this.password || undefined, username: this.loginUser, domain: this.loginDomain, width: w, height: h, acceptCert: acceptCert || undefined }) });
       const data = await resp.json().catch(() => ({}));
       if (stale()) return;
       if (resp.status === 401) return this.requestClose('Die Sitzung ist abgelaufen. Bitte neu anmelden.', 'auth');
@@ -828,7 +873,7 @@ export class RemoteSession extends Session {
         this.startAudio(client);
         setTimeout(() => { if (this.client === client && !client.drawn && !this.streamWorked) this.streamFailed('Es kommt kein Bild an. Der Browser kann das Bild vielleicht nicht dekodieren. „Neu verbinden“ tippen.'); }, 10000);   // Groesse gemeldet, aber nie ein Bild: der Dekodierer geht nicht
         // Die Zaehler der Wiederholung gelten erst als zurueckgesetzt, wenn die Verbindung wirklich haelt (sonst endlos: verbunden, sofort getrennt, neu ...)
-        setTimeout(() => { if (this.client === client && this.connected) { this.firstLogin = false; this.retry = 0; } }, 12000);
+        setTimeout(() => { if (this.client === client && this.connected) { this.firstLogin = false; this.retry = 0; this.loginTries = 0; } }, 12000);
       } else if (st === 5) { // getrennt
         this.connected = false;
         if (client.drawn) { this.streamWorked = true; this.resume.confirm(); }      // die Sitzung am Ziel gibt es wirklich: ein Token darf sie wieder aufnehmen
@@ -837,7 +882,7 @@ export class RemoteSession extends Session {
         if (!this.everConnected) return; // Fehler wird von onerror gemeldet
         if (this.hasSibling() && !this.resume.usable()) return this.takenBySibling();
         // sofort nach dem Anmelden getrennt = xrdp hat das Passwort abgelehnt: nicht wiederholen (aber nicht, wenn schon ein Bild da war und der Server die Sitzung erhaelt)
-        if (!this.resume.usable() && this.firstLogin && Date.now() - this.connectedAt < 12000) return this.requestClose('Anmeldung fehlgeschlagen. Bitte Passwort prüfen.');
+        if (!this.resume.usable() && this.firstLogin && Date.now() - this.connectedAt < 12000) return this.loginDialog(769);
         this.scheduleReconnect();
       }
     };
@@ -846,6 +891,7 @@ export class RemoteSession extends Session {
       if (err && err.code === 520 && this.everConnected && this.resume.usable()) return;   // Leitung weg (Netzwechsel): das Schliessen des Sockets plant den naechsten Versuch (scheduleReconnect)
       if (err && err.code === 800) { this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); return this.certDialog(err); }   // Zertifikat des Ziels geaendert: der Benutzer entscheidet
       const code = err && err.code;
+      if (isLoginError(code)) { this.connected = false; return this.loginDialog(code); }   // Anmeldung abgelehnt oder Anmeldedaten verlangt: neu fragen, die Sitzung bleibt
       const known = ERROR_TEXT[code];
       const msg = known || ((err && err.message) ? err.message : 'Verbindungsfehler');
       this.connected = false;
@@ -853,7 +899,7 @@ export class RemoteSession extends Session {
       if (code === 797) { this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); return this.requestClose(msg); }   // Obergrenze der Sitzungen: Meldung des Servers, Sitzung zu
       if (!this.everConnected) this.requestClose(known || 'Verbindung nicht möglich: ' + msg);
       else if (this.hasSibling()) this.takenBySibling();
-      else if (this.firstLogin && Date.now() - this.connectedAt < 12000) this.requestClose('Anmeldung fehlgeschlagen. Bitte Passwort prüfen.');
+      else if (this.firstLogin && Date.now() - this.connectedAt < 12000) this.loginDialog(769);
       else { this.setState('error', 'Fehler'); this.showOverlay(msg); }
     };
     client.onclipboard = (data) => {

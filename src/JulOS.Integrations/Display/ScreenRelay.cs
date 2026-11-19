@@ -158,8 +158,10 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             return null;
         }
 
-        var stream = new ScreenStream(target.Options, target.MaxKilobitsPerSecond, log, encoders, clientCodecs, target.Trust, drive: target.Drive);
-        log.LogInformation("Bildschirm-Verbindung offen (RDP; der Browser kann {Codecs})", clientCodecs);
+        var stream = target.Vnc is { } vnc
+            ? new ScreenStream(vnc, target.MaxKilobitsPerSecond, log, encoders, clientCodecs, target.Trust)
+            : new ScreenStream(target.Options!, target.MaxKilobitsPerSecond, log, encoders, clientCodecs, target.Trust, drive: target.Drive);
+        log.LogInformation("Bildschirm-Verbindung offen ({Protocol}; der Browser kann {Codecs})", target.Vnc is null ? "RDP" : "VNC", clientCodecs);
         var live = new Live
         {
             Token = NewToken(), Owner = owner, Stream = stream, Stop = stop, Lease = lease, Target = target, Started = Environment.TickCount64,
@@ -296,7 +298,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                 }
 
                 var limits = live.Stream.ClipboardLimits;
-                await SendOnceAsync(ws, ScreenProtocol.Limits(limits.MaxFileBytes, ClipboardOptions.MaxFiles, ClipboardOptions.MaxEntries), ct).ConfigureAwait(false);
+                await SendOnceAsync(ws, live.Stream.SupportsFiles ? ScreenProtocol.Limits(limits.MaxFileBytes, ClipboardOptions.MaxFiles, ClipboardOptions.MaxEntries) : ScreenProtocol.Limits(0, 0, 0), ct).ConfigureAwait(false);
 
                 var send = PumpToBrowserAsync(ws, live.Stream, live.Owner, Downloads, attach.Token);
                 var receive = ReceiveFromBrowserAsync(ws, live.Stream, attach.Token);
@@ -380,7 +382,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         catch (OperationCanceledException) { /* abgebrochen */ }
         catch (RdpException e) when (e.CertificateFingerprint is not null)
         {
-            log.LogWarning("RDP-Zertifikat des Ziels hat sich geändert: Verbindung nicht aufgebaut, nichts gesendet");
+            log.LogWarning("Zertifikat des Ziels hat sich geändert: Verbindung nicht aufgebaut, nichts gesendet");
             last = ScreenProtocol.CertificateChanged(e.CertificateFingerprint, live.Target.Trust?.Stored);
         }
         catch (RdpException e) { last = ScreenProtocol.Error(e.IsCredentialsMissing ? ErrorCredentialsMissing : e.IsLogonFailure ? ErrorLogonFailed : ErrorConnectFailed, e.Message); }
@@ -715,6 +717,9 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                 break;
             case ScreenProtocol.FromBrowserKey when m.Length >= 3:
                 stream.Key(m[1], (m[2] & 1) != 0, (m[2] & 2) != 0);
+                break;
+            case ScreenProtocol.FromBrowserKeysym when m.Length >= 6:
+                stream.Keysym(BinaryPrimitives.ReadUInt32BigEndian(m[1..]), m[5] != 0);
                 break;
             case ScreenProtocol.FromBrowserUnicode when m.Length >= 3:
                 stream.Unicode((char)BinaryPrimitives.ReadUInt16BigEndian(m[1..]));

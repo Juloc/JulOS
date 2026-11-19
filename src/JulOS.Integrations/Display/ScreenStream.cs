@@ -2,6 +2,7 @@ using System.Threading.Channels;
 using JulOS.Integrations.Display.Rdp;
 using JulOS.Integrations.Display.Rdp.Channels;
 using JulOS.Integrations.Display.Rdp.Drive;
+using JulOS.Integrations.Display.Vnc;
 using JulOS.Integrations.Display.Refine;
 using JulOS.Integrations.Display.Video;
 using Microsoft.Extensions.Logging;
@@ -56,7 +57,7 @@ public enum CursorKind { Shape, Hidden, Default }
 public sealed record ScreenCursor(CursorKind Kind, int HotX, int HotY, int Width, int Height, byte[]? Rgba) : ScreenEvent;
 
 /// <summary>
-/// Ein ferner Desktop fuer einen Browser: RDP hinein, H.264-Bilder heraus. Aenderungen am Bildschirm werden gesammelt, nur das geaenderte
+/// Ein ferner Desktop fuer einen Browser: RDP oder VNC hinein, H.264-Bilder heraus. Aenderungen am Bildschirm werden gesammelt, nur das geaenderte
 /// Rechteck wird umgerechnet und kodiert. Der Browser bestaetigt jedes Bild; solange drei unbestaetigt sind, wird nichts Neues
 /// gesendet (so bleibt die Verzoegerung klein, auch auf langsamer Leitung). Steht der Bildschirm still, wird dasselbe Bild so lange
 /// neu kodiert, bis es scharf ist.
@@ -93,7 +94,8 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     // normalerweise in wenigen Millisekunden): zuruecksetzen und ein Schluesselbild senden, statt fuer immer zu warten.
     private const int AckStallMs = 2000;
 
-    private readonly RdpOptions _options;
+    private readonly RdpOptions? _options;
+    private readonly VncOptions? _vncOptions;
     private readonly int _maxKilobitsPerSecond;
     private readonly ILogger? _log;
     private readonly Channel<ScreenEvent> _events = Channel.CreateUnbounded<ScreenEvent>(new UnboundedChannelOptions { SingleReader = true });
@@ -105,7 +107,8 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     private readonly ClipboardBridge _clipboard;
     private readonly SoundChannel _soundChannel = new();
     private readonly AudioInputChannel _microphoneChannel = new();
-    private RdpClient? _rdp;
+    private IScreenSource? _source;
+    private VncClient? _vnc;
     private DisplayControlChannel? _display;
     private readonly EncoderSelector _selector;
     private IVideoEncoder? _encoder;
@@ -163,11 +166,23 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
     /// <param name="graphicsPipeline">Ob die Bilder des Servers durchgereicht werden duerfen (RDPGFX); ohne Angabe entscheidet JULOS_RDP_GFX.</param>
     public ScreenStream(RdpOptions options, int maxKilobitsPerSecond = 16_000, ILogger? log = null, EncoderSelector? encoders = null, VideoCodecs clientCodecs = VideoCodecs.H264, CertificateTrust? trust = null, bool? graphicsPipeline = null, SharedDrive? drive = null)
+        : this(options, null, maxKilobitsPerSecond, log, encoders, clientCodecs, trust, graphicsPipeline, drive)
+    {
+    }
+
+    /// <summary>Ein VNC-Desktop: dieselbe Kodierung und dasselbe Protokoll zum Browser, aber ohne Ton, Laufwerk und Dateien in der Zwischenablage.</summary>
+    public ScreenStream(VncOptions options, int maxKilobitsPerSecond = 16_000, ILogger? log = null, EncoderSelector? encoders = null, VideoCodecs clientCodecs = VideoCodecs.H264, CertificateTrust? trust = null)
+        : this(null, options, maxKilobitsPerSecond, log, encoders, clientCodecs, trust, false, null)
+    {
+    }
+
+    private ScreenStream(RdpOptions? options, VncOptions? vnc, int maxKilobitsPerSecond, ILogger? log, EncoderSelector? encoders, VideoCodecs clientCodecs, CertificateTrust? trust, bool? graphicsPipeline, SharedDrive? drive)
     {
         _trust = trust;
         _drive = drive;
-        _gfxWanted = (graphicsPipeline ?? GfxAllowed) && !GfxSettings.IsAvoided(options.Host, options.Port);
+        _gfxWanted = options is not null && (graphicsPipeline ?? GfxAllowed) && !GfxSettings.IsAvoided(options.Host, options.Port);
         _options = options;
+        _vncOptions = vnc;
         _maxKilobitsPerSecond = maxKilobitsPerSecond;
         _kilobits = maxKilobitsPerSecond;
         _pacer = new LinkPacer(maxKilobitsPerSecond);
@@ -215,7 +230,10 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     public ChannelReader<ScreenEvent> Events => _events.Reader;
 
     /// <summary>Warum der ferne Rechner die Sitzung beendet hat, falls er es gesagt hat.</summary>
-    public string? EndReason => _rdp?.EndReason;
+    public string? EndReason => _source?.EndReason;
+
+    /// <summary>Ob die Sitzung Dateien und Bilder in die Zwischenablage nimmt (RDP); VNC kennt dort nur Text.</summary>
+    public bool SupportsFiles => _vncOptions is null;
 
     /// <summary>Verbindet, meldet sich an und laeuft, bis die Sitzung endet oder abgebrochen wird. Wirft RdpException, wenn das Verbinden misslingt.</summary>
     public async Task RunAsync(CancellationToken cancellationToken)
@@ -239,9 +257,15 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     // Eine Verbindung bis zum Ende. True, wenn sie wegen RDPGFX aufgegeben wurde und ohne neu aufgebaut werden soll.
     private async Task<bool> RunSessionAsync(bool useGfx, CancellationToken cancellationToken)
     {
+        if (_vncOptions is not null)
+        {
+            await RunVncAsync(_vncOptions, cancellationToken).ConfigureAwait(false);
+            return false;
+        }
+
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stop.Token);
-        var rdp = new RdpClient(_options, this, message => _log?.LogDebug("RDP: {Message}", message)) { AdvertiseGraphics = useGfx };
-        _rdp = rdp;
+        var rdp = new RdpClient(_options!, this, message => _log?.LogDebug("RDP: {Message}", message)) { AdvertiseGraphics = useGfx };
+        _source = rdp;
         var channels = new DynamicChannels();
         var display = new DisplayControlChannel();
         channels.Register(display);
@@ -307,6 +331,76 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         return fallback;
     }
 
+    // ---- VNC ----
+
+    // Eine VNC-Verbindung bis zum Ende: ohne RDPGFX, Kanaele und Neuaufbau; das Bild geht durch denselben Kodierer wie bei RDP.
+    private async Task RunVncAsync(VncOptions options, CancellationToken cancellationToken)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stop.Token);
+        var vnc = new VncClient(options, this, message => _log?.LogDebug("VNC: {Message}", message))
+        {
+            ClipboardReceived = text => _events.Writer.TryWrite(new ScreenClipboardText(text)),
+        };
+        _vnc = vnc;
+        _source = vnc;
+        await vnc.ConnectAsync(linked.Token).ConfigureAwait(false);
+
+        // Angemeldet: ein neues oder bestaetigtes Zertifikat (VeNCrypt mit TLS) wird jetzt gemerkt
+        if (_trust is not null && await _trust.CommitAsync(linked.Token).ConfigureAwait(false))
+        {
+            _log?.LogInformation("VNC-Zertifikat {Decision}", _trust.Decision == CertificateDecision.FirstUse ? "gemerkt" : "ersetzt (vom Benutzer bestätigt)");
+        }
+
+        SetPendingSize(vnc.Width, vnc.Height);
+        PublishCursor(new ScreenCursor(CursorKind.Default, 0, 0, 0, 0, null));
+
+        var read = vnc.RunAsync(linked.Token);
+        var encode = EncodeLoopAsync(linked.Token);
+        var follow = FollowVncSizeAsync(vnc, linked.Token);
+        var first = await Task.WhenAny(read, encode).ConfigureAwait(false);
+        await linked.CancelAsync().ConfigureAwait(false);
+        foreach (var task in new[] { read, encode, follow })
+        {
+            try { await task.ConfigureAwait(false); }
+            catch (OperationCanceledException) { /* wir haben es selbst abgebrochen */ }
+        }
+
+        await first.ConfigureAwait(false);
+    }
+
+    // Die Groesse des Browserfensters als Groesse des Desktops, wo der Server es kann (ExtendedDesktopSize): eine Anfrage je neuem Wunsch,
+    // hoechstens alle 300 ms. Antwortet der Server mit einer anderen Groesse, gilt diese; verweigert er es, bleibt es dabei.
+    private async Task FollowVncSizeAsync(VncClient vnc, CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(150, cancellationToken).ConfigureAwait(false);
+                int wantWidth, wantHeight;
+                lock (_gate)
+                {
+                    wantWidth = _wantWidth;
+                    wantHeight = _wantHeight;
+                    var now = Environment.TickCount64;
+                    if (wantWidth <= 0 || _settled || !vnc.CanResize || now - _lastAskedAt < 300 || (vnc.Width == wantWidth && vnc.Height == wantHeight))
+                    {
+                        continue;
+                    }
+
+                    _lastAskedAt = now;
+                    _settled = true;
+                }
+
+                vnc.RequestSize(wantWidth, wantHeight);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // die Sitzung endet
+        }
+    }
+
     // ---- RDPGFX ----
 
     private void StartGfx(DynamicChannels channels, CancellationTokenSource session)
@@ -370,7 +464,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
             if (_gfxFallbackRemember)
             {
-                GfxSettings.Avoid(_options.Host, _options.Port);
+                GfxSettings.Avoid(_options!.Host, _options.Port);
             }
 
             return true;
@@ -583,35 +677,87 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
     // ---- Eingabe vom Browser ----
 
-    public void MouseMove(int x, int y) => _rdp?.MouseMove(x, y);
+    public void MouseMove(int x, int y) => _source?.MouseMove(x, y);
 
-    public void MouseButton(int button, bool down) => _rdp?.MouseButton(button, down);
+    public void MouseButton(int button, bool down) => _source?.MouseButton(button, down);
 
-    public void MouseWheel(int delta, bool horizontal) => _rdp?.MouseWheel(delta, horizontal);
+    public void MouseWheel(int delta, bool horizontal) => _source?.MouseWheel(delta, horizontal);
 
-    public void Key(int scancode, bool extended, bool down) => _rdp?.Key(scancode, extended, down);
+    public void Key(int scancode, bool extended, bool down) => _source?.Key(scancode, extended, down);
 
-    public void Unicode(char unit) => _rdp?.Unicode(unit);
+    public void Unicode(char unit) => _source?.Unicode(unit);
+
+    /// <summary>Eine Taste als X11-Keysym (nur VNC: der Browser schickt dort das getippte Zeichen statt einer Taste; bei RDP ohne Wirkung).</summary>
+    public void Keysym(uint keysym, bool down) => _vnc?.Keysym(keysym, down);
 
     /// <summary>Der Browser hat Text abgelegt; der ferne Rechner holt ihn, wenn dort eingefuegt wird.</summary>
-    public void SetClipboard(string text) => _clipboard.SetLocalText(text);
+    public void SetClipboard(string text)
+    {
+        if (_vnc is { } vnc)
+        {
+            vnc.SendClipboard(text);
+            return;
+        }
+
+        _clipboard.SetLocalText(text);
+    }
 
     /// <summary>Der Browser sendet ein Bild (als BMP) oder eine Datei an die Zwischenablage des fernen Rechners; siehe <see cref="ClipboardBridge"/>.</summary>
-    public void BeginTransfer(uint id, byte kind, int index, int count, long size, string name) => _clipboard.BeginTransfer(id, kind, index, count, size, name);
+    public void BeginTransfer(uint id, byte kind, int index, int count, long size, string name)
+    {
+        if (_vnc is not null)
+        {
+            // VNC kennt nur Text in der Zwischenablage: der Browser bekommt gleich die Antwort
+            _events.Writer.TryWrite(new ScreenTransferResult(id, ClipboardBridge.ResultNoClipboard, "Die VM unterstützt keine Dateien in der Zwischenablage."));
+            return;
+        }
 
-    public void TransferChunk(uint id, ReadOnlySpan<byte> data) => _clipboard.TransferChunk(id, data);
+        _clipboard.BeginTransfer(id, kind, index, count, size, name);
+    }
 
-    public void EndTransfer(uint id) => _clipboard.EndTransfer(id);
+    public void TransferChunk(uint id, ReadOnlySpan<byte> data)
+    {
+        if (_vnc is null)
+        {
+            _clipboard.TransferChunk(id, data);
+        }
+    }
 
-    public void CancelTransfer(uint id) => _clipboard.CancelTransfer(id);
+    public void EndTransfer(uint id)
+    {
+        if (_vnc is null)
+        {
+            _clipboard.EndTransfer(id);
+        }
+    }
+
+    public void CancelTransfer(uint id)
+    {
+        if (_vnc is null)
+        {
+            _clipboard.CancelTransfer(id);
+        }
+    }
 
     /// <summary>Der Browser holt einen Eintrag (Datei oder Ordner, leer: alles), den der ferne Rechner kopiert hat.</summary>
-    public void RequestFile(uint batch, string path) => _clipboard.RequestFile(batch, path);
+    public void RequestFile(uint batch, string path)
+    {
+        if (_vnc is null)
+        {
+            _clipboard.RequestFile(batch, path);
+        }
+    }
 
     /// <summary>Die Grenzen der Zwischenablage-Dateien dieser Sitzung (der Browser bekommt sie gemeldet).</summary>
     public ClipboardOptions ClipboardLimits => _clipboard.Options;
 
-    public void CancelFile(uint batch) => _clipboard.CancelFile(batch);
+    public void CancelFile(uint batch)
+    {
+        if (_vnc is null)
+        {
+            _clipboard.CancelFile(batch);
+        }
+    }
 
 
     /// <summary>Der Browser hat die Bilder bis zu dieser Folgenummer dekodiert (oder verworfen); ohne Nummer: ein Bild mehr.</summary>
@@ -995,20 +1141,20 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     // als der Kodierer (dann kommt gleich die neue Groesse).
     private bool Convert(I420Frame frame, int left, int top, int width, int height)
     {
-        var rdp = _rdp;
-        if (rdp is null)
+        var source = _source;
+        if (source is null)
         {
             return false;
         }
 
-        lock (rdp.FrameLock)
+        lock (source.FrameLock)
         {
-            if ((rdp.Width & ~1) != frame.Width || (rdp.Height & ~1) != frame.Height)
+            if ((source.Width & ~1) != frame.Width || (source.Height & ~1) != frame.Height)
             {
                 return false;
             }
 
-            ColorConverter.BgrxToI420(rdp.Framebuffer, rdp.Width * 4, frame, left, top, width, height);
+            ColorConverter.BgrxToI420(source.Framebuffer, source.Width * 4, frame, left, top, width, height);
         }
 
         return true;
@@ -1073,8 +1219,8 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     private int RefineStep()
     {
         var refiner = _refiner;
-        var rdp = _rdp;
-        if (refiner is null || rdp is null || refiner.DirtyTiles == 0 || Volatile.Read(ref _passthrough))
+        var source = _source;
+        if (refiner is null || source is null || refiner.DirtyTiles == 0 || Volatile.Read(ref _passthrough))
         {
             return int.MaxValue;
         }
@@ -1096,14 +1242,14 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         foreach (var run in refiner.TakeQuiet(now, RefineTilesPerPass))
         {
             var pixels = new byte[run.Width * run.Height * 4];
-            lock (rdp.FrameLock)
+            lock (source.FrameLock)
             {
-                if ((rdp.Width & ~1) != refiner.Width || (rdp.Height & ~1) != refiner.Height)
+                if ((source.Width & ~1) != refiner.Width || (source.Height & ~1) != refiner.Height)
                 {
                     return 50;
                 }
 
-                CopyPixels(rdp.Framebuffer, rdp.Width * 4, run, pixels);
+                CopyPixels(source.Framebuffer, source.Width * 4, run, pixels);
             }
 
             EmitRefinement(refiner, run, pixels);
@@ -1433,9 +1579,9 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         }
 
         await _stop.CancelAsync().ConfigureAwait(false);
-        if (_rdp is not null)
+        if (_source is not null)
         {
-            await _rdp.DisposeAsync().ConfigureAwait(false);
+            await _source.DisposeAsync().ConfigureAwait(false);
         }
 
         _clipboard.Dispose();

@@ -21,6 +21,7 @@ class FakeSocket {
 }
 const el = () => ({ style: {}, append() {}, getContext: () => ({ drawImage() {}, putImageData() {}, clearRect() {} }), appendChild() {} });
 globalThis.document = { createElement: el, hidden: false, addEventListener() {}, removeEventListener() {} };
+globalThis.window = { addEventListener() {}, removeEventListener() {} };
 globalThis.VideoDecoder = FakeDecoder;
 globalThis.EncodedVideoChunk = FakeChunk;
 globalThis.WebSocket = FakeSocket;

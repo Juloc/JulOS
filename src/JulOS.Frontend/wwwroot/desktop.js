@@ -14,7 +14,7 @@ import { serviceState, connectionState, dotClass, stateText, groupConnections, h
 
 const $ = (s, r = document) => r.querySelector(s);
 const BAR_H = 34;
-let ctx = null;            // von shell.js: { state, esc, api, connect, edit, add, quick, folders, editHost, addHost, devices, signOut }
+let ctx = null;            // von shell.js: { state, esc, api, connect, edit, add, quick, folders, editHost, addHost, devices, account, nettools, signOut }
 let root = null;
 const wins = new Map();    // id -> Fenster
 let zTop = 10;
@@ -69,6 +69,7 @@ const P = {
   download: '<path d="M12 3v12m0 0-4-4m4 4 4-4M5 21h14"/>',
   up: '<path d="m18 15-6-6-6 6"/>',
   check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  popout: '<path d="M14 4h6v6M20 4l-8.5 8.5M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/>',
   blank: '',
 };
 const ic = (n) => `<svg class="dk-i" viewBox="0 0 24 24" aria-hidden="true">${P[n] || ''}</svg>`;
@@ -364,9 +365,11 @@ const MENUS = () => ({
     ...APPS.filter((a) => a.soon).map((a) => ({ label: a.name, icon: a.ic, hint: 'bald verfügbar', disabled: true })),
   ],
   System: [
+    { label: 'Passwort und Authenticator …', icon: 'key', run: () => ctx.account() },
     { label: 'Geräte und Sitzungen …', icon: 'shield', run: () => ctx.devices() },
     { label: 'Einstellungen', icon: 'sliders', run: () => openHome('einstellungen') },
     { label: 'System-Übersicht', icon: 'activity', run: () => openHome('system') },
+    { label: 'Netzwerkwerkzeuge …', icon: 'globe', run: () => ctx.nettools() },
     { sep: true },
     { label: 'Abmelden', icon: 'power', run: () => ctx.signOut() },
   ],
@@ -391,6 +394,7 @@ function buildBar() {
   const user = btn('dk-ic', '<span class="dk-avatar"></span>', 'Konto'); user.id = 'dkUser';
   user.addEventListener('click', () => showMenu(user, [
     { cap: ctx.state.user || '' },
+    { label: 'Passwort und Authenticator …', icon: 'key', run: () => ctx.account() },
     { label: 'Geräte und Sitzungen …', icon: 'shield', run: () => ctx.devices() },
     { label: 'Einstellungen', icon: 'sliders', run: () => openHome('einstellungen') },
     { sep: true },
@@ -879,7 +883,7 @@ function renderAppsView(m) {
 function renderSettings(m) {
   m.innerHTML = `<h3 style="margin-top:14px">Einstellungen</h3>
     <div class="dk-card"><h4>Konto</h4><p>Angemeldet als <b>${ctx.esc(ctx.state.user || '')}</b>.</p>
-      <div class="dk-btns"><button type="button" class="dk-b dk-btn" data-act="devices">${ic('shield')}Geräte und Sitzungen</button><button type="button" class="dk-b dk-btn" data-act="signout">${ic('power')}Abmelden</button></div></div>
+      <div class="dk-btns"><button type="button" class="dk-b dk-btn" data-act="account">${ic('key')}Passwort und Authenticator</button><button type="button" class="dk-b dk-btn" data-act="devices">${ic('shield')}Geräte und Sitzungen</button><button type="button" class="dk-b dk-btn" data-act="signout">${ic('power')}Abmelden</button></div></div>
     <div class="dk-card"><h4>Fernsteuerung</h4><p>Solange ein Sitzungsfenster vorn ist, zeigt die obere Leiste seine Menüs: Tasten, Kombinationen (frei belegbar), Ansicht (Zoom, Vollbild) und Fenster (Programme der Ziel-Maschine). Der Name der Verbindung öffnet Neu verbinden, Text senden und Beenden.</p></div>
     <div class="dk-card"><h4>Dock</h4><p>Wann der Dock unten zu sehen ist. Du erreichst die Wahl auch mit Rechtsklick auf den Dock.</p>
       <div class="dk-btns">${DOCK_MODES.map(([id, label]) => `<button type="button" class="dk-b dk-btn${id === dockMode ? ' pri' : ''}" data-dockmode="${id}" aria-pressed="${id === dockMode}">${label}</button>`).join('')}</div></div>
@@ -905,6 +909,7 @@ function onMainClick(e) {
   else if (t.dataset.act === 'add') ctx.add();
   else if (t.dataset.act === 'quick') ctx.quick();
   else if (t.dataset.act === 'devices') ctx.devices();
+  else if (t.dataset.act === 'account') ctx.account();
   else if (t.dataset.act === 'signout') ctx.signOut();
   else if (t.dataset.act === 'settings') goto('einstellungen');
   else if (t.dataset.act === 'desktop' || t.dataset.act === 'terminal') pickConnection(t.dataset.act, t);
@@ -982,6 +987,12 @@ export function sessionOpened(session, n) {
     onVisible: (on) => session.setVisible(on),
     onClose: () => { Sessions.close(session.id); } });
   w.session = session; sessWins.set(session.id, w);
+  // Eigenes Browserfenster (Pop-out): nur Fernsteuer-Sitzungen, und dieses Layout gibt es nur auf grossen Bildschirmen mit Maus
+  if (typeof session.popOut === 'function') {
+    const pop = btn('dk-po', ic('popout'), 'In eigenem Fenster öffnen'); pop.title = 'In eigenem Fenster öffnen';
+    pop.addEventListener('click', (ev) => { ev.stopPropagation(); if (session.popped) session.popBack(); else session.popOut(); });
+    w.head.querySelector('.dk-wc').prepend(pop);
+  }
   const dot = el('span', 'dk-sdot busy'); dot.title = session.stateText; w.head.querySelector('.dk-wt').prepend(dot);
   w.dot = dot;
   session.addEventListener('titlechange', (e) => { w.head.querySelector('.dk-wt span:last-child').textContent = e.detail.title; w.el.setAttribute('aria-label', e.detail.title); renderBar(); });

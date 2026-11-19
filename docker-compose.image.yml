@@ -26,6 +26,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      julos-data-init:
+        condition: service_completed_successfully
     environment:
       JULOS_DB: "Host=postgres;Database=julos;Username=julos;Password=${JULOS_DB_PASSWORD}"
       # optional: Schluessel zum Speichern von Verbindungs-Passwoertern (openssl rand -base64 32); ohne ihn wird nichts gespeichert
@@ -52,6 +54,13 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
+      # Datenordner: hier legt der Server den Schluessel fuer gespeicherte Passwoerter an (secret.key). Ein benanntes Volume, damit er einen Neustart
+      # und ein neues Image ueberlebt; julos-data-init gibt es dem Benutzer des Servers (nocopy, siehe unten). Nicht im Upload-Ordner (der ist die Wurzel des Dateibrowsers).
+      - type: volume
+        source: julos-data
+        target: /data
+        volume:
+          nocopy: true   # sonst uebernimmt ein leeres Volume beim Start die Rechte des Image-Ordners (Benutzer "app") statt die von julos-data-init
       - ${HOME}/julos-uploads:/uploads
       # Backup-Ordner: vorher anlegen (mkdir -m 700 ~/julos-backup), er gehoert dem Benutzer des Servers; Ablageort ausserhalb dieses Rechners mitnehmen
       - ${JULOS_BACKUP_PATH:-${HOME}/julos-backup}:/backup
@@ -60,6 +69,39 @@ services:
     # BIND_IP = LAN-Adresse des Docker-Hosts (nur Heimnetz); Standard ist nur lokal (127.0.0.1)
     ports:
       - "${BIND_IP:-127.0.0.1}:${BIND_PORT:-8080}:8080"
+    # Haertung ohne Funktionsverlust (der Server bindet einen unprivilegierten Port und braucht keine Linux-Faehigkeiten); Grundlage: docs/SECURITY-REVIEW.md Nr. 16.
+    # Optional, strenger: das Wurzeldateisystem schreibschuetzen. Geschrieben wird nur in /data, /uploads, /backup und /tmp; der Start und /api/health
+    # sind so geprueft, ein voller Durchlauf (RDP mit GPU, Uploads, Sicherung) nicht. Darum steht es hier nur als Angebot (docs/DEVELOPMENT.md "Container hardening").
+    # read_only: true
+    # tmpfs:
+    #   - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Gesundheitspruefung: der Server fragt sich selbst (Runtime-Image hat kein curl); gesund heisst: der Server antwortet und die Datenbank auch
+    healthcheck:
+      test: ["CMD", "dotnet", "JulOS.dll", "health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+
+  # Einmalig vor dem Server: gibt das Datenvolume dem Benutzer des Servers (ein neues Volume gehoert sonst dem Benutzer des Images und waere fuer ihn nicht beschreibbar).
+  julos-data-init:
+    image: postgres:18   # nur seiner Werkzeuge wegen (chown), ohnehin vorhanden
+    user: "0:0"
+    entrypoint: ["chown", "${JULOS_UID:-1000}:${JULOS_GID:-1000}", "/data"]
+    volumes:
+      - julos-data:/data
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
 
 volumes:
   julos-postgres:
+  julos-data:

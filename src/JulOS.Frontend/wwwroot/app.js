@@ -1,6 +1,9 @@
 import { StreamClient } from './stream.js';
 import { MouseInput, mouseState } from './mouse.js';
 import { Resume } from './resume.js';
+import { StatusBar } from './statusbar.js';
+import { openPopout } from './popout-main.js';
+import { QUALITIES, normalizeQuality, qualityOf, nextQuality } from './perf.js';
 import { StreamAudio } from './stream-audio.js';
 import { SizeGate, LayoutLog } from './layoutlog.js';
 import { KB_SETTLE_MS, StageBase, effectiveStage, panOffset, panDrag, normalizeKbMode, nextKbMode, kbModeLabel } from './kbpan.js';
@@ -78,6 +81,7 @@ const ICONS = {
   bolt: 'M11 21h-1l1-7H7.5c-.58 0-.57-.32-.38-.66.19-.34.05-.08.07-.12C8.48 10.94 10.42 7.54 13 3h1l-1 7h3.5c.49 0 .56.33.47.51l-.07.15C12.96 17.55 11 21 11 21z',
   layers: 'M11.99 18.54l-7.37-5.73L3 14.07l9 7 9-7-1.63-1.27-7.38 5.74zM12 16l7.36-5.73L21 9l-9-7-9 7 1.63 1.27L12 16z',
   home: 'M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z',
+  speed: 'M20.38 8.57l-1.23 1.85a8 8 0 0 1-.22 7.58H5.07A8 8 0 0 1 15.58 6.85l1.85-1.23A10 10 0 0 0 3.35 19a2 2 0 0 0 1.72 1h13.85a2 2 0 0 0 1.74-1 10 10 0 0 0-.27-10.44zm-9.79 6.84a2 2 0 0 0 2.83 0l5.66-8.49-8.49 5.66a2 2 0 0 0 0 2.83z',
   backspace: 'M22 3H7c-.69 0-1.23.35-1.59.88L0 12l5.41 8.11c.36.53.9.89 1.59.89h15c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-3 12.59L17.59 17 14 13.41 10.41 17 9 15.59 12.59 12 9 8.41 10.41 7 14 10.59 17.59 7 19 8.41 15.41 12 19 15.59z',
 };
 export const ico = (name) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${ICONS[name] || ''}"/></svg>`;
@@ -104,6 +108,7 @@ const S = {
   expanded: store.get('expanded', false), group: store.get('group', 'keys'), editing: false,
   autoKb: store.get('autoKb', true),   // Tastatur oeffnet sich beim Tippen auf ein Textfeld (Erkennung am Mauszeiger)
   debug: store.get('debug', true),     // sendet nur Messwerte (Groessen, Ereignisarten), nie getippten Text
+  perf: store.get('perf', false),             // Statusleiste (Leistungsanzeige) bei allen Stream-Sitzungen
   autoPaste: store.get('autoPaste', true),   // Foto nach dem Hochladen sofort mit Strg+V einfuegen
   seed: store.get('seed', '#9a67ea'),         // Grundfarbe fuer das Material-You-Design ('system' oder #rrggbb), Standard Violett wie die Handy-Oberflaeche
   scheme: store.get('scheme', 'auto'),       // 'auto' | 'light' | 'dark'
@@ -114,6 +119,12 @@ function pcDefaultK() {
   try { return matchMedia('(pointer: fine)').matches && matchMedia('(min-width: 1000px)').matches ? 1 : 0.8; } catch { return 0.8; }
 }
 let lastStageSize = { w: window.innerWidth, h: window.innerHeight };   // zuletzt gemessene sichtbare Bildflaeche (fuer Sitzungen im Hintergrund)
+
+/** Statusleiste (Leistungsanzeige) ein- oder ausblenden: gilt fuer alle Stream-Sitzungen und wird gemerkt. */
+function setPerf(on) {
+  S.perf = !!on; store.set('perf', S.perf);
+  for (const s of remotes()) { s.statusBar.show(S.perf); s.updateMenuLabels(); }
+}
 
 /** Alle Fernsteuer-Sitzungen und die aktive (andere Sitzungsarten, etwa das native Terminal, gehoeren nicht hierher). */
 const remotes = () => Sessions.list().filter((s) => s instanceof RemoteSession);
@@ -357,6 +368,15 @@ function toggleFullscreen() {
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   else document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => toast('Vollbild nicht möglich'));
 }
+// Im Vollbild die Systemtasten (Esc, Alt+Tab, Windows-Taste, Strg+W/T/N) an den fernen Rechner geben statt an den Browser (Tastatursperre: nur Chrome und
+// Edge, nur im Vollbild und nur auf sicheren Seiten). Esc gedrueckt halten beendet das Vollbild weiterhin.
+const LOCKED_KEYS = ['Escape', 'Tab', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight', 'KeyW', 'KeyT', 'KeyN', 'F4', 'F5'];
+document.addEventListener('fullscreenchange', () => {
+  const kb = navigator.keyboard;
+  if (!kb || !kb.lock) return;
+  if (document.fullscreenElement) kb.lock(LOCKED_KEYS).catch(() => { /* nicht erlaubt: die Tasten bleiben beim Browser */ });
+  else if (kb.unlock) kb.unlock();
+});
 function openClipDlg() {
   const s = cur();
   el.remoteClip.value = (s && s.clipText) || '';
@@ -462,10 +482,12 @@ export class RemoteSession extends Session {
     this.client = null; this.display = null; this.mouse = null;
     this.connected = false; this.everConnected = false; this.intentional = false; this.fatal = false; this.disposed = false;
     this.firstLogin = true; this.streamWorked = false;   // streamWorked: auf dieser Verbindung kam schon einmal ein Bild
+    this.popped = null;                            // laeuft die Sitzung in einem eigenen Fenster (popout-main.js)? Dann steht hier dessen Griff
     this.resume = new Resume();                    // Sitzungserhalt des Streams: Token, Zeitfenster, Versuche (siehe resume.js)
     this.gen = 0;                                  // zaehlt jeden Verbindungsversuch: spaete Antworten eines alten Versuchs werden verworfen
     this.k = clamp(store.get('k.' + conn.id, store.get('k', pcDefaultK())), 0.35, 1.8);   // Remote-Pixel pro Handy-Pixel (kleiner = Inhalt groesser), je Verbindung gemerkt
     this.lastSent = { w: 0, h: 0 }; this.gate = new SizeGate({ settleMs: KB_SETTLE_MS });
+    this.quality = normalizeQuality(store.get('q.' + conn.id, 'auto'));   // Bildrate dieser Sitzung (Nachricht 31), je Verbindung gemerkt
     this.retry = 0; this.retryTimer = null; this.resizeTimer = null; this.connectTimer = null; this.toastTimer = null; this.zoomTimer = null;
     this.connectedAt = 0; this.connectStarted = 0; this.frameSeen = false;
     this.cursor = { ibeam: false };
@@ -500,6 +522,8 @@ export class RemoteSession extends Session {
       rowsTop: q('sv-rowsTop'), rowsBottom: q('sv-rowsBottom'), xfer: q('sv-xfer'), xferText: q('sv-xferText'), xferCancel: q('sv-xferCancel'),
     };
     renderIcons(root);
+    this.perfEl = document.createElement('div'); this.perfEl.className = 'sv-perf'; this.el.stage.appendChild(this.perfEl);
+    this.statusBar = new StatusBar(this.perfEl); this.statusBar.setQuality(this.quality); this.statusBar.show(S.perf);
     this.lay = new LayoutLog({ emit: (evt, d) => this.dbg(evt, d), parts: { app: $('#app'), stage: this.el.stage, topbar: this.el.topbar, dock: this.el.dock }, state: () => ({ kbOpen }), visible: LAYDEBUG });
     this.ro = new ResizeObserver(() => this.onStageResize());
     this.ro.observe(this.el.stage);
@@ -550,7 +574,7 @@ export class RemoteSession extends Session {
   /** Im Hintergrund (nicht sichtbar): Ansicht aus, keine Groessenmeldungen, Fensterleiste ruht, der Stream pausiert (Server kodiert nicht, Browser dekodiert nicht). */
   setVisible(on) {
     on = !!on;
-    this.visible = on; this.element.hidden = !on;
+    this.visible = on; this.element.hidden = !on; this.statusBar.setActive(on);
     this.applyPause(); this.applyAudio();
     if (on) {
       this.fitDisplay(); this.scheduleSize(80); if (this.W.available) this.pollWindows(); this.refreshAll();
@@ -605,13 +629,46 @@ export class RemoteSession extends Session {
     } catch (e) { this.toast(e.message, 4800); }
     this.updateAudioMenu();
   }
+  /* ---------- Eigenes Fenster (Pop-out): dieselbe Strom-Sitzung in einem Browserfenster, ohne zweiten Login (popout-main.js, popout.js) ---------- */
+  popOut() {
+    if (this.popped) { try { this.popped.win.focus(); } catch { /* egal */ } return; }
+    const r = openPopout(this, () => this.popBack(), { perf: S.perf });
+    if (!r.ok) { this.toast(r.reason, 4200); return; }
+    this.popped = r;
+    this.resume.confirm();                               // ein Bild kam schon (Voraussetzung fuer das Fenster): das Token darf die Sitzung wieder aufnehmen
+    this.intentional = true; this.teardown(true);        // nur die Leitung kappen: der Server haelt die Sitzung, das Fenster nimmt sie mit dem Token auf
+    this.setState('connected', 'In eigenem Fenster');
+    this.el.reconnectBtn.textContent = 'Wieder anheften';
+    this.showOverlay('Diese Sitzung läuft in einem eigenen Fenster.');
+  }
+  /** Das Fenster ist zu oder will zurueck (oder der Benutzer tippt "Wieder anheften"): die Sitzung hier wieder aufnehmen. */
+  popBack() {
+    const p = this.popped; if (!p) return;
+    this.popped = null; p.stop();
+    this.el.reconnectBtn.textContent = 'Neu verbinden';
+    this.quality = normalizeQuality(store.get('q.' + this.conn.id, this.quality)); this.statusBar.setQuality(this.quality);
+    setPerf(store.get('perf', S.perf));                  // was im Fenster geschaltet wurde, gilt auch hier
+    if (this.disposed) return;
+    this.intentional = false; this.retry = 0; this.resume.lost();     // das Token gilt ab jetzt (die Zeit ohne Browser zaehlt erst ab hier)
+    this.start();
+  }
+
+  /** Bildrate dieser Sitzung waehlen ('auto' | '60' | '30' | 'eco'): merken, an den Server schicken, anzeigen. */
+  setQualityMode(id) {
+    id = normalizeQuality(id);
+    this.quality = id; store.set('q.' + this.conn.id, id);
+    if (this.client instanceof StreamClient) this.client.setQuality(id);
+    this.statusBar.setQuality(id); this.updateMenuLabels();
+    this.toast('Bildrate: ' + qualityOf(id).label, 1800);
+  }
   applyPause() { if (this.client instanceof StreamClient) this.client.setPaused(!this.visible || document.hidden); }
   refreshAll() { this.updateMenuLabels(); this.renderRows(); }
   dispose() {
     this.disposed = true; this.intentional = true;
+    if (this.popped) { const p = this.popped; this.popped = null; p.end(); }      // die Sitzung endet: das Fenster beendet sie am Server und geht zu
     this.teardown();
     this.ro.disconnect(); this.lay.dispose();
-    clearTimeout(this.toastTimer); clearTimeout(this.zoomTimer);
+    clearTimeout(this.toastTimer); clearTimeout(this.zoomTimer); this.statusBar.dispose();
     this.password = null;
     this.unmount();
   }
@@ -685,6 +742,7 @@ export class RemoteSession extends Session {
   }
 
   async start() {
+    if (this.popped) { const p = this.popped; this.popped = null; p.stop(); this.el.reconnectBtn.textContent = 'Neu verbinden'; }   // zurueck ins Hauptfenster: das Fenster gibt die Leitung ab
     this.intentional = false; this.fatal = false; this.connectStarted = Date.now();
     if (this.client && this.client.drawn) this.resume.confirm();      // ein Bild kam schon (zum Beispiel Seite wieder sichtbar, bevor der tote Socket gemeldet wurde): das Token darf die Sitzung aufnehmen
     this.teardown(true);                   // der Server haelt eine Stream-Sitzung weiter, die nehmen wir gleich wieder auf (sonst endet sie dort nach Ablauf)
@@ -711,7 +769,7 @@ export class RemoteSession extends Session {
       return this.streamFailed('Dieser Browser kann das Bild nicht dekodieren (H.264 mit WebCodecs, die Seite braucht HTTPS). Bitte einen aktuellen Browser nutzen und „Neu verbinden“ tippen.');
     }
     if (stale()) return;
-    let ticket, driveMode = null;
+    let ticket, driveMode = null, keyLayout = 'de';
     // Eine erhaltene Sitzung des Servers wieder aufnehmen: kein Ticket, kein Passwort, kein neuer Login am Ziel (der Server nimmt das Token, siehe resume.js)
     const resumeToken = this.everConnected && this.resume.usable() ? this.resume.token : null;
     if (!resumeToken) try {
@@ -722,7 +780,7 @@ export class RemoteSession extends Session {
       if (stale()) return;
       if (resp.status === 401) return this.requestClose('Die Sitzung ist abgelaufen. Bitte neu anmelden.', 'auth');
       if (!resp.ok) throw new Error(data.error || 'Fehler ' + resp.status);
-      ticket = data.ticket; driveMode = data.drive || null;
+      ticket = data.ticket; driveMode = data.drive || null; keyLayout = data.layout || 'de';
     } catch (e) {
       if (stale()) return;
       const msg = e.name === 'TimeoutError' || e.name === 'TypeError' ? 'Keine Verbindung zum Server. Netz prüfen.' : e.message;
@@ -732,7 +790,7 @@ export class RemoteSession extends Session {
     }
 
     const wsBase = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
-    const client = new StreamClient(wsBase + '/api/remote/screen');
+    const client = new StreamClient(wsBase + '/api/remote/screen', keyLayout);
     this.wireAudio(client);
     client.onsession = (o) => { if (this.client === client) this.resume.offered(o.token, o.keep); };
     // Der Server kennt das Token nicht mehr (abgelaufen, Neustart, Sitzung dort beendet): ganz normal neu aufbauen, mit Ticket und neuem Login
@@ -745,6 +803,7 @@ export class RemoteSession extends Session {
       setTimeout(() => { if (!this.disposed && !this.intentional) this.start(); }, 0);
     };
     const display = client.getDisplay();
+    client.quality = this.quality; this.statusBar.attach(client);
     this.client = client; this.display = display; this.lastSent = { w, h }; this.gate = new SizeGate({ settleMs: KB_SETTLE_MS });
     this.lay.note('conn', { engine: 'stream' });
     this.el.display.appendChild(display.getElement());
@@ -1222,6 +1281,8 @@ export class RemoteSession extends Session {
     set('.mv-autokb', S.autoKb ? 'an' : 'aus');
     set('.mv-autopaste', S.autoPaste ? 'an' : 'aus');
     set('.mv-count', String(Sessions.count));
+    set('.mv-perf', S.perf ? 'an' : 'aus');
+    set('.mv-quality', qualityOf(this.quality).label);
     this.updateAudioMenu();
   }
   openMenu() { applyKbMode(); this.updateMenuLabels(); this.el.menu.hidden = false; this.el.scrim.hidden = false; this.setActOn('menu', true); }
@@ -1237,6 +1298,8 @@ export class RemoteSession extends Session {
       toast(S.kbResize === 'pan' ? 'Bild wird verschoben, die Auflösung bleibt' : 'Auflösung folgt der Tastatur', 2200);
       return;
     }
+    if (act === 'perf') { setPerf(!S.perf); return; }
+    if (act === 'quality') { this.setQualityMode(nextQuality(this.quality)); return; }
     if (['kbMode', 'autoKb', 'touchMode', 'autoPaste'].includes(act)) {
       if (act === 'kbMode') S.kbMode = S.kbMode === 'rich' ? 'normal' : S.kbMode === 'normal' ? 'direct' : 'rich';
       if (act === 'autoKb') S.autoKb = !S.autoKb;
@@ -1275,7 +1338,7 @@ export class RemoteSession extends Session {
     const fwd = (state) => {
       if (this.client !== client) return;
       const s = display.getScale() || 1;
-      client.sendMouseState(mouseState(state.x / s, state.y / s, state.left, state.middle, state.right, state.up, state.down));
+      client.sendMouseState({ ...state, x: state.x / s, y: state.y / s });
     };
     mouse.onmousedown = mouse.onmouseup = mouse.onmousemove = fwd;
     mouse.onmouseout = () => {};
@@ -2006,6 +2069,12 @@ export const remoteApi = {
   activateWindow: (id) => { const s = cur(); return s && s.activateWindow(id, s.W.mode === 'apps'); },
   toggleMode: () => cur() && cur().toggleMode(),
   openApps: () => cur() && openApps(cur()),
+  /** Eigenes Fenster (nur Desktop-Oberflaeche): oeffnen oder wieder anheften; popped sagt, ob die Sitzung gerade dort ist */
+  popOut: () => { const s = cur(); if (s) { if (s.popped) s.popBack(); else s.popOut(); } },
+  popped: () => !!(cur() && cur().popped), canPopOut: () => !!cur(),
+  /** Statusleiste und Bildrate */
+  perfShown: () => S.perf, setPerf: (on) => setPerf(on),
+  quality: () => (cur() ? cur().quality : 'auto'), setQuality: (id) => cur() && cur().setQualityMode(id), qualities: QUALITIES,
   /** Sonstiges */
   reconnect: () => { const s = cur(); if (s) { s.retry = 0; if (s.hasCredentials()) s.start(); } },
   action: (name) => ACTIONS[name] && ACTIONS[name](cur()),

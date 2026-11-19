@@ -84,12 +84,12 @@ internal static class RemoteEndpoints
             var rdp = new RdpOptions
             {
                 Host = c.Host, Port = c.Port, UserName = c.Username, Password = password, Width = w & ~1, Height = h & ~1,
-                KeyboardLayout = 0x407, CertificateCheck = trust.Check, Sound = true,
+                Domain = c.Domain, KeyboardLayout = KeyboardLayouts.WindowsId(c.KeyboardLayout), CertificateCheck = trust.Check, Sound = true,
             };
             // Laufwerk: nur, wenn die Verbindung es verlangt (beide Schalter standardmaessig aus) und der Server eine Wurzel hat; die Wurzel kommt nur aus der Server-Einstellung
             var drive = c.DriveShare ? drives.For(c.DriveWrite) : null;
             var screenTicket = screenTickets.Create(id.UserId, new ScreenTarget(rdp, SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid), Trust: trust, Drive: drive));
-            return screenTicket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(screenTicket, c.Kind, w & ~1, h & ~1, "stream", drive is null ? null : drive.Writable ? "rw" : "ro"), AppJson.Default.TicketResponse);
+            return screenTicket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(screenTicket, c.Kind, w & ~1, h & ~1, "stream", drive is null ? null : drive.Writable ? "rw" : "ro", KeyboardLayouts.ClientKey(c.KeyboardLayout)), AppJson.Default.TicketResponse);
         });
 
         // Schritt 2 (Desktop): WebSocket mit dem Ticket, nur binaere Nachrichten (siehe ScreenProtocol). Die Sitzung wurde schon vom ApiGuard geprueft (ohne Cookie-Erneuerung).

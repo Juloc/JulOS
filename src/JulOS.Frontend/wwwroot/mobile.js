@@ -457,6 +457,7 @@ function renderProfile() {
   pg.innerHTML = `
     <div class="m3-h" data-head><h1>Profil</h1><p>Konto, Darstellung und Sicherheit</p></div>
     <div class="m3-card me"><span class="avatar">${esc((user || '?').trim().slice(0, 1))}</span><span class="t">${esc(user)}<small>Passwort und Authenticator</small></span></div>
+    <button type="button" class="mb m3-btn tonal block m3-state" id="mAccount">${icon('lock')}Passwort und Authenticator ändern</button>
 
     <div class="grp-t">Darstellung</div>
     <div class="m3-card grp">
@@ -465,6 +466,9 @@ function renderProfile() {
       <div class="setrow line"><div class="lab">Server und Monitoring zeigen<small>Seiten, für die es noch keine Daten gibt</small></div><button type="button" class="mb m3-switch m3-state" role="switch" aria-checked="${planned}" id="mPlanned" aria-label="Server und Monitoring zeigen"></button></div>
     </div>
 
+    <div class="grp-t">Werkzeuge</div>
+    <button type="button" class="mb m3-btn tonal block m3-state" id="mNet">${icon('dns')}Netzwerkwerkzeuge (Ping, DNS, Ports)</button>
+
     <div class="grp-t">Über JulOS</div>
     <div class="m3-card grp" id="mAbout"><div class="setrow"><div class="lab">Version<small>Wird geladen …</small></div></div></div>
     <button type="button" class="mb m3-btn danger block big logout m3-state" id="mOut">${icon('logout')}Abmelden</button>`;
@@ -472,6 +476,8 @@ function renderProfile() {
   $('#mScheme').addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (!b) return; setTheme({ scheme: b.dataset.v }); applyShellTheme(); renderProfile(); });
   $('#mSwatches').addEventListener('click', (e) => { const b = e.target.closest('[data-seed]'); if (!b) return; setTheme({ seed: b.dataset.seed }); applyShellTheme(); renderProfile(); });
   $('#mPlanned').addEventListener('click', (e) => { const on = e.currentTarget.getAttribute('aria-checked') !== 'true'; ls.set('planned', on); e.currentTarget.setAttribute('aria-checked', on); renderNav(); });
+  $('#mAccount').addEventListener('click', () => ctx.account());
+  $('#mNet').addEventListener('click', () => ctx.nettools());
   $('#mOut').addEventListener('click', () => ctx.signOut());
   if (current === 'profile') { loadSessions(); loadAbout(); }
 }
@@ -574,7 +580,7 @@ function wireSheet(dlg) {
   dlg.addEventListener('pointerup', end); dlg.addEventListener('pointercancel', end);
 }
 function enhanceSheets() {
-  for (const id of ['connDlg', 'hostDlg', 'startDlg', 'quickDlg', 'folderDlg', 'devicesDlg']) { const d = $('#' + id); if (!d) continue; d.classList.add('m3sheet'); wireSheet(d); }
+  for (const id of ['connDlg', 'hostDlg', 'startDlg', 'quickDlg', 'folderDlg', 'devicesDlg', 'accountDlg', 'netDlg']) { const d = $('#' + id); if (!d) continue; d.classList.add('m3sheet'); wireSheet(d); }
   // Art und Bildübertragung: segmentierte Tasten statt Auswahlliste; das select bleibt als Wertspeicher bestehen (shell.js liest und setzt es)
   const segFor = (sel) => {
     const label = sel.closest('label'), box = document.createElement('div');

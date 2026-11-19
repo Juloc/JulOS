@@ -22,11 +22,17 @@ public sealed partial class RdpClient
     // Buttons as browsers number them: 0 left, 1 middle, 2 right, 3 back, 4 forward.
     public void MouseButton(int button, bool down)
     {
+        var (code, flags) = ButtonEvent(button, down);
+        Input(code, 0, flags, _pointerX, _pointerY);
+    }
+
+    // The event kind and the pointer flags of a button: left, middle and right are ordinary mouse events, back and forward are the extended ones (XBUTTON1, XBUTTON2).
+    internal static (int Code, int Flags) ButtonEvent(int button, bool down)
+    {
         var pressed = down ? 0x8000 : 0;
         if (button is 3 or 4)
         {
-            Input(EventMouseExtra, 0, (button == 3 ? 0x0001 : 0x0002) | pressed, _pointerX, _pointerY);
-            return;
+            return (EventMouseExtra, (button == 3 ? 0x0001 : 0x0002) | pressed);
         }
 
         var flag = button switch
@@ -35,18 +41,26 @@ public sealed partial class RdpClient
             1 => 0x4000,
             _ => 0x2000,
         };
-        Input(EventMouse, 0, flag | pressed, _pointerX, _pointerY);
+        return (EventMouse, flag | pressed);
     }
 
-    // A turn of the wheel in the units Windows uses (120 a notch); more than one message can carry is split.
+    // A turn of the wheel in the units Windows uses (120 a notch, finer steps are fine); more than one message can carry is split.
+    // Vertical: positive is away from the user (up). Horizontal: positive is to the right.
     public void MouseWheel(int delta, bool horizontal)
+    {
+        foreach (var flags in WheelFlags(delta, horizontal))
+        {
+            Input(EventMouse, 0, flags, _pointerX, _pointerY);
+        }
+    }
+
+    internal static IEnumerable<int> WheelFlags(int delta, bool horizontal)
     {
         var axis = horizontal ? 0x0400 : 0x0200;
         for (var i = 0; delta != 0 && i < 20; i++)
         {
             var step = Math.Clamp(delta, -255, 255);
-            var flags = step < 0 ? axis | 0x0100 | ((0x100 + step) & 0xFF) : axis | (step & 0xFF);
-            Input(EventMouse, 0, flags, _pointerX, _pointerY);
+            yield return step < 0 ? axis | 0x0100 | ((0x100 + step) & 0xFF) : axis | (step & 0xFF);
             delta -= step;
         }
     }

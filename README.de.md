@@ -33,6 +33,7 @@ Stand: erst Linux (X11, XFCE getestet). Windows ist eingeplant, die Agent-API is
 - **Passwortmanager**: Anmeldeformular und Passwort-Dialog sind fuer Autofill erkennbar (Bitwarden usw.).
 - **Touch**: Tippen = Klick, Halten = Rechtsklick, Ziehen, Zwei-Finger-Scrollen, Pinch-Zoom (Aufloesung passt sich an), Touchpad-Modus.
 - **Mehrere Sitzungen gleichzeitig** (bis zu 8 je Benutzer, RDP und SSH, auch zwei zum selben Ziel): am Handy eine Leiste mit einem Chip je Sitzung (Zustandspunkt) und ein Sheet mit Karten zum Wechseln und Schliessen; am grossen Bildschirm ist jede Sitzung ein eigenes Fenster, die Tastatur gehoert nur dem Fenster mit Fokus. Sitzungen im Hintergrund laufen weiter, aber ohne teure Arbeit. Siehe [docs/SESSIONS.md](docs/SESSIONS.md).
+- **Statusleiste, Bildrate und Pop-out** (Desktop und Handy): je Stream-Sitzung eine optionale Statusleiste (Bilder pro Sekunde, Reaktionszeit, Datenrate, Auflösung, Kodierer), eine Bildrate je Sitzung (automatisch, 60, 30, sparsam) und am großen Bildschirm lässt sich eine Sitzung ohne zweiten Login in ein eigenes Browserfenster lösen. Siehe [docs/STATUSBAR.md](docs/STATUSBAR.md) und [docs/SESSIONS.md](docs/SESSIONS.md).
 - **PWA**: installierbar (braucht HTTPS), Standalone/Vollbild, Offline-Huelle. Material-You-Palette aus Grundfarbe oder Bild.
 - **Neu verbinden** mit Animation, Auto-Tastatur bei Textfeldern, Layout folgt dem sichtbaren Viewport.
 
@@ -61,6 +62,7 @@ Fuer den Rechner, auf dem der Server selbst laeuft, den Hostnamen `host.docker.i
 
 `BIND_IP` in `.env` ist die Adresse, auf der der Server lauscht: `127.0.0.1` (Standard, hinter einem Reverse-Proxy) oder die LAN-Adresse.
 **Mehrere Rechner (Hosts):** ein Host ist ein Rechner oder Server mit eigenen Verbindungen und eigenem Agenten; Desktop-Oberflaeche und Handy-Shell listen sie mit gruenem oder grauem Statuspunkt (siehe [docs/HOSTS.md](docs/HOSTS.md)).
+**Agent-Betrieb und Updates:** der Host-Dialog zeigt `Agent 0.x, Update verfügbar`, wenn der Server einen neueren Agenten mitliefert; **Jetzt aktualisieren** lässt den verbundenen Agenten die neue Datei selbst von deinem Server holen (SHA-256 vom Server, nur gleiche Herkunft, atomarer Ersatz, Neustart), ein Schalter je Agent (Standard aus) macht es beim Verbinden automatisch. Auf dem Ziel: `julos-agent.py status | stop | uninstall [--yes]`; das Log liegt in `~/.local/state/julos/agent.log` (mit Rotation); `install-linux-agent.sh --systemd` startet ihn als Benutzerdienst. Agenten vor 0.4.0 müssen einmal neu eingerichtet werden, bevor sie sich aktualisieren können. Einzelheiten in [docs/AGENT_API.md](docs/AGENT_API.md).
 **Agent auf einem anderen Rechner als der Server:** den Host oeffnen (Host-Dialog oder Ansicht Hosts), **Agent einrichten** waehlen und die angezeigten Befehle in der grafischen Sitzung des Ziels ausfuehren (sie laden die Agent-Dateien von deinem Server und richten ihn mit einem einmaligen Code ein). Der Agent meldet sich von dort aus per HTTPS beim Server, auf dem Ziel lauscht nichts; **Agent entfernen** widerruft ihn. Siehe [docs/AGENT_API.md](docs/AGENT_API.md).
 Auf demselben Rechner bleibt es bei `tools/install-linux-agent.sh` ohne Argumente: die Agent-Dateien liegen in `~/julos-uploads` des Zielbenutzers und der Server laeuft als dieser Benutzer (`JULOS_UID`/`JULOS_GID`). Passwort oder Authenticator verloren? `tools/julos-user.sh` setzt sie auf der Konsole zurueck.
 
@@ -74,7 +76,7 @@ Browser installieren PWAs und erlauben die Zwischenablage-API nur ueber **HTTPS*
 Eine Fernsteuerung darf nicht allein durch das Desktop-Passwort geschuetzt sein.
 
 - **Eigene Anmeldung:** Passwort (Argon2id) plus Authenticator-Code, zehn Wiederherstellungscodes, langlebige rotierende Sitzungen (in PostgreSQL nur als Hash), Sperre mit wachsender Wartezeit. Jede API und der WebSocket brauchen eine Sitzung, siehe [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-- **Erster Start:** das erste Konto legst du im Browser an, mit einem einmaligen Setup-Code aus dem Server-Log. Danach ist die Einrichtung geschlossen.
+- **Erster Start:** das erste Konto legst du im Browser an, mit einem einmaligen Setup-Code aus dem Server-Log. Danach ist die Einrichtung geschlossen. Das Authenticator-Geheimnis siehst du auch als QR-Code; Passwort und Authenticator aenderst du spaeter in der App (Handy: Profil, Desktop: Einstellungen), jeweils mit dem aktuellen Passwort. Ein kleiner Dialog (Ping, DNS-Abfrage, Port-Test) prueft vom Server aus, ob die Ziele deiner gespeicherten Verbindungen antworten.
 - **Verbindungen** laufen ueber Einmal-Tickets (30 s). Das Passwort des Ziels tippst du pro Verbindung (hoechstens 30 s im Speicher, nie geloggt) oder es wird auf Wunsch AES-256-GCM-verschluesselt gespeichert, mit einem Schluessel nur in den Server-Einstellungen; es geht nie zurueck zum Browser.
 - PostgreSQL hat keinen veroeffentlichten Port. Offene Verbindungen enden mit ihrer Sitzung.
 - **mTLS** im Proxy (optionale Zusatzschicht): nur dein Handy mit Client-Zertifikat erreicht die Anmeldeseite. Erzeugen mit
@@ -97,7 +99,7 @@ Die App selbst braucht diesen Weg nicht mehr: die Stream-Engine sendet Bilder un
 - `tools/julos-agent.py` Linux-Agent (Fenster, Programme, Programm-Modus, ausgehende Verbindung zum Server), `tools/julos-clip.py` Foto-Helfer
 - `tools/install-linux-agent.sh`, `tools/julos-user.sh`, `tools/make-client-cert.sh`
 - `docs/AGENT_API.md` Agent-API, `docs/ARCHITECTURE.md` Stack und Sicherheitskonzept, `docs/MODULES.md` die optionalen Module Caddy und DDNS (nur lesen, standardmaessig aus), `caddy/Caddyfile.example`
-- `.github/workflows/docker.yml` baut das Image fuer `ghcr.io/<owner>/<repo>` (amd64 + arm64)
+- `.github/workflows/docker.yml` baut das Image fuer `ghcr.io/<owner>/<repo>` (amd64 + arm64; die SDK-Stufe laeuft nativ, ohne Emulation), `.github/workflows/tests.yml` fuehrt die Server-Tests (mit PostgreSQL), die Browser-Logik-Tests und eine NuGet-Schwachstellenmeldung aus
 
 ## Ausblick
 

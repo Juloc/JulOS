@@ -38,6 +38,7 @@ Status: Linux (X11, XFCE tested) first. Windows is planned and the agent API is 
 - **Touch**: tap = click, long press = right click, drag, two-finger scroll, pinch zoom (resolution adapts), touchpad mode.
 - **PWA**: installable (needs HTTPS), standalone/fullscreen, offline shell. Material You palette from a seed colour or from an image.
 - **Several sessions at once** (up to 8 per user, RDP and SSH, also two to the same target): on the phone a strip with one chip per session (state dot) and a sheet with cards to switch or close; on a wide screen each session is its own window and the keyboard goes only to the focused one. Sessions in the background keep running but pause the expensive work. See [docs/SESSIONS.md](docs/SESSIONS.md).
+- **Status bar, frame rate and pop-out** (desktop and phone): an optional status bar per stream session (frames per second, reaction time, data rate, resolution, encoder), a per-session frame rate (automatic, 60, 30, economy), and on a wide screen a session can move into its own browser window without a second login. See [docs/STATUSBAR.md](docs/STATUSBAR.md) and [docs/SESSIONS.md](docs/SESSIONS.md).
 - **Reconnect** with animation, keyboard auto-open on text fields, visual viewport aware layout.
 
 ## Quick start
@@ -54,7 +55,7 @@ tools/install-linux-agent.sh    # in the graphical session of the target machine
 ```
 
 Open `http://<BIND_IP>:8080` (on `localhost` or over HTTPS; the session cookie needs a secure context), enter the setup code, choose a user name and password and
-confirm the authenticator code. Then add a connection (Desktop = RDP, Terminal = SSH) and tap it. The target's password is typed per connection, or stored encrypted on request (needs a key: either `JULOS_SECRET_KEY` in `.env`, `openssl rand -base64 32`, or a volume at `/data` where the server creates `secret.key` itself, as the image's Compose stacks do). The server backs up the database and this key every day into `~/julos-backup` (see [docs/BACKUP.md](docs/BACKUP.md), including how to restore); copy that folder off the machine).
+confirm the authenticator code. Then add a connection (Desktop = RDP, Terminal = SSH) and tap it. A small dialog (ping, DNS lookup, port test) checks from the server whether the targets of your saved connections answer. The authenticator secret is also shown as a QR code, and password and authenticator can be changed later in the app (phone: Profil, desktop: Einstellungen). The target's password is typed per connection, or stored encrypted on request (needs a key: either `JULOS_SECRET_KEY` in `.env`, `openssl rand -base64 32`, or a volume at `/data` where the server creates `secret.key` itself, as the image's Compose stacks do). The server backs up the database and this key every day into `~/julos-backup` (see [docs/BACKUP.md](docs/BACKUP.md), including how to restore); copy that folder off the machine).
 A desktop connection is streamed by JulOS's own display engine (own RDP client on the server, H.264 decoded in the browser with WebCodecs; the browser needs H.264 and a secure context, otherwise the app says so and offers "Neu verbinden"). It plays the desktop's sound and can send the browser's microphone to the desktop (off until you switch it on in the menu). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 With a GPU in the container the stream engine encodes on it (VAAPI, optionally H.265), see [docs/ENCODERS.md](docs/ENCODERS.md).
 Optionally (`JULOS_RDP_GFX=on`, off by default) the stream engine passes on the H.264 that an RDP server sends through its graphics pipeline instead of encoding again, and falls back to its own encoder whenever the server cannot do that; the common xrdp of Debian cannot, see [docs/RDPGFX.md](docs/RDPGFX.md).
@@ -65,6 +66,7 @@ To reach the machine the server runs on, use the host name `host.docker.internal
 
 `BIND_IP` in `.env` is the address the server listens on: `127.0.0.1` (default, behind a reverse proxy) or the LAN address.
 **Several machines (hosts):** a host is a machine or server with its own connections and its own agent; the desktop interface and the phone shell list them with a green or grey status dot (see [docs/HOSTS.md](docs/HOSTS.md)).
+**Agent operation and updates:** the host dialog shows `Agent 0.x, Update verfügbar` when the server ships a newer agent; **Jetzt aktualisieren** makes the connected agent fetch the new file from your server itself (SHA-256 from the server, same origin only, atomic replace, restart), and a switch per agent (default off) does it automatically on connect. On the target: `julos-agent.py status | stop | uninstall [--yes]`; the log is `~/.local/state/julos/agent.log` (rotated); `install-linux-agent.sh --systemd` runs it as a user service. Agents older than 0.4.0 need one new enrolment before they can update. Details in [docs/AGENT_API.md](docs/AGENT_API.md).
 **Agent on another machine than the server:** open the host (host dialog, or the Hosts view), choose **Agent einrichten** and run the shown commands in the graphical session of the target (they download the agent files from your server and enrol it with a one-time code). The agent connects outbound to the server over HTTPS, so nothing on the target listens; **Agent entfernen** revokes it. See [docs/AGENT_API.md](docs/AGENT_API.md).
 On the same machine, `tools/install-linux-agent.sh` without arguments keeps the old way: the agent files live in `~/julos-uploads` of the target user and the server runs as that user (`JULOS_UID`/`JULOS_GID`). Lost your password or authenticator? `tools/julos-user.sh` resets them on the console.
 
@@ -101,7 +103,7 @@ The app itself no longer needs this path: the stream engine sends images and fil
 - `tools/julos-agent.py` Linux agent (windows, apps, app mode, outbound link to the server), `tools/julos-clip.py` photo clipboard helper
 - `tools/install-linux-agent.sh`, `tools/julos-user.sh`, `tools/make-client-cert.sh`
 - `CHANGELOG.md` and `docs/RELEASING.md` the versions and how to release one, `docs/AGENT_API.md` the agent API, `docs/HOSTS.md` hosts, `docs/ARCHITECTURE.md` the stack and security design, `docs/MODULES.md` the optional read-only Caddy and DDNS modules (off by default), `caddy/Caddyfile.example`
-- `.github/workflows/docker.yml` builds the image for `ghcr.io/<owner>/<repo>` (amd64 + arm64)
+- `.github/workflows/docker.yml` builds the image for `ghcr.io/<owner>/<repo>` (amd64 + arm64; the SDK stage runs natively, no emulation), `.github/workflows/tests.yml` runs the server tests (with PostgreSQL), the browser-logic tests and a NuGet vulnerability report
 
 ## Roadmap
 

@@ -18,6 +18,7 @@ export function sessionMenu(deps) {
   const funcs = R.group('funcs');
   return [
     { label: 'Neu verbinden', icon: 'play', run: () => R.reconnect() },
+    ...(R.canPopOut() ? [{ label: R.popped() ? 'Wieder anheften' : 'In eigenem Fenster öffnen', icon: 'blank', run: () => R.popOut() }] : []),
     { sep: true },
     ...(funcs ? funcs.items.filter((d) => d.type === 'action').map((d) => ({ label: d.label.startsWith(':') ? d.value : d.label, icon: 'blank', run: () => R.press(d) })) : []),
     { sep: true },
@@ -67,6 +68,10 @@ function viewMenu(deps) {
     ...ZOOMS.map((p) => ({ label: p + ' %', icon: Math.abs(pct - p) <= 3 ? 'check' : 'blank', run: () => R.setZoomPercent(p) })),
     { sep: true },
     { label: 'An Fenstergröße anpassen', icon: 'blank', run: () => R.fit() },
+    { sep: true },
+    { label: 'Statusleiste', icon: R.perfShown() ? 'check' : 'blank', hint: R.perfShown() ? 'an' : 'aus', run: () => R.setPerf(!R.perfShown()) },
+    { label: 'Bildrate', icon: 'blank', hint: (R.qualities.find((q) => q.id === R.quality()) || R.qualities[0]).label,
+      sub: R.qualities.map((q) => ({ label: q.label, icon: R.quality() === q.id ? 'check' : 'blank', hint: q.id === 'auto' ? 'Standard' : '', run: () => R.setQuality(q.id) })) },
     { sep: true },
     { label: w && w.maximized ? 'Fenster wiederherstellen' : 'Fenster maximieren', icon: 'blank', run: () => deps.toggleMax() },
     { label: document.fullscreenElement ? 'Vollbild beenden' : 'Vollbild', icon: 'blank', run: () => deps.fullscreen() },

@@ -8,6 +8,11 @@ internal sealed record SetupBeginResponse(string Secret, string Uri, string[] Re
 internal sealed record SetupFinishRequest(string? Code, string? User, string? Totp);
 internal sealed record LoginRequest(string? User, string? Password, string? Code);
 internal sealed record LoginResponse(string User, int RecoveryLeft);
+internal sealed record PasswordChangeRequest(string? Current, string? Next);
+internal sealed record TotpBeginRequest(string? Current);
+internal sealed record TotpBeginResponse(string Secret, string Uri);
+internal sealed record TotpFinishRequest(string? Code);
+internal sealed record TotpFinishResponse(string[] Recovery);
 internal sealed record MeResponse(string? User, bool SetupNeeded);
 internal sealed record SessionDto(bool Current, DateTimeOffset CreatedAt, DateTimeOffset LastSeen, string? UserAgent, string? Ip);
 internal sealed record SessionsResponse(SessionDto[] Sessions);
@@ -16,10 +21,10 @@ internal sealed record ActivateRequest(bool? Maximize);
 internal sealed record LaunchRequest(string? Id);
 internal sealed record ModeRequest(string? Mode);
 internal sealed record UploadResponse(bool Ok);
-internal sealed record ConnectionDto(Guid Id, string Name, string Kind, string Host, int Port, string Username, bool HasPassword, Guid HostId, bool DriveShare = false, bool DriveWrite = false);
+internal sealed record ConnectionDto(Guid Id, string Name, string Kind, string Host, int Port, string Username, bool HasPassword, Guid HostId, bool DriveShare = false, bool DriveWrite = false, string Domain = "", string Notes = "", string Layout = "de");
 internal sealed record ConnectionsResponse(ConnectionDto[] Connections, bool CanStorePasswords, bool DriveAvailable = false);
-internal sealed record ConnectionRequest(string? Name, string? Kind, string? Host, int? Port, string? Username, string? Password = null, bool? ForgetPassword = null, bool? DriveShare = null, bool? DriveWrite = null, Guid? HostId = null);
+internal sealed record ConnectionRequest(string? Name, string? Kind, string? Host, int? Port, string? Username, string? Password = null, bool? ForgetPassword = null, bool? DriveShare = null, bool? DriveWrite = null, Guid? HostId = null, string? Domain = null, string? Notes = null, string? Layout = null);
 internal sealed record TicketRequest(Guid? Connection, string? Password, int? Width, int? Height, string? Sid = null, int? Cols = null, int? Rows = null, string? AcceptHostKey = null, string? AcceptCert = null, QuickTarget? Quick = null);
 /// <summary>Quick Connect: Ziel einer Sitzung ohne gespeicherte Verbindung (das Passwort steht im Ticket selbst und wird nirgends abgelegt).</summary>
 internal sealed record QuickTarget(string? Kind, string? Host, int? Port, string? Username);
-internal sealed record TicketResponse(string Ticket, string Kind, int Width, int Height, string Engine = "stream", string? Drive = null);
+internal sealed record TicketResponse(string Ticket, string Kind, int Width, int Height, string Engine = "stream", string? Drive = null, string? Layout = null);

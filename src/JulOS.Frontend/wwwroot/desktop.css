@@ -88,6 +88,9 @@ html.desktop body { background: #d9d4f2; }
 /* Sitzungsfenster: die Fernsteuerung (#remote) wird hierher verschoben */
 .dk-win.dk-session { background: rgba(255, 255, 255, .78); }
 .dk-win.dk-session .dk-wb { background: #000; }
+/* Statusleiste als Fusszeile des Sitzungsfensters (statusbar.js), ueber dem Bild, ohne die Stage zu verkleinern */
+.dk-win.dk-session .sv-perf { left: 0; right: 0; top: auto; bottom: 0; max-width: none; border-radius: 0; padding: 3px 12px; gap: 0 18px; flex-wrap: nowrap; overflow: hidden; white-space: nowrap; background: rgba(12, 14, 20, .78); }
+.dk-win.dk-session .sv-perf-encoder { margin-left: auto; overflow: hidden; text-overflow: ellipsis; }
 html.desktop .sv { flex: 1; min-height: 0; }
 html.desktop .sv .sv-rowsTop { display: none; }
 /* Die Tastenleiste und die Fensterleiste der VM stehen nicht mehr im Fenster: ihre Funktionen sind Menues in der oberen Leiste (desktop-remote.js) */

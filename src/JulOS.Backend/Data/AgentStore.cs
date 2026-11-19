@@ -3,7 +3,7 @@ using Npgsql;
 
 namespace JulOS.Backend.Data;
 
-public sealed record AgentRecord(Guid HostId, Guid UserId, DateTimeOffset CreatedAt, DateTimeOffset? LastSeen, string? Version, string? Platform, string? Hostname = null, string? Os = null);
+public sealed record AgentRecord(Guid HostId, Guid UserId, DateTimeOffset CreatedAt, DateTimeOffset? LastSeen, string? Version, string? Platform, string? Hostname = null, string? Os = null, bool AutoUpdate = false);
 
 /// <summary>
 /// Agenten, die sich von der Ziel-Maschine aus beim Server melden. Je Host hoechstens einer. Einrichtungscodes und Token stehen
@@ -12,10 +12,10 @@ public sealed record AgentRecord(Guid HostId, Guid UserId, DateTimeOffset Create
 public sealed class AgentStore(NpgsqlDataSource db, TimeProvider time)
 {
     public static readonly TimeSpan CodeLifetime = TimeSpan.FromMinutes(10);
-    private const string Columns = "host_id, user_id, created_at, last_seen, version, platform, hostname, os";
+    private const string Columns = "host_id, user_id, created_at, last_seen, version, platform, hostname, os, auto_update";
 
     private static AgentRecord Read(NpgsqlDataReader r) =>
-        new(r.GetGuid(0), r.GetGuid(1), r.GetFieldValue<DateTimeOffset>(2), r.IsDBNull(3) ? null : r.GetFieldValue<DateTimeOffset>(3), r.IsDBNull(4) ? null : r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5), r.IsDBNull(6) ? null : r.GetString(6), r.IsDBNull(7) ? null : r.GetString(7));
+        new(r.GetGuid(0), r.GetGuid(1), r.GetFieldValue<DateTimeOffset>(2), r.IsDBNull(3) ? null : r.GetFieldValue<DateTimeOffset>(3), r.IsDBNull(4) ? null : r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5), r.IsDBNull(6) ? null : r.GetString(6), r.IsDBNull(7) ? null : r.GetString(7), r.GetBoolean(8));
 
     /// <summary>Neuer Einrichtungscode fuer einen Host des Benutzers (ein frueherer, noch offener Code wird ungueltig). Null, wenn der Host nicht ihm gehoert.</summary>
     public async Task<(string Code, DateTimeOffset Expires)?> CreateCodeAsync(Guid userId, Guid hostId, CancellationToken ct = default)
@@ -88,6 +88,13 @@ public sealed class AgentStore(NpgsqlDataSource db, TimeProvider time)
         await using var cmd = db.Cmd("update agents set last_seen = $2, version = coalesce($3, version), platform = coalesce($4, platform), hostname = coalesce($5, hostname), os = coalesce($6, os) where host_id = $1",
             hostId, time.GetUtcNow(), version, platform, hostname, os);
         await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>Schaltet die automatische Aktualisierung des Agenten ein oder aus. False, wenn es fuer den Host keinen Agenten des Benutzers gibt.</summary>
+    public async Task<bool> SetAutoUpdateAsync(Guid userId, Guid hostId, bool enabled, CancellationToken ct = default)
+    {
+        await using var cmd = db.Cmd("update agents set auto_update = $3 where user_id = $1 and host_id = $2", userId, hostId, enabled);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
 
     /// <summary>Entfernt den Agenten (sein Token gilt nicht mehr) und offene Codes des Hosts.</summary>

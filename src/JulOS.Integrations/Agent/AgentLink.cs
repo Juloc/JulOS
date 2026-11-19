@@ -29,11 +29,13 @@ public sealed class AgentLink
     public static readonly TimeSpan PutTotal = TimeSpan.FromMinutes(3);
     public static readonly TimeSpan PutAnswer = TimeSpan.FromSeconds(12);     // nach dem letzten Stueck: der Helfer hat selbst 8 s
     public static readonly TimeSpan PullTotal = TimeSpan.FromSeconds(30);
+    public static readonly TimeSpan UpdateTotal = TimeSpan.FromSeconds(60);    // Datei holen, pruefen, ersetzen
 
     private readonly WebSocket _ws;
     private readonly ILogger _log;
     private readonly SemaphoreSlim _sendLock = new(1, 1);
     private readonly SemaphoreSlim _transferLock = new(1, 1);
+    private int _updating;
     private readonly ConcurrentDictionary<int, Pending> _pending = new();
     private int _nextId;
 
@@ -310,6 +312,26 @@ public sealed class AgentLink
         }
         catch (AgentUnavailableException) { await CancelAsync(id).ConfigureAwait(false); throw; }
         finally { _pending.TryRemove(id, out _); _transferLock.Release(); }
+    }
+
+    /// <summary>
+    /// Bittet den Agenten, sich zu aktualisieren: er holt die Datei selbst von der Adresse seines Servers (<paramref name="path"/> ist nur der feste Pfad, nie eine volle Adresse),
+    /// prueft die SHA-256-Summe und ersetzt sich. Die Antwort kommt, bevor er neu startet (200) oder mit dem Grund der Ablehnung; danach reisst die Verbindung kurz ab und der Agent
+    /// meldet sich mit der neuen Version. Hoechstens eine Aktualisierung gleichzeitig.
+    /// </summary>
+    public async Task<AgentReply> UpdateAsync(string path, string sha256, string version, CancellationToken ct)
+    {
+        if (Interlocked.CompareExchange(ref _updating, 1, 0) != 0) return new AgentReply(409, """{"error":"Eine Aktualisierung läuft schon."}""");
+        var (id, p) = Register();
+        try
+        {
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            limit.CancelAfter(UpdateTotal);
+            await SendJsonAsync(w => { w.WriteString("t", "update"); w.WriteNumber("id", id); w.WriteString("path", path); w.WriteString("sha256", sha256); w.WriteString("version", version); }, limit.Token).ConfigureAwait(false);
+            return await p.Done.Task.WaitAsync(limit.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new AgentUnavailableException("Zeitüberschreitung beim Agenten."); }
+        finally { _pending.TryRemove(id, out _); Volatile.Write(ref _updating, 0); }
     }
 
     /// <summary>Das Bild aus der Zwischenablage der Ziel-Maschine holen (nur Bilder, hoechstens <paramref name="maxBytes"/>).</summary>

@@ -1,0 +1,69 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # PostgreSQL fuer die Datenbank-Tests (jeder Test legt sich ein eigenes Schema an, siehe tests/JulOS.Backend.Tests/TestDb.cs).
+    # Wegwerf-Zugang nur fuer diesen Lauf. Die Tests gegen echte Ziele (SSH, RDP) brauchen deploy/dev und bleiben hier uebersprungen.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: julos
+          POSTGRES_USER: julos
+          POSTGRES_PASSWORD: ci-throwaway
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U julos -d julos"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      JULOS_TEST_DB: Host=127.0.0.1;Port=5432;Database=julos;Username=julos;Password=ci-throwaway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Server tests (mit Datenbank)
+        run: dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj
+      - name: Bildschirm-Engine tests (ohne Ziele)
+        run: dotnet test --project tests/JulOS.Display.Tests/JulOS.Display.Tests.csproj
+      - name: Browser-Logik (node)
+        run: node --test tests/frontend
+      - name: Agent-Skript uebersetzt
+        run: python3 -m py_compile tools/julos-agent.py tools/julos-clip.py
+
+  # Nur melden: bekannte Schwachstellen in den NuGet-Paketen (auch indirekte). Der Job schlaegt nicht fehl, die Liste steht in der Zusammenfassung.
+  vulnerabilities:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: dotnet list package --vulnerable
+        run: |
+          dotnet restore JulOS.slnx
+          dotnet list JulOS.slnx package --vulnerable --include-transitive 2>&1 | tee vulnerable.txt
+          {
+            echo '### NuGet-Schwachstellen'
+            echo '```'
+            cat vulnerable.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if grep -q 'has the following vulnerable packages' vulnerable.txt; then
+            echo "::warning::Es gibt Pakete mit bekannten Schwachstellen (siehe Zusammenfassung)"
+          fi

@@ -46,6 +46,9 @@ test('host details and the agent sentence', () => {
   assert.match(agentSummary(host('a', { agent: { online: false, lastSeen: '2026-01-02T10:00:00Z', outdated: false } })), /^Agent getrennt \(zuletzt /);
   assert.equal(agentSummary(host('a', { agent: { online: false, outdated: false } })), 'Agent getrennt');
   assert.match(agentSummary(host('a', { agent: { online: true, version: '0.2.0', outdated: true } })), /zu alt/);
+  assert.equal(agentSummary(host('a', { agent: { online: true, version: '0.3.0', platform: 'linux-x11', outdated: false, updateAvailable: true, latest: '0.4.0' } })), 'Agent verbunden – Agent 0.3.0, linux-x11 – Update verfügbar (0.4.0)');
+  assert.doesNotMatch(agentSummary(host('a', { agent: { online: true, version: '0.4.0', outdated: false, updateAvailable: false, latest: '0.4.0' } })), /Update/);
+  assert.doesNotMatch(agentSummary(host('a', { agent: { online: true, version: '0.2.0', outdated: true, updateAvailable: true, latest: '0.4.0' } })), /Update verfügbar/);   // zu alt: erst neu einrichten
 });
 
 test('the service summary counts reachable services', () => {

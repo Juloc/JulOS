@@ -44,7 +44,8 @@
       <!-- Schritt 2: Authenticator und Wiederherstellungscodes -->
       <form id="setupSecretForm" class="card" hidden autocomplete="off">
         <h1>Authenticator</h1>
-        <p class="sub">Füge diesen Schlüssel in deine Authenticator-App ein (zum Beispiel Bitwarden, Aegis oder Google Authenticator).</p>
+        <p class="sub">Scanne den QR-Code oder füge den Schlüssel in deine Authenticator-App ein (zum Beispiel Bitwarden, Aegis oder Google Authenticator).</p>
+        <div id="setupQr" class="qr"></div>
         <a id="setupOtpLink" class="btn ghost" href="#">In der Authenticator-App öffnen</a>
         <p class="hint">Oder den Schlüssel von Hand eintragen:</p>
         <code id="setupSecret" class="mono"></code>
@@ -85,6 +86,7 @@
         <h1>JulOS</h1>
         <button id="accountBtn" type="button" class="chip" aria-haspopup="menu"><span id="accountName"></span></button>
         <div id="accountMenu" class="sheet" hidden role="menu">
+          <button type="button" role="menuitem" data-act="account">Passwort und Authenticator</button>
           <button type="button" role="menuitem" data-act="devices">Geräte und Sitzungen</button>
           <button type="button" role="menuitem" data-act="signout">Abmelden</button>
         </div>
@@ -145,6 +147,8 @@
             <div class="mi" role="menuitem" data-act="autoKb"><span class="mic" data-ic="auto_kb"></span><span class="mt">Auto-Tastatur bei Textfeld</span><span class="mv mv-autokb"></span></div>
             <div class="mi" role="menuitem" data-act="touchMode"><span class="mic" data-ic="touch"></span><span class="mt">Finger</span><span class="mv mv-touch"></span></div>
             <div class="mi" role="menuitem" data-act="autoPaste"><span class="mic" data-ic="image"></span><span class="mt">Foto sofort einfügen</span><span class="mv mv-autopaste"></span></div>
+            <div class="mi" role="menuitem" data-act="perf"><span class="mic" data-ic="speed"></span><span class="mt">Leistung anzeigen</span><span class="mv mv-perf"></span></div>
+            <div class="mi" role="menuitem" data-act="quality"><span class="mic" data-ic="speed"></span><span class="mt">Bildrate</span><span class="mv mv-quality"></span></div>
             <div class="mi" role="menuitem" data-act="sound" hidden><span class="mic" data-ic="volume"></span><span class="mt">Ton vom Rechner</span><span class="mv mv-sound"></span></div>
             <div class="mi" role="menuitem" data-act="volume" hidden><span class="mic" data-ic="volume"></span><span class="mt">Lautstärke</span><span class="mv mv-volume"></span></div>
             <div class="mi" role="menuitem" data-act="mic" hidden><span class="mic" data-ic="mic"></span><span class="mt">Mikrofon</span><span class="mv mv-mic"></span></div>
@@ -186,11 +190,20 @@
         <label>Adresse <input id="connHost" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Name oder IP-Adresse" required></label>
         <label>Port <input id="connPort" type="text" inputmode="numeric" autocomplete="off" placeholder="3389"></label>
         <label>Benutzername auf dem Ziel <input id="connUser" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
+        <label id="connDomainRow"><span>Domäne <span class="opt">(optional, nur Desktop)</span></span> <input id="connDomain" type="text" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="leer = keine Windows-Domäne"></label>
+        <label id="connLayoutRow"><span>Tastaturlayout des Ziels <span class="opt">(nur Desktop)</span></span>
+          <select id="connLayout">
+            <option value="de">Deutsch</option><option value="de-at">Deutsch (Österreich)</option><option value="de-ch">Deutsch (Schweiz)</option>
+            <option value="en-us">Englisch (USA)</option><option value="en-gb">Englisch (Vereinigtes Königreich)</option>
+            <option value="fr">Französisch</option><option value="es">Spanisch</option><option value="it">Italienisch</option>
+          </select>
+        </label>
         <label><span>Passwort <span class="opt">(optional)</span></span>
           <input id="connPw" type="password" autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="leer = bei jeder Verbindung tippen">
         </label>
         <label id="connForgetRow" class="check" hidden><input id="connForget" type="checkbox"> Gespeichertes Passwort löschen</label>
         <p id="connPwHint" class="hint"></p>
+        <label><span>Notizen <span class="opt">(optional)</span></span> <textarea id="connNotes" rows="2" maxlength="500" autocomplete="off" placeholder="Wofür ist das Ziel, Besonderheiten …"></textarea></label>
         <p id="connMsg" class="msg" role="alert"></p>
         <div class="row">
           <button id="connSave" type="submit" class="primary">Speichern</button>
@@ -234,6 +247,13 @@
             <p class="hint">Auf dem Host, in einem Terminal der grafischen Sitzung:</p>
             <pre id="hostAgentCmd" class="agentcmd"></pre>
             <button id="hostAgentCopy" type="button" class="ghost">Befehle kopieren</button>
+          </div>
+          <div id="hostAgentUpdate" hidden>
+            <p id="hostAgentUpdateHint" class="hint" hidden></p>
+            <div class="row">
+              <button id="hostAgentUpdateBtn" type="button" class="primary" hidden>Jetzt aktualisieren</button>
+            </div>
+            <label class="check"><input id="hostAgentAuto" type="checkbox"> Automatisch aktualisieren, wenn eine neue Version da ist</label>
           </div>
           <div class="row">
             <button id="hostAgentSetup" type="button" class="ghost">Agent einrichten</button>
@@ -290,6 +310,61 @@
         <button id="logoutOthers" type="button" class="danger">Alle anderen abmelden</button>
         <button class="ghost close" data-act="close" type="button">Schließen</button>
       </div>
+    </dialog>
+
+    <!-- Konto: Passwort aendern, Authenticator neu einrichten (account.js) -->
+    <dialog id="accountDlg">
+      <h2>Konto</h2>
+      <div id="acctMain">
+        <h3>Passwort ändern</h3>
+        <form id="pwForm" autocomplete="on">
+          <label>Aktuelles Passwort <input id="pwCur" type="password" autocomplete="current-password" required></label>
+          <label>Neues Passwort (mindestens 12 Zeichen) <input id="pwNew" type="password" autocomplete="new-password" minlength="12" required></label>
+          <label>Neues Passwort wiederholen <input id="pwNew2" type="password" autocomplete="new-password" minlength="12" required></label>
+          <p class="hint">Alle anderen Geräte werden dabei abgemeldet.</p>
+          <div class="dlg-btns"><button type="submit" class="primary">Passwort ändern</button></div>
+          <p id="pwMsg" class="msg" role="alert"></p>
+        </form>
+        <h3>Authenticator neu einrichten</h3>
+        <form id="totpBeginForm" autocomplete="off">
+          <p class="hint">Du bekommst einen neuen Schlüssel (als Text und QR-Code) und neue Wiederherstellungscodes. Der alte Authenticator und die alten Codes gelten erst nach der Bestätigung nicht mehr; alle anderen Geräte werden abgemeldet.</p>
+          <label>Aktuelles Passwort <input id="totpCur" type="password" autocomplete="current-password" required></label>
+          <div class="dlg-btns"><button type="submit" class="primary">Neuen Schlüssel anfordern</button></div>
+          <p id="totpMsg" class="msg" role="alert"></p>
+        </form>
+      </div>
+      <form id="totpFinishForm" hidden autocomplete="off">
+        <h3>Neuer Authenticator</h3>
+        <p class="hint">Scanne den QR-Code oder trage den Schlüssel in deiner Authenticator-App ein (zum Beispiel Bitwarden, Aegis oder Google Authenticator), dann gib den ersten Code ein. Erst danach gilt der neue Schlüssel.</p>
+        <div id="acctQr" class="qr"></div>
+        <a id="acctOtpLink" class="btn ghost" href="#">In der Authenticator-App öffnen</a>
+        <p class="hint">Oder den Schlüssel von Hand eintragen:</p>
+        <code id="acctSecret" class="mono"></code>
+        <label>Code aus der App <input id="totpCode" type="text" inputmode="numeric" pattern="[0-9 ]*" autocomplete="one-time-code" required></label>
+        <div class="dlg-btns"><button type="submit" class="primary">Bestätigen und ersetzen</button><button id="totpAbort" type="button" class="ghost">Abbrechen</button></div>
+        <p id="totpFinishMsg" class="msg" role="alert"></p>
+      </form>
+      <div id="totpDone" hidden>
+        <h3>Neue Wiederherstellungscodes</h3>
+        <p class="hint">Der neue Authenticator gilt. Jeder Code gilt einmal und ersetzt den Authenticator, falls das Handy weg ist; die alten Codes sind ungültig. Speichere diese jetzt, sie werden nicht noch einmal gezeigt.</p>
+        <pre id="acctRecovery" class="mono"></pre>
+        <div class="dlg-btns"><button id="acctCopy" type="button" class="ghost">Codes kopieren</button></div>
+        <p id="totpDoneMsg" class="msg" role="alert"></p>
+      </div>
+      <div class="row"><button class="ghost close" data-act="close" type="button">Schließen</button></div>
+    </dialog>
+
+    <!-- Netzwerkwerkzeuge: Ping, DNS, Port-Test gegen gespeicherte Ziele (nettools.js) -->
+    <dialog id="netDlg">
+      <h2>Netzwerkwerkzeuge</h2>
+      <p class="hint">Prüft vom Server aus, nicht von diesem Gerät, und nur Ziele deiner gespeicherten Verbindungen (und nur, was die Erlaubnisliste des Servers zulässt).</p>
+      <label>Ziel <select id="netTarget"></select></label>
+      <div class="dlg-btns"><button id="netPing" type="button" class="ghost">Ping</button><button id="netDns" type="button" class="ghost">DNS-Abfrage</button></div>
+      <label>Ports <span class="opt">(bis zu 10, mit Komma getrennt)</span> <input id="netPorts" type="text" inputmode="numeric" autocomplete="off" placeholder="22, 3389"></label>
+      <div class="dlg-btns"><button id="netPortGo" type="button" class="primary">Ports prüfen</button></div>
+      <pre id="netOut" class="mono" aria-live="polite"></pre>
+      <p id="netMsg" class="msg" role="alert"></p>
+      <div class="row"><button class="ghost close" data-act="close" type="button">Schließen</button></div>
     </dialog>
 
     <!-- Text senden / Zwischenablage -->

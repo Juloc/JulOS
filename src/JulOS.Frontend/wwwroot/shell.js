@@ -4,6 +4,9 @@ import { agentSummary, hostDetail } from './hosts.js';
 import { loadOrganisation, takeOverLocal, mergePlacements, setFolder, touch, move, folderName } from './folders.js';
 import { initFolderDialog } from './folder-dialog.js';
 import { parseQuickTarget, quickConnection, DEFAULT_PORT as QUICK_PORT } from './quick.js';
+import { initAccount } from './account.js';
+import { initNetTools } from './nettools.js';
+import { qrSvg } from './qr.js';
 import './terminal-session.js';      // Sitzungsart 'terminal' (natives SSH-Terminal)
 
 /* =====================================================================
@@ -95,6 +98,7 @@ $('#setupForm').addEventListener('submit', async (e) => {
     setupInfo = { code, user };
     $('#setupSecret').textContent = r.secret;
     $('#setupOtpLink').href = r.uri;
+    try { $('#setupQr').innerHTML = qrSvg(r.uri, { label: 'QR-Code für den Authenticator' }); } catch { $('#setupQr').replaceChildren(); }
     $('#setupRecovery').textContent = r.recovery.join('\n');
     $('#setupPw').value = ''; $('#setupPw2').value = '';
     form.hidden = true; $('#setupSecretForm').hidden = false; setTimeout(() => $('#setupTotp').focus(), 50);
@@ -113,7 +117,7 @@ $('#setupSecretForm').addEventListener('submit', async (e) => {
   busy(form, true); setMsg(msg, '');
   try {
     const r = await api('/api/setup/finish', { method: 'POST', body: { code: setupInfo.code, user: setupInfo.user, totp: $('#setupTotp').value.replace(/\s+/g, '') } });
-    $('#setupSecret').textContent = ''; $('#setupRecovery').textContent = ''; $('#setupTotp').value = ''; setupInfo = null;
+    $('#setupSecret').textContent = ''; $('#setupRecovery').textContent = ''; $('#setupQr').replaceChildren(); $('#setupTotp').value = ''; setupInfo = null;
     showHome(r.user);
   } catch (err) { setMsg(msg, err.message); }
   finally { busy(form, false); }
@@ -213,6 +217,7 @@ $('#accountMenu').addEventListener('click', async (e) => {
   const act = e.target.closest('button')?.dataset.act;
   $('#accountMenu').hidden = true;
   if (act === 'devices') openDevices();
+  else if (act === 'account') openAccount();
   else if (act === 'signout') signOut();
 });
 
@@ -237,10 +242,13 @@ const showDriveChoice = () => {
   $('#connDriveWriteHint').hidden = !on || !share || !$('#connDriveWrite').checked;
   $('#connDriveOff').hidden = !on || state.driveAvailable;
 };
-$('#connKind').addEventListener('change', () => { $('#connPort').placeholder = DEFAULT_PORT[$('#connKind').value]; showDriveChoice(); });
+$('#connKind').addEventListener('change', () => { $('#connPort').placeholder = DEFAULT_PORT[$('#connKind').value]; showDriveChoice(); showDesktopFields(); });
 $('#connDrive').addEventListener('change', showDriveChoice);
 $('#connDriveWrite').addEventListener('change', showDriveChoice);
 $('#addConn').addEventListener('click', () => editDialog(null));
+
+// Domäne und Tastaturlayout gibt es nur beim Desktop (RDP)
+function showDesktopFields() { const on = $('#connKind').value === 'desktop'; $('#connDomainRow').hidden = !on; $('#connLayoutRow').hidden = !on; }
 
 function editDialog(c, kind) {
   state.editing = c;
@@ -252,6 +260,8 @@ function editDialog(c, kind) {
   $('#connPort').value = c ? String(c.port) : '';
   $('#connPort').placeholder = DEFAULT_PORT[$('#connKind').value];
   $('#connUser').value = c ? c.username : '';
+  $('#connDomain').value = c ? c.domain || '' : ''; $('#connLayout').value = c && c.layout ? c.layout : 'de'; $('#connNotes').value = c ? c.notes || '' : '';
+  showDesktopFields();
   fillHostSelect(c ? c.hostId : undefined);
   fillFolderSelect(c ? c.folderId : '');
   $('#connUp').hidden = $('#connDown').hidden = !c;
@@ -331,9 +341,18 @@ function hostDialog(h, onCreated) {
 }
 
 function showAgentState(h) {
+  const a = h.agent;
   $('#hostAgentState').textContent = agentSummary(h);
-  $('#hostAgentSetup').textContent = h.agent ? 'Neu einrichten' : 'Agent einrichten';
-  $('#hostAgentRemove').hidden = !h.agent;
+  $('#hostAgentSetup').textContent = a ? 'Neu einrichten' : 'Agent einrichten';
+  $('#hostAgentRemove').hidden = !a;
+  $('#hostAgentUpdate').hidden = !a;
+  $('#hostAgentAuto').checked = !!(a && a.autoUpdate);
+  const due = !!(a && a.updateAvailable);
+  $('#hostAgentUpdateBtn').hidden = !due;
+  $('#hostAgentUpdateBtn').disabled = !(due && a.online && a.canUpdate);
+  const hint = $('#hostAgentUpdateHint');
+  hint.textContent = !due ? '' : !a.canUpdate ? 'Dieser Agent kann sich noch nicht selbst aktualisieren: einmal neu einrichten (Agent einrichten).' : !a.online ? 'Der Agent ist gerade getrennt; aktualisieren geht, sobald er sich meldet.' : '';
+  hint.hidden = !hint.textContent;
 }
 
 $('#hostForm').addEventListener('submit', async (e) => {
@@ -377,6 +396,37 @@ $('#hostAgentCopy').addEventListener('click', async () => {
   catch { const r = document.createRange(); r.selectNodeContents($('#hostAgentCmd')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); setMsg($('#hostMsg'), 'Bitte markiert kopieren (Kopieren nicht erlaubt).'); }
 });
 
+// Aktualisieren: der Server schickt dem Agenten die Anweisung, der Agent holt die Datei selbst, prueft sie und startet neu; danach melden wir uns kurz bei der Liste, bis die neue Version da ist
+$('#hostAgentUpdateBtn').addEventListener('click', async (e) => {
+  const b = e.currentTarget, h = state.editingHost; if (!h) return;
+  b.disabled = true; setMsg($('#hostMsg'), '');
+  try {
+    const r = await api(`/api/hosts/${h.id}/agent/update`, { method: 'POST', body: {} });
+    setMsg($('#hostMsg'), `Agent wird auf ${r.version} aktualisiert und startet neu …`, true);
+    for (let i = 0; i < 20; i++) {
+      await new Promise((ok) => setTimeout(ok, 2000));
+      await loadHosts();
+      const now = state.hosts.find((x) => x.id === h.id);
+      if (now && now.agent && now.agent.online && !now.agent.updateAvailable) {
+        state.editingHost = now; showAgentState(now);
+        setMsg($('#hostMsg'), `Agent ist jetzt auf ${now.agent.version}.`, true);
+        if (M) M.snack('Agent aktualisiert');
+        return;
+      }
+    }
+    setMsg($('#hostMsg'), 'Der Agent hat sich noch nicht mit der neuen Version gemeldet. Bitte gleich die Liste prüfen.');
+  } catch (err) { setMsg($('#hostMsg'), err.message); }
+  finally { const now = state.hosts.find((x) => x.id === h.id); if (now) { state.editingHost = now; showAgentState(now); } }
+});
+
+$('#hostAgentAuto').addEventListener('change', async (e) => {
+  const box = e.currentTarget, h = state.editingHost; if (!h) return;
+  box.disabled = true; setMsg($('#hostMsg'), '');
+  try { await api(`/api/hosts/${h.id}/agent/auto-update`, { method: 'PUT', body: { enabled: box.checked } }); await loadHosts(); }
+  catch (err) { box.checked = !box.checked; setMsg($('#hostMsg'), err.message); }
+  finally { box.disabled = false; const now = state.hosts.find((x) => x.id === h.id); if (now) state.editingHost = now; }
+});
+
 // Entfernen braucht ein zweites Tippen (das Token gilt danach nicht mehr, der Agent trennt sich sofort)
 $('#hostAgentRemove').addEventListener('click', async (e) => {
   const b = e.currentTarget, h = state.editingHost; if (!h) return;
@@ -396,7 +446,8 @@ $('#connForm').addEventListener('submit', async (e) => {
   const form = e.currentTarget, msg = $('#connMsg');
   const portText = $('#connPort').value.trim();
   if (portText && !/^\d{1,5}$/.test(portText)) return setMsg(msg, 'Der Port muss eine Zahl sein.');
-  const body = { name: $('#connName').value, kind: $('#connKind').value, host: $('#connHost').value, port: portText ? Number(portText) : null, username: $('#connUser').value };
+  const body = { name: $('#connName').value, kind: $('#connKind').value, host: $('#connHost').value, port: portText ? Number(portText) : null, username: $('#connUser').value, notes: $('#connNotes').value };
+  if (body.kind === 'desktop') { body.domain = $('#connDomain').value; body.layout = $('#connLayout').value; }
   const hostId = $('#connHostSel').value; if (hostId && hostId !== NEW_HOST) body.hostId = hostId;
   const drive = body.kind === 'desktop' && state.driveAvailable && $('#connDrive').checked;
   body.driveShare = drive; body.driveWrite = drive && $('#connDriveWrite').checked;
@@ -533,8 +584,10 @@ Sessions.addEventListener('closed', (e) => {
 Sessions.addEventListener('home', () => { if (!D) goHome(); });
 Sessions.addEventListener('switcher', () => { if (M) M.openSwitcher(); else goHome(); });
 
-if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), signOut, home: goHome });
-if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), devices: openDevices, signOut });
+const openAccount = initAccount({ api, setMsg });
+const openNetTools = initNetTools({ api, setMsg, connections: () => state.connections });
+if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), signOut, home: goHome, account: openAccount, nettools: openNetTools });
+if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), devices: openDevices, account: openAccount, nettools: openNetTools, signOut });
 
 /* ---------- Geraete und Sitzungen ---------- */
 function describeAgent(ua) {

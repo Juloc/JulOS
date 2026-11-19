@@ -11,9 +11,10 @@
  *                      30 Kodierer (codec, GPU ja/nein, Name: nur zum Anzeigen); ein Bild hat in flags Bit 1 gesetzt, wenn es H.265 ist
  *                      40 Nachbesserung (x, y, breite, hoehe u16, PNG: ein ruhendes Rechteck verlustfrei, kommt ueber das Video),
  *                      41 Nachbesserung weg (anzahl u16, je x, y, breite, hoehe: dort hat sich der Bildschirm geaendert)
- *   Browser -> Server: 1 Bestaetigung (Folgenummer u32: alle Bilder bis dahin), 2 Maus bewegt, 3 Maustaste, 4 Mausrad, 5 Taste (Scancode), 6 Zeichen, 7 Fenstergroesse, 8 Schluesselbild,
+ *   Browser -> Server: 1 Bestaetigung (Folgenummer u32: alle Bilder bis dahin), 2 Maus bewegt, 3 Maustaste (0 links, 1 Mitte, 2 rechts, 3 zurueck, 4 vor), 4 Mausrad (Betrag i16 in Windows-Einheiten, 120 je Raste; Byte: waagerecht), 5 Taste (Scancode), 6 Zeichen, 7 Fenstergroesse, 8 Schluesselbild,
  *                      9 Zwischenablage (UTF-8-Text, bis 1 MiB; der ferne Rechner holt ihn, wenn er einfuegt),
  *                      10 Senden Anfang (Bild als BMP oder Datei), 11 Stueck, 12 Ende, 13 Abbruch, 14 Datei der VM holen, 15 Holen Abbruch,
+ *                      31 Bildrate (Stufe: 0 automatisch, 1 hoechstens 60 Bilder/s, 2 hoechstens 30, 3 sparsam; je Sitzung),
  *                      16 Pause (1 = die Ansicht ist nicht zu sehen: der Server kodiert nicht, 0 = weiter),
  *                      17 Beenden (die Sitzung wird geschlossen: der Server erhaelt sie nicht fuer ein Wiederverbinden),
  *                      30 Codecs (Menge: 1 H.264, 2 H.265; beim Verbinden steht sie in der Adresse als codecs=, danach nur noch bei einem Wechsel zurueck auf H.264)
@@ -25,11 +26,12 @@
  * ===================================================================== */
 
 import { StreamAudio } from './stream-audio.js';
+import { StreamPerf, normalizeQuality, qualityOf } from './perf.js';
 import { codecMask, probeCodecs, codecStringOf, decoderConfig, CODEC_H264, CODEC_HEVC } from './codecs.js';
 
 const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, image: 7, files: 8, fileChunk: 9, result: 10, session: 11, resumeFailed: 12, audio: 20, audioStatus: 21, encoder: 30, refine: 40, refineClear: 41 };
 const OUT = { ack: 1, move: 2, button: 3, wheel: 4, key: 5, unicode: 6, resize: 7, keyframe: 8, clipboard: 9,
-  sendBegin: 10, sendChunk: 11, sendEnd: 12, sendCancel: 13, fileRequest: 14, fileCancel: 15, pause: 16, end: 17, codecs: 30 };
+  sendBegin: 10, sendChunk: 11, sendEnd: 12, sendCancel: 13, fileRequest: 14, fileCancel: 15, pause: 16, end: 17, codecs: 30, quality: 31 };
 const CHUNK = 128 * 1024;                 // so gross sind die Stuecke beim Senden (der Server nimmt bis 256 kB)
 const BUFFER_HIGH = 1024 * 1024;          // darueber wartet das Senden, bis der Socket leer laeuft (sonst steht die Maus hinter einer Datei)
 
@@ -46,10 +48,15 @@ for (let i = 0; i < 10; i++) SPECIAL.set(0xffbe + i, [0x3b + i, 0]);            
 SPECIAL.set(0xffc8, [0x57, 0]); SPECIAL.set(0xffc9, [0x58, 0]);                    // F11, F12
 const MODIFIERS = { 0xffe3: 'ctrl', 0xffe4: 'ctrl', 0xffe9: 'alt', 0xffea: 'alt', 0xffeb: 'super', 0xffec: 'super' };
 
-// Buchstaben und Ziffern fuer Tastenkombinationen (Strg+C ...): die Taste der deutschen Belegung; auf der englischen sind y und z vertauscht
+// Buchstaben und Ziffern fuer Tastenkombinationen (Strg+C ...): die Taste der deutschen Belegung; auf der englischen sind y und z vertauscht,
+// auf der franzoesischen (AZERTY) a/q, z/w und m (siehe LETTER_OVERRIDES, je nach Layout der Verbindung)
 const LETTER_SCANCODES = { q: 0x10, w: 0x11, e: 0x12, r: 0x13, t: 0x14, z: 0x15, u: 0x16, i: 0x17, o: 0x18, p: 0x19,
   a: 0x1e, s: 0x1f, d: 0x20, f: 0x21, g: 0x22, h: 0x23, j: 0x24, k: 0x25, l: 0x26, y: 0x2c, x: 0x2d, c: 0x2e, v: 0x2f, b: 0x30, n: 0x31, m: 0x32,
   1: 0x02, 2: 0x03, 3: 0x04, 4: 0x05, 5: 0x06, 6: 0x07, 7: 0x08, 8: 0x09, 9: 0x0a, 0: 0x0b, ',': 0x33, '.': 0x34, '-': 0x35, '+': 0x1b, '#': 0x2b, '<': 0x56 };
+
+// Abweichungen der Buchstabentasten je Layout der Verbindung ("de" und "qwertz" haben keine; "en" ist der alte Name von "qwerty")
+const QWERTY = { y: 0x15, z: 0x2c };
+const LETTER_OVERRIDES = { qwerty: QWERTY, en: QWERTY, azerty: { y: 0x15, z: 0x11, w: 0x2c, a: 0x10, q: 0x1e, m: 0x27 } };
 
 // Zeichen, die nur die deutsche Belegung kennt: [Scancode, Umschalt, AltGr]. Manche Server (xrdp) nehmen fuer solche Zeichen keine
 // Unicode-Eingabe an, deshalb gehen sie ueber ihre Taste; alles andere geht als Unicode.
@@ -180,7 +187,9 @@ export class StreamClient {
     this.state = 0;
     this.socket = null; this.decoder = null; this.codec = '';
     this.connected = false; this.closing = false;
-    this.last = { x: -1, y: -1, left: false, middle: false, right: false, up: false, down: false };
+    this.last = { x: -1, y: -1, left: false, middle: false, right: false, back: false, forward: false, up: false, down: false };
+    this.focusLost = (e) => { if (e.type === 'blur' || document.hidden) this.releaseAll(); };
+    this.held = new Set();      // gedrueckte Tasten (Scancode und Erweiterung), damit sie beim Fokusverlust losgelassen werden koennen
     this.mods = { ctrl: false, alt: false, super: false };
     this.layout = layout;
     this.stats = { pictures: 0, dropped: 0, bytes: 0 };
@@ -194,6 +203,8 @@ export class StreamClient {
     this.hevcOk = !!codecSupport.hevc;  // ob H.265 angeboten wird; nach einem Fehler des H.265-Dekodierers nicht mehr
     this.hevc = false;                  // ob der Dekodierer gerade H.265 dekodiert
     this.encoder = null;                // was der Server meldet: { codec, hardware, name }
+    this.perf = new StreamPerf();       // Zaehler fuer die Leistungsanzeige (perf.js, docs/STATUSBAR.md)
+    this.quality = 'auto';              // gewaehlte Bildrate-Stufe (Nachricht 31)
   }
 
   getDisplay() { return this.display; }
@@ -205,6 +216,13 @@ export class StreamClient {
     if (this.paused === on) return;
     this.paused = on;
     if (this.connected) this.send(Uint8Array.of(OUT.pause, on ? 1 : 0));
+  }
+
+  // Bildrate und Bitrate dieser Sitzung waehlen (Nachricht 31): 'auto' | '60' | '30' | 'eco'. Der Server behaelt die Stufe bis zur naechsten Nachricht;
+  // ein neuer Client schickt sie nach dem Verbinden erneut (die Sitzung der Seite kennt die Wahl).
+  setQuality(id) {
+    this.quality = normalizeQuality(id);
+    if (this.connected) this.send(Uint8Array.of(OUT.quality, qualityOf(this.quality).byte));
   }
 
   // Ein Dekodierer, der Bilder angenommen hat und sie nicht mehr herausgibt (manche halten Bilder zurueck, weil sie auf spaetere warten):
@@ -223,6 +241,7 @@ export class StreamClient {
     socket.binaryType = 'arraybuffer';
     this.socket = socket;
     this.watch = setInterval(() => this.watchDecoder(), 500);
+    window.addEventListener('blur', this.focusLost); document.addEventListener('visibilitychange', this.focusLost);
     socket.onmessage = (e) => { if (this.socket === socket) this.receive(e.data); };
     socket.onclose = () => { if (this.socket === socket) this.finish(); };
     socket.onerror = () => { if (this.socket === socket && !this.connected && this.onerror) this.onerror({ code: 520, message: 'Keine Verbindung zum Server.' }); };
@@ -230,7 +249,7 @@ export class StreamClient {
 
   // keep: nur die Leitung kappen (der Server haelt die Sitzung, ein neuer Client nimmt sie mit dem Token wieder auf); sonst "Beenden" melden
   disconnect(keep = false) {
-    clearInterval(this.watch);
+    clearInterval(this.watch); this.unwatchFocus();
     this.closing = true;
     if (!keep) this.send1(OUT.end);
     const s = this.socket; this.socket = null;
@@ -241,7 +260,7 @@ export class StreamClient {
   }
 
   finish() {
-    clearInterval(this.watch);
+    clearInterval(this.watch); this.unwatchFocus();
     this.socket = null; this.closeDecoder(); this.audio.close();
     for (const t of this.transfers.values()) t.result({ code: 4, text: 'Verbindung beendet.' });
     for (const f of this.fetches.values()) f.fail('Verbindung beendet.');
@@ -257,6 +276,7 @@ export class StreamClient {
 
   /* ---- vom Server ---- */
   receive(buffer) {
+    this.perf.received(buffer.byteLength);
     const v = new DataView(buffer);
     switch (v.getUint8(0)) {
       case IN.picture: this.picture(v, buffer); break;
@@ -272,7 +292,7 @@ export class StreamClient {
       }
       case IN.size:
         this.display.resize(v.getUint16(1), v.getUint16(3));
-        if (!this.connected) { this.connected = true; this.setState(3); if (this.paused) this.send(Uint8Array.of(OUT.pause, 1)); }
+        if (!this.connected) { this.connected = true; this.setState(3); if (this.paused) this.send(Uint8Array.of(OUT.pause, 1)); if (this.quality !== 'auto') this.setQuality(this.quality); }
         break;
       case IN.error: {
         const code = v.getUint16(1), message = new TextDecoder().decode(new Uint8Array(buffer, 3));
@@ -479,6 +499,7 @@ export class StreamClient {
         frame.close();
         this.drawn = true;
         this.output = sequence; this.activityAt = performance.now();
+        this.perf.drawn(this.activityAt, sequence);
         this.ack(sequence);                        // erst nach dem Zeichnen: so laeuft der Server dem Browser nie davon
       },
       error: () => { if (this.decoder === d) this.decoderFailed(); },
@@ -501,12 +522,33 @@ export class StreamClient {
       const b = new DataView(new ArrayBuffer(5)); b.setUint8(0, OUT.move); b.setUint16(1, x); b.setUint16(3, y); this.send(b.buffer);
       this.display.setPointer(x, y); l.x = x; l.y = y;
     }
-    for (const [name, button] of [['left', 0], ['middle', 1], ['right', 2]]) {
-      if (!!s[name] !== l[name]) { this.send(Uint8Array.of(OUT.button, button, s[name] ? 1 : 0)); l[name] = !!s[name]; }
+    for (const [name, button] of [['left', 0], ['middle', 1], ['right', 2], ['back', 3], ['forward', 4]]) {
+      if (!!s[name] !== l[name]) { this.send(Uint8Array.of(OUT.button, button, s[name] ? 1 : 0)); l[name] = !!s[name]; if (s[name]) this.noteInput(); }
     }
     for (const [name, delta] of [['up', 120], ['down', -120]]) {
-      if (s[name] && !l[name]) { const b = new DataView(new ArrayBuffer(4)); b.setUint8(0, OUT.wheel); b.setInt16(1, delta); b.setUint8(3, 0); this.send(b.buffer); }
+      if (s[name] && !l[name]) { this.noteInput(); this.sendWheel(delta, false); }
       l[name] = !!s[name];
+    }
+    // Raddrehung in Windows-Einheiten (120 je Raste, auch feinere Schritte), senkrecht und waagerecht
+    if (s.wheel) this.sendWheel(s.wheel, false);
+    if (s.hwheel) this.sendWheel(s.hwheel, true);
+  }
+
+  unwatchFocus() { window.removeEventListener('blur', this.focusLost); document.removeEventListener('visibilitychange', this.focusLost); }
+
+  sendWheel(delta, horizontal) {
+    const b = new DataView(new ArrayBuffer(4)); b.setUint8(0, OUT.wheel); b.setInt16(1, Math.max(-32768, Math.min(32767, Math.round(delta)))); b.setUint8(3, horizontal ? 1 : 0); this.send(b.buffer);
+  }
+
+  // Alles loslassen, was am fernen Rechner gedrueckt ist: sonst bleibt eine Taste haengen, wenn der Browser den Fokus verliert (Alt+Tab, Tab-Wechsel,
+  // Dialog), weil das Loslassen dann nie bei uns ankommt. Der ferne Rechner bekommt die Freigabe, die Tasten- und Umschaltzustaende hier werden geloescht.
+  releaseAll() {
+    for (const code of this.held) this.send(Uint8Array.of(OUT.key, code >> 1, (code & 1)));
+    this.held.clear();
+    this.mods.ctrl = this.mods.alt = this.mods.super = false;
+    const l = this.last;
+    for (const [name, button] of [['left', 0], ['middle', 1], ['right', 2], ['back', 3], ['forward', 4]]) {
+      if (l[name]) { this.send(Uint8Array.of(OUT.button, button, 0)); l[name] = false; }
     }
   }
 
@@ -522,11 +564,13 @@ export class StreamClient {
     if (this.mods.ctrl || this.mods.alt || this.mods.super) {
       let low = char.toLowerCase();
       let code = LETTER_SCANCODES[low];
-      if (code !== undefined && this.layout !== 'de') { if (low === 'y') code = 0x15; else if (low === 'z') code = 0x2c; }
+      const over = LETTER_OVERRIDES[this.layout];
+      if (code !== undefined && over && over[low] !== undefined) code = over[low];
       if (code !== undefined) { this.key(code, 0, pressed); return; }
     }
     const german = this.layout === 'de' ? GERMAN_KEYS[char] : undefined;
     if (german) { if (pressed) this.tapLayoutKey(german); return; }
+    if (pressed) this.noteInput();
     if (pressed) for (const unit of char) { for (let i = 0; i < unit.length; i++) { this.send(Uint8Array.of(OUT.unicode, unit.charCodeAt(i) >> 8, unit.charCodeAt(i) & 255)); } }
   }
 
@@ -538,7 +582,14 @@ export class StreamClient {
     if (altgr) this.key(0x38, 1, false);
   }
 
-  key(scancode, extended, pressed) { this.send(Uint8Array.of(OUT.key, scancode, (extended ? 1 : 0) | (pressed ? 2 : 0))); }
+  // Eingaben, auf die ein neues Bild folgen sollte: daraus rechnet die Leistungsanzeige die Reaktionszeit (nur ein Zeitstempel)
+  noteInput() { this.perf.input(performance.now(), this.received); }
+
+  key(scancode, extended, pressed) {
+    const id = (scancode << 1) | (extended ? 1 : 0);
+    if (pressed) { this.held.add(id); this.noteInput(); } else this.held.delete(id);
+    this.send(Uint8Array.of(OUT.key, scancode, (extended ? 1 : 0) | (pressed ? 2 : 0)));
+  }
 
   // Text fuer die Zwischenablage des fernen Rechners (UTF-8): eine Nachricht, der ferne Rechner holt ihn, wenn er einfuegt
   sendClipboardText(text) {

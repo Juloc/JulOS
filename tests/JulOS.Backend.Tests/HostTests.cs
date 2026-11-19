@@ -528,4 +528,28 @@ public sealed class HostTests
         Assert.Equal(0, await db.ScalarAsync<long>("select count(*) from agents"));
         await Assert.ThrowsAnyAsync<Exception>(() => FakeLinkAgent.ConnectAsync(app.Server, token));          // das Token gilt nicht mehr
     }
+
+    /// <summary>Die Migration 009 ist rueckwaertskompatibel: bestehende Verbindungen bekommen leere Domaene, leere Notizen und Deutsch (wie bisher fest eingestellt).</summary>
+    [Fact]
+    public async Task Migration_009_gives_existing_connections_the_old_behaviour()
+    {
+        await using var old = await TestDb.CreateAsync(migrate: false);
+        var asm = typeof(Migrator).Assembly;
+        await old.ExecAsync("create table schema_migrations (id text primary key, applied_at timestamptz not null default now())");
+        foreach (var name in asm.GetManifestResourceNames().Where(n => n.StartsWith("database/", StringComparison.Ordinal) && n.EndsWith(".sql", StringComparison.Ordinal)).Order(StringComparer.Ordinal))
+        {
+            var id = name["database/".Length..^4];
+            if (string.CompareOrdinal(id, "009") >= 0) continue;
+            using var reader = new StreamReader(asm.GetManifestResourceStream(name)!);
+            await old.ExecAsync(await reader.ReadToEndAsync());
+            await old.ExecAsync("insert into schema_migrations (id) values ($1)", id);
+        }
+        var user = Guid.NewGuid();
+        await old.ExecAsync("insert into users (id, name, password_hash, totp_secret, totp_confirmed) values ($1, 'jul', 'x', 'y', true)", user);
+        await old.ExecAsync("insert into connections (user_id, name, kind, host, port, username) values ($1, 'Alt', 'desktop', 'ziel', 3389, 'u')", user);
+
+        await new Migrator(old.Data).RunAsync(TestContext.Current.CancellationToken);
+        var c = (await new ConnectionStore(old.Data).ListAsync(user)).Single();
+        Assert.Equal(("", "", "de"), (c.Domain, c.Notes, c.KeyboardLayout));
+    }
 }

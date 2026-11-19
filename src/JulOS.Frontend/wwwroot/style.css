@@ -181,6 +181,12 @@ input[type=search] { background: var(--md-surface-high); color: var(--text); bor
 .sv-zoom { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(.9); z-index: 21; pointer-events: none; opacity: 0; transition: opacity .18s, transform .18s;
   background: color-mix(in srgb, var(--md-surface) 82%, transparent); color: var(--md-on-surface); padding: 12px 22px; border-radius: 999px; font-size: 1.4rem; font-weight: 500; box-shadow: 0 2px 12px rgba(0,0,0,.4); }
 .sv-zoom.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+/* Statusleiste (statusbar.js): auf dem Handy ein kleines Overlay oben links im Bild, im Desktop eine Fusszeile (desktop.css) */
+.sv-perf { position: absolute; left: 8px; top: 8px; max-width: calc(100% - 16px); z-index: 19; display: flex; flex-wrap: wrap; gap: 2px 12px; padding: 4px 9px; border-radius: 9px;
+  background: rgba(0, 0, 0, .66); color: #fff; font: 500 11px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; pointer-events: none; }
+.sv-perf[hidden] { display: none; }
+.sv-perfc i { font-style: normal; opacity: .62; margin-right: 4px; }
+.sv-perfc b { font-weight: 600; }
 .row.bar { padding-top: 6px; padding-bottom: 6px; }
 .row.bar .rk { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; align-items: center; }
 .row.bar .rk::-webkit-scrollbar { display: none; }
@@ -221,6 +227,15 @@ input[type=search] { background: var(--md-surface-high); color: var(--text); bor
 .btn, button.primary { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; min-height: var(--btn); padding: 0 22px; border-radius: 999px; font-weight: 500; }
 a.btn.ghost { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
 button:disabled { opacity: .55; cursor: default; }
+/* QR-Code des Authenticator-Schluessels (qr.js): immer heller Grund mit Rand, auch im dunklen Design */
+.qr { width: min(240px, 100%); margin: 6px auto 10px; border-radius: 12px; overflow: hidden; }
+.qr:empty { display: none; }
+.qr svg { display: block; width: 100%; height: auto; }
+/* Tasten in Dialogen mit mehreren Formularen (Konto, Netzwerkwerkzeuge; nicht .row: in den Sheets der Handy-Ansicht klebt jede .row unten und die Reihen verdecken sich) */
+.dlg-btns { display: flex; gap: 8px; margin: 6px 0 8px; }
+.dlg-btns button { flex: 1 1 0; }
+dialog.m3sheet .dlg-btns button { height: 44px; min-height: 0; padding: 0 16px; border-radius: var(--m3-shape-full); font: var(--m3-label-l); color: var(--m3-primary); background: none; box-shadow: none; }
+dialog.m3sheet .dlg-btns button.primary { background: var(--m3-primary); color: var(--m3-on-primary); order: 2; flex-grow: 1.4; }
 .mono { display: block; font: .95rem/1.5 ui-monospace, "Roboto Mono", monospace; background: var(--md-surface-high); border-radius: 12px; padding: 12px; word-break: break-all; white-space: pre-wrap; user-select: all; -webkit-user-select: all; margin: 0; }
 
 .homebar { display: flex; align-items: center; gap: 12px; padding: 14px 20px 6px; position: relative; }

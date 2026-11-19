@@ -371,8 +371,9 @@ public sealed partial class RdpClient
         data.U16(0xCA01).U16(1).U32(0);
         // 24 bits here and "32 bits wanted" in the flags: that is how a client asks for full colour.
         data.U16(24).U16(0x000F);
-        // Error details, 32 bits, status messages, strong keys, a connection type that counts, monitor layouts.
-        data.U16(0x006F);
+        // Error details, 32 bits, status messages, strong keys, a connection type that counts, monitor layouts - and,
+        // when asked for (AdvertiseGraphics), the graphics pipeline over a dynamic channel.
+        data.U16(AdvertiseGraphics ? 0x016F : 0x006F);
         data.Zero(64);
         // The connection type "LAN": the server spends bandwidth on quality.
         data.U8(6).U8(0);

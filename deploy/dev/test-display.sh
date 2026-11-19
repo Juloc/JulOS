@@ -16,5 +16,5 @@ record() { sleep 5; docker exec -i -u ubuntu -e SECONDS_LONG=40 "$target" bash -
 record & record_pid=$!
 trap 'kill $tone_pid $record_pid 2>/dev/null || true; rm -rf "$probe"' EXIT
 docker run --rm --network "$net" --user "$(id -u):$(id -g)" -e HOME=/tmp -e DOTNET_CLI_HOME=/tmp -e DOTNET_NOLOGO=1 \
-  -e JULOS_TEST_RDP_HOST=rdp-target -e JULOS_TEST_RDP_TONE=1 -e JULOS_TEST_RDP_REC=/probe/rec.raw -v $probe:/probe:ro -v "$PWD":/src -w /src julos-display-test \
+  -e JULOS_TEST_RDP_HOST=rdp-target -e JULOS_TEST_RDP_GFX_HOST -e JULOS_TEST_RDP_GFX_H264 -e JULOS_TEST_RDP_TONE=1 -e JULOS_TEST_RDP_REC=/probe/rec.raw -v $probe:/probe:ro -v "$PWD":/src -w /src julos-display-test \
   dotnet test --project tests/JulOS.Display.Tests -c Release "$@"

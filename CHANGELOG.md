@@ -22,6 +22,10 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ### Neu
 - Module Caddy und DDNS, erste Stufe, nur lesend und standardmäßig aus (`JULOS_CADDY`, `JULOS_DDNS`, siehe [docs/MODULES.md](docs/MODULES.md)): Caddy zeigt „Domain → Ziel“ aus einem nur lesend eingebundenen Caddyfile und/oder der Admin-API (ein fester Abruf), mit einer Erreichbarkeitsprüfung nur der gelisteten Ziele; DDNS vergleicht die öffentliche Adresse (Router oder Lookup-Dienst) mit der Namensauflösung der eingestellten Namen („Synchron“ oder „Nicht synchron“, mit Zeit der Prüfung), ohne Token und ohne zu schreiben. Fenster im Desktop (Dock, Launcher, Menü) und Karten in der Handy-Shell erscheinen nur, wenn der Server das Modul eingeschaltet hat.
+## [Unreleased]
+
+### Neu
+- Stream-Engine, wahlweise und standardmäßig aus (`JULOS_RDP_GFX=on`): das H.264, das ein RDP-Server durch die Grafik-Pipeline (RDPGFX) schickt, geht ohne neue Kodierung an den Browser (weniger CPU, eine Kodierstufe weniger). Liefert der Server kein passendes H.264, bricht etwas ab oder braucht der Browser ein Schlüsselbild, verbindet dieselbe Sitzung ohne Pipeline neu und kodiert wie bisher selbst. Das xrdp von Debian 13 liefert so kein H.264, Windows-Server (komprimierte Nachrichten) sind nicht unterstützt und nicht geprüft; Einzelheiten in [docs/RDPGFX.md](docs/RDPGFX.md). Gegen einen Server, der H.264 sendet, noch nicht erprobt.
 
 ## [0.4.0] - 2026-11-19
 

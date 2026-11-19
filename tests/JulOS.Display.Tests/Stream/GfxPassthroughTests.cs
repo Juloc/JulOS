@@ -151,6 +151,25 @@ public sealed class GfxPassthroughTests
     }
 
     [Fact]
+    public async Task A_browser_that_falls_far_behind_ends_the_pipeline_instead_of_letting_pictures_pile_up()
+    {
+        var (stream, gfx, _, session) = Attached();
+        await using var _ = stream;
+
+        gfx.Receive(GfxServer.AvcFrame(1, GfxServer.KeyBitstream));
+        for (uint frame = 2; frame <= ScreenStream.MaxGfxPending; frame++)
+        {
+            gfx.Receive(GfxServer.AvcFrame(frame, GfxServer.DeltaBitstream));
+        }
+
+        Assert.False(session.IsCancellationRequested);
+        gfx.Receive(GfxServer.AvcFrame(ScreenStream.MaxGfxPending + 1, GfxServer.DeltaBitstream));
+
+        Assert.True(session.IsCancellationRequested);
+        Assert.Contains("nicht nach", stream.GfxState.Left);
+    }
+
+    [Fact]
     public async Task A_server_that_cannot_be_passed_on_ends_the_pipeline_with_its_reason()
     {
         var (stream, gfx, toServer, session) = Attached();

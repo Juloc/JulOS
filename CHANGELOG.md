@@ -4,6 +4,11 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unreleased]
+
+### Neu
+- Stream-Engine, wahlweise und standardmäßig aus (`JULOS_RDP_GFX=on`): das H.264, das ein RDP-Server durch die Grafik-Pipeline (RDPGFX) schickt, geht ohne neue Kodierung an den Browser (weniger CPU, eine Kodierstufe weniger). Liefert der Server kein passendes H.264, bricht etwas ab oder braucht der Browser ein Schlüsselbild, verbindet dieselbe Sitzung ohne Pipeline neu und kodiert wie bisher selbst. Das xrdp von Debian 13 liefert so kein H.264, Windows-Server (komprimierte Nachrichten) sind nicht unterstützt und nicht geprüft; Einzelheiten in [docs/RDPGFX.md](docs/RDPGFX.md). Gegen einen Server, der H.264 sendet, noch nicht erprobt.
+
 ## [0.4.0] - 2026-11-19
 
 ### Neu

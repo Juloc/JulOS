@@ -81,6 +81,10 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     private const int GfxKeyWaitMs = 4000;
     private const int GfxAckStallMs = 5000;
 
+    // Bilder des Servers lassen sich nicht auslassen (jedes haengt am vorigen) und nicht stauen: kommt der Browser (oder die Leitung) so weit
+    // hinterher, ist der eigene Kodierer mit seinem Fenster und der Messung der Leitung (LinkPacer) besser.
+    internal const int MaxGfxPending = 45;
+
     // Kommt bei vollem Fenster unbestaetigter Bilder so lange keine Bestaetigung, gilt das Fenster als verloren (der Browser dekodiert
     // normalerweise in wenigen Millisekunden): zuruecksetzen und ein Schluesselbild senden, statt fuer immer zu warten.
     private const int AckStallMs = 2000;
@@ -394,6 +398,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
             return;
         }
 
+        bool overloaded;
         lock (_gfxGate)
         {
             if (_gfxFallback is not null)
@@ -433,6 +438,12 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
             _gfxPending.Enqueue((last, frame.FrameId, Environment.TickCount64));
             Volatile.Write(ref _lastSentAt, Environment.TickCount64);
+            overloaded = _gfxPending.Count > MaxGfxPending;
+        }
+
+        if (overloaded)
+        {
+            GfxFallbackRequested($"der Browser kommt mit {MaxGfxPending} Bildern des Servers nicht nach", remember: false);
         }
     }
 

@@ -23,6 +23,9 @@ public sealed record ScreenEncoderInfo(VideoCodec Codec, bool Hardware, string N
 /// <summary>Der ferne Rechner hat Text kopiert.</summary>
 public sealed record ScreenClipboardText(string Text) : ScreenEvent;
 
+/// <summary>Ein Ereignis der Text-Zwischenablage fuer die Diagnose im Browser (siehe <see cref="ClipNote"/>); Flags: Bit0 Kanal der VM bereit, Bit1 Dateien moeglich.</summary>
+public sealed record ScreenClipboardNote(byte Flags, ClipNote Note, int Count) : ScreenEvent;
+
 /// <summary>Es liegt Ton bereit: <see cref="ScreenStream.Audio"/> hat ihn (nur ein Zeichen, der Ton selbst wartet dort in einer begrenzten Warteschlange).</summary>
 public sealed record ScreenAudioReady : ScreenEvent;
 
@@ -182,11 +185,20 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
             Download = (batch, download) => _events.Writer.TryWrite(new ScreenDownloadReady(batch, download)),
             DownloadState = (batch, state, done, total, text) => _events.Writer.TryWrite(new ScreenFileState(batch, state, done, total, text)),
             Result = (id, code, message) => _events.Writer.TryWrite(new ScreenTransferResult(id, code, message)),
+            Note = (note, count) =>
+            {
+                // nur die Art und die Laenge, nie der Text
+                _log?.LogDebug("Zwischenablage: {Note} ({Count})", note, count);
+                _events.Writer.TryWrite(new ScreenClipboardNote(ClipboardFlags(), note, count));
+            },
         });
         Audio = new AudioBridge(_soundChannel, _microphoneChannel);
         Audio.Ready += () => _events.Writer.TryWrite(new ScreenAudioReady());
         Audio.StatusChanged += status => _events.Writer.TryWrite(new ScreenAudioStatus(status));
     }
+
+    // Stand des Kanals der Zwischenablage fuer die Diagnose: Bit0 bereit (chansrv der VM hat sich gemeldet), Bit1 Dateien moeglich
+    private byte ClipboardFlags() => (byte)((_clipboardChannel.IsReady ? 1 : 0) | (_clipboardChannel.CanTransferFiles ? 2 : 0));
 
     /// <summary>Der Ton der Sitzung: pro Verbindung aus, bis der Browser ihn einschaltet.</summary>
     public AudioBridge Audio { get; }

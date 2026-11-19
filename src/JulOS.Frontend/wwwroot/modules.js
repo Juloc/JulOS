@@ -1,18 +1,24 @@
 /* =====================================================================
- * Module Caddy und DDNS (nur lesen): gemeinsame Daten und Texte fuer Desktop (desktop-modules.js) und Handy (mobile.js).
- * Keine Oberflaeche hier, nur Abrufe und deutsche Beschriftungen (getestet in tests/frontend/modules.test.mjs).
- * Standardmaessig sind beide Module am Server aus; dann gibt es weder Fenster noch Karte.
+ * Module Dienste, Caddy und DDNS: gemeinsame Daten und Texte fuer Desktop (desktop-modules.js, desktop-widgets.js) und Handy (mobile.js).
+ * Keine Oberflaeche hier, nur Abrufe, Vorlagen und Beschriftungen (getestet in tests/frontend/modules.test.mjs).
+ * Standardmaessig sind alle Module am Server aus; dann gibt es weder Fenster noch Karte.
  * ===================================================================== */
 
-import { t, tk, tp } from './i18n.js';
+import { t, tk, tp, fmtNumber } from './i18n.js';
 
-/** Welche Module der Server eingeschaltet hat. Bei jedem Fehler (auch 401) gilt: keins. */
+const MODES = ['off', 'read', 'control'];
+const modeOf = (v) => (MODES.includes(v) ? v : 'off');
+
+/** Welche Module der Server eingeschaltet hat (caddy, ddns, services: true/false) und mit welchem Schalter (modes: off, read, control). Bei jedem Fehler (auch 401) gilt: keins. */
 export async function loadModules(api) {
   try {
     const m = await api('/api/modules');
-    return { caddy: m.caddy === 'read', ddns: m.ddns === 'read' };
-  } catch { return { caddy: false, ddns: false }; }
+    const modes = { caddy: modeOf(m.caddy), ddns: modeOf(m.ddns), services: modeOf(m.services) };
+    return { caddy: modes.caddy !== 'off', ddns: modes.ddns !== 'off', services: modes.services !== 'off', modes };
+  } catch { return { caddy: false, ddns: false, services: false, modes: { caddy: 'off', ddns: 'off', services: 'off' } }; }
 }
+export const NO_MODULES = { caddy: false, ddns: false, services: false, modes: { caddy: 'off', ddns: 'off', services: 'off' } };
+export const anyModule = (m) => !!(m && (m.caddy || m.ddns || m.services));
 
 const KINDS = { proxy: tk('modules.kindProxy'), files: tk('modules.kindFiles'), redirect: tk('modules.kindRedirect'), respond: tk('modules.kindRespond'), other: tk('modules.kindOther') };
 export const kindLabel = (k) => t(KINDS[k] || KINDS.other);
@@ -65,4 +71,135 @@ export function ddnsHeadline(s) {
     return tp('modules.ddnsSomeOff', n);
   }
   return s.message || t('modules.ddnsStateUnknown');
+}
+
+
+/* ---------- Dienste: Symbole, Vorlagen, Darstellung ---------- */
+
+/** Strich-Symbole (24 px) fuer die Kacheln; dieselben Namen wie ServiceRules.Icons am Server. */
+const SERVICE_ICONS = {
+  globe: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
+  server: '<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
+  box: '<path d="m21 8-9-5-9 5v8l9 5 9-5z"/><path d="m3.3 7.5 8.7 5 8.7-5M12 22V12.5"/>',
+  cloud: '<path d="M17.5 19H9a7 7 0 1 1 6.7-9h1.8a4.5 4.5 0 1 1 0 9z"/>',
+  activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  monitor: '<rect x="2.5" y="3.5" width="19" height="13" rx="2"/><path d="M8 21h8M12 16.5V21"/>',
+  folder: '<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"/>',
+  shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+  grid: '<path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/>',
+  terminal: '<path d="m4 17 6-6-6-6M12 19h8"/>',
+  key: '<circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 8-8M16 7l3 3"/>',
+  lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+};
+export const ICON_KEYS = Object.keys(SERVICE_ICONS);
+export const ICON_LABEL = { globe: tk('widgets.iconGlobe'), server: tk('widgets.iconServer'), box: tk('widgets.iconBox'), cloud: tk('widgets.iconCloud'), activity: tk('widgets.iconActivity'), monitor: tk('widgets.iconMonitor'),
+  folder: tk('widgets.iconFolder'), lock: tk('widgets.iconLock'), terminal: tk('widgets.iconTerminal'), shield: tk('widgets.iconShield'), grid: tk('widgets.iconGrid'), key: tk('widgets.iconKey') };
+export const svcIcon = (name) => `<svg class="wd-i" viewBox="0 0 24 24" aria-hidden="true">${SERVICE_ICONS[name] || SERVICE_ICONS.globe}</svg>`;
+
+/**
+ * Fertige Vorlagen. Pfade gelten ab der Adresse des Dienstes. Jularr: /health/ready ist anonym; die Kennzahlen kommen aus den Verwaltungs-Endpunkten
+ * (GET /api/v1/admin/activity/summary und /api/v1/admin/system/dashboard) und brauchen ein Geraete-Token als Kopfzeile "Authorization: Bearer ..." (nur lesen aus Jularrs Quelltext, nicht gegen eine laufende Jularr-Instanz geprueft).
+ */
+export const TEMPLATES = [
+  { id: 'jularr', name: tk('widgets.tplJularr'), icon: 'box', health: '/health/ready', metrics: '/api/v1/admin/activity/summary', header: 'Authorization', interval: 30, fields: [
+    { path: 'activeCount', label: tk('widgets.mJularrActive'), unit: '', format: 'plain' }, { path: 'bytesPerSecond', label: tk('widgets.mJularrSpeed'), unit: '', format: 'rate' },
+    { path: 'importCount', label: tk('widgets.mJularrImport'), unit: '', format: 'plain' }, { path: 'errorCount', label: tk('widgets.mJularrErrors'), unit: '', format: 'plain' }] },
+  { id: 'jularr-library', name: tk('widgets.tplJularrLibrary'), icon: 'box', health: '/health/ready', metrics: '/api/v1/admin/system/dashboard', header: 'Authorization', interval: 300, fields: [
+    { path: 'works', label: tk('widgets.mJularrWorks'), unit: '', format: 'plain' }, { path: 'files', label: tk('widgets.mJularrFiles'), unit: '', format: 'plain' },
+    { path: 'openRequests', label: tk('widgets.mJularrRequests'), unit: '', format: 'plain' }] },
+  { id: 'caddyui', name: tk('widgets.tplCaddyUi'), icon: 'shield', health: '/health/ready', metrics: '', header: '', interval: 60, fields: [] },
+  { id: 'http', name: tk('widgets.tplHttp'), icon: 'globe', health: '/', metrics: '', header: '', interval: 60, fields: [] },
+];
+export const templateById = (id) => TEMPLATES.find((x) => x.id === id) || null;
+
+/** Der Ursprung einer Adresse ("http://host:8080"), sonst ''. */
+export function originOf(url) { try { const u = new URL(String(url).trim()); return /^https?:$/.test(u.protocol) ? u.origin : ''; } catch { return ''; } }
+
+/** Eintraege einer Vorlage fuer eine Adresse des Dienstes. */
+export function fromTemplate(tpl, base) {
+  const o = originOf(base);
+  return {
+    icon: tpl.icon, openUrl: o ? o + '/' : '', healthUrl: o && tpl.health ? o + tpl.health : '', metricsUrl: o && tpl.metrics ? o + tpl.metrics : '',
+    headerName: tpl.header, intervalSeconds: tpl.interval, metrics: tpl.fields.map((f) => ({ path: f.path, label: t(f.label), unit: f.unit, format: f.format })), template: tpl.id,
+  };
+}
+
+/** Zustand einer Kachel: ok (gruen), bad (rot), idle (grau). */
+export const stateClass = (st) => (!st ? 'idle' : st.state === 'up' ? 'ok' : st.state === 'down' ? 'bad' : 'idle');
+const STATE_TEXT = { up: tk('widgets.stateUp'), down: tk('widgets.stateDown'), unknown: tk('widgets.stateUnknown') };
+export const stateText = (st) => t(STATE_TEXT[st && st.state] || STATE_TEXT.unknown);
+const ERRORS = { timeout: tk('widgets.errTimeout'), refused: tk('widgets.errRefused'), status: tk('widgets.errStatus'), notAllowed: tk('widgets.errNotAllowed'), tooLarge: tk('widgets.errTooLarge'), invalid: tk('widgets.errInvalid') };
+export const errorText = (st) => (st && st.error && ERRORS[st.error] ? t(ERRORS[st.error]) + (st.error === 'status' && st.httpStatus ? ' (' + st.httpStatus + ')' : '') : '');
+/** Antwortzeit als Text ("12 ms"), leer ohne Wert. */
+export const msText = (st) => (st && st.ms !== undefined && st.ms !== null ? t('widgets.ms', { n: st.ms }) : '');
+
+export function fmtBytes(n) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let v = Math.abs(n), i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return (n < 0 ? '-' : '') + fmtNumber(v, i === 0 || v >= 100 ? 0 : 1) + ' ' + units[i];
+}
+/** Wert einer Kennzahl als Text: Zahlen je nach Darstellung (plain, bytes, rate, percent), Text unveraendert, fehlender Wert als Strich. */
+export function fmtMetric(m) {
+  if (!m) return '–';
+  if (typeof m.number === 'number') {
+    const n = m.number;
+    if (m.format === 'bytes') return fmtBytes(n);
+    if (m.format === 'rate') return fmtBytes(n) + '/s';
+    if (m.format === 'percent') return fmtNumber(n, Number.isInteger(n) ? 0 : 1) + ' %';
+    return fmtNumber(n, Number.isInteger(n) ? 0 : 1) + (m.unit ? ' ' + m.unit : '');
+  }
+  if (m.text !== undefined && m.text !== null) return m.text + (m.unit ? ' ' + m.unit : '');
+  return '–';
+}
+
+/* ---------- Caddy: Zustand, Zertifikate, Protokoll ---------- */
+
+const CERT_STATES = { ok: tk('modules.certOk'), warn: tk('modules.certWarn'), expired: tk('modules.certExpired'), error: tk('modules.certError'), skipped: tk('modules.certSkipped') };
+export const certClass = (c) => (!c ? '' : c.state === 'ok' ? 'ok' : c.state === 'warn' ? 'warn' : c.state === 'skipped' ? 'idle' : 'bad');
+export const certStateText = (c) => t(CERT_STATES[c && c.state] || CERT_STATES.skipped);
+const CERT_ERRORS = { timeout: tk('modules.certErrTimeout'), refused: tk('modules.certErrRefused'), handshake: tk('modules.certErrHandshake'), notAllowed: tk('modules.certErrNotAllowed') };
+/** Eine Zeile zum Zertifikat: Aussteller, Ablauf (Tage) oder der Fehler. */
+export function certDetail(c, fmtDay) {
+  if (!c) return '';
+  if (c.error) return t(CERT_ERRORS[c.error] || CERT_ERRORS.handshake);
+  const parts = [];
+  if (c.issuer) parts.push(t('modules.certIssuer', { issuer: c.issuer }));
+  if (c.notAfter) parts.push(c.daysLeft < 0 ? t('modules.certExpiredOn', { date: fmtDay(c.notAfter) }) : tp('modules.certDaysLeft', c.daysLeft, { date: fmtDay(c.notAfter) }));
+  if (c.state !== 'skipped' && c.trusted === false) parts.push(t('modules.certNotTrusted'));
+  return parts.join(' · ');
+}
+/** Wie viele Zertifikate laufen ab oder sind kaputt: { warn, bad, total } (nur geprueft zaehlt, "skipped" nicht). */
+export function certSummary(list) {
+  const l = (list || []).filter((c) => c.state !== 'skipped');
+  return { warn: l.filter((c) => c.state === 'warn').length, bad: l.filter((c) => c.state === 'expired' || c.state === 'error').length, total: l.length };
+}
+
+const HEALTH = { up: tk('modules.caddyUp'), down: tk('modules.caddyDown'), unknown: tk('modules.caddyUnknown') };
+export const caddyHealthText = (h) => t(HEALTH[h && h.state] || HEALTH.unknown) + (h && h.state === 'up' && h.ms !== undefined ? ` (${h.ms} ms)` : '');
+export const caddyHealthClass = (h) => (!h ? 'idle' : h.state === 'up' ? 'ok' : h.state === 'down' ? 'bad' : 'idle');
+/** Statusklasse einer Anfrage im Protokoll: ok (2xx, 3xx), warn (4xx), bad (5xx). */
+export const logClass = (status) => (status >= 500 ? 'bad' : status >= 400 ? 'warn' : 'ok');
+
+/* ---------- DDNS: Aktualisieren und Verlauf ---------- */
+
+const OUTCOMES = { updated: tk('modules.ddnsOutUpdated'), current: tk('modules.ddnsOutCurrent'), failed: tk('modules.ddnsOutFailed'), noIp: tk('modules.ddnsOutNoIp'), privateIp: tk('modules.ddnsOutPrivate'), noProvider: tk('modules.ddnsOutNoProvider'), tooSoon: tk('modules.ddnsOutTooSoon') };
+export const ddnsOutcomeText = (r) => t(OUTCOMES[r && r.outcome] || OUTCOMES.failed);
+export const ddnsOutcomeClass = (r) => (!r ? '' : r.outcome === 'updated' ? 'ok' : r.outcome === 'current' ? 'ok' : r.outcome === 'failed' ? 'bad' : 'idle');
+const CHANGE_MSG = { ok: tk('modules.ddnsMsgOk'), missing: tk('modules.ddnsMsgMissing'), ambiguous: tk('modules.ddnsMsgAmbiguous'), rejected: tk('modules.ddnsMsgRejected'), unreachable: tk('modules.ddnsMsgUnreachable') };
+const TRIGGERS = { button: tk('modules.ddnsTrigButton'), auto: tk('modules.ddnsTrigAuto') };
+
+/** Eine Zeile des Verlaufs: Name, "alt -> neu", Ausloeser und Ergebnis, Zeit (schon formatiert, damit der Test ohne Zeitzone auskommt). */
+export function historyRow(e, fmtDate) {
+  return {
+    title: e.host,
+    sub: `${e.oldIp || '–'} → ${e.newIp}`,
+    meta: [t(TRIGGERS[e.trigger] || TRIGGERS.button), e.ok ? '' : t(CHANGE_MSG[e.message] || CHANGE_MSG.rejected)].filter(Boolean).join(' · '),
+    when: fmtDate(e.at), cls: e.ok ? 'ok' : 'bad', state: e.ok ? t('modules.ddnsHistOk') : t('modules.ddnsHistFailed'),
+  };
+}
+/** Die Zeile zur Schreibstufe: Anbieter und automatisch ja/nein. */
+export function ddnsControlLine(info) {
+  if (!info || !info.canUpdate) return '';
+  return t('modules.ddnsControlLine', { provider: info.provider, auto: info.auto ? t('modules.ddnsAutoOn', { min: Math.round(info.autoSeconds / 60) }) : t('modules.ddnsAutoOff') });
 }

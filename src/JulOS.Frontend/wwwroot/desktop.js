@@ -95,6 +95,7 @@ const APPS = [
   { id: 'files', name: t('desktop.files'), ic: 'folder', g: ['#c28418', '#a86408'] },
   { id: 'hosts', name: t('desktop.hosts'), sub: t('desktop.hostsSub'), ic: 'server', g: ['#2fa08c', '#1c7a70'] },
   { id: 'docker', name: 'Docker', ic: 'box', g: ['#3a95e0', '#1f69bf'], soon: true },
+  { id: 'widgets', name: t('desktop.widgets'), sub: t('desktop.widgetsSub'), ic: 'grid', g: ['#c06a14', '#a8461a'], mod: 'services' },
   { id: 'caddy', name: 'Caddy', sub: t('desktop.caddySub'), ic: 'globe', g: ['#1fa06a', '#12804f'], mod: 'caddy' },
   { id: 'ddns', name: 'DDNS', sub: t('desktop.ddnsSub'), ic: 'cloud', g: ['#3f8fe0', '#2d66cc'], mod: 'ddns' },
   { id: 'monitor', name: t('desktop.monitor'), ic: 'activity', g: ['#cf5fae', '#8c45d6'] },
@@ -104,7 +105,7 @@ const appOf = (c) => appById(tileKind(c));     // Kachel einer Verbindung: Deskt
 const isProg = (c) => c.kind === 'terminal' && tileKind(c) !== 'terminal';
 /** Kurzer Hinweis fuer shell.js (Kachel angelegt, Fehler). */
 export const toast = (msg) => notify(msg);
-let modules = { caddy: false, ddns: false };   // vom Server (GET /api/modules), nach der Anmeldung geladen
+let modules = { caddy: false, ddns: false, services: false };   // vom Server (GET /api/modules), nach der Anmeldung geladen
 const shownApps = () => APPS.filter((a) => !a.mod || modules[a.mod]);
 const tile = (g, icon) => `<span class="dk-ti" style="--g1:${g[0]};--g2:${g[1]}">${ic(icon)}</span>`;
 
@@ -539,14 +540,14 @@ function buildDock() {
 /** Caddy und DDNS im Dock: erst sichtbar, wenn der Server das Modul eingeschaltet hat (applyModules) */
 function modDock(item) {
   const g = el('div', 'dk-dmods'); g.hidden = true;
-  g.append(el('div', 'dk-dsep'), item('caddy', 'Caddy', appById('caddy')), item('ddns', 'DDNS', appById('ddns')));
+  g.append(el('div', 'dk-dsep'), item('widgets', t('desktop.widgets'), appById('widgets')), item('caddy', 'Caddy', appById('caddy')), item('ddns', 'DDNS', appById('ddns')));
   for (const b of g.querySelectorAll('.dk-di')) b.hidden = true;
   return g;
 }
 function applyModules() {
   if (!root) return;
-  for (const id of ['caddy', 'ddns']) { const b = $(`.dk-di[data-dock="${id}"]`, root); if (b) b.hidden = !modules[id]; }
-  const g = $('.dk-dmods', root); if (g) g.hidden = !(modules.caddy || modules.ddns);
+  for (const [id, mod] of [['widgets', 'services'], ['caddy', 'caddy'], ['ddns', 'ddns']]) { const b = $(`.dk-di[data-dock="${id}"]`, root); if (b) b.hidden = !modules[mod]; }
+  const g = $('.dk-dmods', root); if (g) g.hidden = !(modules.caddy || modules.ddns || modules.services);
   if (launcher) closeLauncher();
 }
 function dockClick(id, anchor) {
@@ -803,9 +804,24 @@ function renderStart(m) {
       <button type="button" class="dk-b" data-act="devices">${ic('shield')}<span>${t('desktop.devicesShort')}</span></button>
       <button type="button" class="dk-b" data-act="settings">${ic('sliders')}<span>${t('desktop.settings')}</span></button>
     </div>
+    <h3 class="dk-heimh" hidden>${t('heimnetz.title')}</h3><div class="dk-heim"></div>
     <h3>${t('desktop.systemOverview')} <button type="button" class="dk-b dk-more" data-go="system">${t('desktop.openMonitor')}</button></h3>
     ${overviewCards()}`;
   watchOverview(m);
+  mountHeim(m);
+}
+
+/** Karte "Heimnetz" (heimnetz.js): nur, wenn der Server mindestens ein Modul eingeschaltet hat */
+let heimCtl = null;
+function mountHeim(m) {
+  const box = $('.dk-heim', m); if (!box) return;
+  heimCtl?.destroy(); heimCtl = null;
+  if (!(modules.caddy || modules.ddns || modules.services)) return;
+  $('.dk-heimh', m).hidden = false;
+  import('./heimnetz.js').then((h) => {
+    if (!box.isConnected) return;
+    heimCtl = h.mountHeimnetz(box, { api: ctx.api, mods: modules, esc: ctx.esc, open: (k) => runApp({ services: 'widgets', caddy: 'caddy', ddns: 'ddns' }[k]) });
+  });
 }
 
 /* ---------- System-Uebersicht: echte Messwerte des Rechners, auf dem der Server laeuft (GET /api/system/overview) ---------- */
@@ -981,7 +997,7 @@ async function openModule(id) {
   try {
     const m = await import('./desktop-modules.js');
     if (!wins.has(id)) return w;   // schon wieder geschlossen
-    w.mod = id === 'caddy' ? m.mountCaddy(w.body, { el, btn, ic, api: ctx.api }) : m.mountDdns(w.body, { el, btn, ic, api: ctx.api });
+    w.mod = m.mountModule(id, w.body, { el, btn, ic, api: ctx.api });
   } catch { w.body.innerHTML = `<div class="dk-fempty">${t('desktop.moduleLoadFailed', { name: a.name })}</div>`; }
   return w;
 }
@@ -1118,7 +1134,7 @@ export async function init(context) {
 }
 /** Nach Anmeldung (oder wenn die Seite die Startansicht zeigt): Konto setzen, Home-Fenster oeffnen */
 export function userChanged(user, message) {
-  import('./modules.js').then((m) => m.loadModules(ctx.api)).then((m) => { modules = m; applyModules(); });
+  import('./modules.js').then((m) => m.loadModules(ctx.api)).then((m) => { modules = m; applyModules(); const hw = wins.get('home'); if (hw && nav.view === 'start') mountHeim(hw.main); });
   const av = $('#dkUser .dk-avatar', root); if (av) av.textContent = (user || '?').slice(0, 1);
   if (!wins.has('home') && !wins.size) openHome();
   if (dockMode === 'auto' && !dockHinted) { dockHinted = true; showDock(); hideTimer = setTimeout(hideDock, 3500); }
@@ -1138,6 +1154,7 @@ export function reset() {
   closeMenu(); closeLauncher();
   for (const w of [...wins.values()]) { w.opts.onClose = null; closeWin(w); }
   sessWins.clear();
-  modules = { caddy: false, ddns: false }; applyModules();
+  modules = { caddy: false, ddns: false, services: false }; applyModules();
+  heimCtl?.destroy(); heimCtl = null; import('./heimnetz.js').then((h) => h.resetHeimnetz());
   nav.view = 'start'; nav.back = []; nav.fwd = [];
 }

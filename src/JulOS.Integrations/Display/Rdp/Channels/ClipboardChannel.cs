@@ -25,6 +25,11 @@ public sealed class ClipboardChannel : StaticChannel
     // File contents requests under way at the same time, for each direction.
     public const int MaxFileRequests = 64;
 
+    // How long a data request may stay unanswered. A server whose clipboard owner hangs (a stuck clipboard manager, an
+    // application that never answers the selection request) may never answer at all; without an end to the wait every
+    // later request would queue behind it for the rest of the session.
+    public static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(15);
+
     // The most this client asks for in one range request: what it has to hold when the answer arrives.
     public const int MaxRangeRequest = 16 * 1024 * 1024;
 
@@ -93,6 +98,8 @@ public sealed class ClipboardChannel : StaticChannel
     private IReadOnlyList<ClipFormat> _remote = [];
     private int _remoteGeneration;
     private bool _requestOutstanding;
+    private long _requestSerial;
+    private Timer? _requestTimer;
     private int _serverDataRequests;
     private int _servedCount;
 
@@ -101,6 +108,9 @@ public sealed class ClipboardChannel : StaticChannel
     private readonly record struct OwnFileRequest(bool IsSize, int Count);
 
     private readonly record struct ServedRequest(bool IsSize, int Count);
+
+    // How long a data request waits for its answer (see DefaultRequestTimeout); once over, it counts as refused and the next one goes out.
+    public TimeSpan RequestTimeout { get; init; } = DefaultRequestTimeout;
 
     public override string Name => "cliprdr";
 
@@ -572,7 +582,7 @@ public sealed class ClipboardChannel : StaticChannel
             return;
         }
 
-        _requestOutstanding = false;
+        EndRequest();
         var data = Succeeded(flags) ? body.ToArray() : null;
         Later(ref after, () => Guarded.Raise(DataReceived, data, Log, "cliprdr: the handler of DataReceived"));
         NextRequest(ref after);
@@ -722,7 +732,43 @@ public sealed class ClipboardChannel : StaticChannel
     private void QueueDataRequest(uint formatId)
     {
         _requestOutstanding = true;
+        var serial = ++_requestSerial;
+        _requestTimer?.Dispose();
+        _requestTimer = RequestTimeout > TimeSpan.Zero && RequestTimeout != Timeout.InfiniteTimeSpan
+            ? new Timer(_ => RequestTimedOut(serial), null, RequestTimeout, Timeout.InfiniteTimeSpan)
+            : null;
         _outbox.Add(Message(TypeFormatDataRequest, 0, 4).U32(formatId).ToArray());
+    }
+
+    // Under the lock: the outstanding request is over, answered or given up.
+    private void EndRequest()
+    {
+        _requestOutstanding = false;
+        _requestSerial++;
+        _requestTimer?.Dispose();
+        _requestTimer = null;
+    }
+
+    // The server did not answer in time: the request counts as refused and the next one may go. An answer that
+    // still comes is ignored (or, when the next request is out by then, taken for its answer: requests carry no id).
+    private void RequestTimedOut(long serial)
+    {
+        List<Action>? after = null;
+        lock (_gate)
+        {
+            if (!_requestOutstanding || serial != _requestSerial)
+            {
+                return;
+            }
+
+            EndRequest();
+            Note(ref after, $"the server did not answer a data request in {RequestTimeout.TotalSeconds:0} s; it counts as refused");
+            Later(ref after, () => Guarded.Raise(DataReceived, null, Log, "cliprdr: the handler of DataReceived"));
+            NextRequest(ref after);
+        }
+
+        Flush();
+        Run(after);
     }
 
     // A refusal carries no data (MS-RDPECLIP 3.1.5.4.3).
@@ -776,7 +822,7 @@ public sealed class ClipboardChannel : StaticChannel
         _serverLocks.Clear();
         _remote = [];
         _remoteGeneration++;
-        _requestOutstanding = false;
+        EndRequest();
         _serverDataRequests = 0;
         _servedCount = 0;
         _listsUnanswered = 0;

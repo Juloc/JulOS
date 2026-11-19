@@ -1,0 +1,74 @@
+/* Dienste-Widgets (widgets.js): Kacheln, Zustandspunkt, Kennzahlen und der Dialog. Zwei Farbwelten: Desktop (--dk-*) und Handy (--m3-*), die Klassen sind dieselben. */
+html.desktop .wd, html.desktop dialog.wd-dlg {
+  --wd-fg: var(--dk-t1); --wd-sub: var(--dk-sub); --wd-card: var(--dk-card); --wd-edge: var(--dk-card-edge); --wd-line: var(--dk-line2);
+  --wd-ok: var(--dk-st-ok); --wd-bad: var(--dk-st-bad); --wd-idle: var(--dk-st-off); --wd-ok-bg: var(--dk-ok-bg); --wd-bad-bg: var(--dk-bad-bg);
+  --wd-accent: var(--dk-accent); --wd-accent-fg: var(--dk-pri-fg); --wd-field: var(--dk-field); --wd-hover: var(--dk-hover);
+}
+#mobile .wd, dialog.m3sheet.wd-dlg {
+  --wd-fg: var(--m3-on-surface); --wd-sub: var(--m3-on-surface-variant); --wd-card: var(--m3-surface-container); --wd-edge: var(--m3-outline-variant); --wd-line: var(--m3-outline-variant);
+  --wd-ok: var(--m3-ok); --wd-bad: var(--m3-error); --wd-idle: var(--m3-outline); --wd-ok-bg: color-mix(in oklab, var(--m3-ok) 18%, transparent); --wd-bad-bg: var(--m3-error-container);
+  --wd-accent: var(--m3-primary); --wd-accent-fg: var(--m3-on-primary); --wd-field: var(--m3-surface-high); --wd-hover: color-mix(in oklab, var(--m3-primary) 12%, transparent);
+}
+.wd-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; color: var(--wd-fg, inherit); }
+.wd-note { flex: 1; min-width: 140px; color: var(--wd-sub); font-size: 12.5px; }
+.wd-btn { font: inherit; font-size: 13px; font-weight: 600; padding: 7px 14px; border-radius: 99px; border: 1px solid var(--wd-line); background: transparent; color: var(--wd-fg); cursor: pointer; min-height: 36px; }
+.wd-btn:hover { background: var(--wd-hover); }
+.wd-btn.primary { background: var(--wd-accent); color: var(--wd-accent-fg); border-color: transparent; }
+.wd-btn.danger { color: var(--wd-bad); }
+.wd-btn:disabled { opacity: .5; cursor: default; }
+.wd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
+.wd-tile { position: relative; border-radius: 16px; background: var(--wd-card); border: 1px solid var(--wd-edge); color: var(--wd-fg); border-left: 4px solid var(--wd-idle); }
+.wd-tile.ok { border-left-color: var(--wd-ok); }
+.wd-tile.bad { border-left-color: var(--wd-bad); }
+.wd-body { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; color: inherit; text-decoration: none; min-height: 84px; }
+a.wd-body:hover { background: var(--wd-hover); border-radius: 14px; }
+.wd-head { display: flex; align-items: center; gap: 8px; padding-right: 34px; }
+.wd-ic { display: grid; place-items: center; width: 28px; height: 28px; flex: none; color: var(--wd-accent); }
+.wd-i { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+#mobile svg.wd-i, dialog.m3sheet svg.wd-i { fill: none; }
+.wd-name { font-weight: 650; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.wd-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--wd-idle); flex: none; }
+.wd-dot.ok { background: var(--wd-ok); box-shadow: 0 0 0 3px var(--wd-ok-bg); }
+.wd-dot.bad { background: var(--wd-bad); box-shadow: 0 0 0 3px var(--wd-bad-bg); }
+.wd-sub { font-size: 12px; color: var(--wd-sub); }
+.wd-sub.ok { color: var(--wd-ok); } .wd-sub.bad { color: var(--wd-bad); }
+.wd-err { font-size: 12px; color: var(--wd-bad); }
+.wd-metrics { margin: 2px 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+.wd-metrics div { min-width: 0; }
+.wd-metrics dt { font-size: 11px; color: var(--wd-sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wd-metrics dd { margin: 0; font-size: 16px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.wd-edit { position: absolute; top: 6px; right: 6px; width: 30px; height: 30px; border-radius: 50%; border: 0; background: transparent; color: var(--wd-sub); display: grid; place-items: center; cursor: pointer; }
+.wd-edit:hover { background: var(--wd-hover); color: var(--wd-fg); }
+.wd-empty { color: var(--wd-sub); grid-column: 1 / -1; margin: 12px 0; }
+dialog.wd-dlg { width: min(560px, 94vw); max-height: 92vh; overflow: auto; color: var(--wd-fg); }
+.wd-form { display: flex; flex-direction: column; gap: 10px; }
+.wd-form h2 { margin: 0 0 4px; font-size: 18px; }
+.wd-form label { display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--wd-sub); }
+.wd-form input, .wd-form select { font: inherit; font-size: 14px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--wd-line); background: var(--wd-field); color: var(--wd-fg); min-width: 0; }
+.wd-form fieldset { border: 1px solid var(--wd-line); border-radius: 12px; padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 8px; margin: 0; }
+.wd-form legend { font-size: 12px; font-weight: 600; color: var(--wd-sub); padding: 0 6px; }
+.wd-check { flex-direction: row !important; align-items: center; gap: 8px !important; }
+.wd-check input { width: auto; }
+.wd-hint { margin: 0; font-size: 12px; color: var(--wd-sub); }
+.wd-rows { display: flex; flex-direction: column; gap: 6px; }
+.wd-row { display: grid; grid-template-columns: 1.4fr 1fr .6fr .8fr auto; gap: 6px; align-items: center; }
+.wd-x { border: 0; background: transparent; color: var(--wd-sub); font-size: 20px; cursor: pointer; width: 32px; height: 32px; border-radius: 50%; }
+.wd-msg { margin: 0; color: var(--wd-bad); font-size: 13px; min-height: 1em; }
+.wd-actions { display: flex; align-items: center; gap: 8px; }
+.wd-sp { flex: 1; }
+@media (max-width: 560px) { .wd-row { grid-template-columns: 1fr 1fr; } .wd-row .wd-x { justify-self: end; } }
+.wd-host { margin-bottom: 14px; }
+/* Caddy-Fenster: Reiter, Konfigurationstext, Warnfarbe */
+html.desktop .dk-mtabs { display: flex; gap: 6px; flex-wrap: wrap; }
+html.desktop .dk-mtab[aria-selected="true"] { background: var(--dk-sel); color: var(--dk-accent-text); }
+html.desktop .dk-mpre { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--dk-field); color: var(--dk-t1); font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow: auto; max-height: 52vh; white-space: pre; user-select: text; }
+html.desktop .dk-mstate.warn { background: rgba(240, 176, 48, .22); color: var(--dk-st-busy); }
+#mobile .m3-li .tr.m3mod.warn { background: color-mix(in oklab, #f0b030 24%, transparent); }
+/* Karte Heimnetz (heimnetz.js) */
+.hn { border-radius: 16px; background: var(--wd-card); border: 1px solid var(--wd-edge); color: var(--wd-fg); padding: 6px; }
+.hn-head { display: flex; align-items: center; gap: 10px; padding: 8px 10px; font-size: 15px; }
+.hn-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; font: inherit; color: inherit; background: transparent; border: 0; border-radius: 12px; padding: 9px 10px; cursor: pointer; min-height: 44px; }
+.hn-row:hover { background: var(--wd-hover); }
+.hn-name { font-weight: 650; min-width: 74px; }
+.hn-text { color: var(--wd-sub); font-size: 13px; overflow-wrap: anywhere; }
+.wd-dot.warn { background: #f0b030; box-shadow: 0 0 0 3px rgba(240, 176, 48, .25); }

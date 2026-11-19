@@ -12,6 +12,7 @@
   <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="terminal.css">
+  <link rel="stylesheet" href="widgets.css">
   <title>JulOS</title>
 </head>
 <body>
@@ -391,6 +392,7 @@
       <div class="row">
         <button id="typeBtn" type="button" data-i18n="app.typeIn">Eintippen</button>
         <button id="pasteBtn" type="button" class="ghost" data-i18n="app.toRemoteClipboard">In Remote-Zwischenablage</button>
+        <button id="pasteDevBtn" type="button" class="ghost" data-i18n="clipperm.pasteButton">Aus der Zwischenablage holen</button>
       </div>
       <h3 data-i18n="app.sendFileOrImage">Datei oder Bild senden</h3>
       <p class="hint" data-i18n="app.sendFileHint">Bild, Datei oder Ordner kommt in die Zwischenablage der VM (dort Strg+V). Auch per Ablegen auf das Bild und Strg+V.</p>
@@ -415,6 +417,11 @@
           <button id="imgSaveBtn" type="button" class="ghost" data-i18n="common.save">Speichern</button>
         </div>
       </div>
+      <details id="clipDiag">
+        <summary data-i18n="clipdiag.title">Diagnose</summary>
+        <p class="hint" data-i18n="clipdiag.hint">Zeigt, wo die Zwischenablage hakt. Inhalte erscheinen hier nie, nur Richtung, Zeit und Länge.</p>
+        <ul id="clipDiagList"></ul>
+      </details>
       <div class="row">
         <button class="ghost close" data-act="close" type="button" data-i18n="common.close">Schließen</button>
       </div>

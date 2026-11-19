@@ -33,3 +33,12 @@ test('Die Sitzungsbeschreibung hat eine Kennung je Ziel und kein Passwort', () =
   assert.equal(quickConnection({ kind: 'desktop', host: 'pc', port: null, username: '' }).quick.port, 3389);
   assert.ok(!JSON.stringify(a).toLowerCase().includes('password'));
 });
+
+test('VNC: Schema vnc:// und Port 5900 ergeben die Art vnc, der Standardport einer Quick-Sitzung ist 5900', () => {
+  assert.deepEqual(parseQuickTarget('vnc://pc.lan'), { kind: 'vnc', host: 'pc.lan', port: null, username: '' });
+  assert.deepEqual(parseQuickTarget('VNC://anna@pc.lan:5901/'), { kind: 'vnc', host: 'pc.lan', port: 5901, username: 'anna' });
+  assert.deepEqual(parseQuickTarget('10.0.0.5:5900'), { kind: 'vnc', host: '10.0.0.5', port: 5900, username: '' });
+  assert.equal(parseQuickTarget('10.0.0.5:5901').kind, null);
+  assert.equal(quickConnection({ kind: 'vnc', host: 'pc', port: null, username: '' }).quick.port, 5900);
+  assert.equal(quickConnection({ kind: 'vnc', host: 'pc', port: null, username: '' }).id, 'quick:vnc:pc:5900:');
+});

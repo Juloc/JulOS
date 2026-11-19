@@ -294,6 +294,8 @@ let suppressClick = false;
 let editRow = 0, editIndex = -1;      // editIndex -1 = neue Taste
 const saveRows = () => { store.set('rows4', rows); prefs.push('keybar', { rows }); };
 /** Bereich einer Taste: 'both' (Standard), 'desktop' oder 'terminal'; eine Sitzung zeigt nur die Tasten ihrer Art. */
+/** Bildschirm-Sitzungen: RDP (Art 'desktop') und VNC; beide laufen durch dieselbe Strom-Engine. */
+const isScreen = (kind) => kind === 'desktop' || kind === 'vnc';
 const keyInScope = (def, kind) => !def.scope || def.scope === 'both' || def.scope === kind;
 
 /* Tasten per langem Druecken ziehen: innerhalb der Zeile und in andere Zeilen */
@@ -578,7 +580,7 @@ export class RemoteSession extends Session {
   hasCredentials() { return !!(this.password || this.conn.stored); }   // Passwort im Speicher des Browsers oder auf dem Server gespeichert
   /** Gibt es eine andere offene Sitzung zum selben Desktop-Ziel (Adresse, Port, Benutzer)? Ein RDP-Ziel gibt je Benutzer nur einen Desktop her:
       die zweite Verbindung uebernimmt ihn, die erste reisst ab. Ein Abriss mit so einer Schwestersitzung ist daher meist eine Uebernahme, kein Fehler. */
-  hasSibling() { return this.kind === 'desktop' && !!this.conn.target && Sessions.list().some((s) => s !== this && s.kind === 'desktop' && s.conn.target === this.conn.target); }
+  hasSibling() { return isScreen(this.kind) && !!this.conn.target && Sessions.list().some((s) => s !== this && isScreen(s.kind) && s.conn.target === this.conn.target); }
   takenBySibling() {
     this.fatal = true; this.connected = false; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer);
     this.setState('taken', t('app.stateTaken'));
@@ -729,7 +731,8 @@ export class RemoteSession extends Session {
     if (this.loginBox || this.disposed) return;
     this.fatal = true; this.connected = false; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer);
     this.teardown();
-    const step = loginStep(code, this.loginTries || 0);
+    const vnc = this.conn.kind === 'vnc';
+    const step = loginStep(code, this.loginTries || 0, this.conn.kind);
     if (!step.ask) return this.requestClose(step.text);
     const wrap = document.createElement('div'); wrap.className = 'term-dialog'; this.loginBox = wrap;
     const form = document.createElement('form'); form.className = 'box'; form.setAttribute('role', 'dialog'); form.autocomplete = 'off';
@@ -742,9 +745,10 @@ export class RemoteSession extends Session {
       const i = document.createElement('input'); i.type = type; i.value = value || ''; i.name = name; i.autocomplete = type === 'password' ? 'off' : 'off'; i.spellcheck = false; i.autocapitalize = 'off'; i.maxLength = 256;
       l.appendChild(i); form.appendChild(l); return i;
     };
-    const user = field(t('app.user'), 'text', this.loginUser ?? userOfTarget(this.conn.target), 'user');
+    // Ein VNC-Server fragt nur nach einem Passwort: weder Benutzer noch Domaene
+    const user = vnc ? { value: '' } : field(t('app.user'), 'text', this.loginUser ?? userOfTarget(this.conn.target), 'user');
     const pw = field(t('app.password'), 'password', '', 'pw');
-    const domain = field(t('app.domainOptional'), 'text', this.loginDomain ?? this.conn.domain ?? '', 'domain');
+    const domain = vnc ? { value: '' } : field(t('app.domainOptional'), 'text', this.loginDomain ?? this.conn.domain ?? '', 'domain');
     const msg = add('p', 'hint login-msg', ''); msg.setAttribute('role', 'alert');
     const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'danger'; cancel.textContent = t('common.cancel');
     const ok = document.createElement('button'); ok.type = 'submit'; ok.className = 'primary'; ok.textContent = t('app.signIn');
@@ -753,7 +757,7 @@ export class RemoteSession extends Session {
     cancel.addEventListener('click', () => { done(); this.password = null; this.requestClose(t('app.loginCancelled')); });
     form.addEventListener('submit', (ev) => {
       ev.preventDefault();
-      const r = readLogin({ user: user.value, password: pw.value, domain: domain.value });
+      const r = readLogin({ user: user.value, password: pw.value, domain: domain.value }, { user: !vnc });
       if (r.error) { msg.textContent = r.error; return; }
       pw.value = '';
       done();
@@ -763,7 +767,7 @@ export class RemoteSession extends Session {
     });
     wrap.appendChild(form); this.el.stage.appendChild(wrap);
     this.el.overlay.hidden = true; this.setState('error', t('app.stateLoginNeeded'));
-    (user.value ? pw : user).focus();
+    (vnc || user.value ? pw : user).focus();
   }
   showBusy(msg) { // Fortschritt mit Animation, ohne Knoepfe
     const e = this.el; e.overlayMsg.textContent = msg; e.spinner.hidden = false; e.overlay.hidden = false; e.reconnectBtn.hidden = true; e.closeBtn.hidden = true;
@@ -853,7 +857,7 @@ export class RemoteSession extends Session {
     }
 
     const wsBase = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
-    const client = new StreamClient(wsBase + '/api/remote/screen', keyLayout);
+    const client = new StreamClient(wsBase + '/api/remote/screen', keyLayout, { keysyms: this.conn.kind === 'vnc' });
     this.wireAudio(client);
     client.onsession = (o) => { if (this.client === client) this.resume.offered(o.token, o.keep); };
     // Der Server kennt das Token nicht mehr (abgelaufen, Neustart, Sitzung dort beendet): ganz normal neu aufbauen, mit Ticket und neuem Login
@@ -1295,7 +1299,7 @@ export class RemoteSession extends Session {
     wrap.className = 'row ' + (bar ? 'bar' : 'grp') + (S.editing ? ' editing' : '');
     const rk = document.createElement('div'); rk.className = 'rk'; rk.dataset.r = String(r);
     if (label && !bar) { const t = document.createElement('div'); t.className = 'gt'; t.textContent = rowTitle(row); rk.appendChild(t); }
-    row.items.forEach((def, i) => { if (S.editing || keyInScope(def, this.kind)) rk.appendChild(this.keyEl(def, r, i)); });
+    row.items.forEach((def, i) => { if (S.editing || keyInScope(def, this.kind === 'vnc' ? 'desktop' : this.kind)) rk.appendChild(this.keyEl(def, r, i)); });
     if (S.editing) {
       const add = document.createElement('div'); add.setAttribute('role', 'button'); add.className = 'k add'; add.innerHTML = ico('add') + `<span>${t('app.key')}</span>`;
       add.addEventListener('click', () => openKeyEditor(r, -1)); rk.appendChild(add);
@@ -1663,6 +1667,7 @@ export class RemoteSession extends Session {
 
 /** Fabrik fuer Desktops. Terminals sind eine eigene Sitzungsart (terminal-session.js, natives SSH-Terminal). */
 Sessions.registerFactory('desktop', (conn, o) => new RemoteSession(conn, o));
+Sessions.registerFactory('vnc', (conn, o) => new RemoteSession(conn, o));
 
 /** Die Bildschirmtastatur der Seite (ein einziges Eingabefeld) fuer andere Sitzungsarten, zum Beispiel das Terminal. */
 export const softKeyboard = {

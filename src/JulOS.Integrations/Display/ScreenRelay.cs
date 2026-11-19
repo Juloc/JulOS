@@ -160,7 +160,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
 
         var stream = target.Vnc is { } vnc
             ? new ScreenStream(vnc, target.MaxKilobitsPerSecond, log, encoders, clientCodecs, target.Trust)
-            : new ScreenStream(target.Options!, target.MaxKilobitsPerSecond, log, encoders, clientCodecs, target.Trust, drive: target.Drive);
+            : new ScreenStream(target.Options, target.MaxKilobitsPerSecond, log, encoders, clientCodecs, target.Trust, drive: target.Drive);
         log.LogInformation("Bildschirm-Verbindung offen ({Protocol}; der Browser kann {Codecs})", target.Vnc is null ? "RDP" : "VNC", clientCodecs);
         var live = new Live
         {

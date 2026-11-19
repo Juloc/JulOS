@@ -79,13 +79,32 @@ public sealed class QuickConnectTests
         Assert.Equal(HttpStatusCode.OK, (await Quick(c, cookie, new { kind = "terminal", host = "ERLAUBT.example", username = "u" })).StatusCode);                 // Standardport 22
         Assert.Equal(HttpStatusCode.Forbidden, (await Quick(c, cookie, new { kind = "terminal", host = "anderes.example", username = "u" })).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await Quick(c, cookie, new { kind = "desktop", host = "10.0.0.7", username = "u" })).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await Quick(c, cookie, new { kind = "vnc", host = "erlaubt.example" })).StatusCode);                               // Art unbekannt
+        Assert.Equal(HttpStatusCode.BadRequest, (await Quick(c, cookie, new { kind = "telnet", host = "erlaubt.example" })).StatusCode);                            // Art unbekannt
         Assert.Equal(HttpStatusCode.BadRequest, (await Quick(c, cookie, new { kind = "terminal", host = "erlaubt.example/pfad" })).StatusCode);                     // Adresse ungueltig
         Assert.Equal(HttpStatusCode.BadRequest, (await Quick(c, cookie, new { kind = "terminal", host = "erlaubt.example", port = 70000 })).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await Quick(c, cookie, new { kind = "terminal", host = "erlaubt.example", username = new string('u', 65) })).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await Quick(c, cookie, new { kind = "terminal", host = "erlaubt.example" }, password: null)).StatusCode);               // Passwort fehlt
         Assert.Equal(HttpStatusCode.BadRequest, (await Quick(c, cookie, new { kind = "terminal", host = "erlaubt.example" }, password: new string('p', 257))).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Req(HttpMethod.Post, "/api/remote/ticket", cookie, new { password = "x" }))).StatusCode);         // weder Verbindung noch Quick
+        Assert.Equal(0L, await db.ScalarAsync<long>("select count(*) from connections"));
+    }
+
+    [Fact]
+    public async Task Quick_connect_takes_vnc_with_port_5900_and_without_a_password_but_under_the_same_allow_list()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db, allowed: "erlaubt.example");
+        var c = app.Http();
+        var (cookie, _) = await SignedInAsync(c, db);
+
+        var r = await Quick(c, cookie, new { kind = "vnc", host = "erlaubt.example" }, password: null);       // ein VNC-Server ohne Anmeldung braucht kein Passwort
+        Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        var j = await Json(r);
+        Assert.Equal("vnc", j.GetProperty("kind").GetString());
+        Assert.Equal("stream", j.GetProperty("engine").GetString());
+        Assert.Equal(HttpStatusCode.OK, (await Quick(c, cookie, new { kind = "vnc", host = "erlaubt.example", port = 5901 }, password: "pw")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await Quick(c, cookie, new { kind = "vnc", host = "anderes.example" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await Quick(c, cookie, new { kind = "vnc", host = "erlaubt.example" }, password: new string('p', 257))).StatusCode);
         Assert.Equal(0L, await db.ScalarAsync<long>("select count(*) from connections"));
     }
 

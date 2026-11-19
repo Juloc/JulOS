@@ -7,6 +7,7 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 ## [Unveröffentlicht]
 
 ### Neu
+- Stream-Engine: auf langsamer Leitung (WLAN, Mobilfunk, WAN) passt sich die Bitrate an die gemessene Liefergeschwindigkeit an und das Fenster der unbestätigten Bilder wird kleiner; Klicks reagieren dort nach etwa 0,3 s statt nach über 1 s.
 - Stream-Engine: ruhende Bildteile (Text, Farbe) werden zusätzlich verlustfrei nachgeliefert und liegen pixelgenau über dem Video, farbiger Text ist damit so scharf wie bei Guacamole.
 
 ## [0.1.0] - 2026-11-19

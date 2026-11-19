@@ -7,10 +7,16 @@ namespace JulOS.Integrations.Display;
 /// </summary>
 internal sealed class PictureWindow(int max)
 {
+    private int _max = max;
     private long _sent;                 // Folgenummer des zuletzt gesendeten Bildes
     private long _acked;                // Folgenummer, bis zu der alles bestaetigt (oder verworfen) ist
 
-    public int Max { get; } = max;
+    /// <summary>So viele Bilder duerfen unterwegs sein; auf langsamer Leitung stellt <see cref="LinkPacer"/> es kleiner (mindestens 1).</summary>
+    public int Max
+    {
+        get => Volatile.Read(ref _max);
+        set => Volatile.Write(ref _max, Math.Max(1, value));
+    }
 
     public int InFlight => (int)Math.Max(0, Volatile.Read(ref _sent) - Volatile.Read(ref _acked));
 

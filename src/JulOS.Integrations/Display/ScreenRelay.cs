@@ -172,7 +172,12 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                         continue;
                 }
 
+                var started = System.Diagnostics.Stopwatch.GetTimestamp();
                 await ws.SendAsync(buffer.AsMemory(0, length), WebSocketMessageType.Binary, true, ct).ConfigureAwait(false);
+                if (evt is ScreenPicture)
+                {
+                    stream.SocketSent((long)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                }
             }
             finally
             {

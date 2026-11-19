@@ -61,6 +61,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     // und nur, solange der Browser mit den Bildern nachkommt.
     private const double RefineShare = 0.25;
     private const int RefineTilesPerPass = 48;
+    private static readonly bool PacerAllowed = !string.Equals(Environment.GetEnvironmentVariable("JULOS_STREAM_PACER"), "off", StringComparison.OrdinalIgnoreCase);
     private static readonly bool RefineAllowed = !string.Equals(Environment.GetEnvironmentVariable("JULOS_STREAM_REFINE"), "off", StringComparison.OrdinalIgnoreCase);
 
     // Kommt bei vollem Fenster unbestaetigter Bilder so lange keine Bestaetigung, gilt das Fenster als verloren (der Browser dekodiert
@@ -92,6 +93,9 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     private (int Width, int Height)? _pendingSize;
 
     private readonly PictureWindow _window = new(MaxPicturesInFlight);
+    private readonly LinkPacer _pacer;
+    private readonly Lock _pacerGate = new();
+    private int _kilobits;
     private long _lastAckAt, _lastSentAt, _lastUpdateAt;
     private int _sequence;
     private int _disposed;
@@ -105,6 +109,8 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     {
         _options = options;
         _maxKilobitsPerSecond = maxKilobitsPerSecond;
+        _kilobits = maxKilobitsPerSecond;
+        _pacer = new LinkPacer(maxKilobitsPerSecond);
         _log = log;
         _clipboard = new ClipboardBridge(_clipboardChannel, new ClipboardSink
         {
@@ -200,6 +206,10 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         if (sequence is { } value)
         {
             _window.Acknowledge(value);
+            lock (_pacerGate)
+            {
+                _pacer.Acknowledged(value, Environment.TickCount64);
+            }
         }
         else
         {
@@ -239,6 +249,15 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         if (was && !paused)
         {
             Wake();
+        }
+    }
+
+    /// <summary>Das Senden eines Bildes an den WebSocket hat so lange gedauert: ein voller Sendepuffer bremst (siehe <see cref="LinkPacer"/>).</summary>
+    public void SocketSent(long elapsedMilliseconds)
+    {
+        lock (_pacerGate)
+        {
+            _pacer.SocketSent(elapsedMilliseconds, Environment.TickCount64);
         }
     }
 
@@ -338,9 +357,25 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
                     _log?.LogWarning("Keine Bestaetigung seit {Quiet} ms bei {InFlight} offenen Bildern (letztes Bild vor {Sent} ms, letzte Aenderung vor {Update} ms): Fenster zurueckgesetzt, Schluesselbild folgt",
                         quietFor, inFlight, tick - Volatile.Read(ref _lastSentAt), tick - Volatile.Read(ref _lastUpdateAt));
                     _window.Reset();
+                    lock (_pacerGate)
+                    {
+                        _pacer.Reset(Volatile.Read(ref _sequence));
+                    }
+
                     needKey = true;
                 }
             }
+
+            if (_window.Full && !Volatile.Read(ref _paused) && (needKey || PeekDirty(out _, out _, out _, out _, out _) || (encodedAny && encoder is { IsSharp: false })))
+            {
+                // Es gaebe etwas zu senden, aber das Fenster ist voll: der Engpass ist die Leitung oder der Browser
+                lock (_pacerGate)
+                {
+                    _pacer.Blocked(Environment.TickCount64);
+                }
+            }
+
+            AdaptToLink();
             if (encoder is not null && frame is not null && !Volatile.Read(ref _paused) && !_window.Full)
             {
                 var now = Environment.TickCount64;
@@ -435,6 +470,35 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         return true;
     }
 
+    // Langsame Leitung: Bitrate und Fenster folgen dem, was die Messung (LinkPacer) sagt.
+    private void AdaptToLink()
+    {
+        if (!PacerAllowed)
+        {
+            return;
+        }
+
+        int kilobits, window;
+        lock (_pacerGate)
+        {
+            if (!_pacer.Update(Environment.TickCount64))
+            {
+                return;
+            }
+
+            (kilobits, window) = (_pacer.Kilobits, _pacer.Window);
+        }
+
+        if (kilobits != _kilobits)
+        {
+            _log?.LogDebug("Leitung: Bitrate {From} -> {To} kbit/s, Fenster {Window}", _kilobits, kilobits, window);
+            _kilobits = kilobits;
+            _encoder?.SetBitrate(kilobits);
+        }
+
+        _window.Max = window;
+    }
+
     // Kacheln, die der Browser nachgebessert hat und die sich wieder geaendert haben, werden dort gestrichen, bevor das Bild mit der Aenderung
     // hinausgeht (sonst bliebe das alte Bild darueber stehen).
     private void ClearRefinements()
@@ -468,7 +532,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         }
 
         var now = Environment.TickCount64;
-        var perSecond = _maxKilobitsPerSecond * 125.0 * RefineShare;
+        var perSecond = _kilobits * 125.0 * RefineShare;
         _refineCredit = Math.Min(perSecond, _refineCredit + perSecond * Math.Clamp(now - _refineAt, 0, 1000) / 1000.0);
         _refineAt = now;
         if (Volatile.Read(ref _paused) || _window.InFlight > 1)
@@ -548,7 +612,13 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
         var sequence = Interlocked.Increment(ref _sequence);
         _window.Sent(sequence);
-        Volatile.Write(ref _lastSentAt, Environment.TickCount64);
+        var tick = Environment.TickCount64;
+        lock (_pacerGate)
+        {
+            _pacer.Sent(sequence, data.Length, tick);
+        }
+
+        Volatile.Write(ref _lastSentAt, tick);
         _events.Writer.TryWrite(new ScreenPicture(sequence, isKey, data.ToArray()));
         return true;
     }
@@ -570,6 +640,10 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
         _frame = new I420Frame(evenWidth, evenHeight);
         _encoder = new H264Encoder(evenWidth, evenHeight, FramesPerSecond, _maxKilobitsPerSecond);
+        if (_kilobits != _maxKilobitsPerSecond)
+        {
+            _encoder.SetBitrate(_kilobits);
+        }
         _frame.MarkChanged();
         var refiner = new TileRefiner(evenWidth, evenHeight);
         refiner.Mark(0, 0, evenWidth, evenHeight, Environment.TickCount64);

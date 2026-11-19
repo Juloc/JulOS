@@ -208,6 +208,14 @@ public sealed unsafe class H264Encoder : IDisposable
         return _rate?.Interval(Math.Clamp((double)changedPixels / ((long)Width * Height), 0.0, 1.0)) ?? 0;
     }
 
+    // The caller found the connection slower or faster than the bit rate given at the start: the rate controller works with the new one
+    // from the next picture on (it changes how coarse pictures are and when the caller is asked to wait, not the stream's format).
+    public void SetBitrate(int maxKilobitsPerSecond)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxKilobitsPerSecond, 1);
+        _rate?.SetBitrate(maxKilobitsPerSecond);
+    }
+
     // One picture in, one access unit out: Annex B with start codes, and SPS and PPS in front of every key
     // frame. The memory is valid until the next call. The encoder has copied the picture when this returns,
     // so the frame can be written to again right away.

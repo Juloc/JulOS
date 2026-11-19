@@ -1,17 +1,17 @@
 // Messung im Browser: Reaktionszeit (Klick auf das Messquadrat bis zur Farbaenderung auf dem Anzeige-Canvas) und grobe Bildrate.
 // Einfuegen ueber die Konsole oder das javascript-Werkzeug der Browser-Seite, dann: JSON.stringify(await window.__bench({}))
-// Voraussetzung: angemeldet, verbunden (Guacamole oder Strom), probe.py laeuft im Test-Desktop (siehe README.md).
+// Voraussetzung: angemeldet, mit dem Test-Desktop verbunden, probe.py laeuft im Test-Desktop (siehe README.md).
 // Die Bildrate dieser Schleife ist durch die Abtastung (getImageData) auf etwa 11 je Sekunde gedeckelt: nur die Reaktionszeit zaehlt.
 window.__bench = async function (o) {
   o = Object.assign({ n: 15, fpsSeconds: 6, px: 620, py: 90, vx: 200, vy: 120, video: true }, o || {});
   const S = window.__pd.S, c = S.client;
-  const cv = S.engine === 'stream' ? S.display.flatten() : S.display.getDefaultLayer().getCanvas();
+  const cv = S.display.flatten();
   const ctx = cv.getContext('2d', { willReadFrequently: true });
   const mc = new MessageChannel(); const yieldNow = () => new Promise((r) => { mc.port1.onmessage = () => r(); mc.port2.postMessage(0); });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const st = (x, y, l) => ({ x, y, left: !!l, middle: false, right: false, up: false, down: false });
   const col = () => { const d = ctx.getImageData(o.px, o.py, 1, 1).data; return (d[0] > 150 && d[1] < 100) ? 'r' : (d[1] > 150 && d[0] < 100) ? 'g' : '?'; };
-  const out = { engine: S.engine, canvas: [cv.width, cv.height] };
+  const out = { canvas: [cv.width, cv.height] };
   if (o.video) {
     const hash = () => { const d = ctx.getImageData(o.vx, o.vy, 64, 32).data; let h = 0; for (let i = 0; i < d.length; i += 28) h = (h * 31 + d[i] + d[i + 1] * 3 + d[i + 2] * 7) | 0; return h; };
     let last = hash(), changes = 0; const t0 = performance.now();

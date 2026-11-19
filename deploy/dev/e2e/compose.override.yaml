@@ -3,7 +3,6 @@
 # fuer den Browser ist der Server dann "localhost" und damit ein sicherer Kontext (HTTPS-Funktionen, WebCodecs wie am Handy).
 services:
   postgres: { ports: !reset [] }
-  guacd: { ports: !reset [] }
   julos: { ports: !reset [] }
   test-ssh: { ports: !reset [] }
 

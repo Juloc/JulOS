@@ -62,7 +62,7 @@ test.describe('Ersteinrichtung', () => {
 });
 
 const API = { 'X-JulOS': '1', Origin: 'http://127.0.0.1:8080' };   // so erkennt der Server Aufrufe der eigenen Seite (Fremd-Ursprung wird abgelehnt)
-const DESKTOP_CONN = { name: 'E2E Desktop', kind: 'desktop', engine: 'stream', host: RDP.host, user: RDP.user };
+const DESKTOP_CONN = { name: 'E2E Desktop', kind: 'desktop', host: RDP.host, user: RDP.user };
 const SSH_CONN = { name: 'E2E Terminal', kind: 'terminal', host: SSH.host, port: SSH.port, user: SSH.user };
 
 const tile = (page, name) => page.locator('#desktop .dk-tile', { hasText: name });
@@ -73,7 +73,6 @@ async function addConnection(page, c) {
   await expect(page.locator('#connDlg')).toBeVisible();
   await page.fill('#connName', c.name);
   await page.selectOption('#connKind', c.kind);
-  if (c.engine) await page.selectOption('#connEngine', c.engine);
   await page.fill('#connHost', c.host);
   if (c.port) await page.fill('#connPort', c.port);
   await page.fill('#connUser', c.user);
@@ -106,11 +105,10 @@ const picture = (page) => page.evaluate(() => {
   return best;
 });
 
-/** Wartet auf ein echtes Bild der VM (nicht schwarz, mehrere Farben) und zählt die Bildschirmverbindungen (Stream gegen Guacamole-Ausweichen). */
+/** Wartet auf ein echtes Bild der VM (nicht schwarz, mehrere Farben) und prüft, dass die Bildschirmverbindung des Streams offen ist. */
 async function waitForPicture(page, sockets) {
   await expect.poll(async () => { const p = await picture(page); return p.max > 10 && p.colors >= 4; }, { message: 'die VM liefert ein Bild', timeout: 40_000, intervals: [500] }).toBe(true);
-  expect(sockets.some((u) => u.includes('/api/remote/screen')), 'Stream-Engine statt Ausweichen auf Guacamole').toBe(true);
-  expect(sockets.some((u) => u.includes('/api/remote/ws'))).toBe(false);
+  expect(sockets.some((u) => u.includes('/api/remote/screen')), 'die Bildschirmverbindung des Streams ist offen').toBe(true);
 }
 
 const watchSockets = (page) => { const urls = []; page.on('websocket', (ws) => urls.push(ws.url())); return urls; };

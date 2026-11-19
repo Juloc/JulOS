@@ -1,4 +1,4 @@
-# JulOS: Server (.NET), PostgreSQL und guacd. Baut das Image lokal; die Variante mit fertigem Image steht in docker-compose.image.yml.
+# JulOS: Server (.NET) und PostgreSQL. Baut das Image lokal; die Variante mit fertigem Image steht in docker-compose.image.yml.
 name: julos
 
 services:
@@ -18,13 +18,6 @@ services:
       timeout: 3s
       retries: 20
 
-  guacd:
-    image: guacamole/guacd:1.6.0
-    restart: unless-stopped
-    # kein veroeffentlichter Port: guacd ist nur fuer den Server im internen Netz erreichbar
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-
   julos:
     build: .
     image: ghcr.io/juloc/julos:latest
@@ -32,11 +25,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      guacd:
-        condition: service_started
     environment:
       JULOS_DB: "Host=postgres;Database=julos;Username=julos;Password=${JULOS_DB_PASSWORD}"
-      JULOS_GUACD: guacd:4822
       # optional: Schluessel zum Speichern von Verbindungs-Passwoertern (openssl rand -base64 32); ohne ihn wird nichts gespeichert
       JULOS_SECRET_KEY: "${JULOS_SECRET_KEY:-}"
       # optional: Verbindungsziele auf diese Namen oder Adressen beschraenken (kommagetrennt)

@@ -24,6 +24,8 @@ using Npgsql;
 
 // Konsolenwerkzeug: dotnet JulOS.dll user ...
 if (args.Length > 0 && args[0] == "user") return await UserCli.RunAsync(args[1..]);
+// Sicherung auf der Konsole: dotnet JulOS.dll backup create | restore DATEI
+if (args.Length > 0 && args[0] == "backup") return await BackupCli.RunAsync(args[1..]);
 // Diagnose ohne Datenbank: dotnet JulOS.dll diag encoders
 if (args.Length > 0 && args[0] == "diag") return DiagCli.Run(args[1..]);
 
@@ -50,6 +52,11 @@ builder.Services.AddSingleton(new SetupCode(builder.Configuration["JULOS_SETUP_C
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<AuthService>();
 builder.Services.AddHostedService<SessionPurgeWorker>();
+// Taegliche Sicherung der Datenbank und des Schluessels in den Backup-Ordner, siehe docs/BACKUP.md
+builder.Services.AddSingleton(BackupOptions.Parse(builder.Configuration["JULOS_BACKUP"], builder.Configuration["JULOS_BACKUP_DIR"], builder.Configuration["JULOS_BACKUP_TIME"],
+    builder.Configuration["JULOS_BACKUP_KEEP_DAYS"], builder.Configuration["JULOS_BACKUP_KEY"], builder.Configuration["JULOS_DATA"]));
+builder.Services.AddSingleton<BackupService>();
+builder.Services.AddHostedService<BackupWorker>();
 builder.Services.AddSingleton<GuacTickets>();
 builder.Services.AddSingleton<ScreenTickets>();
 builder.Services.AddSingleton<SshTickets>();

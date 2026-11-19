@@ -16,7 +16,8 @@ public sealed class ModuleHttpTests
 {
     private const string Password = "korrektes pferd batterie";
     private const string SetupCode = "TEST-CODE-0000";
-    private static readonly string[] Paths = ["/api/modules/caddy/routes", "/api/modules/caddy/reachability", "/api/modules/ddns/status"];
+    private static readonly string[] Paths = ["/api/modules/caddy/routes", "/api/modules/caddy/reachability", "/api/modules/ddns/status",
+        "/api/modules/caddy/health", "/api/modules/caddy/certificates", "/api/modules/caddy/config", "/api/modules/caddy/log"];
 
     private sealed class Server(TestDb db, Action<IServiceCollection>? services = null, params (string, string)[] settings) : WebApplicationFactory<Program>
     {
@@ -132,6 +133,43 @@ public sealed class ModuleHttpTests
                 Assert.Equal(HttpStatusCode.MethodNotAllowed, (await c.SendAsync(Post(path, cookie))).StatusCode);
             Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Get("/api/modules/ddns/status", cookie))).StatusCode);   // DDNS bleibt aus
         }
+    }
+
+    [Fact]
+    public async Task Caddy_health_certificates_config_and_log_answer_without_secrets_and_without_input()
+    {
+        var log = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllTextAsync(log, "{\"ts\":1700000000,\"request\":{\"remote_ip\":\"198.51.100.7\",\"method\":\"GET\",\"host\":\"app.example.test\",\"uri\":\"/a?token=GEHEIM\"},\"status\":200,\"duration\":0.01,\"size\":5}\n");
+            var web = new FakeServiceWeb(new()
+            {
+                ["http://caddy:2019/config/apps/http/servers"] = (HttpStatusCode.OK, """{"srv0":{"routes":[{"match":[{"host":["app.example.test"]}],"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"web:3000"}]}]}]}}"""),
+                ["http://caddy:2019/config/"] = (HttpStatusCode.OK, """{"apps":{"tls":{"automation":{"policies":[{"issuers":[{"email":"admin@example.test","api_token":"GEHEIM"}]}]}}},"routes":"web:3000"}"""),
+                ["http://caddy:2019/reverse_proxy/upstreams"] = (HttpStatusCode.OK, "[]"),
+            });
+            var opts = new CaddyOptions(ModuleMode.Read, null, new Uri("http://caddy:2019"), LogFile: log);
+            await using var db = await TestDb.CreateAsync();
+            await using var app = new Server(db, s => s.AddSingleton(new CaddyModule(opts, web, tls: (d, _, _) => Task.FromResult(new CertInfo(d, "ok", "Wegwerf-CA", null, 80, true, null)))), ("JULOS_CADDY", "read"));
+            var c = app.Client();
+            var cookie = await SignInAsync(c);
+
+            Assert.Equal("up", (await Json(await c.SendAsync(Get("/api/modules/caddy/health", cookie)))).GetProperty("state").GetString());
+            var certs = await Json(await c.SendAsync(Get("/api/modules/caddy/certificates?host=evil.example.test", cookie)));
+            Assert.Equal("app.example.test", certs.GetProperty("certificates")[0].GetProperty("domain").GetString());
+            var config = await c.SendAsync(Get("/api/modules/caddy/config", cookie));
+            var configText = await config.Content.ReadAsStringAsync();
+            Assert.DoesNotContain("GEHEIM", configText);
+            Assert.DoesNotContain("admin@example.test", configText);
+            var logText = await (await c.SendAsync(Get("/api/modules/caddy/log", cookie))).Content.ReadAsStringAsync();
+            Assert.Contains("app.example.test", logText);
+            Assert.DoesNotContain("GEHEIM", logText);
+            Assert.DoesNotContain("198.51.100.7", logText);
+            foreach (var path in Paths.Skip(3).Take(4))
+                Assert.Equal(HttpStatusCode.MethodNotAllowed, (await c.SendAsync(Post(path, cookie))).StatusCode);
+            Assert.All(web.Requests, r => Assert.Equal("http://caddy:2019", new Uri(r.Url).GetLeftPart(UriPartial.Authority)));
+        }
+        finally { File.Delete(log); }
     }
 
     [Fact]

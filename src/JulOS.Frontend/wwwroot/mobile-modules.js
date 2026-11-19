@@ -2,9 +2,9 @@
  * Karten und Detail-Sheets fuer Caddy und DDNS in der Handy-Shell (nur lesen). Wird von mobile.js erst geladen, wenn der Server
  * mindestens ein Modul eingeschaltet hat. deps: { icon, esc, api, wireSheet, app }
  * ===================================================================== */
-import { t, tk, tp } from './i18n.js';
+import { t, tk, tp, fmtDay } from './i18n.js';
 import { mountWidgets } from './widgets.js';
-import { routeParts, sourceLabel, reachMap, reachText, reachClass, ddnsStateLabel, ddnsStateClass, ddnsHeadline, ago } from './modules.js';
+import { routeParts, sourceLabel, reachMap, reachText, reachClass, ddnsStateLabel, ddnsStateClass, ddnsHeadline, ago, certClass, certStateText, certDetail, certSummary, caddyHealthText } from './modules.js';
 
 const META = {
   caddy: { title: 'Caddy', sub: tk('mobile.modCaddySub'), ic: 'lock' },
@@ -41,14 +41,19 @@ const row = (esc, main, sub, chip, cls) => `<div class="m3-li static"><span clas
 async function caddyBody({ esc, api }, check) {
   const l = await api('/api/modules/caddy/routes');
   const reach = check ? reachMap(await api('/api/modules/caddy/reachability')) : new Map();
+  const [health, certs] = await Promise.all([api('/api/modules/caddy/health').catch(() => null), api('/api/modules/caddy/certificates').catch(() => null)]);
   const rows = l.routes.map((r) => {
     const p = routeParts(r);
     const states = r.kind === 'proxy' ? (r.targets || []).map((tg) => reach.get(tg)).filter(Boolean) : [];
     const worst = states.find((s) => s.state === 'down') || states.find((s) => s.state === 'skipped') || states[0];
     return row(esc, p.domain + (p.path ? ' ' + p.path : ''), p.kind + ' → ' + p.target, worst ? reachText(worst) : '', reachClass(worst));
   });
-  return `<p class="hint">${esc(t('mobile.modSource', { source: sourceLabel(l.source) }))}${l.warnings.length ? ' ' + esc(l.warnings.join(' ')) : ''}</p>
+  const certRows = certs ? certs.certificates.map((c) => row(esc, c.domain, certDetail(c, (d) => fmtDay(d)), certStateText(c), certClass(c))) : [];
+  const sum = certs ? certSummary(certs.certificates) : null;
+  return `<p class="hint">${health ? `<b>${esc(caddyHealthText(health))}</b> · ` : ''}${esc(t('mobile.modSource', { source: sourceLabel(l.source) }))}${l.warnings.length ? ' ' + esc(l.warnings.join(' ')) : ''}</p>
     <div class="m3-card acts" style="margin:0">${rows.join('') || `<p class="empty-hint">${esc(t('mobile.modNoEntries'))}</p>`}</div>
+    ${certs ? `<h3 class="m3-sec" style="margin-top:14px"><span>${esc(t('mobile.modCerts'))}</span></h3>${sum && (sum.warn || sum.bad) ? `<p class="hint">${esc(tp('desktop.certsAttention', sum.warn + sum.bad))}</p>` : ''}
+    <div class="m3-card acts" style="margin:0">${certRows.join('') || `<p class="empty-hint">${esc(t('desktop.noCerts'))}</p>`}</div>` : ''}
     <p class="hint" style="margin-top:12px">${esc(t('mobile.modCaddyNote'))}</p>`;
 }
 

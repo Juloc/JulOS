@@ -192,6 +192,20 @@ public sealed class ModuleTests : IDisposable
     }
 
     [Fact]
+    public void Caddy_reads_credentials_tls_target_and_log_from_the_settings()
+    {
+        var s = Settings(("JULOS_CADDY", "read"), ("JULOS_CADDY_ADMIN_URL", "http://caddy:2019"), ("JULOS_CADDY_ADMIN_AUTH_FILE", " /run/secrets/caddy-admin "), ("JULOS_CADDY_TLS_CONNECT", "caddy:443"), ("JULOS_CADDY_LOG_FILE", "/var/log/caddy/access.log"));
+        Assert.Equal("/run/secrets/caddy-admin", s.Caddy.AdminAuthFile);
+        Assert.Equal(("caddy", 443), (s.Caddy.TlsConnect!.Host, s.Caddy.TlsConnect.Port));
+        Assert.Equal("/var/log/caddy/access.log", s.Caddy.LogFile);
+        Assert.Empty(s.Warnings);
+        var bad = Settings(("JULOS_CADDY", "read"), ("JULOS_CADDY_TLS_CONNECT", "kein host port"));
+        Assert.Null(bad.Caddy.TlsConnect);
+        Assert.Single(bad.Warnings);
+        Assert.Empty(Settings(("JULOS_CADDY_TLS_CONNECT", "kein host port")).Warnings);   // aus: keine Meldung
+    }
+
+    [Fact]
     public void Addresses_are_checked_when_the_modules_are_on()
     {
         var s = Settings(("JULOS_CADDY", "read"), ("JULOS_DDNS", "read"),

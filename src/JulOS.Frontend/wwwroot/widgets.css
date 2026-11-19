@@ -58,3 +58,9 @@ dialog.wd-dlg { width: min(560px, 94vw); max-height: 92vh; overflow: auto; color
 .wd-sp { flex: 1; }
 @media (max-width: 560px) { .wd-row { grid-template-columns: 1fr 1fr; } .wd-row .wd-x { justify-self: end; } }
 .wd-host { margin-bottom: 14px; }
+/* Caddy-Fenster: Reiter, Konfigurationstext, Warnfarbe */
+html.desktop .dk-mtabs { display: flex; gap: 6px; flex-wrap: wrap; }
+html.desktop .dk-mtab[aria-selected="true"] { background: var(--dk-sel); color: var(--dk-accent-text); }
+html.desktop .dk-mpre { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--dk-field); color: var(--dk-t1); font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow: auto; max-height: 52vh; white-space: pre; user-select: text; }
+html.desktop .dk-mstate.warn { background: rgba(240, 176, 48, .22); color: var(--dk-st-busy); }
+#mobile .m3-li .tr.m3mod.warn { background: color-mix(in oklab, #f0b030 24%, transparent); }

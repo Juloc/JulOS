@@ -20,6 +20,15 @@ public sealed record ModuleSettings(CaddyOptions Caddy, DdnsOptions Ddns, Servic
         var caddyWarnings = new List<string>();
         var caddyfile = get("JULOS_CADDYFILE")?.Trim();
         var admin = OutboundHttp.ParseHttpUrl("JULOS_CADDY_ADMIN_URL", get("JULOS_CADDY_ADMIN_URL"), caddyWarnings, rootOnly: true);
+
+        var authFile = get("JULOS_CADDY_ADMIN_AUTH_FILE")?.Trim();
+        var logFile = get("JULOS_CADDY_LOG_FILE")?.Trim();
+        UpstreamTarget? tlsConnect = null;
+        if (!string.IsNullOrWhiteSpace(get("JULOS_CADDY_TLS_CONNECT")))
+        {
+            tlsConnect = UpstreamTarget.Parse(get("JULOS_CADDY_TLS_CONNECT"));
+            if (tlsConnect is null) caddyWarnings.Add("JULOS_CADDY_TLS_CONNECT: kein gueltiges Host:Port. Die Einstellung wird nicht benutzt.");
+        }
         if (caddyMode != ModuleMode.Off) w.AddRange(caddyWarnings);
 
         var ddnsWarnings = new List<string>();
@@ -31,7 +40,7 @@ public sealed record ModuleSettings(CaddyOptions Caddy, DdnsOptions Ddns, Servic
         if (ddnsMode != ModuleMode.Off) w.AddRange(ddnsWarnings);
 
         return new ModuleSettings(
-            new CaddyOptions(caddyMode, string.IsNullOrEmpty(caddyfile) ? null : caddyfile, admin),
+            new CaddyOptions(caddyMode, string.IsNullOrEmpty(caddyfile) ? null : caddyfile, admin, string.IsNullOrEmpty(authFile) ? null : authFile, tlsConnect, string.IsNullOrEmpty(logFile) ? null : logFile),
             new DdnsOptions(ddnsMode, hosts, lookup, router, cache),
             new ServiceOptions(servicesMode, string.IsNullOrWhiteSpace(get("JULOS_SERVICES_HOSTS")) ? get("JULOS_ALLOWED_HOSTS") : get("JULOS_SERVICES_HOSTS")),
             [.. w]);

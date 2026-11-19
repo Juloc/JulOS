@@ -1,7 +1,7 @@
 // Module Caddy und DDNS (modules.js): was die Oberflaeche aus den Antworten des Servers macht.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TEMPLATES, templateById, fromTemplate, originOf, stateClass, stateText, errorText, msText, fmtMetric, fmtBytes, svcIcon, ICON_KEYS, loadModules, anyModule, routeParts, reachMap, reachText, reachClass, ddnsStateLabel, ddnsHeadline, ago, sourceLabel } from '../../src/JulOS.Frontend/wwwroot/modules.js';
+import { certClass, certStateText, certDetail, certSummary, caddyHealthText, caddyHealthClass, logClass, TEMPLATES, templateById, fromTemplate, originOf, stateClass, stateText, errorText, msText, fmtMetric, fmtBytes, svcIcon, ICON_KEYS, loadModules, anyModule, routeParts, reachMap, reachText, reachClass, ddnsStateLabel, ddnsHeadline, ago, sourceLabel } from '../../src/JulOS.Frontend/wwwroot/modules.js';
 
 test('modules: only what the server switched on is shown, every error means off', async () => {
   const off = { caddy: false, ddns: false, services: false, modes: { caddy: 'off', ddns: 'off', services: 'off' } };
@@ -108,4 +108,27 @@ test('services: the icons of the interface are the ones the server accepts', asy
   const cs = fs.readFileSync(new URL('../../src/JulOS.Backend/Modules/ServiceRules.cs', import.meta.url), 'utf8');
   const server = /Icons = \[(.*?)\]/.exec(cs)[1].split(',').map((x) => x.trim().replace(/"/g, ''));
   assert.deepEqual([...ICON_KEYS].sort(), server.sort());
+});
+
+test('caddy: certificate states, details and the summary that feeds the warning', () => {
+  const day = (d) => String(d).slice(0, 10);
+  const ok = { state: 'ok', issuer: 'Let\'s Encrypt', notAfter: '2027-01-30T00:00:00Z', daysLeft: 72, trusted: true };
+  assert.equal(certStateText(ok), 'Gültig');
+  assert.equal(certClass(ok), 'ok');
+  assert.equal(certDetail(ok, day), 'Aussteller Let\'s Encrypt · läuft in 72 Tagen ab (2027-01-30)');
+  assert.equal(certDetail({ ...ok, daysLeft: 1, state: 'warn' }, day).includes('in 1 Tag ab'), true);
+  assert.equal(certClass({ state: 'warn' }), 'warn');
+  assert.equal(certDetail({ state: 'expired', notAfter: '2026-11-01T00:00:00Z', daysLeft: -18, issuer: 'CA', trusted: true }, day), 'Aussteller CA · abgelaufen am 2026-11-01');
+  assert.equal(certDetail({ state: 'error', error: 'timeout' }, day), 'Zeitüberschreitung');
+  assert.match(certDetail({ ...ok, trusted: false }, day), /Kette nicht vertrauenswürdig/);
+  assert.deepEqual(certSummary([ok, { state: 'warn' }, { state: 'expired' }, { state: 'error' }, { state: 'skipped' }]), { warn: 1, bad: 2, total: 4 });
+  assert.deepEqual(certSummary(undefined), { warn: 0, bad: 0, total: 0 });
+});
+
+test('caddy: health and log classes', () => {
+  assert.equal(caddyHealthText({ state: 'up', ms: 12 }), 'Caddy läuft (12 ms)');
+  assert.equal(caddyHealthText({ state: 'down' }), 'Caddy antwortet nicht');
+  assert.equal(caddyHealthText(undefined), 'Zustand unbekannt');
+  assert.deepEqual([{ state: 'up' }, { state: 'down' }, { state: 'unknown' }, undefined].map(caddyHealthClass), ['ok', 'bad', 'idle', 'idle']);
+  assert.deepEqual([200, 301, 404, 503].map(logClass), ['ok', 'ok', 'warn', 'bad']);
 });

@@ -64,6 +64,35 @@ internal static class ModuleEndpoints
             return Results.Json(await caddy.CheckAsync(ct), AppJson.Default.CaddyReachability);
         });
 
+        // Zustand der Admin-API (und was Caddy ueber seine Ziele zaehlt), Zertifikate aus TLS-Handshakes, Konfiguration ohne Geheimnisse, Zugriffsprotokoll: alle ohne Eingaben
+        app.MapGet("/api/modules/caddy/health", async (HttpContext ctx, HitCounter hits, CaddyModule caddy, CancellationToken ct) =>
+        {
+            if (!caddy.Enabled) return Off("Caddy");
+            if (Busy(ctx, hits, "caddy-health", 30)) return TooMany();
+            return Results.Json(await caddy.HealthAsync(ct), AppJson.Default.CaddyHealth);
+        });
+
+        app.MapGet("/api/modules/caddy/certificates", async (HttpContext ctx, HitCounter hits, CaddyModule caddy, CancellationToken ct) =>
+        {
+            if (!caddy.Enabled) return Off("Caddy");
+            if (Busy(ctx, hits, "caddy-certs", 12)) return TooMany();
+            return Results.Json(await caddy.CertificatesAsync(ct), AppJson.Default.CaddyCertificates);
+        });
+
+        app.MapGet("/api/modules/caddy/config", async (HttpContext ctx, HitCounter hits, CaddyModule caddy, CancellationToken ct) =>
+        {
+            if (!caddy.Enabled) return Off("Caddy");
+            if (Busy(ctx, hits, "caddy-config", 12)) return TooMany();
+            return Results.Json(await caddy.ConfigAsync(ct), AppJson.Default.CaddyConfigText);
+        });
+
+        app.MapGet("/api/modules/caddy/log", async (HttpContext ctx, HitCounter hits, CaddyModule caddy, CancellationToken ct) =>
+        {
+            if (!caddy.Enabled) return Off("Caddy");
+            if (Busy(ctx, hits, "caddy-log", 30)) return TooMany();
+            return Results.Json(await caddy.LogAsync(ct), AppJson.Default.CaddyLog);
+        });
+
         app.MapGet("/api/modules/ddns/status", async (HttpContext ctx, HitCounter hits, DdnsMonitor ddns, CancellationToken ct) =>
         {
             if (!ddns.Enabled) return Off("DDNS");

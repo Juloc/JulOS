@@ -152,3 +152,31 @@ export function fmtMetric(m) {
   if (m.text !== undefined && m.text !== null) return m.text + (m.unit ? ' ' + m.unit : '');
   return '–';
 }
+
+/* ---------- Caddy: Zustand, Zertifikate, Protokoll ---------- */
+
+const CERT_STATES = { ok: tk('modules.certOk'), warn: tk('modules.certWarn'), expired: tk('modules.certExpired'), error: tk('modules.certError'), skipped: tk('modules.certSkipped') };
+export const certClass = (c) => (!c ? '' : c.state === 'ok' ? 'ok' : c.state === 'warn' ? 'warn' : c.state === 'skipped' ? 'idle' : 'bad');
+export const certStateText = (c) => t(CERT_STATES[c && c.state] || CERT_STATES.skipped);
+const CERT_ERRORS = { timeout: tk('modules.certErrTimeout'), refused: tk('modules.certErrRefused'), handshake: tk('modules.certErrHandshake'), notAllowed: tk('modules.certErrNotAllowed') };
+/** Eine Zeile zum Zertifikat: Aussteller, Ablauf (Tage) oder der Fehler. */
+export function certDetail(c, fmtDay) {
+  if (!c) return '';
+  if (c.error) return t(CERT_ERRORS[c.error] || CERT_ERRORS.handshake);
+  const parts = [];
+  if (c.issuer) parts.push(t('modules.certIssuer', { issuer: c.issuer }));
+  if (c.notAfter) parts.push(c.daysLeft < 0 ? t('modules.certExpiredOn', { date: fmtDay(c.notAfter) }) : tp('modules.certDaysLeft', c.daysLeft, { date: fmtDay(c.notAfter) }));
+  if (c.state !== 'skipped' && c.trusted === false) parts.push(t('modules.certNotTrusted'));
+  return parts.join(' · ');
+}
+/** Wie viele Zertifikate laufen ab oder sind kaputt: { warn, bad, total } (nur geprueft zaehlt, "skipped" nicht). */
+export function certSummary(list) {
+  const l = (list || []).filter((c) => c.state !== 'skipped');
+  return { warn: l.filter((c) => c.state === 'warn').length, bad: l.filter((c) => c.state === 'expired' || c.state === 'error').length, total: l.length };
+}
+
+const HEALTH = { up: tk('modules.caddyUp'), down: tk('modules.caddyDown'), unknown: tk('modules.caddyUnknown') };
+export const caddyHealthText = (h) => t(HEALTH[h && h.state] || HEALTH.unknown) + (h && h.state === 'up' && h.ms !== undefined ? ` (${h.ms} ms)` : '');
+export const caddyHealthClass = (h) => (!h ? 'idle' : h.state === 'up' ? 'ok' : h.state === 'down' ? 'bad' : 'idle');
+/** Statusklasse einer Anfrage im Protokoll: ok (2xx, 3xx), warn (4xx), bad (5xx). */
+export const logClass = (status) => (status >= 500 ? 'bad' : status >= 400 ? 'warn' : 'ok');

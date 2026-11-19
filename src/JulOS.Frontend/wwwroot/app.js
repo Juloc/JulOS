@@ -1841,6 +1841,7 @@ function focusKbForHardware() {
   const s = cur();
   if (!HW_KB || !s || !s.connected || !s.visible || !keyOwner() || kbFocused()) return;
   if (document.querySelector('dialog[open]') || !s.el.menu.hidden) return;
+  if (document.activeElement && document.activeElement.closest('.term-bar')) return;      // das Textfeld der Eingabeleiste des Terminals behaelt den Fokus (terminal-input.js)
   try { el.kb.focus({ preventScroll: true }); } catch { el.kb.focus(); }
 }
 /** Ein echtes Texteingabefeld (Eingabe, Auswahl, Textbereich, bearbeitbarer Inhalt)? Knoepfe und Haken zaehlen nicht. */

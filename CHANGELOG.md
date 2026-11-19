@@ -4,6 +4,18 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Neu
+- Modul **Dienste** (`JULOS_SERVICES=off|read|control`, Standard aus): eigene Dienste als Widgets. Du legst einen Dienst an (Name, Symbol, Adresse zum Öffnen, optionale Gesundheitsadresse, optionale JSON-Kennzahlen-Adresse mit Zuordnung „Feldpfad → Beschriftung, Einheit, Darstellung“, Abfrageintervall 10 bis 3600 s, optionaler API-Schlüssel als Kopfzeile). Der Server fragt nur gespeicherte Adressen ab (Erlaubnisliste `JULOS_SERVICES_HOSTS` oder `JULOS_ALLOWED_HOSTS`, ohne Liste nur das eigene Netz, nie Link-Local, keine Weiterleitungen, 4 s, 256 KB), zeigt grün, rot oder grau mit Antwortzeit und die Kennzahlen als Kachel: Desktop im neuen Fenster „Widgets“, Handy auf der Dienste-Seite. Der Schlüssel liegt verschlüsselt in der Datenbank (Migration 012) und wird nie ausgeliefert oder geloggt. Vorlagen: Jularr (Warteschlange und Bestand), Caddy UI (Gesundheit) und Allgemein (HTTP-Gesundheit).
+- **Caddy lesen, neu:** direkt über die Admin-API ohne Filter-Dienst (nur `GET` auf vier feste Pfade, optional Zugangsdaten aus einer Datei `JULOS_CADDY_ADMIN_AUTH_FILE`): Zustand der Admin-API und Zähler je Ziel, Zertifikate aus dem TLS-Handshake der gelisteten Domains (Aussteller, Ablauf, Warnung ab 14 Tagen, Fehler; `JULOS_CADDY_TLS_CONNECT`), Konfiguration als Text ohne Geheimnisse, letzte Zeilen und Zähler je Host aus dem Zugriffsprotokoll (`JULOS_CADDY_LOG_FILE`, ohne Besucheradressen und Query). Das Caddy-Fenster hat Reiter Routen, Zertifikate, Konfiguration und Protokoll. Schreiben ist nur als Entwurf dokumentiert (docs/MODULES.md), `JULOS_CADDY=control` gilt wie `read`.
+- **DDNS schreiben** (`JULOS_DDNS=control`, optional automatisch mit eigenem Schalter `JULOS_DDNS_AUTO`): Anbieter-Adapter Cloudflare (Token nur für eine Zone, aus Datei), allgemeine Update-URL und DuckDNS hinter einer schmalen Schnittstelle. Geändert werden nur die in `JULOS_DDNS_HOSTS` genannten A- oder AAAA-Einträge, nur bei abweichender Adresse, nie mit privater Adresse, nie wird ein Eintrag angelegt oder gelöscht; automatisch höchstens alle 5 Minuten. Verlauf (alt, neu, Zeit, Auslöser) in der Tabelle `ddns_history` (Migration 013), im Fenster und im Handy-Sheet; die letzten Änderungen erscheinen in den „Aktivitäten“ der Handy-Startseite.
+- Karte **Heimnetz** auf der Desktop-Startseite und der Handy-Startseite: Dienste, Caddy (Zustand, Domains, Zertifikate) und DDNS mit einer Gesamtampel (das Schlechteste gewinnt). Nur eingeschaltete Module kommen vor.
+- `GET /api/modules` meldet jetzt `off`, `read` oder `control` je Modul und das neue Modul `services`. Neue Dateien in der Service-Worker-Hülle (Version pd-v49). Doku: [docs/MODULES.md](docs/MODULES.md) neu gefasst (Schalter, Rechte, Grenzen, Einrichtung für Caddy-Admin-API, Cloudflare und die Jularr-Vorlage, Funktionsvergleich mit dem Caddy UI, Vertrag für ein künftiges Caddy UI); `.env.example` und beide Compose-Dateien haben die neuen Variablen (auskommentiert bzw. leer = aus).
+
+### Geändert
+- Die Texte der Fenster Caddy und DDNS sagen nicht mehr „nur Ansicht, schreibt nichts“, weil DDNS mit `control` schreiben kann.
+
 ## [0.8.0] - 2026-11-19
 
 ### Neu

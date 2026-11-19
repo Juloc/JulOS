@@ -180,3 +180,26 @@ export const caddyHealthText = (h) => t(HEALTH[h && h.state] || HEALTH.unknown) 
 export const caddyHealthClass = (h) => (!h ? 'idle' : h.state === 'up' ? 'ok' : h.state === 'down' ? 'bad' : 'idle');
 /** Statusklasse einer Anfrage im Protokoll: ok (2xx, 3xx), warn (4xx), bad (5xx). */
 export const logClass = (status) => (status >= 500 ? 'bad' : status >= 400 ? 'warn' : 'ok');
+
+/* ---------- DDNS: Aktualisieren und Verlauf ---------- */
+
+const OUTCOMES = { updated: tk('modules.ddnsOutUpdated'), current: tk('modules.ddnsOutCurrent'), failed: tk('modules.ddnsOutFailed'), noIp: tk('modules.ddnsOutNoIp'), privateIp: tk('modules.ddnsOutPrivate'), noProvider: tk('modules.ddnsOutNoProvider'), tooSoon: tk('modules.ddnsOutTooSoon') };
+export const ddnsOutcomeText = (r) => t(OUTCOMES[r && r.outcome] || OUTCOMES.failed);
+export const ddnsOutcomeClass = (r) => (!r ? '' : r.outcome === 'updated' ? 'ok' : r.outcome === 'current' ? 'ok' : r.outcome === 'failed' ? 'bad' : 'idle');
+const CHANGE_MSG = { ok: tk('modules.ddnsMsgOk'), missing: tk('modules.ddnsMsgMissing'), ambiguous: tk('modules.ddnsMsgAmbiguous'), rejected: tk('modules.ddnsMsgRejected'), unreachable: tk('modules.ddnsMsgUnreachable') };
+const TRIGGERS = { button: tk('modules.ddnsTrigButton'), auto: tk('modules.ddnsTrigAuto') };
+
+/** Eine Zeile des Verlaufs: Name, "alt -> neu", Ausloeser und Ergebnis, Zeit (schon formatiert, damit der Test ohne Zeitzone auskommt). */
+export function historyRow(e, fmtDate) {
+  return {
+    title: e.host,
+    sub: `${e.oldIp || '–'} → ${e.newIp}`,
+    meta: [t(TRIGGERS[e.trigger] || TRIGGERS.button), e.ok ? '' : t(CHANGE_MSG[e.message] || CHANGE_MSG.rejected)].filter(Boolean).join(' · '),
+    when: fmtDate(e.at), cls: e.ok ? 'ok' : 'bad', state: e.ok ? t('modules.ddnsHistOk') : t('modules.ddnsHistFailed'),
+  };
+}
+/** Die Zeile zur Schreibstufe: Anbieter und automatisch ja/nein. */
+export function ddnsControlLine(info) {
+  if (!info || !info.canUpdate) return '';
+  return t('modules.ddnsControlLine', { provider: info.provider, auto: info.auto ? t('modules.ddnsAutoOn', { min: Math.round(info.autoSeconds / 60) }) : t('modules.ddnsAutoOff') });
+}

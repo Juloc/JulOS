@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using JulOS.Backend.Data;
+using Npgsql;
 using JulOS.Backend.Logic;
 using JulOS.Backend.Modules;
 using JulOS.Frontend.Auth;
@@ -37,6 +38,20 @@ internal static class ModuleEndpoints
                 : d.LookupUrl is not null ? new UrlIpSource(OutboundHttp.Create(), d.LookupUrl) : null;
             return new DdnsMonitor(d, source, new SystemResolver(), sp.GetRequiredService<TimeProvider>());
         });
+        services.AddSingleton<IDdnsHistory>(sp => new DdnsHistoryStore(sp.GetRequiredService<NpgsqlDataSource>()));
+        services.AddSingleton(sp =>
+        {
+            var d = settings.Ddns;
+            IDnsProvider? provider = d.Provider switch
+            {
+                { Kind: "cloudflare" } p => new CloudflareProvider(OutboundHttp.Create(), p.CloudflareZone!, p.TokenFile),
+                { Kind: "duckdns" } p => new DuckDnsProvider(OutboundHttp.Create(), p.TokenFile),
+                { Kind: "generic" } p => new GenericUrlProvider(OutboundHttp.Create(), p.UpdateUrl!, p.AuthFile),
+                _ => null,
+            };
+            return new DdnsUpdater(d, sp.GetRequiredService<DdnsMonitor>(), provider, sp.GetRequiredService<IDdnsHistory>(), sp.GetRequiredService<TimeProvider>());
+        });
+        services.AddHostedService<JulOS.Workers.DdnsAutoWorker>();
         return services;
     }
 
@@ -99,9 +114,36 @@ internal static class ModuleEndpoints
             if (Busy(ctx, hits, "ddns", 30)) return TooMany();
             return Results.Json(await ddns.GetAsync(ct), AppJson.Default.DdnsStatus);
         });
+
+        // Schreibstufe (JULOS_DDNS=control): Zustand der Einstellungen, Aktualisieren per Knopf, Verlauf. Nichts davon nimmt eine Adresse oder einen Namen vom Browser an.
+        app.MapGet("/api/modules/ddns/control", (HttpContext ctx, HitCounter hits, DdnsMonitor ddns, DdnsUpdater updater) =>
+        {
+            if (!ddns.Enabled) return Off("DDNS");
+            if (Busy(ctx, hits, "ddns-control", 30)) return TooMany();
+            return Results.Json(updater.Info(), AppJson.Default.DdnsControlInfo);
+        });
+
+        app.MapGet("/api/modules/ddns/history", async (HttpContext ctx, HitCounter hits, DdnsMonitor ddns, IDdnsHistory history, CancellationToken ct) =>
+        {
+            if (!ddns.Enabled) return Off("DDNS");
+            if (Busy(ctx, hits, "ddns-history", 30)) return TooMany();
+            return Results.Json(new DdnsHistoryResponse([.. await history.RecentAsync(50, ct)]), AppJson.Default.DdnsHistoryResponse);
+        });
+
+        app.MapPost("/api/modules/ddns/update", async (HttpContext ctx, HitCounter hits, DdnsMonitor ddns, DdnsUpdater updater, CancellationToken ct) =>
+        {
+            if (!ddns.Enabled) return Off("DDNS");
+            if (!updater.IsControl) return Error(403, "DDNS ist auf diesem Server nur zum Ansehen eingeschaltet (JULOS_DDNS=control erlaubt Aktualisieren).");
+            if (!updater.CanUpdate) return Error(409, "Es ist kein DNS-Anbieter eingestellt (JULOS_DDNS_PROVIDER).");
+            if (Busy(ctx, hits, "ddns-update", 3)) return TooMany();
+            var result = await updater.UpdateAsync("button", ct);
+            app.Logger.LogInformation("DDNS: Aktualisierung per Knopf, Ergebnis {Outcome}, Benutzer {User}", result.Outcome, ((SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!).UserName);
+            return Results.Json(result, AppJson.Default.DdnsUpdateResult);
+        });
     }
 
     private static string Mode(ModuleMode m) => ModuleModes.Name(m);
 }
 
+internal sealed record DdnsHistoryResponse(DdnsHistoryEntry[] Entries);
 internal sealed record ModulesResponse(string Caddy, string Ddns, string Services);

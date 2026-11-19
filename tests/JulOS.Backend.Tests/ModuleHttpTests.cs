@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
 using JulOS.Backend.Modules;
 using Microsoft.AspNetCore.Builder;
@@ -17,7 +18,8 @@ public sealed class ModuleHttpTests
     private const string Password = "korrektes pferd batterie";
     private const string SetupCode = "TEST-CODE-0000";
     private static readonly string[] Paths = ["/api/modules/caddy/routes", "/api/modules/caddy/reachability", "/api/modules/ddns/status",
-        "/api/modules/caddy/health", "/api/modules/caddy/certificates", "/api/modules/caddy/config", "/api/modules/caddy/log"];
+        "/api/modules/caddy/health", "/api/modules/caddy/certificates", "/api/modules/caddy/config", "/api/modules/caddy/log",
+        "/api/modules/ddns/control", "/api/modules/ddns/history"];
 
     private sealed class Server(TestDb db, Action<IServiceCollection>? services = null, params (string, string)[] settings) : WebApplicationFactory<Program>
     {
@@ -197,6 +199,74 @@ public sealed class ModuleHttpTests
         // schnelle Wiederholung kommt aus dem Zwischenspeicher, der Lookup wird nicht je Aufruf befragt
         await c.SendAsync(Get("/api/modules/ddns/status", cookie));
         Assert.Equal(1, ip.Calls);
+    }
+
+    private static (DdnsOptions, DdnsMonitor, FakeDnsProvider) DdnsRig(ModuleMode mode)
+    {
+        var opts = new DdnsOptions(mode, ["home.example.test"], null, null, DdnsOptions.DefaultCache);
+        return (opts, new DdnsMonitor(opts, new FakeIp("203.0.113.9"), new FakeResolver(new() { ["home.example.test"] = ["203.0.113.1"] })), new FakeDnsProvider(null));
+    }
+
+    [Fact]
+    public async Task Ddns_control_updates_by_button_only_with_the_switch_and_keeps_a_history()
+    {
+        var (opts, monitor, provider) = DdnsRig(ModuleMode.Control);
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db, s =>
+        {
+            s.AddSingleton(monitor);
+            s.AddSingleton(sp => new DdnsUpdater(opts, monitor, provider, sp.GetRequiredService<IDdnsHistory>()));
+        }, ("JULOS_DDNS", "control"));
+        var c = app.Client();
+        var cookie = await SignInAsync(c);
+
+        var info = await Json(await c.SendAsync(Get("/api/modules/ddns/control", cookie)));
+        Assert.True(info.GetProperty("canUpdate").GetBoolean());
+        Assert.Equal("Fake", info.GetProperty("provider").GetString());
+        Assert.Equal("control", (await Json(await c.SendAsync(Get("/api/modules", cookie)))).GetProperty("ddns").GetString());
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, (await c.SendAsync(Post("/api/modules/ddns/control", cookie))).StatusCode);
+
+        // Eingaben des Browsers zaehlen nicht: der Koerper nennt weder Name noch Adresse
+        var req = Post("/api/modules/ddns/update?host=evil.example.test&ip=198.51.100.1", cookie);
+        req.Content = JsonContent.Create(new { host = "evil.example.test", ip = "198.51.100.1" });
+        var res = await Json(await c.SendAsync(req));
+        Assert.Equal("updated", res.GetProperty("outcome").GetString());
+        Assert.Equal([("home.example.test", "203.0.113.9")], provider.Writes);
+
+        var history = await Json(await c.SendAsync(Get("/api/modules/ddns/history", cookie)));
+        var row = history.GetProperty("entries")[0];
+        Assert.Equal(("home.example.test", "203.0.113.1", "203.0.113.9", "button"), (row.GetProperty("host").GetString(), row.GetProperty("oldIp").GetString(), row.GetProperty("newIp").GetString(), row.GetProperty("trigger").GetString()));
+        Assert.Equal(1L, await db.ScalarAsync<long>("select count(*) from ddns_history"));
+        // der Knopf ist begrenzt: eine Pause nach der Aenderung
+        Assert.Equal("tooSoon", (await Json(await c.SendAsync(Post("/api/modules/ddns/update", cookie)))).GetProperty("outcome").GetString());
+    }
+
+    [Fact]
+    public async Task Ddns_read_cannot_update_and_control_without_a_provider_says_so()
+    {
+        var (opts, monitor, _) = DdnsRig(ModuleMode.Read);
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db, s =>
+        {
+            s.AddSingleton(monitor);
+            s.AddSingleton(sp => new DdnsUpdater(opts, monitor, new FakeDnsProvider(null), sp.GetRequiredService<IDdnsHistory>()));
+        }, ("JULOS_DDNS", "read"));
+        var c = app.Client();
+        var cookie = await SignInAsync(c);
+        var r = await c.SendAsync(Post("/api/modules/ddns/update", cookie));
+        Assert.Equal(HttpStatusCode.Forbidden, r.StatusCode);
+        Assert.False((await Json(await c.SendAsync(Get("/api/modules/ddns/control", cookie)))).GetProperty("canUpdate").GetBoolean());
+
+        var (copts, cmonitor, _) = DdnsRig(ModuleMode.Control);
+        await using var db2 = await TestDb.CreateAsync();
+        await using var app2 = new Server(db2, s =>
+        {
+            s.AddSingleton(cmonitor);
+            s.AddSingleton(sp => new DdnsUpdater(copts, cmonitor, null, sp.GetRequiredService<IDdnsHistory>()));
+        }, ("JULOS_DDNS", "control"));
+        var c2 = app2.Client();
+        var cookie2 = await SignInAsync(c2);
+        Assert.Equal(HttpStatusCode.Conflict, (await c2.SendAsync(Post("/api/modules/ddns/update", cookie2))).StatusCode);
     }
 
     [Fact]

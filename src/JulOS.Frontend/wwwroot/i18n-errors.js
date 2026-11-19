@@ -8,6 +8,8 @@ import { t, getLang } from './i18n.js';
 /** Fester Text des Servers -> Schluessel (Quellen: Error(...)-Antworten in src/JulOS.Frontend, Regelpruefungen in src/JulOS.Backend/Logic, Anmeldung, SSH- und Bildstrom-Meldungen). */
 export const SERVER_TEXTS = {
   "Zu viele Anfragen, bitte kurz warten.": "err.tooMany",
+  "DDNS ist auf diesem Server nur zum Ansehen eingeschaltet (JULOS_DDNS=control erlaubt Aktualisieren).": "err.ddnsReadOnly",
+  "Es ist kein DNS-Anbieter eingestellt (JULOS_DDNS_PROVIDER).": "err.ddnsNoProvider",
   "Dienst nicht gefunden.": "err.serviceNotFound",
   "Zu viele Dienste.": "err.tooManyServices",
   "Dienste sind auf diesem Server nur zum Ansehen eingeschaltet (JULOS_SERVICES=control erlaubt Ändern).": "err.servicesReadOnly",

@@ -186,6 +186,7 @@ public sealed class ModuleTests : IDisposable
         var s = Settings(("JULOS_CADDY", "control"), ("JULOS_DDNS", "READ"), ("JULOS_SERVICES", "control"));
         Assert.Equal(ModuleMode.Read, s.Caddy.Mode);      // Caddy schreibt nicht (nur als Entwurf dokumentiert)
         Assert.Equal(ModuleMode.Read, s.Ddns.Mode);
+        Assert.Equal(ModuleMode.Control, Settings(("JULOS_DDNS", "control")).Ddns.Mode);
         Assert.Equal(ModuleMode.Control, s.Services.Mode);
         Assert.Contains("Schreiben gibt es hier nicht", Assert.Single(s.Warnings));
         Assert.Equal(ModuleMode.Off, Settings().Services.Mode);

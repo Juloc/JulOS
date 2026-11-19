@@ -6,7 +6,11 @@ using System.Xml;
 
 namespace JulOS.Backend.Modules;
 
-public sealed record DdnsOptions(ModuleMode Mode, string[] Hosts, Uri? LookupUrl, Uri? RouterUrl, TimeSpan CacheFor)
+/// <summary>Auto: wird automatisch aktualisiert (nur mit Mode=Control und einem Anbieter), alle AutoEvery (mindestens 5 Minuten).</summary>
+/// <summary>Kind: cloudflare, generic oder duckdns. Alles Geheime steht in Dateien (TokenFile, AuthFile), nie in der Umgebung selbst; UpdateUrl kann ein Token tragen und wird nie angezeigt.</summary>
+public sealed record DdnsProviderOptions(string Kind, string? CloudflareZone, string? TokenFile, string? UpdateUrl, string? AuthFile);
+
+public sealed record DdnsOptions(ModuleMode Mode, string[] Hosts, Uri? LookupUrl, Uri? RouterUrl, TimeSpan CacheFor, bool Auto = false, TimeSpan AutoEvery = default, DdnsProviderOptions? Provider = null)
 {
     public const int MaxHosts = 20;
     public static readonly TimeSpan DefaultCache = TimeSpan.FromSeconds(60);
@@ -113,12 +117,16 @@ public sealed class DdnsMonitor(DdnsOptions options, IPublicIpSource? source, IH
     public bool Enabled => options.Mode != ModuleMode.Off;
     public string[] Hosts => options.Hosts;
 
-    public async Task<DdnsStatus> GetAsync(CancellationToken ct)
+    /// <summary>Vergisst die letzte Messung (nach einer Aenderung am DNS).</summary>
+    public void Forget() => _last = null;
+
+    /// <param name="force">true: neu messen, auch wenn die letzte Messung noch gilt (vor einer Aktualisierung).</param>
+    public async Task<DdnsStatus> GetAsync(CancellationToken ct, bool force = false)
     {
         await _gate.WaitAsync(ct);
         try
         {
-            if (_last is { } last && _time.GetUtcNow() - last.CheckedAt < options.CacheFor) return last;
+            if (!force && _last is { } last && _time.GetUtcNow() - last.CheckedAt < options.CacheFor) return last;
             return _last = await MeasureAsync(ct);
         }
         finally { _gate.Release(); }

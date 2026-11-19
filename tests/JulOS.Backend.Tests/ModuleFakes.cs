@@ -76,3 +76,45 @@ internal sealed class FakeServiceWeb(Dictionary<string, (HttpStatusCode Status, 
         return Task.FromResult(new HttpResponseMessage(r.Status) { Content = new StringContent(r.Body, Encoding.UTF8, "application/json") });
     }
 }
+
+/// <summary>Ein Fake-DNS-Anbieter: nennt feste Eintraege (oder null = nicht lesbar), merkt sich jedes Schreiben.</summary>
+internal sealed class FakeDnsProvider(DnsRecord[]? records, bool ok = true) : IDnsProvider
+{
+    public string Name => "Fake";
+    public List<(string Host, string Address)> Writes { get; } = [];
+    public int Reads;
+
+    public Task<IReadOnlyList<DnsRecord>?> ReadAsync(string[] hosts, string type, CancellationToken ct)
+    {
+        Reads++;
+        return Task.FromResult<IReadOnlyList<DnsRecord>?>(records?.Where(r => r.Type == type && hosts.Contains(r.Host)).ToArray());
+    }
+
+    public Task<DnsWriteResult> UpdateAsync(string host, IPAddress ip, CancellationToken ct)
+    {
+        Writes.Add((host, ip.ToString()));
+        return Task.FromResult(ok ? new DnsWriteResult(true, "ok") : new DnsWriteResult(false, "rejected"));
+    }
+}
+
+internal sealed class MemoryHistory : IDdnsHistory
+{
+    public List<DdnsHistoryEntry> Rows { get; } = [];
+    public Task AddAsync(DdnsHistoryEntry e, CancellationToken ct) { lock (Rows) Rows.Insert(0, e); return Task.CompletedTask; }
+    public Task<IReadOnlyList<DdnsHistoryEntry>> RecentAsync(int count, CancellationToken ct) => Task.FromResult<IReadOnlyList<DdnsHistoryEntry>>([.. Rows.Take(count)]);
+    public Task<string?> LastWrittenAsync(string host, string type, CancellationToken ct) => Task.FromResult(Rows.FirstOrDefault(r => r.Host == host && r.Type == type && r.Ok)?.NewIp);
+}
+
+/// <summary>Fake fuer die HTTP-Anbieter: je Methode und Adresse eine Antwort, jede Anfrage samt Kopfzeilen und Koerper wird gemerkt.</summary>
+internal sealed class FakeProviderWeb(Func<HttpRequestMessage, string, (HttpStatusCode, string)> answer) : HttpMessageHandler
+{
+    public List<(string Method, string Url, string Body, string? Auth)> Requests { get; } = [];
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct);
+        Requests.Add((request.Method.Method, request.RequestUri!.ToString(), body, request.Headers.Authorization?.ToString()));
+        var (status, text) = answer(request, body);
+        return new HttpResponseMessage(status) { Content = new StringContent(text, Encoding.UTF8, "application/json") };
+    }
+}

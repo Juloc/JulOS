@@ -4,8 +4,8 @@
  * DDNS: aktuelle oeffentliche Adresse, Zustand je Name, Zeit der letzten Pruefung. Nichts hier aendert etwas am Server oder an Caddy.
  * deps: { el, btn, ic, api }
  * ===================================================================== */
-import { routeParts, sourceLabel, reachMap, reachText, reachClass, ddnsStateLabel, ddnsStateClass, ddnsHeadline, ago, certClass, certStateText, certDetail, certSummary, caddyHealthText, caddyHealthClass, logClass } from './modules.js';
-import { t, tp, fmtDay, fmtTime } from './i18n.js';
+import { routeParts, sourceLabel, reachMap, reachText, reachClass, ddnsStateLabel, ddnsStateClass, ddnsHeadline, ago, ddnsOutcomeText, historyRow, ddnsControlLine, certClass, certStateText, certDetail, certSummary, caddyHealthText, caddyHealthClass, logClass } from './modules.js';
+import { t, tp, fmtDay, fmtTime, fmtDate } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
 import { mountWidgets } from './widgets.js';
 
@@ -120,9 +120,32 @@ export function mountDdns(body, { el, btn, ic, api }) {
   const head = el('div', 'dk-card dk-mhead');
   const list = el('div', 'dk-mlist'); list.setAttribute('aria-live', 'polite');
   const reload = btn('dk-btn', ic('refresh') + t('desktop.checkNow'));
+  const ctl = el('div', 'dk-card dk-mhead'); ctl.hidden = true;
+  const ctlLine = text('p', 'dk-mnote', ''), ctlMsg = text('p', '', '');
+  const update = btn('dk-btn', ic('cloud') + t('desktop.ddnsUpdate'));
+  ctl.append(ctlLine, update, ctlMsg);
+  const histTitle = text('h3', '', t('desktop.ddnsHistory')); histTitle.hidden = true;
+  const hist = el('div', 'dk-mlist'); hist.hidden = true;
   const foot = text('p', 'dk-mfoot', t('desktop.ddnsFoot'));
-  root.append(head, list, reload, foot); body.appendChild(root);
+  root.append(head, list, reload, ctl, histTitle, hist, foot); body.appendChild(root);
   let seq = 0;
+
+  async function loadControl() {
+    try {
+      const info = await api('/api/modules/ddns/control');
+      ctl.hidden = !info.canUpdate; ctlLine.textContent = ddnsControlLine(info);
+      const rows = (await api('/api/modules/ddns/history')).entries || [];
+      histTitle.hidden = hist.hidden = !(info.canUpdate || rows.length);
+      hist.replaceChildren();
+      if (!rows.length) hist.appendChild(text('div', 'dk-fempty', t('desktop.ddnsNoHistory')));
+      for (const e of rows) {
+        const h = historyRow(e, (d) => fmtDate(d));
+        const row = el('div', 'dk-row dk-mrow'); const main = el('span', 'dk-tt');
+        main.append(text('b', '', h.title + '  ' + h.sub), text('i', '', h.when + (h.meta ? ' · ' + h.meta : '')));
+        row.append(main, text('span', 'dk-mstate ' + h.cls, h.state)); hist.appendChild(row);
+      }
+    } catch { ctl.hidden = true; }
+  }
 
   async function load() {
     const my = ++seq;
@@ -145,11 +168,18 @@ export function mountDdns(body, { el, btn, ic, api }) {
         row.append(main, text('span', 'dk-mstate ' + ddnsStateClass(h.state), ddnsStateLabel(h.state)));
         list.appendChild(row);
       }
+      loadControl();
     } catch (e) {
       if (my !== seq) return;
       head.replaceChildren(text('p', '', serverMsg(e.message) || t('desktop.notLoaded'))); list.replaceChildren();
     } finally { if (my === seq) reload.disabled = false; }
   }
+  update.addEventListener('click', async () => {
+    update.disabled = true; ctlMsg.textContent = '';
+    try { const r = await api('/api/modules/ddns/update', { method: 'POST', body: {} }); ctlMsg.textContent = ddnsOutcomeText(r); ctlMsg.className = ''; await load(); }
+    catch (e) { ctlMsg.textContent = serverMsg(e.message) || t('desktop.notLoaded'); }
+    finally { update.disabled = false; }
+  });
   reload.addEventListener('click', load);
   load();
   return { reload: load };

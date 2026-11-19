@@ -1,7 +1,7 @@
 // Module Caddy und DDNS (modules.js): was die Oberflaeche aus den Antworten des Servers macht.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { certClass, certStateText, certDetail, certSummary, caddyHealthText, caddyHealthClass, logClass, TEMPLATES, templateById, fromTemplate, originOf, stateClass, stateText, errorText, msText, fmtMetric, fmtBytes, svcIcon, ICON_KEYS, loadModules, anyModule, routeParts, reachMap, reachText, reachClass, ddnsStateLabel, ddnsHeadline, ago, sourceLabel } from '../../src/JulOS.Frontend/wwwroot/modules.js';
+import { ddnsOutcomeText, ddnsOutcomeClass, historyRow, ddnsControlLine, certClass, certStateText, certDetail, certSummary, caddyHealthText, caddyHealthClass, logClass, TEMPLATES, templateById, fromTemplate, originOf, stateClass, stateText, errorText, msText, fmtMetric, fmtBytes, svcIcon, ICON_KEYS, loadModules, anyModule, routeParts, reachMap, reachText, reachClass, ddnsStateLabel, ddnsHeadline, ago, sourceLabel } from '../../src/JulOS.Frontend/wwwroot/modules.js';
 
 test('modules: only what the server switched on is shown, every error means off', async () => {
   const off = { caddy: false, ddns: false, services: false, modes: { caddy: 'off', ddns: 'off', services: 'off' } };
@@ -131,4 +131,22 @@ test('caddy: health and log classes', () => {
   assert.equal(caddyHealthText(undefined), 'Zustand unbekannt');
   assert.deepEqual([{ state: 'up' }, { state: 'down' }, { state: 'unknown' }, undefined].map(caddyHealthClass), ['ok', 'bad', 'idle', 'idle']);
   assert.deepEqual([200, 301, 404, 503].map(logClass), ['ok', 'ok', 'warn', 'bad']);
+});
+
+test('ddns: outcomes, history rows and the control line', () => {
+  assert.equal(ddnsOutcomeText({ outcome: 'updated' }), 'Aktualisiert.');
+  assert.match(ddnsOutcomeText({ outcome: 'tooSoon' }), /Zu früh/);
+  assert.equal(ddnsOutcomeText({ outcome: 'etwas-neues' }), 'Die Änderung ist fehlgeschlagen (siehe Verlauf).');
+  assert.deepEqual(['updated', 'current', 'failed', 'noIp'].map((o) => ddnsOutcomeClass({ outcome: o })), ['ok', 'ok', 'bad', 'idle']);
+  const when = () => 'jetzt';
+  assert.deepEqual(historyRow({ at: 'x', host: 'home.example.test', oldIp: '203.0.113.1', newIp: '203.0.113.9', trigger: 'auto', ok: true, message: 'ok' }, when),
+    { title: 'home.example.test', sub: '203.0.113.1 → 203.0.113.9', meta: 'automatisch', when: 'jetzt', cls: 'ok', state: 'geändert' });
+  const bad = historyRow({ at: 'x', host: 'h', newIp: '203.0.113.9', trigger: 'button', ok: false, message: 'missing' }, when);
+  assert.equal(bad.sub, '– → 203.0.113.9');
+  assert.equal(bad.meta, 'per Knopf · Eintrag fehlt');
+  assert.equal(bad.cls, 'bad');
+  assert.equal(ddnsControlLine({ canUpdate: false }), '');
+  assert.equal(ddnsControlLine(null), '');
+  assert.match(ddnsControlLine({ canUpdate: true, provider: 'Cloudflare', auto: true, autoSeconds: 900 }), /Cloudflare · automatisch: ein \(alle 15 min\)/);
+  assert.match(ddnsControlLine({ canUpdate: true, provider: 'DuckDNS', auto: false, autoSeconds: 300 }), /automatisch: aus/);
 });

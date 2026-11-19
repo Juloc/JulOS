@@ -184,10 +184,11 @@ public sealed class ScreenStreamTests
         await using var stream = new ScreenStream(Options(host, 1280, 720), 16_000, null, selector);
         using var cts = new CancellationTokenSource(Wait);
         var run = stream.RunAsync(cts.Token);
-        await NextAsync<ScreenSize>(stream, cts.Token);
 
+        // The encoder is made before the size is announced, so its info comes first (NextAsync skips what it is not asked for).
         var first = await NextAsync<ScreenEncoderInfo>(stream, cts.Token);
         Assert.True(first.Hardware);
+        await NextAsync<ScreenSize>(stream, cts.Token);
         var second = await NextAsync<ScreenEncoderInfo>(stream, cts.Token, i => !i.Hardware);       // after the failure
         Assert.Equal(VideoCodec.H264, second.Codec);
         Assert.StartsWith("OpenH264", second.Name);
@@ -209,10 +210,10 @@ public sealed class ScreenStreamTests
         await using var stream = new ScreenStream(Options(host, 1280, 720), 16_000, null, selector, VideoCodecs.H264 | VideoCodecs.Hevc);
         using var cts = new CancellationTokenSource(Wait);
         var run = stream.RunAsync(cts.Token);
-        await NextAsync<ScreenSize>(stream, cts.Token);
 
         var info = await NextAsync<ScreenEncoderInfo>(stream, cts.Token);
         Assert.Equal(VideoCodec.Hevc, info.Codec);
+        await NextAsync<ScreenSize>(stream, cts.Token);
         var hevc = await NextAsync<ScreenPicture>(stream, cts.Token);
         Assert.Equal(VideoCodec.Hevc, hevc.Codec);
         Assert.True(hevc.IsKey);

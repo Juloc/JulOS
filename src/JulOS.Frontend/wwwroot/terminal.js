@@ -8,6 +8,7 @@
 
 import { t } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
+import { noticeTexts } from './terminal-programs.js';
 
 const LIB = '/lib/xterm/';
 let libPromise = null;
@@ -214,8 +215,14 @@ export class TerminalView {
         this.connected = true; this.everConnected = true; this.fingerprint = info.fingerprint;
         if (info.hostKey === 'new') this._banner(t('term.hostKeyNew', { fingerprint: info.fingerprint }));
         else if (info.hostKey === 'changed-accepted') this._banner(t('term.hostKeyAccepted', { fingerprint: info.fingerprint }));
+        // Programm-Sitzung: was der Server gefunden hat (fehlendes Programm, Verzeichnis oder tmux) nie still lassen: als Hinweis und als Zeile im Terminal
+        const notices = noticeTexts(info.notice, this.conn, t);
+        if (notices.length) {
+          this.term.write(notices.map((n) => `\r\n\x1b[33m[JulOS] ${n}\x1b[0m`).join('') + '\r\n');
+          this._banner(notices.join(' '), 15000);
+        }
         this.lastCols = 0;                                              // die Groesse nach dem Verbinden einmal sicher melden
-        this._setState('connected', { hostKey: info.hostKey, fingerprint: info.fingerprint });
+        this._setState('connected', { hostKey: info.hostKey, fingerprint: info.fingerprint, program: info.program, keep: info.keep, notices });
         this._sendResize(true);
         if (this.active) this.focus();
         break;
@@ -284,6 +291,11 @@ export class TerminalView {
     this.lastCols = cols; this.lastRows = rows;
     this._sendRaw(TO.resize, new Uint8Array([cols >> 8, cols & 255, rows >> 8, rows & 255]));
   }
+
+  /** Text an das Programm (Schnelltasten und Eingabeleiste); gesendet wird nur bei stehender Verbindung. */
+  sendText(text) { this._sendText(text); this.opts.onKeyUsed?.(); }
+  /** Kurzer Hinweis oben im Terminal. */
+  notify(text, ms = 5000) { this._banner(text, ms); }
 
   /** Eingaben der Sondertasten-Leiste: X11-Keysym, wie beim Stream-Client. */
   sendKeyEvent(pressed, sym) {

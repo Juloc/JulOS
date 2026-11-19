@@ -3,6 +3,7 @@ import { Sessions } from './sessions.js';
 import { SCHEMES, normalizeScheme } from './scheme.js';
 import { t, tp, tk, fmtNumber, fmtDate, fmtTime, fmtDay, getPref, LANG_CHOICES } from './i18n.js';
 import { looksLikeAddress } from './quick.js';
+import { tileKind, KIND_KEY, withProgram } from './terminal-programs.js';
 import { favouriteList, recentList, filterByFolder, groupByFolder, folderIconSvg, folderName, setFavorite } from './folders.js';
 import { connectionState, dotClass as hostDot, stateText, serviceState, hostDetail, agentSummary, servicesSummary } from './hosts.js';
 
@@ -48,8 +49,12 @@ const X = {
   info: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z',
   construction: 'M13.78 15.3l6 6 2.11-2.16-6-6zM17.5 10c1.93 0 3.5-1.57 3.5-3.5 0-.58-.16-1.12-.41-1.6l-2.7 2.7-1.49-1.49 2.7-2.7c-.48-.25-1.02-.41-1.6-.41C15.57 3 14 4.57 14 6.5c0 .41.08.8.21 1.16l-1.85 1.85-1.78-1.78.71-.71-1.41-1.41L12 3.49c-1.17-1.17-3.07-1.17-4.24 0L4.22 7.03l1.41 1.41H2.81l-.71.71 3.54 3.54.71-.71V9.15l1.41 1.41.71-.71 1.78 1.78-7.41 7.41 2.12 2.12L16.34 11.8c.36.13.75.2 1.16.2z',
 };
+// Claude und Codex: eigene einfache Zeichen (ein Funkelstern und Klammern), keine Marken
+X.claude = 'M12 2l1.9 6.1L20 6l-4.1 4.9L22 12l-6.1 1.1L20 18l-6.1-2.1L12 22l-1.9-6.1L4 18l4.1-4.9L2 12l6.1-1.1L4 6l6.1 2.1z';
+X.codex = 'M9.4 16.6 4.8 12l4.6-4.6L8 6l-6 6 6 6zm5.2 0 4.6-4.6-4.6-4.6L16 6l6 6-6 6z';
 const icon = (n) => (X[n] ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${X[n]}"/></svg>` : ico(n));
 const kindIcon = (k) => icon(k === 'terminal' ? 'terminal' : 'desktop');
+const connIcon = (c) => icon(tileKind(c));              // Terminal-Verbindungen mit Claude oder Codex bekommen ihr eigenes Symbol
 const LOGO = `<svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="mlg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--m3-primary)"/><stop offset="1" stop-color="var(--m3-tertiary)"/></linearGradient></defs><rect width="32" height="32" rx="10" fill="url(#mlg)"/><path d="M12 9.5v13l11-6.5z" fill="var(--m3-on-primary)"/></svg>`;
 // Zierbild im Kopf der Startseite: Berg und See in den Toenen des Themas (keine Bilddatei)
 const ART = `<svg class="art" viewBox="0 0 400 96" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
@@ -68,6 +73,7 @@ const DEST = [
 const SWATCHES = [['#9a67ea', tk('mobile.colorViolet')], ['#4f86f7', tk('mobile.colorBlue')], ['#00a67e', tk('mobile.colorGreen')], ['#0aa5b8', tk('mobile.colorTeal')], ['#e5599a', tk('mobile.colorPink')], ['#e5484d', tk('mobile.colorRed')], ['#f5a524', tk('mobile.colorOrange')]];
 const SCHEME_LABEL = { light: tk('mobile.schemeLight'), dark: tk('mobile.schemeDark'), auto: tk('mobile.schemeAuto') };
 const kindText = (k) => (k === 'terminal' ? t('shell.kindTerminal') : t('shell.kindDesktop'));
+const connKindText = (c) => t(KIND_KEY[tileKind(c)]);
 const DEFAULT_SEED = '#9a67ea';
 
 let ctx = null, root = null, ready = null;
@@ -278,9 +284,9 @@ function whenLabel(ts) {
 }
 const favourites = () => favouriteList(conns(), 6);
 const openCount = (c) => Sessions.find(c.id).length;
-const tileHtml = (c, pinned) => `<button type="button" class="mb tile m3-state ${c.kind}${openCount(c) ? ' live' : ''}" data-conn="${c.id}" data-act="start" aria-label="${esc(t('mobile.tileAria', { name: c.name, kind: kindText(c.kind), state: stateText(connectionState(hosts(), c)), action: openCount(c) ? t('mobile.tileOpen', { n: openCount(c) }) : t('mobile.tileTap') }))}">
+const tileHtml = (c, pinned) => `<button type="button" class="mb tile m3-state ${c.kind} k-${tileKind(c)}${openCount(c) ? ' live' : ''}" data-conn="${c.id}" data-act="start" aria-label="${esc(t('mobile.tileAria', { name: c.name, kind: connKindText(c), state: stateText(connectionState(hosts(), c)), action: openCount(c) ? t('mobile.tileOpen', { n: openCount(c) }) : t('mobile.tileTap') }))}">
   <span class="hdot ${hostDot(connectionState(hosts(), c))}" title="${stateText(connectionState(hosts(), c))}"></span>${openCount(c) ? `<span class="liveb" title="${esc(t('mobile.sessionOpen'))}">${openCount(c)}</span>` : ''}${pinned ? `<span class="fav" title="${esc(t('mobile.favourite'))}">${icon('star')}</span>` : ''}${c.hasPassword ? `<span class="badge" title="${esc(t('shell.passwordSaved'))}">${icon('key')}</span>` : ''}
-  <span class="ti">${kindIcon(c.kind)}</span><span class="tn">${esc(c.name)}</span></button>`;
+  <span class="ti">${connIcon(c)}</span><span class="tn">${esc(c.name)}</span></button>`;
 
 function activityRows(limit) {
   const log = ls.get('log', []).filter((l) => l.type !== 'start' || byId(l.id)).slice(0, limit);
@@ -295,7 +301,7 @@ function activityRows(limit) {
 /* Offene Sitzungen: Karten mit Zustandspunkt, ein Tipp wechselt hin, das Kreuz schliesst */
 const dotClass = (st) => (st === 'connected' ? 'ok' : st === 'connecting' || st === 'reconnecting' ? 'busy' : 'bad');
 const sessionRows = () => Sessions.list().map((s) => `<div class="m3-li sess ${s === Sessions.active ? 'act' : ''}" data-act="sess" data-sid="${s.id}" role="button" tabindex="0" aria-label="${esc(t('mobile.sessAria', { title: s.title, state: s.stateText }))}">
-    <span class="lead">${kindIcon(s.kind)}</span><span class="txt"><span class="hl">${esc(s.title)}</span><span class="sl"><span class="m3-dot sdot ${dotClass(s.state)}"></span>${esc(s.stateText)} · ${esc(s.conn.name === s.title ? kindText(s.kind) : s.conn.name)}</span></span>
+    <span class="lead">${icon(tileKind(s.conn))}</span><span class="txt"><span class="hl">${esc(s.title)}</span><span class="sl"><span class="m3-dot sdot ${dotClass(s.state)}"></span>${esc(s.stateText)} · ${esc(s.conn.name === s.title ? kindText(s.kind) : s.conn.name)}</span></span>
     <button type="button" class="mb sx m3-state" data-act="sessclose" data-sid="${s.id}" aria-label="${esc(t('mobile.sessClose', { title: s.title }))}">${icon('close')}</button></div>`).join('');
 function sessionsSection() {
   if (!Sessions.count) return '';
@@ -386,6 +392,8 @@ function renderServices() {
     <button type="button" class="mb m3-btn filled m3-state" data-act="add">${icon('add')}${t('shell.newConnection')}</button>
     <button type="button" class="mb m3-btn tonal m3-state" data-act="last" ${last ? '' : 'disabled'} ${last ? `aria-label="${esc(t('mobile.lastOpenedName', { name: last.name }))}"` : ''}>${icon('history')}${last ? esc(t('mobile.lastName', { name: last.name.length > 14 ? last.name.slice(0, 13) + '…' : last.name })) : t('mobile.lastOpened')}</button>
     <button type="button" class="mb m3-btn tonal m3-state" data-act="ssh">${icon('terminal')}${t('mobile.openSsh')}</button>
+    <button type="button" class="mb m3-btn tonal m3-state" data-act="prog" data-prog="claude">${icon('claude')}${t('prog.claude')}</button>
+    <button type="button" class="mb m3-btn tonal m3-state" data-act="prog" data-prog="codex">${icon('codex')}${t('prog.codex')}</button>
     <button type="button" class="mb m3-btn tonal m3-state" data-act="quick">${icon('bolt')}${t('mobile.quickConnect')}</button>
     <button type="button" class="mb m3-btn tonal m3-state" data-act="folders">${folderIconSvg('folder')}${t('mobile.folders')}</button>`;
 }
@@ -536,6 +544,15 @@ function onClick(e) {
   else if (act === 'mod') import('./mobile-modules.js').then((m) => m.openSheet(a.dataset.mod, { icon, esc, api: ctx.api, wireSheet, app: $('#app') }));
   else if (act === 'allacts') { view.allActs = !view.allActs; renderHome(); }
   else if (act === 'last') { const c = lastConnection(); if (c) ctx.connect(c); }
+  else if (act === 'prog') {
+    // Ein Tipp auf "Claude" oder "Codex" (shell.js: launchProgram); bei mehreren passenden Kacheln steht die Auswahl in der Liste darunter
+    const program = a.dataset.prog;
+    ctx.program(program, (list) => {
+      view.kind = 'terminal'; view.q = ''; view.folder = 'all'; view.host = '';
+      renderServices(); snack(t('prog.pickTile', { program: t(program === 'codex' ? 'prog.codex' : 'prog.claude') })); $('#mGrid').scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return list;
+    });
+  }
   else if (act === 'ssh') {
     const terms = conns().filter((c) => c.kind === 'terminal');
     if (terms.length === 1) ctx.connect(terms[0]);
@@ -550,7 +567,7 @@ function actionSheet(c) {
   let dlg = $('#mActDlg');
   if (!dlg) { dlg = document.createElement('dialog'); dlg.id = 'mActDlg'; dlg.className = 'm3sheet'; $('#app').appendChild(dlg); wireSheet(dlg); }
   const fav = !!c.favorite;
-  dlg.innerHTML = `<h2>${esc(c.name)}</h2><p class="hint">${esc(kindText(c.kind))} · ${esc(c.username ? c.username + '@' : '')}${esc(c.host)}:${c.port}</p>
+  dlg.innerHTML = `<h2>${esc(c.name)}</h2><p class="hint">${esc(connKindText(c))} · ${esc(c.username ? c.username + '@' : '')}${esc(c.host)}:${c.port}</p>
     <div class="m3-list" style="margin:0 -18px">
       <button type="button" class="mb m3-li m3-state" data-a="start"><span class="lead">${icon('play')}</span><span class="txt"><span class="hl">${openCount(c) ? t('mobile.switchSession') : t('mobile.connect')}</span>${openCount(c) ? `<span class="sl">${esc(t('mobile.openCount', { n: openCount(c) }))}</span>` : ''}</span></button>
       ${openCount(c) ? `<button type="button" class="mb m3-li m3-state" data-a="extra"><span class="lead">${icon('add')}</span><span class="txt"><span class="hl">${t('mobile.anotherSession')}</span><span class="sl">${t('mobile.anotherSessionSub')}</span></span></button>` : ''}

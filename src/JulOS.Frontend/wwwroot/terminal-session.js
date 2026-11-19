@@ -7,15 +7,22 @@
 import { RemoteSession, softKeyboard } from './app.js';
 import { Sessions } from './sessions.js';
 import { TerminalView } from './terminal.js';
+import { TerminalBar } from './terminal-input.js';
+import { programOf } from './terminal-programs.js';
 import { t } from './i18n.js';
 
 // Maus und echte Tastatur: xterm nimmt die Tasten selbst an. ?softkb in der Adresse erzwingt zum Testen die Handy-Tastatur (Eingabefeld der Seite).
 const HW_KB = matchMedia('(pointer: fine) and (hover: hover)').matches && !location.search.includes('softkb');
+// Verbindungsabbrueche, nach denen eine tmux-Sitzung von selbst wieder angehaengt wird: kein Code (Leitung weg) oder ein Verbindungsfehler (Server ausgelastet, Zeit, Ziel nicht erreichbar)
+const RETRY_CODES = new Set([513, 514, 515, 520]);
+const KEEP_SECONDS = 600;           // so lange wird nach einem Abriss versucht, die tmux-Sitzung wieder zu nehmen (das Ziel haelt sie ohnehin weiter)
 
 export class TerminalSession extends RemoteSession {
   constructor(conn, opts = {}) {
     super(conn, opts);
-    this.view = null;
+    this.view = null; this.bar = null;
+    this.barState = { draft: '', open: undefined };      // gehoert der Sitzung: ein Neuverbinden behaelt den Entwurf und ob die Leiste offen ist
+    this.keep = false;                                    // laeuft die Sitzung in tmux (Antwort des Servers)? Dann haengt sich ein Neuverbinden wieder an
     this.element.classList.add('sv-terminal');
     this.engine = 'ssh';
   }
@@ -37,6 +44,8 @@ export class TerminalSession extends RemoteSession {
     });
     this.view = view;
     this.client = view;                       // die Leiste ruft this.client.sendKeyEvent(gedrueckt, keysym)
+    this.bar?.destroy();
+    this.bar = new TerminalBar({ view, container: this.el.stage, program: programOf(this.conn), state: this.barState });   // Eingabeleiste und Schnelltasten (terminal-input.js)
     view.setActive(this.visible);
     await view.connect();
   }
@@ -46,6 +55,11 @@ export class TerminalSession extends RemoteSession {
     if (state === 'connecting') return;
     if (state === 'connected') {
       this.connected = true; this.everConnected = true; this.connectedAt = Date.now();
+      this.bar?.setProgram(info.program || programOf(this.conn));
+      // Laeuft die Sitzung in tmux, bleibt die Arbeit auf dem Ziel erhalten: nach einem Abriss wird sie wieder angehaengt (Fristen: resume.js, wie beim Stream)
+      this.keep = info.keep === 'tmux';
+      if (this.keep) { this.resume.offered('tmux', KEEP_SECONDS); this.resume.confirm(); } else this.resume.reset();
+      this.resume.connected();
       this.el.overlay.hidden = true; this.el.spinner.hidden = true;
       this.setState('connected', t('term.connected'));
       if (Sessions.active === this && HW_KB) view.focusInput();
@@ -56,20 +70,42 @@ export class TerminalSession extends RemoteSession {
     if (info.code === 777) { this.fatal = true; this.setState('taken', t('term.taken')); return this.showOverlay(info.message); }
     if (info.code === 797) { this.fatal = true; return this.requestClose(info.message); }                      // Obergrenze: Meldung des Servers
     if (state === 'error' && (info.fatal || !this.everConnected)) { this.fatal = !!info.fatal; return this.requestClose(info.message); }
+    // tmux: die Arbeit lebt auf dem Ziel weiter, also wieder anhaengen (der Browser versucht es mit wachsenden Pausen, bis die Frist ablaeuft)
+    const lost = state === 'closed' ? (!info.code || RETRY_CODES.has(info.code)) : state === 'error' && !info.fatal;
+    if (this.keep && lost && this.scheduleKeepReconnect()) return;
     // Verbindung stand, ist aber weg: die Shell auf dem Ziel endet mit der Verbindung, darum kein stilles Neuverbinden (das ergaebe eine leere neue Shell)
     this.setState('disconnected', state === 'closed' && info.code ? t('term.ended') : t('term.disconnected'));
     this.showOverlay(info.message || t('term.connectionClosed'));
   }
 
+  /** Eine getrennte tmux-Sitzung wieder anhaengen: true, wenn ein Versuch geplant ist (false: die Frist ist um, die Ueberlagerung zeigt es). */
+  scheduleKeepReconnect() {
+    this.resume.lost();
+    if (!this.resume.usable() || this.intentional || this.disposed) return false;
+    this.setState('reconnecting', t('term.reconnecting'));
+    this.showBusy(t('term.reconnecting'));
+    clearTimeout(this.retryTimer);
+    this.retryTimer = setTimeout(() => { if (!this.intentional && !this.disposed) this.start(); }, this.resume.nextDelay());
+    return true;
+  }
+
   teardown() {
     const view = this.view;
     this.view = null;
+    this.bar?.destroy(); this.bar = null;
     super.teardown();                         // trennt this.client (= die Ansicht), raeumt Zeitgeber und Umschalter auf
     view?.destroy();
   }
 
-  /** Zurueck aus dem Hintergrund (Handy gesperrt): eine bestehende Verbindung bleibt, eine getrennte zeigt ihre Ueberlagerung; kein Neustart von selbst. */
-  onPageVisible() {}
+  /**
+   * Zurueck aus dem Hintergrund (Handy gesperrt): eine bestehende Verbindung bleibt, eine getrennte zeigt ihre Ueberlagerung; kein Neustart von selbst.
+   * Ausnahme tmux: die Arbeit lebt auf dem Ziel, also wird nach laengerer Pause oder bei getrennter Leitung wieder angehaengt (auch beim Signal "Netz wieder da").
+   */
+  onPageVisible(away) {
+    if (!this.keep || this.intentional || this.fatal || this.disposed || !this.everConnected) return;
+    if (this.view && !this.connected && Date.now() - this.connectStarted < 10000) return;      // es wird gerade verbunden
+    if (!this.connected || away > 15000) { clearTimeout(this.retryTimer); this.start(); }
+  }
 
   /* ---------- Groesse, Zoom, Sichtbarkeit: Zeichen statt Pixel, die Ansicht misst selbst ---------- */
   resize() { this.view?.fitSoon(); }
@@ -81,7 +117,7 @@ export class TerminalSession extends RemoteSession {
   setK(k) { this.view?.zoom(k < this.k ? 1 : -1); }
   rememberProfile() {}
   setVisible(on) { super.setVisible(on); this.view?.setActive(!!on); }
-  focus() { if (HW_KB) this.view?.focusInput(); }
+  focus() { if (HW_KB && !this.bar?.field.matches(':focus')) this.view?.focusInput(); }
   blur() { this.view?.blur(); super.blur(); }
 
   /* ---------- Einfuegen: Text geht als Einfuegen ins Terminal (mit Klammer-Modus, wenn die Shell ihn kann) ---------- */

@@ -1,6 +1,7 @@
 import { remoteApi } from './app.js';
 import { Sessions } from './sessions.js';
 import { remoteMenuNames, remoteMenuItems, sessionMenu } from './desktop-remote.js';
+import { serviceState, connectionState, dotClass, stateText, groupConnections, hostDetail, agentSummary, servicesSummary } from './hosts.js';
 
 /* =====================================================================
  * Desktop-Oberflaeche (breite Bildschirme mit Maus): Menueleiste, Dock, Launcher, Home-Fenster und ein Fenster
@@ -11,7 +12,7 @@ import { remoteMenuNames, remoteMenuItems, sessionMenu } from './desktop-remote.
 
 const $ = (s, r = document) => r.querySelector(s);
 const BAR_H = 34;
-let ctx = null;            // von shell.js: { state, esc, api, connect, edit, add, devices, signOut }
+let ctx = null;            // von shell.js: { state, esc, api, connect, edit, add, editHost, addHost, devices, signOut }
 let root = null;
 const wins = new Map();    // id -> Fenster
 let zTop = 10;
@@ -34,6 +35,7 @@ const P = {
   terminal: '<path d="m4 17 6-6-6-6M12 19h8"/>',
   sliders: '<path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/>',
   folder: '<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"/>',
+  server: '<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
   cloud: '<path d="M17.5 19H9a7 7 0 1 1 6.7-9h1.8a4.5 4.5 0 1 1 0 9z"/>',
   activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
   box: '<path d="m21 8-9-5-9 5v8l9 5 9-5z"/><path d="m3.3 7.5 8.7 5 8.7-5M12 22V12.5"/>',
@@ -79,6 +81,7 @@ const APPS = [
   { id: 'terminal', name: 'Terminal', sub: 'SSH', ic: 'terminal', g: ['#5b6275', '#2c3142'] },
   { id: 'settings', name: 'Einstellungen', ic: 'sliders', g: ['#a2a8be', '#6f7590'] },
   { id: 'files', name: 'Dateien', ic: 'folder', g: ['#f7c76a', '#ee9b3a'] },
+  { id: 'hosts', name: 'Hosts', sub: 'Rechner und Server', ic: 'server', g: ['#7fd6c2', '#2a9d8f'] },
   { id: 'docker', name: 'Docker', ic: 'box', g: ['#55b9f5', '#2b7bd8'], soon: true },
   { id: 'caddy', name: 'Caddy', sub: 'Domains', ic: 'globe', g: ['#5fd49a', '#1fa971'], mod: 'caddy' },
   { id: 'ddns', name: 'DDNS', sub: 'Adresse', ic: 'cloud', g: ['#8fd0ff', '#5a9cf5'], mod: 'ddns' },
@@ -337,6 +340,12 @@ const MENUS = () => ({
     { sep: true },
     { label: 'Neue Verbindung …', icon: 'plus', run: () => ctx.add() },
   ],
+  Hosts: [
+    ...ctx.state.hosts.map((h) => ({ label: h.name, icon: 'server', hint: h.online ? 'online' : 'offline', run: () => openHome('hosts') })),
+    ...(ctx.state.hosts.length ? [{ sep: true }] : []),
+    { label: 'Hosts verwalten', icon: 'server', run: () => openHome('hosts') },
+    { label: 'Neuer Host …', icon: 'plus', run: () => ctx.addHost() },
+  ],
   Dateien: [
     { label: 'Dateien öffnen', icon: 'folder', run: () => openFiles() },
     { label: 'Suchen …', icon: 'search', run: () => openFiles('', true) },
@@ -489,6 +498,7 @@ function buildDock() {
     item('launcher', 'Launcher', { ic: 'grid', g: ['#b08cf5', '#6a58e6'] }, true),
     item('home', 'Start', appById('home')),
     item('files', 'Dateien', appById('files')),
+    item('hosts', 'Hosts', appById('hosts')),
     el('div', 'dk-dsep'),
     item('desktop', 'Desktop (RDP)', appById('desktop')),
     item('terminal', 'Terminal (SSH)', appById('terminal')),
@@ -523,6 +533,7 @@ function renderDock() {
   const state = {};
   const home = wins.get('home'); if (home) state.home = home;
   const files = wins.get('files'); if (files) state.files = files;
+  if (wins.get('home') && nav.view === 'hosts') state.hosts = wins.get('home');
   for (const id of ['caddy', 'ddns']) { const w = wins.get(id); if (w) state[id] = w; }
   for (const w of sessWins.values()) { const k = w.session.kind; if (!state[k] || (state[k].minimized && !w.minimized)) state[k] = w; }
   for (const b of root.querySelectorAll('.dk-di[data-dock]')) {
@@ -597,6 +608,7 @@ function runApp(id, anchor) {
   if (id === 'settings') return openHome('einstellungen');
   if (id === 'monitor') return openHome('system');
   if (id === 'files') return openFiles();
+  if (id === 'hosts') return openHome('hosts');
   if (a && a.mod) return modules[a.mod] ? openModule(id) : notify(`${a.name} ist auf diesem Server nicht eingeschaltet.`);
   if (id === 'desktop' || id === 'terminal') return pickConnection(id, anchor);
 }
@@ -673,7 +685,7 @@ function openLauncher() {
  *  Home-Fenster
  * ===================================================================== */
 const NAV = [
-  { id: 'start', name: 'Start', ic: 'home' }, { id: 'apps', name: 'Apps', ic: 'grid' }, { id: 'dienste', name: 'Dienste', ic: 'monitor' },
+  { id: 'start', name: 'Start', ic: 'home' }, { id: 'apps', name: 'Apps', ic: 'grid' }, { id: 'dienste', name: 'Dienste', ic: 'monitor' }, { id: 'hosts', name: 'Hosts', ic: 'server' },
   { id: 'dateien', name: 'Dateien', ic: 'folder' }, { id: 'system', name: 'System', ic: 'activity' }, { id: 'einstellungen', name: 'Einstellungen', ic: 'sliders' },
 ];
 const nav = { view: 'start', back: [], fwd: [] };
@@ -717,7 +729,7 @@ function renderHome() {
   const w = wins.get('home'); if (!w) return;
   w.side.replaceChildren();
   NAV.forEach((n, i) => {
-    if (i === 3) w.side.appendChild(document.createElement('hr'));
+    if (n.id === 'dateien') w.side.appendChild(document.createElement('hr'));
     const b = btn('dk-nav' + (n.id === nav.view ? ' sel' : ''), ic(n.ic) + '<span></span>' + (n.soon ? '<span class="dk-tag">bald</span>' : '')); b.querySelector('span').textContent = n.name;
     b.dataset.nav = n.id; b.dataset.name = n.name; if (n.soon) b.setAttribute('aria-disabled', 'true');
     w.side.appendChild(b);
@@ -726,14 +738,14 @@ function renderHome() {
   hist[0].disabled = !nav.back.length; hist[1].disabled = !nav.fwd.length;
   const m = w.main; m.scrollTop = 0;
   stopOverview();
-  ({ start: renderStart, apps: renderAppsView, dienste: renderServices, system: renderSystem, einstellungen: renderSettings }[nav.view] || renderStart)(m);
+  ({ start: renderStart, apps: renderAppsView, dienste: renderServices, hosts: renderHosts, system: renderSystem, einstellungen: renderSettings }[nav.view] || renderStart)(m);
   tickClock();
 }
 
 const connTile = (c) => {
   const n = Sessions.find(c.id).length, open = n > 0;
   const a = appById(c.kind);
-  return `<button type="button" class="dk-b dk-tile" data-conn="${ctx.esc(c.id)}">${tile(a.g, a.ic)}<span class="dk-tt"><b>${ctx.esc(c.name)}</b><i class="${open ? 'on' : ''}">${open ? (n > 1 ? n + ' Sitzungen offen' : 'Sitzung offen') : (c.kind === 'terminal' ? 'Terminal' : 'Desktop') + ' · ' + ctx.esc(c.host)}</i></span></button>`;
+  return `<button type="button" class="dk-b dk-tile" data-conn="${ctx.esc(c.id)}">${tile(a.g, a.ic)}<span class="dk-tt"><b><span class="dk-sd ${dotClass(connectionState(ctx.state.hosts, c))}" title="${stateText(connectionState(ctx.state.hosts, c))}"></span>${ctx.esc(c.name)}</b><i class="${open ? 'on' : ''}">${open ? (n > 1 ? n + ' Sitzungen offen' : 'Sitzung offen') : (c.kind === 'terminal' ? 'Terminal' : 'Desktop') + ' · ' + ctx.esc(c.host)}</i></span></button>`;
 };
 function renderStart(m) {
   const conns = ctx.state.connections;
@@ -805,17 +817,38 @@ function renderSystem(m) {
       <p style="margin-bottom:2px"><b>Netzwerk:</b> nur der Datenverkehr des JulOS-Containers, also was Browser, Fernsteuerung und Terminal verursachen. Der Verkehr des ganzen Rechners wäre nur mit <code>network_mode: host</code> sichtbar.</p></div>`;
   watchOverview(m);
 }
+const hostFilter = { id: '' };      // leer = alle Hosts (Auswahl in der Dienste-Ansicht, nur solange das Fenster lebt)
+const serviceRow = (c) => {
+  const a = appById(c.kind), n = Sessions.find(c.id).length, open = n > 0, st = connectionState(ctx.state.hosts, c);
+  return `<div class="dk-row">${tile(a.g, a.ic)}<span class="dk-tt"><b><span class="dk-sd ${dotClass(st)}" title="${stateText(st)}"></span>${ctx.esc(c.name)}${open ? ` <span class="dk-tag">${n > 1 ? n + ' Sitzungen' : 'Sitzung offen'}</span>` : ''}</b><i>${c.kind === 'terminal' ? 'Terminal (SSH)' : 'Desktop (RDP)'} · ${ctx.esc(c.username ? c.username + '@' : '')}${ctx.esc(c.host)}:${c.port}${c.hasPassword ? ' · Passwort gespeichert' : ''}</i></span>
+    <button type="button" class="dk-b dk-btn pri" data-conn="${ctx.esc(c.id)}">${ic('play')}${open ? 'Öffnen' : 'Verbinden'}</button>
+    ${open ? `<button type="button" class="dk-b dk-btn sq" data-extra="${ctx.esc(c.id)}" aria-label="Weitere Sitzung" title="Weitere Sitzung zu diesem Ziel">${ic('plus')}</button>` : ''}
+    <button type="button" class="dk-b dk-btn sq" data-edit="${ctx.esc(c.id)}" aria-label="Bearbeiten" title="Bearbeiten">${ic('edit')}</button></div>`;
+};
 function renderServices(m) {
-  const conns = ctx.state.connections;
+  const hosts = ctx.state.hosts, conns = ctx.state.connections;
+  if (hostFilter.id && !hosts.some((h) => h.id === hostFilter.id)) hostFilter.id = '';
+  const groups = groupConnections(hosts, conns).filter((g) => !hostFilter.id || (g.host && g.host.id === hostFilter.id));
+  // Die Auswahl des Hosts gibt es erst, wenn es mehr als einen gibt; die Gruppenkoepfe zeigen den Zustand des Hosts
+  const chips = hosts.length > 1 ? `<div class="dk-chips" role="group" aria-label="Host wählen">${[{ id: '', name: 'Alle Hosts' }, ...hosts].map((h) => `<button type="button" class="dk-b dk-chip${h.id === hostFilter.id ? ' sel' : ''}" data-hostfilter="${ctx.esc(h.id)}" aria-pressed="${h.id === hostFilter.id}">${h.id ? `<span class="dk-sd ${dotClass(h.online)}"></span>` : ''}${ctx.esc(h.name)}</button>`).join('')}</div>` : '';
   m.innerHTML = `<h3 style="margin-top:14px">Dienste <button type="button" class="dk-b dk-btn pri" style="margin-left:auto" data-act="add">${ic('plus')}Verbindung hinzufügen</button></h3>
+    ${chips}
     ${conns.length ? '' : '<p class="dk-lead">Noch keine Verbindung. Lege den Computer an, den du steuern willst.</p>'}
-    <div class="dk-list">${conns.map((c) => {
-      const a = appById(c.kind), n = Sessions.find(c.id).length, open = n > 0;
-      return `<div class="dk-row">${tile(a.g, a.ic)}<span class="dk-tt"><b>${ctx.esc(c.name)}${open ? ` <span class="dk-tag">${n > 1 ? n + ' Sitzungen' : 'Sitzung offen'}</span>` : ''}</b><i>${c.kind === 'terminal' ? 'Terminal (SSH)' : 'Desktop (RDP)'} · ${ctx.esc(c.username ? c.username + '@' : '')}${ctx.esc(c.host)}:${c.port}${c.hasPassword ? ' · Passwort gespeichert' : ''}</i></span>
-        <button type="button" class="dk-b dk-btn pri" data-conn="${ctx.esc(c.id)}">${ic('play')}${open ? 'Öffnen' : 'Verbinden'}</button>
-        ${open ? `<button type="button" class="dk-b dk-btn sq" data-extra="${ctx.esc(c.id)}" aria-label="Weitere Sitzung" title="Weitere Sitzung zu diesem Ziel">${ic('plus')}</button>` : ''}
-        <button type="button" class="dk-b dk-btn sq" data-edit="${ctx.esc(c.id)}" aria-label="Bearbeiten" title="Bearbeiten">${ic('edit')}</button></div>`;
-    }).join('')}</div>`;
+    ${groups.map((g) => `${hosts.length > 1 ? `<h4 class="dk-gh"><span class="dk-sd ${dotClass(g.host && g.host.online)}"></span>${ctx.esc(g.host ? g.host.name : 'Ohne Host')} <span class="dk-sub">${g.host ? ctx.esc(stateText(g.host.online)) : ''}</span></h4>` : ''}
+      <div class="dk-list">${g.connections.map(serviceRow).join('') || '<p class="dk-lead">Keine Verbindung auf diesem Host.</p>'}</div>`).join('')}`;
+}
+
+/** Hosts: Rechner und Server mit Zustand, Agent und Diensten; hier wird auch der Agent je Host eingerichtet */
+function renderHosts(m) {
+  const hosts = ctx.state.hosts;
+  m.innerHTML = `<h3 style="margin-top:14px">Hosts <button type="button" class="dk-b dk-btn pri" style="margin-left:auto" data-act="addhost">${ic('plus')}Host hinzufügen</button></h3>
+    ${hosts.length ? '' : '<p class="dk-lead">Noch kein Host. Er entsteht mit der ersten Verbindung oder über „Host hinzufügen“.</p>'}
+    <div class="dk-list">${hosts.map((h) => `<div class="dk-card dk-host">
+      <div class="dk-hh"><span class="dk-sd ${dotClass(h.online)}" title="${stateText(h.online)}"></span><b>${ctx.esc(h.name)}</b><span class="dk-tag">${stateText(h.online)}</span>
+        <button type="button" class="dk-b dk-btn" style="margin-left:auto" data-hostagent="${ctx.esc(h.id)}">${ic('download')}${h.agent ? 'Agent verwalten' : 'Agent einrichten'}</button>
+        <button type="button" class="dk-b dk-btn sq" data-hostedit="${ctx.esc(h.id)}" aria-label="Host bearbeiten" title="Host bearbeiten">${ic('edit')}</button></div>
+      <p class="dk-hm">${ctx.esc([hostDetail(h), agentSummary(h), servicesSummary(h)].filter(Boolean).join(' · '))}</p>
+      <div class="dk-svc">${h.services.map((s) => { const c = ctx.state.connections.find((x) => x.id === s.connection); return c ? `<button type="button" class="dk-b dk-chip" data-conn="${ctx.esc(c.id)}" title="${ctx.esc(c.host)}:${c.port} – ${stateText(serviceState(h, c.id))}"><span class="dk-sd ${dotClass(serviceState(h, c.id))}"></span>${ctx.esc(c.name)}</button>` : ''; }).join('')}</div></div>`).join('')}</div>`;
 }
 function renderAppsView(m) {
   m.innerHTML = `<h3 style="margin-top:14px">Apps</h3><div class="dk-grid">${shownApps().map((a) => `<button type="button" class="dk-b dk-app" data-app="${a.id}"${a.soon ? ' aria-disabled="true" title="Bald verfügbar"' : ''}>${tile(a.g, a.ic)}<span class="dk-n">${a.name}</span>${a.soon ? '<span class="dk-tag">bald</span>' : ''}</button>`).join('')}</div>
@@ -831,9 +864,13 @@ function renderSettings(m) {
     <div class="dk-card"><h4>Darstellung</h4><p>Die Desktop-Oberfläche ist zurzeit immer hell. Ein dunkles Design folgt später.</p></div>`;
 }
 function onMainClick(e) {
-  const t = e.target.closest('[data-conn],[data-edit],[data-extra],[data-act],[data-go],[data-app],[data-dockmode]'); if (!t) return;
+  const t = e.target.closest('[data-conn],[data-edit],[data-extra],[data-act],[data-go],[data-app],[data-dockmode],[data-hostfilter],[data-hostedit],[data-hostagent]'); if (!t) return;
   const find = (id) => ctx.state.connections.find((c) => c.id === id);
+  const host = (id) => ctx.state.hosts.find((h) => h.id === id);
   if (t.dataset.dockmode) setDockMode(t.dataset.dockmode);
+  else if (t.dataset.hostfilter !== undefined) { hostFilter.id = t.dataset.hostfilter; renderHome(); }
+  else if (t.dataset.hostedit || t.dataset.hostagent) { const h = host(t.dataset.hostedit || t.dataset.hostagent); h && ctx.editHost(h); }
+  else if (t.dataset.act === 'addhost') ctx.addHost();
   else if (t.dataset.conn) { const c = find(t.dataset.conn); c && ctx.connect(c); }
   else if (t.dataset.extra) { const c = find(t.dataset.extra); c && ctx.connect(c, { extra: true }); }
   else if (t.dataset.edit) { const c = find(t.dataset.edit); c && ctx.edit(c); }
@@ -1009,6 +1046,13 @@ export function userChanged(user, message) {
   notify(message);
 }
 export function connectionsChanged() { if (root) renderHome_ifOpen(); }
+/** Neue Zustaende der Hosts (kommen alle 30 s): die Ansichten, die sie zeigen, neu zeichnen, ohne dass das Fenster nach oben springt */
+export function hostsChanged() {
+  if (!root) return;
+  const w = wins.get('home');
+  if (w && ['start', 'dienste', 'hosts'].includes(nav.view)) { const top = w.main.scrollTop; renderHome(); w.main.scrollTop = top; }
+  if (menuEl && menuOwner?.dataset.menu === 'Hosts') { const o = menuOwner; closeMenu(); o.click(); }
+}
 /** Abgemeldet oder Anmeldung noetig: alle Fenster zu */
 export function reset() {
   if (!root) return;

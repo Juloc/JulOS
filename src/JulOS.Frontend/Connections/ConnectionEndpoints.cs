@@ -3,7 +3,6 @@ using System.Text.Json;
 using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
 using JulOS.Frontend.Auth;
-using JulOS.Integrations.Agent;
 using JulOS.Integrations.Display.Rdp.Drive;
 
 namespace JulOS.Frontend.Connections;
@@ -14,7 +13,7 @@ internal static class ConnectionEndpoints
     private static IResult Error(int status, string message) =>
         Results.Text(JsonSerializer.Serialize(new ErrorBody(message), AppJson.Default.ErrorBody), "application/json", Encoding.UTF8, status);
 
-    private static ConnectionDto ToDto(ConnectionRecord c) => new(c.Id, c.Name, c.Kind, c.Host, c.Port, c.Username, c.HasPassword, c.Engine, c.DriveShare, c.DriveWrite);
+    private static ConnectionDto ToDto(ConnectionRecord c) => new(c.Id, c.Name, c.Kind, c.Host, c.Port, c.Username, c.HasPassword, c.Engine, c.HostId, c.DriveShare, c.DriveWrite);
 
     private static string? CheckPassword(string? password, SecretBox box)
     {
@@ -31,7 +30,7 @@ internal static class ConnectionEndpoints
             return new ConnectionsResponse([.. (await store.ListAsync(id.UserId, ctx.RequestAborted)).Select(ToDto)], box.Enabled, drives.Available);
         });
 
-        app.MapPost("/api/connections", async (ConnectionRequest body, HttpContext ctx, ConnectionStore store, HostPolicy policy, SecretBox box, DriveRoot drives) =>
+        app.MapPost("/api/connections", async (ConnectionRequest body, HttpContext ctx, ConnectionStore store, HostStore hosts, HostPolicy policy, SecretBox box, DriveRoot drives) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             var (v, error) = ConnectionRules.Validate(body.Name, body.Kind, body.Host, body.Port, body.Username, body.Engine, driveShare: body.DriveShare, driveWrite: body.DriveWrite);
@@ -41,7 +40,9 @@ internal static class ConnectionEndpoints
             var passwordError = CheckPassword(body.Password, box);
             if (passwordError is not null) return Error(400, passwordError);
             if (await store.CountAsync(id.UserId, ctx.RequestAborted) >= ConnectionRules.MaxPerUser) return Error(400, "Zu viele Verbindungen.");
-            var c = await store.CreateAsync(id.UserId, v.Name, v.Kind, v.Host, v.Port, v.Username, v.Engine, ctx.RequestAborted, v.DriveShare, v.DriveWrite);
+            // Der Host muss dem Benutzer gehoeren; ohne Angabe kommt die Verbindung auf seinen ersten Host
+            if (body.HostId is { } wanted && await hosts.GetAsync(id.UserId, wanted, ctx.RequestAborted) is null) return Error(404, "Host nicht gefunden.");
+            var c = await store.CreateAsync(id.UserId, v.Name, v.Kind, v.Host, v.Port, v.Username, v.Engine, body.HostId, ctx.RequestAborted, v.DriveShare, v.DriveWrite);
             if (!string.IsNullOrEmpty(body.Password))
             {
                 await store.SetSecretAsync(id.UserId, c.Id, box.Encrypt(body.Password, c.Id), ctx.RequestAborted);
@@ -50,7 +51,7 @@ internal static class ConnectionEndpoints
             return Results.Json(ToDto(c), AppJson.Default.ConnectionDto);
         });
 
-        app.MapPut("/api/connections/{connection:guid}", async (Guid connection, ConnectionRequest body, HttpContext ctx, ConnectionStore store, HostPolicy policy, SecretBox box, DriveRoot drives) =>
+        app.MapPut("/api/connections/{connection:guid}", async (Guid connection, ConnectionRequest body, HttpContext ctx, ConnectionStore store, HostStore hosts, HostPolicy policy, SecretBox box, DriveRoot drives) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             var before = await store.GetAsync(id.UserId, connection, ctx.RequestAborted);
@@ -61,7 +62,8 @@ internal static class ConnectionEndpoints
             if (!policy.Allows(v.Host)) return Error(403, "Dieses Ziel ist nicht erlaubt.");
             var passwordError = CheckPassword(body.Password, box);
             if (passwordError is not null) return Error(400, passwordError);
-            var c = await store.UpdateAsync(id.UserId, connection, v.Name, v.Kind, v.Host, v.Port, v.Username, v.Engine, ctx.RequestAborted, v.DriveShare, v.DriveWrite);
+            if (body.HostId is { } moveTo && await hosts.GetAsync(id.UserId, moveTo, ctx.RequestAborted) is null) return Error(404, "Host nicht gefunden.");
+            var c = await store.UpdateAsync(id.UserId, connection, v.Name, v.Kind, v.Host, v.Port, v.Username, v.Engine, body.HostId, ctx.RequestAborted, v.DriveShare, v.DriveWrite);
             if (c is null) return Error(404, "Verbindung nicht gefunden.");
 
             // Ein gespeichertes Passwort gehoert zu genau diesem Ziel: wer Adresse, Port, Art oder Benutzer aendert, schickt es sonst an ein anderes Ziel
@@ -89,11 +91,10 @@ internal static class ConnectionEndpoints
             return Results.Json(ToDto(c), AppJson.Default.ConnectionDto);
         });
 
-        app.MapDelete("/api/connections/{connection:guid}", async (Guid connection, HttpContext ctx, ConnectionStore store, AgentLinks links) =>
+        app.MapDelete("/api/connections/{connection:guid}", async (Guid connection, HttpContext ctx, ConnectionStore store) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (!await store.DeleteAsync(id.UserId, connection, ctx.RequestAborted)) return Error(404, "Verbindung nicht gefunden.");
-            links.Disconnect(connection);               // sein Agent (die Zeile ist mit der Verbindung geloescht) darf nicht weiterlaufen
             return Results.NoContent();
         });
     }

@@ -299,6 +299,16 @@ html.desktop .sv .sv-overlay .box { border-radius: 20px; background: rgba(255, 2
 @keyframes dk-pulse { 50% { opacity: .35; } }
 html.desktop .sv .sv-menu [data-only="phone"] { display: none; }
 
+/* ---------- Hosts (docs/HOSTS.md): Statuspunkt gruen/grau, Auswahl, Host-Karten ---------- */
+.dk-sd { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; flex: 0 0 auto; background: #b4b7c9; }
+.dk-sd.ok { background: var(--dk-ok); box-shadow: 0 0 0 3px rgba(31, 169, 113, .18); }
+.dk-chips, .dk-svc { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+.dk-chip { display: inline-flex !important; align-items: center; padding: 5px 11px !important; border-radius: 99px !important; background: rgba(255, 255, 255, .72); border: 1px solid rgba(255, 255, 255, .9) !important; font-size: 12.5px; color: #25284a; }
+.dk-chip.sel { background: var(--dk-soft); border-color: rgba(106, 88, 230, .35) !important; color: #5a4fc7; font-weight: 600; }
+.dk-gh { margin: 14px 0 6px; font-size: 13.5px; display: flex; align-items: center; color: #25284a; }
+.dk-gh .dk-sub { margin-left: 8px; font-weight: 400; color: #6b6f8f; font-size: 12px; }
+.dk-host .dk-hh { display: flex; align-items: center; gap: 8px; }
+.dk-host .dk-hm { margin: 4px 0 8px; font-size: 12.5px; }
 
 /* ---------- Module Caddy und DDNS (nur lesen) ---------- */
 .dk-dmods { display: contents; }

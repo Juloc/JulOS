@@ -12,7 +12,8 @@ internal sealed class TestDb : IAsyncDisposable
     public NpgsqlDataSource Data { get; private set; } = null!;
     public string ConnectionString { get; private set; } = "";
 
-    public static async Task<TestDb> CreateAsync()
+    /// <param name="migrate">false: leeres Schema ohne Migrationen (fuer Tests, die einen alten Stand selbst aufbauen)</param>
+    public static async Task<TestDb> CreateAsync(bool migrate = true)
     {
         Assert.SkipWhen(Admin is null, "JULOS_TEST_DB nicht gesetzt (deploy/dev/test.sh benutzen)");
         var t = new TestDb();
@@ -21,7 +22,7 @@ internal sealed class TestDb : IAsyncDisposable
             await cmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         t.ConnectionString = new NpgsqlConnectionStringBuilder(Admin!) { SearchPath = t._schema }.ConnectionString;
         t.Data = NpgsqlDataSource.Create(t.ConnectionString);
-        await new Migrator(t.Data).RunAsync(TestContext.Current.CancellationToken);
+        if (migrate) await new Migrator(t.Data).RunAsync(TestContext.Current.CancellationToken);
         return t;
     }
 

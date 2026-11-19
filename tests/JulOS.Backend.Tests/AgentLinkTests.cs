@@ -73,12 +73,31 @@ public sealed class AgentLinkTests
         return (finish.Headers.GetValues("Set-Cookie").First().Split(';')[0], await db.ScalarAsync<Guid>("select id from users limit 1"));
     }
 
-    private static Task<Guid> ConnectionOf(TestDb db, Guid user, string name = "VM", string kind = "desktop") =>
-        db.ScalarAsync<Guid>("insert into connections (user_id, name, kind, host, port) values ($1, $2, $3, 'rdp-target', 3389) returning id", user, name, kind);
+    // Der Agent haengt am Host: jede Verbindung dieser Tests bekommt einen eigenen Host, so bleibt "eine Verbindung = ein Agent" wie vorher lesbar
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, Guid> HostOfConnection = new();
+
+    private static async Task<Guid> ConnectionOf(TestDb db, Guid user, string name = "VM", string kind = "desktop")
+    {
+        var host = await db.ScalarAsync<Guid>("insert into hosts (user_id, name) values ($1, $2) returning id", user, name);
+        var connection = await db.ScalarAsync<Guid>("insert into connections (user_id, host_id, name, kind, host, port) values ($1, $2, $3, $4, 'rdp-target', 3389) returning id", user, host, name, kind);
+        HostOfConnection[connection] = host;
+        return connection;
+    }
+
+    private static bool Online(Server app, Guid connection) => app.Services.GetRequiredService<AgentLinks>().IsOnline(HostOfConnection[connection]);
+
+    /// <summary>Der Host aus GET /api/hosts (mit Agent, Diensten und Zustand).</summary>
+    private static async Task<JsonElement> HostJson(HttpClient c, string cookie, Guid host)
+    {
+        var list = await Json(await c.SendAsync(Send(HttpMethod.Get, "/api/hosts", cookie)));
+        return list.GetProperty("hosts").EnumerateArray().First(h => h.GetProperty("id").GetGuid() == host).Clone();
+    }
+
+    private static async Task<JsonElement> AgentOf(HttpClient c, string cookie, Guid host) => (await HostJson(c, cookie, host)).GetProperty("agent");
 
     private static async Task<string> CodeFor(HttpClient c, string cookie, Guid connection)
     {
-        var r = await c.SendAsync(Post($"/api/connections/{connection}/agent/code", new { }, cookie));
+        var r = await c.SendAsync(Post($"/api/hosts/{HostOfConnection[connection]}/agent/code", new { }, cookie));
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);
         return (await Json(r)).GetProperty("code").GetString()!;
     }
@@ -100,7 +119,7 @@ public sealed class AgentLinkTests
         var conn = await ConnectionOf(db, user);
 
         // ohne Sitzung kein Code
-        Assert.Equal(HttpStatusCode.Unauthorized, (await c.SendAsync(Post($"/api/connections/{conn}/agent/code", new { }, null))).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await c.SendAsync(Post($"/api/hosts/{HostOfConnection[conn]}/agent/code", new { }, null))).StatusCode);
 
         var code = await CodeFor(c, cookie, conn);
         Assert.Matches("^[A-Z2-7]{5}-[A-Z2-7]{5}$", code);
@@ -140,9 +159,9 @@ public sealed class AgentLinkTests
         var foreign = await ConnectionOf(db, other, "fremd");
         var terminal = await ConnectionOf(db, user, "Terminal", "terminal");
 
-        Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Post($"/api/connections/{foreign}/agent/code", new { }, cookie))).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Post($"/api/connections/{terminal}/agent/code", new { }, cookie))).StatusCode);   // nur Desktops
-        Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Send(HttpMethod.Delete, $"/api/connections/{foreign}/agent", cookie))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Post($"/api/hosts/{HostOfConnection[foreign]}/agent/code", new { }, cookie))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Post($"/api/hosts/{HostOfConnection[terminal]}/agent/code", new { }, cookie))).StatusCode);   // der Agent gehoert zum Host, nicht zur Art der Verbindung
+        Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Send(HttpMethod.Delete, $"/api/hosts/{HostOfConnection[foreign]}/agent", cookie))).StatusCode);
 
         // Raten: die Versuche je Adresse sind begrenzt (10 je Minute), auch mit lauter ungueltigen Codes
         var statuses = new List<HttpStatusCode>();
@@ -169,24 +188,24 @@ public sealed class AgentLinkTests
         var token = await TokenFor(c, await CodeFor(c, cookie, conn));
         await using (var good = await FakeLinkAgent.ConnectAsync(app.Server, token))
         {
-            await Eventually(() => app.Services.GetRequiredService<AgentLinks>().IsOnline(conn));
+            await Eventually(() => Online(app, conn));
             await Eventually(() => good.WelcomeText is not null);
-            var status = await Json(await c.SendAsync(Send(HttpMethod.Get, "/api/agents", cookie)));
-            var a = status.GetProperty("agents")[0];
+            var a = await AgentOf(c, cookie, HostOfConnection[conn]);
             Assert.True(a.GetProperty("online").GetBoolean());
             Assert.Equal("0.3.0", a.GetProperty("version").GetString());
             Assert.Equal("test-linux", a.GetProperty("platform").GetString());
             Assert.False(a.GetProperty("outdated").GetBoolean());
         }
 
-        // ein zu alter Agent wird mit Begruendung abgewiesen und geht nicht online
+        // ein zu alter Agent wird mit Begruendung abgewiesen und geht nicht online (vorher muss der gute getrennt sein, der Server merkt es kurz spaeter)
+        await Eventually(() => !Online(app, conn));
         await using (var old = await FakeLinkAgent.ConnectAsync(app.Server, token, version: "0.2.0"))
         {
             Assert.True(await old.WaitClosedAsync(Wait));
-            Assert.False(app.Services.GetRequiredService<AgentLinks>().IsOnline(conn));
+            Assert.False(Online(app, conn));
         }
         // seine Version steht trotzdem in der Anzeige
-        await Eventually(async () => (await Json(await c.SendAsync(Send(HttpMethod.Get, "/api/agents", cookie)))).GetProperty("agents")[0].GetProperty("outdated").GetBoolean());
+        await Eventually(async () => (await AgentOf(c, cookie, HostOfConnection[conn])).GetProperty("outdated").GetBoolean());
     }
 
     [Fact]
@@ -206,7 +225,7 @@ public sealed class AgentLinkTests
         var token = await TokenFor(c, await CodeFor(c, cookie, withAgent));
         await TokenFor(c, await CodeFor(c, cookie, offline));
         await using var agent = await FakeLinkAgent.ConnectAsync(app.Server, token);
-        await Eventually(() => app.Services.GetRequiredService<AgentLinks>().IsOnline(withAgent));
+        await Eventually(() => Online(app, withAgent));
 
         // ueber den Link
         var health = await Json(await c.SendAsync(Send(HttpMethod.Get, $"/api/agent/health?c={withAgent}", cookie)));
@@ -261,7 +280,7 @@ public sealed class AgentLinkTests
         var token = await TokenFor(c, await CodeFor(c, cookie, conn));
 
         await using var first = await FakeLinkAgent.ConnectAsync(app.Server, token);
-        await Eventually(() => app.Services.GetRequiredService<AgentLinks>().IsOnline(conn));
+        await Eventually(() => Online(app, conn));
         await using var second = await FakeLinkAgent.ConnectAsync(app.Server, token);
         Assert.True(await first.WaitClosedAsync(Wait));
         await Eventually(() => second.WelcomeText is not null);
@@ -277,7 +296,7 @@ public sealed class AgentLinkTests
         var (cookie, user) = await SignedInAsync(c, db);
         var conn = await ConnectionOf(db, user);
         await using var agent = await FakeLinkAgent.ConnectAsync(app.Server, await TokenFor(c, await CodeFor(c, cookie, conn)));
-        await Eventually(() => app.Services.GetRequiredService<AgentLinks>().IsOnline(conn));
+        await Eventually(() => Online(app, conn));
 
         // Foto: 300 kB, also mehrere Stuecke
         var photo = new byte[300_000]; Random.Shared.NextBytes(photo); PngHead.CopyTo(photo, 0);
@@ -346,26 +365,28 @@ public sealed class AgentLinkTests
         await using (var dropping = await FakeLinkAgent.ConnectAsync(app.Server, token))
         {
             dropping.DropDuringPut = true;
-            await Eventually(() => app.Services.GetRequiredService<AgentLinks>().IsOnline(conn));
+            await Eventually(() => Online(app, conn));
             var photo = new byte[200_000]; PngHead.CopyTo(photo, 0);
             Assert.Equal(HttpStatusCode.BadGateway, (await c.SendAsync(Send(HttpMethod.Post, $"/api/upload?c={conn}", cookie, photo, "image/png"))).StatusCode);
-            await Eventually(() => !app.Services.GetRequiredService<AgentLinks>().IsOnline(conn));
+            await Eventually(() => !Online(app, conn));
         }
 
         await using var agent = await FakeLinkAgent.ConnectAsync(app.Server, token);
-        await Eventually(() => app.Services.GetRequiredService<AgentLinks>().IsOnline(conn));
+        await Eventually(() => Online(app, conn));
         // Agent entfernen: die Verbindung wird getrennt, das Token gilt nicht mehr, der Status ist weg
-        Assert.Equal(HttpStatusCode.NoContent, (await c.SendAsync(Send(HttpMethod.Delete, $"/api/connections/{conn}/agent", cookie))).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await c.SendAsync(Send(HttpMethod.Delete, $"/api/hosts/{HostOfConnection[conn]}/agent", cookie))).StatusCode);
         Assert.True(await agent.WaitClosedAsync(Wait));
         await Assert.ThrowsAnyAsync<Exception>(() => FakeLinkAgent.ConnectAsync(app.Server, token));
-        Assert.Empty((await Json(await c.SendAsync(Send(HttpMethod.Get, "/api/agents", cookie)))).GetProperty("agents").EnumerateArray());
-        Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Send(HttpMethod.Delete, $"/api/connections/{conn}/agent", cookie))).StatusCode);
+        Assert.False((await HostJson(c, cookie, HostOfConnection[conn])).TryGetProperty("agent", out _));
+        Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Send(HttpMethod.Delete, $"/api/hosts/{HostOfConnection[conn]}/agent", cookie))).StatusCode);
 
-        // wird die Verbindung geloescht, geht der Agent mit
+        // Der Agent gehoert zum Host: eine geloeschte Verbindung laesst ihn bestehen, der geloeschte Host nimmt ihn mit
         var token2 = await TokenFor(c, await CodeFor(c, cookie, conn));
         await using var again = await FakeLinkAgent.ConnectAsync(app.Server, token2);
-        await Eventually(() => app.Services.GetRequiredService<AgentLinks>().IsOnline(conn));
+        await Eventually(() => Online(app, conn));
         Assert.Equal(HttpStatusCode.NoContent, (await c.SendAsync(Send(HttpMethod.Delete, $"/api/connections/{conn}", cookie))).StatusCode);
+        Assert.True(Online(app, conn));
+        Assert.Equal(HttpStatusCode.NoContent, (await c.SendAsync(Send(HttpMethod.Delete, $"/api/hosts/{HostOfConnection[conn]}", cookie))).StatusCode);
         Assert.True(await again.WaitClosedAsync(Wait));
         Assert.Equal(0, await db.ScalarAsync<long>("select count(*) from agents"));
     }

@@ -86,12 +86,19 @@ public static partial class DbDump
         foreach (var t in tables) columnsOf[t] = (await ColumnsAsync(conn, tx, t, ct)).ToHashSet();
         var rows = new Dictionary<string, long>();
         var ended = false;
+        // Ein Auszug vor den Hosts (Migration 008) kennt Agenten je Verbindung: sie ziehen auf den Host ihrer Verbindung um (wie die Migration)
+        var beforeHosts = !dumpMigrations.Contains("008_hosts");
         // "next" ist die erste Zeile nach dem Kopf (COPY oder Ende)
         for (; next is not null; next = await input.ReadLineAsync(ct))
         {
             if (next == EndMarker) { ended = true; break; }
             if (next.Length == 0) continue;
             var m = CopyHeader().Match(next);
+            if (beforeHosts && m.Success && m.Groups[1].Value is "agents" or "agent_codes" && m.Groups[2].Value.Split(", ").Contains("connection_id"))
+            {
+                rows[m.Groups[1].Value] = await RestoreLegacyAgentsAsync(conn, tx, m.Groups[1].Value, m.Groups[2].Value, input, ct);
+                continue;
+            }
             // Tabellen- und Spaltennamen kommen aus einer Datei: nur Namen, die es in der Datenbank gibt, kommen in den Befehl
             if (!m.Success || !columnsOf.TryGetValue(m.Groups[1].Value, out var allowed)) throw new InvalidOperationException("Unerwartete Zeile im Auszug: " + Shorten(next));
             var cols = m.Groups[2].Value.Split(", ");
@@ -133,6 +140,53 @@ public static partial class DbDump
         await using var r = await cmd.ExecuteReaderAsync(ct);
         while (await r.ReadAsync(ct)) list.Add(r.GetString(0));
         return list;
+    }
+
+    private static readonly HashSet<string> LegacyAgentColumns = ["connection_id", "user_id", "token_hash", "created_at", "last_seen", "version", "platform"];
+
+    /// <summary>
+    /// Agenten aus einem Auszug vor den Hosts: je Verbindung einer. Der zuletzt gesehene eines Benutzers kommt auf den Host seiner Verbindung, jeder weitere auf einen
+    /// eigenen Host mit dem Namen seiner Verbindung (dieselbe Regel wie Migration 008, damit kein Token verloren geht). Einrichtungscodes (zehn Minuten gueltig) entfallen.
+    /// </summary>
+    private static async Task<long> RestoreLegacyAgentsAsync(NpgsqlConnection conn, NpgsqlTransaction tx, string table, string columns, TextReader input, CancellationToken ct)
+    {
+        var cols = columns.Split(", ");
+        if (table == "agents" && cols.Any(c => !LegacyAgentColumns.Contains(c))) throw new InvalidOperationException("Der Auszug kennt Spalten, die es in agents nicht gibt (neuere Version?).");
+        long n = 0;
+        if (table == "agent_codes")
+        {
+            string? skip;
+            while ((skip = await input.ReadLineAsync(ct)) is not null && skip != "\\.") n++;
+            if (skip is null) throw new InvalidOperationException("Der Auszug ist abgeschnitten (Datei unvollständig).");
+            return 0;
+        }
+        await using (var tmp = conn.Cmd(tx, "create temp table old_agents (connection_id uuid, user_id uuid, token_hash text, created_at timestamptz, last_seen timestamptz, version text, platform text) on commit drop")) await tmp.ExecuteNonQueryAsync(ct);
+        using (var import = await conn.BeginTextImportAsync($"copy old_agents ({columns}) from stdin", ct))
+        {
+            string? line;
+            while ((line = await input.ReadLineAsync(ct)) is not null && line != "\\.") { await import.WriteLineAsync(line); n++; }
+            if (line is null) throw new InvalidOperationException("Der Auszug ist abgeschnitten (Datei unvollständig).");
+        }
+        await using var move = conn.Cmd(tx, """
+            do $$
+            declare r record; h uuid;
+            begin
+              for r in
+                select a.connection_id, a.user_id, a.token_hash, a.created_at, a.last_seen, a.version, a.platform, c.name, c.host_id as default_host,
+                       row_number() over (partition by c.user_id order by a.last_seen desc nulls last, a.created_at) as rn
+                from old_agents a join connections c on c.id = a.connection_id
+              loop
+                if r.rn = 1 then h := r.default_host;
+                else
+                  insert into hosts (user_id, name, sort) values (r.user_id, r.name, r.rn::integer - 1) returning id into h;
+                  update connections set host_id = h where id = r.connection_id;
+                end if;
+                insert into agents (host_id, user_id, token_hash, created_at, last_seen, version, platform) values (h, r.user_id, r.token_hash, r.created_at, r.last_seen, r.version, r.platform);
+              end loop;
+            end $$;
+            """);
+        await move.ExecuteNonQueryAsync(ct);
+        return n;
     }
 
     /// <summary>Alle Tabellen des aktuellen Schemas (ohne die Migrationsliste), Eltern vor Kindern, damit Fremdschluessel beim Einlesen halten.</summary>

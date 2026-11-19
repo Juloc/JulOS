@@ -65,7 +65,8 @@ A Terminal connection is a real terminal in the browser (the server holds the SS
 To reach the machine the server runs on, use the host name `host.docker.internal`.
 
 `BIND_IP` in `.env` is the address the server listens on: `127.0.0.1` (default, behind a reverse proxy) or the LAN address.
-**Agent on another machine than the server:** open the desktop connection, choose **Agent einrichten** and run the shown commands in the graphical session of the target (they download the agent files from your server and enrol it with a one-time code). The agent connects outbound to the server over HTTPS, so nothing on the target listens; **Agent entfernen** revokes it. See [docs/AGENT_API.md](docs/AGENT_API.md).
+**Several machines (hosts):** a host is a machine or server with its own connections and its own agent; the desktop interface and the phone shell list them with a green or grey status dot (see [docs/HOSTS.md](docs/HOSTS.md)).
+**Agent on another machine than the server:** open the host (host dialog, or the Hosts view), choose **Agent einrichten** and run the shown commands in the graphical session of the target (they download the agent files from your server and enrol it with a one-time code). The agent connects outbound to the server over HTTPS, so nothing on the target listens; **Agent entfernen** revokes it. See [docs/AGENT_API.md](docs/AGENT_API.md).
 On the same machine, `tools/install-linux-agent.sh` without arguments keeps the old way: the agent files live in `~/julos-uploads` of the target user and the server runs as that user (`JULOS_UID`/`JULOS_GID`). Lost your password or authenticator? `tools/julos-user.sh` resets them on the console.
 
 ## Installing the PWA, HTTPS
@@ -83,7 +84,7 @@ Remote control must not be protected by the desktop password alone.
 - `guacd` and PostgreSQL have no published port. Open connections end when their session ends.
 - **mTLS** in the proxy (optional extra layer): only your phone with a client certificate reaches the login page. Create one with
   `tools/make-client-cert.sh <name>` (you type the passphrase yourself); the Caddy example has the `client_auth` block.
-- The agent API is only reachable through the server with a live session. Agents either answer on a Unix socket (mode 0600, same machine) or connect outbound with a per-connection token (stored only as a hash on the server, revocable, one-time enrolment code).
+- The agent API is only reachable through the server with a live session. Agents either answer on a Unix socket (mode 0600, same machine) or connect outbound with a per-host token (stored only as a hash on the server, revocable, one-time enrolment code).
 - Never expose xrdp (3389) or the server port directly to the internet without the proxy in front.
 
 Roll-out order: proxy config, port forward 443 to the proxy, DNS; optionally a client certificate on top.
@@ -101,7 +102,7 @@ the "fetch the image from the remote clipboard" button (`pull/`); the own stream
 - `tests/` (`frontend/` runs with node), `database/` (SQL migrations), `deploy/dev/` the test instance with throwaway SSH and RDP targets (see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md); testing on a real phone: [docs/PHONE-TEST.md](docs/PHONE-TEST.md))
 - `tools/julos-agent.py` Linux agent (windows, apps, app mode, outbound link to the server), `tools/julos-clip.py` photo clipboard helper
 - `tools/install-linux-agent.sh`, `tools/julos-user.sh`, `tools/make-client-cert.sh`
-- `CHANGELOG.md` and `docs/RELEASING.md` the versions and how to release one, `docs/AGENT_API.md` the agent API, `docs/ARCHITECTURE.md` the stack and security design, `docs/MODULES.md` the optional read-only Caddy and DDNS modules (off by default), `caddy/Caddyfile.example`
+- `CHANGELOG.md` and `docs/RELEASING.md` the versions and how to release one, `docs/AGENT_API.md` the agent API, `docs/HOSTS.md` hosts, `docs/ARCHITECTURE.md` the stack and security design, `docs/MODULES.md` the optional read-only Caddy and DDNS modules (off by default), `caddy/Caddyfile.example`
 - `.github/workflows/docker.yml` builds the image for `ghcr.io/<owner>/<repo>` (amd64 + arm64)
 
 ## Roadmap

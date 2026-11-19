@@ -9,9 +9,9 @@ using JulOS.Integrations.Agent;
 namespace JulOS.Frontend.Agent;
 
 /// <summary>
-/// Der Agent auf der Ziel-Maschine meldet sich von dort aus beim Server (docs/AGENT_API.md): ein einmaliger Einrichtungscode wird gegen ein Token
+/// Der Agent auf der Ziel-Maschine meldet sich von dort aus beim Server (docs/AGENT_API.md): ein einmaliger Einrichtungscode (fuer einen Host) wird gegen ein Token
 /// getauscht, mit dem der Agent danach eine WebSocket-Verbindung aufbaut. Diese Wege brauchen keine Sitzung des Browsers (der Agent hat keine),
-/// aber den Code oder das Token; alles andere hier (Code erzeugen, Agent entfernen, Status) braucht die Sitzung wie jede Route.
+/// aber den Code oder das Token; alles andere hier (Code erzeugen, Agent entfernen) braucht die Sitzung wie jede Route.
 /// </summary>
 internal static class AgentLinkEndpoints
 {
@@ -46,14 +46,14 @@ internal static class AgentLinkEndpoints
             if (ctx.Request.ContentLength is null or > 1024) return Error(413, "Anfrage zu groß.");
             if (!hits.Allow("enroll:" + Ip(ctx), 10, Minute) || !hits.Allow("enroll:all", 60, Minute)) return Error(429, "Zu viele Versuche, bitte kurz warten.");
             if (!AgentCredentials.LooksLikeCode(body.Code)) return Error(400, "Der Code ist ungültig oder abgelaufen.");
-            var redeemed = await store.RedeemAsync(body.Code!, AgentLabels.Clean(body.Version), AgentLabels.Clean(body.Platform), ctx.RequestAborted);
+            var redeemed = await store.RedeemAsync(body.Code!, AgentLabels.Clean(body.Version), AgentLabels.Clean(body.Platform), AgentLabels.CleanText(body.Hostname), AgentLabels.CleanText(body.Os), ctx.RequestAborted);
             if (redeemed is not { } r)
             {
                 log.LogWarning("Agent-Einrichtung abgelehnt (Code unbekannt oder abgelaufen) von {Ip}", Ip(ctx));
                 return Error(400, "Der Code ist ungültig oder abgelaufen.");
             }
-            log.LogInformation("Agent eingerichtet: Verbindung {Connection}, Benutzer {User}", r.ConnectionId, r.UserId);
-            return Results.Json(new AgentEnrollResponse(r.Token, r.ConnectionId), AppJson.Default.AgentEnrollResponse);
+            log.LogInformation("Agent eingerichtet: Host {Host}, Benutzer {User}", r.HostId, r.UserId);
+            return Results.Json(new AgentEnrollResponse(r.Token, r.HostId), AppJson.Default.AgentEnrollResponse);
         });
 
         // Die dauerhafte Verbindung des Agenten: Token im Kopf "Authorization: Bearer ...", nie in der Adresse (sie landet in Protokollen)
@@ -70,44 +70,30 @@ internal static class AgentLinkEndpoints
                 return Error(401, "Nicht angemeldet.");
             }
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
-            await links.RunAsync(ws, agent.ConnectionId, agent.UserId, info.Version,
-                (version, platform) => store.TouchAsync(agent.ConnectionId, version, platform, CancellationToken.None), ctx.RequestAborted);
+            await links.RunAsync(ws, agent.HostId, agent.UserId, info.Version,
+                a => store.TouchAsync(agent.HostId, a.Version, a.Platform, a.Hostname, a.Os, CancellationToken.None), ctx.RequestAborted);
             return Results.Empty;
         });
 
-        // Einrichtungscode fuer eine Verbindung des Benutzers (wird nur diesmal angezeigt)
-        app.MapPost("/api/connections/{connection:guid}/agent/code", async (Guid connection, HttpContext ctx, AgentStore store, HitCounter hits) =>
+        // Einrichtungscode fuer einen Host des Benutzers (wird nur diesmal angezeigt)
+        app.MapPost("/api/hosts/{host:guid}/agent/code", async (Guid host, HttpContext ctx, AgentStore store, HitCounter hits) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (!hits.Allow("agent-code:" + id.UserId, 10, Minute)) return Error(429, "Zu viele Anfragen, bitte kurz warten.");
-            var made = await store.CreateCodeAsync(id.UserId, connection, ctx.RequestAborted);
-            if (made is not { } c) return Error(404, "Verbindung nicht gefunden (einen Agenten gibt es nur für Desktops).");
-            log.LogInformation("Agent-Einrichtungscode erzeugt: Verbindung {Connection}, Benutzer {User}", connection, id.UserName);
+            var made = await store.CreateCodeAsync(id.UserId, host, ctx.RequestAborted);
+            if (made is not { } c) return Error(404, "Host nicht gefunden.");
+            log.LogInformation("Agent-Einrichtungscode erzeugt: Host {Host}, Benutzer {User}", host, id.UserName);
             return Results.Json(new AgentCodeResponse(c.Code, (int)AgentStore.CodeLifetime.TotalSeconds), AppJson.Default.AgentCodeResponse);
         });
 
         // Agent entfernen: das Token gilt sofort nicht mehr und eine laufende Verbindung wird getrennt
-        app.MapDelete("/api/connections/{connection:guid}/agent", async (Guid connection, HttpContext ctx, AgentStore store, AgentLinks links) =>
+        app.MapDelete("/api/hosts/{host:guid}/agent", async (Guid host, HttpContext ctx, AgentStore store, AgentLinks links) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
-            if (!await store.RevokeAsync(id.UserId, connection, ctx.RequestAborted)) return Error(404, "Kein Agent eingerichtet.");
-            links.Disconnect(connection);
-            log.LogInformation("Agent entfernt: Verbindung {Connection}, Benutzer {User}", connection, id.UserName);
+            if (!await store.RevokeAsync(id.UserId, host, ctx.RequestAborted)) return Error(404, "Kein Agent eingerichtet.");
+            links.Disconnect(host);
+            log.LogInformation("Agent entfernt: Host {Host}, Benutzer {User}", host, id.UserName);
             return Results.NoContent();
-        });
-
-        // Status der eingerichteten Agenten des Benutzers
-        app.MapGet("/api/agents", async (HttpContext ctx, AgentStore store, AgentLinks links) =>
-        {
-            var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
-            var list = new List<AgentStatusDto>();
-            foreach (var a in await store.ListAsync(id.UserId, ctx.RequestAborted))
-            {
-                var live = links.Get(a.ConnectionId, id.UserId) is not null ? links.Status(a.ConnectionId) : null;
-                var version = live?.Version ?? a.Version;
-                list.Add(new AgentStatusDto(a.ConnectionId, live is not null, live is not null ? DateTimeOffset.UtcNow : a.LastSeen, version, live?.Platform ?? a.Platform, version is not null && !AgentLinks.VersionOk(version)));
-            }
-            return Results.Json(new AgentsResponse([.. list]), AppJson.Default.AgentsResponse);
         });
     }
 }

@@ -173,6 +173,9 @@
           <select id="connEngine"><option value="guac">Standard (Guacamole)</option><option value="stream">Stream (H.264, neu)</option></select>
         </label>
         <p id="connEngineHint" class="hint" hidden>Der Stream ist flüssiger bei Bewegung, braucht aber einen Browser mit H.264-Dekodierer und HTTPS. Geht er nicht, verbindet die App automatisch mit Guacamole.</p>
+        <label id="connHostRow">Host
+          <select id="connHostSel"></select>
+        </label>
         <div id="connDriveRow" hidden>
           <label class="check"><input id="connDrive" type="checkbox"> Ordner des Servers als Laufwerk freigeben</label>
           <label id="connDriveWriteRow" class="check" hidden><input id="connDriveWrite" type="checkbox"> Schreiben erlauben</label>
@@ -188,26 +191,41 @@
         </label>
         <label id="connForgetRow" class="check" hidden><input id="connForget" type="checkbox"> Gespeichertes Passwort löschen</label>
         <p id="connPwHint" class="hint"></p>
-        <section id="connAgent" class="agentbox" hidden>
-          <h3>Agent auf dem Ziel</h3>
-          <p id="connAgentState" class="agentstate"></p>
-          <p class="hint">Der Agent läuft in der Sitzung des Ziels und gibt der App die Fensterleiste, den Programmstart sowie Fotos und Dateien für die Zwischenablage. Er meldet sich von dort aus beim Server, auf dem Ziel lauscht nichts.</p>
-          <div id="connAgentCode" hidden>
-            <p class="hint">Dieser Code gilt <b>10 Minuten</b> und nur <b>einmal</b>. Er wird nur jetzt angezeigt.</p>
-            <p id="connAgentCodeText" class="agentcode"></p>
-            <p class="hint">Auf dem Ziel, in einem Terminal der grafischen Sitzung:</p>
-            <pre id="connAgentCmd" class="agentcmd"></pre>
-            <button id="connAgentCopy" type="button" class="ghost">Befehle kopieren</button>
-          </div>
-          <div class="row">
-            <button id="connAgentSetup" type="button" class="ghost">Agent einrichten</button>
-            <button id="connAgentRemove" type="button" class="danger" hidden>Agent entfernen</button>
-          </div>
-        </section>
         <p id="connMsg" class="msg" role="alert"></p>
         <div class="row">
           <button id="connSave" type="submit" class="primary">Speichern</button>
           <button id="connDelete" type="button" class="danger" hidden>Löschen</button>
+          <button class="ghost close" data-act="close" type="button">Abbrechen</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Host anlegen/aendern (docs/HOSTS.md) -->
+    <dialog id="hostDlg">
+      <form id="hostForm" method="dialog" autocomplete="off">
+        <h2 id="hostDlgTitle">Host</h2>
+        <label>Name <input id="hostName" type="text" maxlength="60" autocomplete="off" required></label>
+        <p id="hostInfo" class="hint" hidden></p>
+        <section id="hostAgent" class="agentbox" hidden>
+          <h3>Agent auf diesem Host</h3>
+          <p id="hostAgentState" class="agentstate"></p>
+          <p class="hint">Der Agent läuft in der Sitzung des Ziels und gibt der App die Fensterleiste, den Programmstart sowie Fotos und Dateien für die Zwischenablage. Er meldet sich von dort aus beim Server, auf dem Host lauscht nichts. Ein Host hat einen Agenten, er gilt für alle Verbindungen dieses Hosts.</p>
+          <div id="hostAgentCode" hidden>
+            <p class="hint">Dieser Code gilt <b>10 Minuten</b> und nur <b>einmal</b>. Er wird nur jetzt angezeigt.</p>
+            <p id="hostAgentCodeText" class="agentcode"></p>
+            <p class="hint">Auf dem Host, in einem Terminal der grafischen Sitzung:</p>
+            <pre id="hostAgentCmd" class="agentcmd"></pre>
+            <button id="hostAgentCopy" type="button" class="ghost">Befehle kopieren</button>
+          </div>
+          <div class="row">
+            <button id="hostAgentSetup" type="button" class="ghost">Agent einrichten</button>
+            <button id="hostAgentRemove" type="button" class="danger" hidden>Agent entfernen</button>
+          </div>
+        </section>
+        <p id="hostMsg" class="msg" role="alert"></p>
+        <div class="row">
+          <button id="hostSave" type="submit" class="primary">Speichern</button>
+          <button id="hostDelete" type="button" class="danger" hidden>Löschen</button>
           <button class="ghost close" data-act="close" type="button">Abbrechen</button>
         </div>
       </form>

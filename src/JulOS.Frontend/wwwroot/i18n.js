@@ -2,6 +2,7 @@
  * Sprachen der Oberflaeche (Deutsch und Englisch, docs/DEVELOPMENT.md "Languages"): ein kleines Modul ohne Bibliothek.
  *  - t('schluessel', {name: wert}) liefert den Text in der gewaehlten Sprache; {name} im Text wird ersetzt.
  *  - Rueckfall: fehlt ein Schluessel in der gewaehlten Sprache, kommt der deutsche Text; fehlt er auch dort, kommt ein leerer Text (nie der rohe Schluessel).
+ *  - Vor der Anmeldung waehlt der Adresszusatz ?lang=en (oder de, system) die Sprache.
  *  - Die Wahl heisst "Deutsch" (de, Standard), "English" (en) oder "System" (nach navigator.language); gespeichert lokal (pd.lang) und als Server-Einstellung "lang"
  *    (prefs.js), eine Aenderung gilt nach dem Neuladen der Seite (die Oberflaeche liest die Sprache beim Start).
  *  - Texte in index.html stehen deutsch im Dokument und tragen data-i18n="schluessel" (Text), data-i18n-title, data-i18n-aria-label, data-i18n-placeholder (Attribute);
@@ -42,6 +43,11 @@ const nav = () => (typeof navigator === 'undefined' ? [] : navigator.languages &
 export function loadPref(storage = browserStore(), navLangs = nav()) {
   let v = null;
   try { v = storage && storage.getItem(STORE_KEY); } catch { /* egal */ }
+  // Adresszusatz ?lang=de|en|system waehlt die Sprache schon vor der Anmeldung (und merkt sie lokal)
+  try {
+    const q = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('lang');
+    if (isPref(q)) { v = q; if (storage) storage.setItem(STORE_KEY, q); }
+  } catch { /* egal */ }
   pref = normalizePref(v);
   lang = resolveLang(pref, navLangs);
   setDocumentLang();
@@ -60,7 +66,7 @@ export const getLang = () => lang;
 /** Gebietsschema fuer Datum, Uhrzeit und Zahlen (Intl). */
 export const locale = () => LOCALES[lang];
 
-const fill = (s, p) => (p ? s.replace(/\{(\w+)\}/g, (m, k) => (p[k] === undefined || p[k] === null ? '' : String(p[k]))) : s);
+const fill = (s, p) => s.replace(/\{(\w+)\}/g, (m, k) => (!p || p[k] === undefined || p[k] === null ? '' : String(p[k])));
 
 /** Der Text zu einem Schluessel in der gewaehlten Sprache (Rueckfall Deutsch, sonst leer). */
 export function t(key, params) {

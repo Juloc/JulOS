@@ -22,6 +22,9 @@ internal sealed class ApiGuard(RequestDelegate next, AuthService auth)
     {
         if (!ctx.Request.Path.StartsWithSegments("/api")) { await next(ctx); return; }
 
+        // Der Agent auf der Ziel-Maschine ist kein Browser: er hat weder Cookie noch Origin. Seine Wege pruefen Code und Token selbst (Agent/AgentLinkEndpoints.cs).
+        if (Agent.AgentLinkEndpoints.IsAgentPath(ctx.Request.Path)) { await next(ctx); return; }
+
         if (!HttpMethods.IsGet(ctx.Request.Method) && !HttpMethods.IsHead(ctx.Request.Method))
         {
             if (ctx.Request.Headers["X-JulOS"] != "1" || !SameOrigin(ctx.Request)) { await Reject(ctx, 403, "Anfrage abgelehnt."); return; }

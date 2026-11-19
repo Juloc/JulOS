@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using JulOS.Frontend.About;
+using JulOS.Frontend.Agent;
 using JulOS.Frontend.Auth;
 using JulOS.Frontend.Files;
 using JulOS.Frontend.SystemInfo;
@@ -29,6 +30,10 @@ namespace JulOS.Frontend;
 [JsonSerializable(typeof(ConnectionRequest))]
 [JsonSerializable(typeof(TicketRequest))]
 [JsonSerializable(typeof(TicketResponse))]
+[JsonSerializable(typeof(AgentEnrollRequest))]
+[JsonSerializable(typeof(AgentEnrollResponse))]
+[JsonSerializable(typeof(AgentCodeResponse))]
+[JsonSerializable(typeof(AgentsResponse))]
 [JsonSerializable(typeof(OverviewResponse))]
 [JsonSerializable(typeof(FileListingDto))]
 [JsonSerializable(typeof(FileSearchDto))]

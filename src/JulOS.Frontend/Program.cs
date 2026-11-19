@@ -62,6 +62,10 @@ builder.Services.AddSingleton<SshRelay>(sp => new SshRelay(sp.GetRequiredService
 // Agent in der Sitzung der Ziel-Maschine (Unix-Socket) und der gemeinsame Ordner fuer Foto-Uploads, beide vom Host eingebunden
 builder.Services.AddSingleton(new AgentOptions(builder.Configuration["JULOS_AGENT_SOCKET"] ?? "/uploads/.agent/agent.sock"));
 builder.Services.AddSingleton<AgentClient>();
+// Agenten, die sich von der Ziel-Maschine aus melden (WebSocket): Einrichtung, Verbindungen, Weg eines Aufrufs
+builder.Services.AddSingleton<AgentStore>();
+builder.Services.AddSingleton<AgentLinks>();
+builder.Services.AddSingleton<AgentRouter>();
 builder.Services.AddSingleton(new UploadOptions(builder.Configuration["JULOS_UPLOAD_DIR"] ?? "/uploads"));
 builder.Services.AddSingleton<ClipboardUploader>();
 builder.Services.AddSingleton<ClipboardFileUploader>();
@@ -137,6 +141,7 @@ app.MapAbout(info);
 app.MapRemote();
 app.MapConnections();
 app.MapAgent();
+app.MapAgentLink(info);
 app.MapSystem();
 app.MapFiles();
 

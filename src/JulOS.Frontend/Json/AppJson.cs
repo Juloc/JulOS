@@ -2,7 +2,9 @@ using System.Text.Json.Serialization;
 using JulOS.Frontend.About;
 using JulOS.Frontend.Agent;
 using JulOS.Frontend.Auth;
+using JulOS.Backend.Modules;
 using JulOS.Frontend.Files;
+using JulOS.Frontend.Modules;
 using JulOS.Frontend.SystemInfo;
 
 namespace JulOS.Frontend;
@@ -37,4 +39,8 @@ namespace JulOS.Frontend;
 [JsonSerializable(typeof(OverviewResponse))]
 [JsonSerializable(typeof(FileListingDto))]
 [JsonSerializable(typeof(FileSearchDto))]
+[JsonSerializable(typeof(ModulesResponse))]
+[JsonSerializable(typeof(CaddyListing))]
+[JsonSerializable(typeof(CaddyReachability))]
+[JsonSerializable(typeof(DdnsStatus))]
 internal sealed partial class AppJson : JsonSerializerContext;

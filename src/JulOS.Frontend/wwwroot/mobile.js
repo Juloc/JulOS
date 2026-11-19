@@ -1,5 +1,6 @@
 import { ico, setTheme } from './app.js';
 import { Sessions } from './sessions.js';
+import { looksLikeAddress } from './quick.js';
 import { connectionState, dotClass as hostDot, stateText, serviceState, hostDetail, agentSummary, servicesSummary } from './hosts.js';
 
 /* =====================================================================
@@ -374,7 +375,8 @@ function renderServices() {
   $('#mQuick').innerHTML = `
     <button type="button" class="mb m3-btn filled m3-state" data-act="add">${icon('add')}Neue Verbindung</button>
     <button type="button" class="mb m3-btn tonal m3-state" data-act="last" ${last ? '' : 'disabled'} ${last ? `aria-label="Zuletzt geöffnet: ${esc(last.name)}"` : ''}>${icon('history')}${last ? 'Zuletzt: ' + esc(last.name.length > 14 ? last.name.slice(0, 13) + '…' : last.name) : 'Zuletzt geöffnet'}</button>
-    <button type="button" class="mb m3-btn tonal m3-state" data-act="ssh">${icon('terminal')}SSH öffnen</button>`;
+    <button type="button" class="mb m3-btn tonal m3-state" data-act="ssh">${icon('terminal')}SSH öffnen</button>
+    <button type="button" class="mb m3-btn tonal m3-state" data-act="quick">${icon('bolt')}Quick Connect</button>`;
 }
 /* Module Caddy und DDNS (nur lesen): Karten nur, wenn der Server sie eingeschaltet hat (GET /api/modules); Details im Sheet, siehe mobile-modules.js */
 let mods = { caddy: false, ddns: false }, modsLoaded = false;
@@ -388,6 +390,8 @@ function renderGrid() {
   $('#mGrid').innerHTML = list.length
     ? `<div class="grid4">${list.map((c) => tileHtml(c, pinned.has(c.id))).join('')}</div>`
     : `<p class="empty-hint">${conns().length ? 'Keine Verbindung passt zur Suche.' : 'Noch keine Verbindung. Lege den Computer an, den du steuern willst.'}</p>`;
+  // Sieht die Suche nach einer Adresse aus: Quick Connect ohne Speichern anbieten
+  if (looksLikeAddress(view.q)) $('#mGrid').insertAdjacentHTML('beforeend', `<button type="button" class="mb m3-btn tonal block m3-state" data-act="quickq" style="margin-top:12px">${icon('bolt')}Quick Connect zu ${esc(view.q.trim())}</button>`);
 }
 function lastConnection() {
   for (const l of ls.get('log', [])) if (l.type === 'start') { const c = byId(l.id); if (c) return c; }
@@ -496,6 +500,8 @@ function onClick(e) {
   if (act === 'sess') { Sessions.activate(a.dataset.sid, { reveal: true }); return; }
   if (act === 'start') { const c = byId(a.dataset.conn); if (c) ctx.connect(c); }
   else if (act === 'add') ctx.add();
+  else if (act === 'quick') ctx.quick();
+  else if (act === 'quickq') ctx.quick(view.q);
   else if (act === 'addhost') ctx.addHost();
   else if (act === 'hostedit' || act === 'hostagent') { const h = hosts().find((x) => x.id === a.dataset.host); if (h) ctx.editHost(h); }
   else if (act === 'mod') import('./mobile-modules.js').then((m) => m.openSheet(a.dataset.mod, { icon, esc, api: ctx.api, wireSheet, app: $('#app') }));
@@ -554,7 +560,7 @@ function wireSheet(dlg) {
   dlg.addEventListener('pointerup', end); dlg.addEventListener('pointercancel', end);
 }
 function enhanceSheets() {
-  for (const id of ['connDlg', 'hostDlg', 'startDlg', 'devicesDlg']) { const d = $('#' + id); if (!d) continue; d.classList.add('m3sheet'); wireSheet(d); }
+  for (const id of ['connDlg', 'hostDlg', 'startDlg', 'quickDlg', 'devicesDlg']) { const d = $('#' + id); if (!d) continue; d.classList.add('m3sheet'); wireSheet(d); }
   // Art und Bildübertragung: segmentierte Tasten statt Auswahlliste; das select bleibt als Wertspeicher bestehen (shell.js liest und setzt es)
   const segFor = (sel) => {
     const label = sel.closest('label'), box = document.createElement('div');
@@ -570,6 +576,7 @@ function enhanceSheets() {
     if (lbl) { const sp = document.createElement('span'); sp.textContent = lbl.textContent.trim(); label.replaceChild(sp, lbl); }
   };
   segFor($('#connKind'));
+  segFor($('#quickKind'));
 }
 
 /* ---------- Thema: Grundfarbe und Theme-Color ---------- */

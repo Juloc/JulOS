@@ -20,6 +20,8 @@ import { LIMITS, fmtSize, bmpFromImage, pngFromBytes, filesFromTransfer, saveBlo
 const $ = (s, r = document) => r.querySelector(s);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+/** Wohin das Ticket gilt: eine gespeicherte Verbindung oder (Quick Connect) die Angaben der Sitzung selbst. */
+export const ticketTarget = (conn) => (conn.quick ? { quick: conn.quick } : { connection: conn.id });
 const store = {
   get(k, d) { try { const v = localStorage.getItem('pd.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem('pd.' + k, JSON.stringify(v)); } catch { /* ignorieren */ } },
@@ -693,7 +695,7 @@ export class RemoteSession extends Session {
     if (!resumeToken) try {
       const acceptCert = this.acceptCert; this.acceptCert = null;      // gilt nur fuer diesen einen Versuch (siehe certDialog)
       const resp = await fetch('/api/remote/ticket', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, signal: AbortSignal.timeout(10000),
-        body: JSON.stringify({ connection: this.conn.id, sid: this.id, password: this.password || undefined, width: w, height: h, acceptCert: acceptCert || undefined }) });
+        body: JSON.stringify({ ...ticketTarget(this.conn), sid: this.id, password: this.password || undefined, width: w, height: h, acceptCert: acceptCert || undefined }) });
       const data = await resp.json().catch(() => ({}));
       if (stale()) return;
       if (resp.status === 401) return this.requestClose('Die Sitzung ist abgelaufen. Bitte neu anmelden.', 'auth');
@@ -952,7 +954,7 @@ export class RemoteSession extends Session {
     clearTimeout(this.zoomTimer); this.zoomTimer = setTimeout(() => this.el.zoomPop.classList.remove('show'), 900);
   }
   setK(k, announce = true) {
-    this.k = clamp(k, 0.35, 1.8); store.set('k.' + this.conn.id, this.k);          // je Verbindung gemerkt
+    this.k = clamp(k, 0.35, 1.8); if (!this.conn.quick) store.set('k.' + this.conn.id, this.k);          // je Verbindung gemerkt
     if (announce) this.showZoomPop();
     this.scheduleSize();
   }
@@ -965,10 +967,10 @@ export class RemoteSession extends Session {
     const gen = this.gen, W = this.W;
     W.available = false;
     // Der Agent gehoert zur Maschine, neben der der Server laeuft: nur fuer Desktop-Verbindungen anbieten
-    if (this.conn.kind === 'desktop') { try { const h = await (await fetch('/api/agent/health?c=' + encodeURIComponent(this.conn.id))).json(); W.available = !!h.available; } catch { W.available = false; } }
+    if (this.conn.kind === 'desktop' && !this.conn.quick) { try { const h = await (await fetch('/api/agent/health?c=' + encodeURIComponent(this.conn.id))).json(); W.available = !!h.available; } catch { W.available = false; } }
     if (gen !== this.gen || this.disposed) return;
     this.dbg('agent', { available: W.available });
-    if (this.conn.kind === 'desktop') store.set('winbar.' + this.conn.id, W.available);
+    if (this.conn.kind === 'desktop' && !this.conn.quick) store.set('winbar.' + this.conn.id, W.available);
     this.renderWindows();
     if (!W.available) return;
     this.pollWindows(); W.timer = setInterval(() => this.pollWindows(), 2000);

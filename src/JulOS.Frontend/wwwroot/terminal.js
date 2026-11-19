@@ -169,7 +169,7 @@ export class TerminalView {
     try {
       const resp = await fetch('/api/remote/ticket', {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, signal: AbortSignal.timeout(10000),
-        body: JSON.stringify({ connection: this.conn.id, sid: this.opts.sid || undefined, password: this.password || undefined, cols, rows, acceptHostKey: acceptHostKey || undefined }),
+        body: JSON.stringify({ ...(this.conn.quick ? { quick: this.conn.quick } : { connection: this.conn.id }), sid: this.opts.sid || undefined, password: this.password || undefined, cols, rows, acceptHostKey: acceptHostKey || undefined }),
       });
       const data = await resp.json().catch(() => ({}));
       if (gen !== this.generation) return;

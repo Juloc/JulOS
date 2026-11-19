@@ -24,33 +24,53 @@ internal static class RemoteEndpoints
     public static void MapRemote(this IEndpointRouteBuilder app)
     {
         // Schritt 1: Verbindung waehlen und das Passwort tippen -> Einmal-Ticket (30 s, nur im Speicher)
-        app.MapPost("/api/remote/ticket", async (TicketRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, ScreenTickets screenTickets, SshTickets sshTickets, SecretBox box, DriveRoot drives) =>
+        app.MapPost("/api/remote/ticket", async (TicketRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, ScreenTickets screenTickets, SshTickets sshTickets, SecretBox box, DriveRoot drives, HitCounter hits, QuickTrust quickTrust) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
-            if (body.Connection is not { } connectionId) return Error(400, "Verbindung fehlt.");
             if (body.Password is { Length: > 256 }) return Error(400, "Das Passwort ist zu lang.");
-            var c = await connections.GetAsync(id.UserId, connectionId, ctx.RequestAborted);
-            if (c is null) return Error(404, "Verbindung nicht gefunden.");
-            if (!policy.Allows(c.Host)) return Error(403, "Dieses Ziel ist nicht erlaubt.");
-
-            // Ein getipptes Passwort gilt immer; sonst das gespeicherte (nur auf dem Server entschluesselt, es geht nie zum Browser)
-            var password = body.Password;
-            if (string.IsNullOrEmpty(password) && c.HasPassword)
+            ConnectionRecord c;
+            string? password = body.Password;
+            Func<string, CancellationToken, Task> saveHostKey, saveCert;
+            var owner = id.UserId;
+            if (body.Quick is { } q)
             {
-                var sealedValue = await connections.GetSecretAsync(id.UserId, connectionId, ctx.RequestAborted);
-                password = sealedValue is null ? null : box.Decrypt(sealedValue, connectionId);
-                if (password is null) return Error(409, "Das gespeicherte Passwort lässt sich nicht lesen. Bitte neu eingeben und speichern.");
+                // Quick Connect: dieselben Regeln und dieselbe Erlaubnisliste wie bei gespeicherten Verbindungen; nichts kommt in die Datenbank, das Passwort gilt nur fuer diese Sitzung
+                var (v, quickError) = ConnectionRules.Validate("Quick Connect", q.Kind, q.Host, q.Port, q.Username);
+                if (v is null) return Error(400, quickError!);
+                if (!policy.Allows(v.Host)) return Error(403, "Dieses Ziel ist nicht erlaubt.");
+                if (string.IsNullOrEmpty(password)) return Error(400, "Passwort fehlt.");
+                if (!hits.Allow("quick:" + owner, QuickConnect.MaxPerMinute, TimeSpan.FromMinutes(1))) return Error(429, "Zu viele Anfragen, bitte kurz warten.");
+                var known = quickTrust.Get(owner, v.Kind, v.Host, v.Port);
+                c = new ConnectionRecord(QuickConnect.IdOf(v.Kind, v.Host, v.Port, v.Username), v.Host, v.Kind, v.Host, v.Port, v.Username, false, Guid.Empty,
+                    HostKey: v.Kind == "terminal" ? known : null, CertFingerprint: v.Kind == "desktop" ? known : null);
+                saveHostKey = saveCert = (value, _) => { quickTrust.Set(owner, v.Kind, v.Host, v.Port, value); return Task.CompletedTask; };
             }
-            if (string.IsNullOrEmpty(password)) return Error(400, "Passwort fehlt.");
+            else
+            {
+                if (body.Connection is not { } connectionId) return Error(400, "Verbindung fehlt.");
+                var stored = await connections.GetAsync(owner, connectionId, ctx.RequestAborted);
+                if (stored is null) return Error(404, "Verbindung nicht gefunden.");
+                c = stored;
+                if (!policy.Allows(c.Host)) return Error(403, "Dieses Ziel ist nicht erlaubt.");
+                saveHostKey = (key, ct) => connections.SetHostKeyAsync(owner, connectionId, key, ct);
+                saveCert = (fingerprint, ct) => connections.SetCertFingerprintAsync(owner, connectionId, fingerprint, ct);
+
+                // Ein getipptes Passwort gilt immer; sonst das gespeicherte (nur auf dem Server entschluesselt, es geht nie zum Browser)
+                if (string.IsNullOrEmpty(password) && c.HasPassword)
+                {
+                    var sealedValue = await connections.GetSecretAsync(owner, connectionId, ctx.RequestAborted);
+                    password = sealedValue is null ? null : box.Decrypt(sealedValue, connectionId);
+                    if (password is null) return Error(409, "Das gespeicherte Passwort lässt sich nicht lesen. Bitte neu eingeben und speichern.");
+                }
+                if (string.IsNullOrEmpty(password)) return Error(400, "Passwort fehlt.");
+            }
 
             // Terminal: eigener SSH-Client im Server, der Browser zeichnet den Text selbst (xterm.js). Spalten und Zeilen kommen vom Browser.
             if (c.Kind == "terminal")
             {
                 var options = new SshConnectOptions(c.Host, c.Port, c.Username, password,
                     SshProtocol.Clamp(body.Cols ?? 80, SshProtocol.MinCols, SshProtocol.MaxCols), SshProtocol.Clamp(body.Rows ?? 24, SshProtocol.MinRows, SshProtocol.MaxRows));
-                var (owner, connection) = (id.UserId, c.Id);
-                var sshTicket = sshTickets.Create(id.UserId, new SshTarget(owner, options, c.HostKey, body.AcceptHostKey,
-                    (key, ct) => connections.SetHostKeyAsync(owner, connection, key, ct), SessionRegistry.SlotOf(owner, connection, body.Sid)));
+                var sshTicket = sshTickets.Create(id.UserId, new SshTarget(owner, options, c.HostKey, body.AcceptHostKey, saveHostKey, SessionRegistry.SlotOf(owner, c.Id, body.Sid)));
                 return sshTicket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(sshTicket, c.Kind, options.Cols, options.Rows, "ssh"), AppJson.Default.TicketResponse);
             }
 
@@ -60,8 +80,7 @@ internal static class RemoteEndpoints
             // Desktops laufen immer ueber die eigene Strom-Engine (RDP-Client, H.264); ohne Kodierer auf diesem Server gibt es keine Desktop-Verbindung.
             if (!ScreenStream.IsAvailable) return Error(503, "Die Bildübertragung ist auf diesem Server nicht verfügbar: " + ScreenStream.UnavailableReason);
             // Zertifikat des Ziels: beim ersten Mal merken, danach muss es dasselbe sein (Warnung mit Bestaetigung im Browser, siehe CertificateTrust)
-            var (user, connectionKey) = (id.UserId, c.Id);
-            var trust = new CertificateTrust(c.CertFingerprint, body.AcceptCert, (fingerprint, ct) => connections.SetCertFingerprintAsync(user, connectionKey, fingerprint, ct));
+            var trust = new CertificateTrust(c.CertFingerprint, body.AcceptCert, saveCert);
             var rdp = new RdpOptions
             {
                 Host = c.Host, Port = c.Port, UserName = c.Username, Password = password, Width = w & ~1, Height = h & ~1,

@@ -47,6 +47,7 @@ builder.Services.AddSingleton<Migrator>();
 builder.Services.AddSingleton<UserStore>();
 builder.Services.AddSingleton<HostStore>();
 builder.Services.AddSingleton<ConnectionStore>();
+builder.Services.AddSingleton<QuickTrust>();
 builder.Services.AddSingleton<TcpProbe>();
 builder.Services.AddSingleton(new SecretBox(SecretBox.ResolveKey(builder.Configuration["JULOS_SECRET_KEY"], builder.Configuration["JULOS_DATA"])));
 builder.Services.AddSingleton(new HostPolicy(builder.Configuration["JULOS_ALLOWED_HOSTS"]));

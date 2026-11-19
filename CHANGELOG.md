@@ -7,6 +7,7 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 ## [Unveröffentlicht]
 
 ### Neu
+- Quick Connect: eine einzelne Sitzung ohne Speichern (Art Desktop/RDP oder Terminal/SSH, Adresse auch als `benutzer@adresse:port`, Benutzername, Passwort nur für diese Sitzung). Handy-Shell: Knopf „Quick Connect“ bei den Diensten und Vorschlag in der Suche; Desktop: Menü „Fenster“, Schnellaktion und Launcher. Nichts kommt in die Datenbank, das Passwort steht nirgends im Log; es gelten dieselben Regeln und dieselbe Erlaubnisliste (`JULOS_ALLOWED_HOSTS`) wie bei gespeicherten Verbindungen, höchstens 12 Quick-Tickets je Benutzer und Minute. Host-Schlüssel und Zertifikat eines Quick-Ziels werden nur im Speicher gemerkt. Siehe [docs/FOLDERS.md](docs/FOLDERS.md).
 - Handy: Bei geöffneter Bildschirmtastatur wird die Verbindung nicht mehr neu ausgehandelt. Neue Einstellung im Sitzungsmenü, Zeile „Bei Tastatur“ (auf diesem Gerät gemerkt): „Bild verschieben“ (Standard) lässt die Auflösung gleich, das Bild behält seine Größe und wird nur so verschoben, dass die zuletzt angetippte Stelle (Textfeld) sichtbar bleibt, mit zwei Fingern verschiebbar; „Auflösung folgt“ ist das bisherige Verhalten. Siehe [docs/PHONE-TEST.md](docs/PHONE-TEST.md).
 
 ### Geändert

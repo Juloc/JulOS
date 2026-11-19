@@ -1,5 +1,6 @@
 import { remoteApi } from './app.js';
 import { Sessions } from './sessions.js';
+import { looksLikeAddress } from './quick.js';
 import { remoteMenuNames, remoteMenuItems, sessionMenu } from './desktop-remote.js';
 import { serviceState, connectionState, dotClass, stateText, groupConnections, hostDetail, agentSummary, servicesSummary } from './hosts.js';
 
@@ -12,7 +13,7 @@ import { serviceState, connectionState, dotClass, stateText, groupConnections, h
 
 const $ = (s, r = document) => r.querySelector(s);
 const BAR_H = 34;
-let ctx = null;            // von shell.js: { state, esc, api, connect, edit, add, editHost, addHost, devices, signOut }
+let ctx = null;            // von shell.js: { state, esc, api, connect, edit, add, quick, editHost, addHost, devices, signOut }
 let root = null;
 const wins = new Map();    // id -> Fenster
 let zTop = 10;
@@ -339,6 +340,7 @@ const MENUS = () => ({
     { label: 'Sitzungen überlappend', icon: 'restore', run: () => cascadeSessions(), disabled: sessWins.size < 2 },
     { sep: true },
     { label: 'Neue Verbindung …', icon: 'plus', run: () => ctx.add() },
+    { label: 'Quick Connect …', icon: 'monitor', run: () => ctx.quick() },
   ],
   Hosts: [
     ...ctx.state.hosts.map((h) => ({ label: h.name, icon: 'server', hint: h.online ? 'online' : 'offline', run: () => openHome('hosts') })),
@@ -657,6 +659,8 @@ function openLauncher() {
     hits = [
       ...shownApps().filter((a) => a.name.toLowerCase().includes(q) || (a.sub || '').toLowerCase().includes(q)).map((a) => ({ name: a.name, sub: a.soon ? 'bald verfügbar' : a.sub || 'Programm', g: a.g, ic: a.ic, soon: a.soon, run: (anchor) => runApp(a.id, anchor) })),
       ...ctx.state.connections.filter((c) => (c.name + ' ' + c.host).toLowerCase().includes(q)).map((c) => ({ name: c.name, sub: c.kind === 'terminal' ? 'Terminal' : 'Desktop', g: appById(c.kind).g, ic: appById(c.kind).ic, run: () => ctx.connect(c) })),
+      // Sieht die Eingabe nach einer Adresse aus: Quick Connect ohne Speichern anbieten
+      ...(looksLikeAddress(input.value) ? [{ name: 'Quick Connect zu ' + input.value.trim(), sub: 'ohne Speichern', g: appById('desktop').g, ic: 'plus', run: () => ctx.quick(input.value) }] : []),
     ];
     sel = clamp(sel, 0, Math.max(0, hits.length - 1));
     if (!hits.length) { res.appendChild(el('div', 'dk-none')).textContent = 'Nichts gefunden.'; return; }
@@ -758,6 +762,7 @@ function renderStart(m) {
     <h3>Schnellaktionen</h3>
     <div class="dk-qa">
       <button type="button" class="dk-b" data-act="add">${ic('plus')}<span>Neue Verbindung</span></button>
+      <button type="button" class="dk-b" data-act="quick">${ic('monitor')}<span>Quick Connect</span></button>
       <button type="button" class="dk-b" data-act="desktop">${ic('monitor')}<span>Desktop verbinden</span></button>
       <button type="button" class="dk-b" data-act="terminal">${ic('terminal')}<span>Terminal öffnen</span></button>
       <button type="button" class="dk-b" data-act="devices">${ic('shield')}<span>Geräte</span></button>
@@ -877,6 +882,7 @@ function onMainClick(e) {
   else if (t.dataset.go) goto(t.dataset.go);
   else if (t.dataset.app) runApp(t.dataset.app, t);
   else if (t.dataset.act === 'add') ctx.add();
+  else if (t.dataset.act === 'quick') ctx.quick();
   else if (t.dataset.act === 'devices') ctx.devices();
   else if (t.dataset.act === 'signout') ctx.signOut();
   else if (t.dataset.act === 'settings') goto('einstellungen');

@@ -1,6 +1,7 @@
 import { ico } from './app.js';
 import { Sessions } from './sessions.js';
 import { agentSummary, hostDetail } from './hosts.js';
+import { parseQuickTarget, quickConnection, DEFAULT_PORT as QUICK_PORT } from './quick.js';
 import './terminal-session.js';      // Sitzungsart 'terminal' (natives SSH-Terminal)
 
 /* =====================================================================
@@ -421,6 +422,31 @@ $('#startForm').addEventListener('submit', (e) => {
   launch(state.starting.c, password, state.starting.extra);
 });
 
+/* ---------- Quick Connect: Sitzung ohne Speichern (nichts in der Datenbank, das Passwort gilt nur fuer diese Sitzung) ---------- */
+/** prefill: Eingabe aus der Suche (Adresse, benutzer@adresse:port oder rdp://, ssh://) */
+function quickDialog(prefill = '') {
+  const t = parseQuickTarget(prefill);
+  $('#quickKind').value = (t && t.kind) || 'desktop'; $('#quickKind').dispatchEvent(new Event('change'));
+  $('#quickHost').value = t ? (t.port ? `${t.host}:${t.port}` : t.host) : prefill.trim();
+  $('#quickUser').value = t ? t.username : '';
+  $('#quickPw').value = '';
+  setMsg($('#quickMsg'), '');
+  $('#quickDlg').showModal();
+  setTimeout(() => ($('#quickHost').value ? $('#quickPw') : $('#quickHost')).focus(), 150);
+}
+$('#quickForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const kind = $('#quickKind').value, msg = $('#quickMsg');
+  const t = parseQuickTarget($('#quickHost').value);
+  if (!t) return setMsg(msg, 'Adresse ungültig (Name oder IP-Adresse, optional :Port).');
+  const user = $('#quickUser').value.trim() || t.username;
+  const password = $('#quickPw').value;
+  if (!password) return setMsg(msg, 'Das Passwort fehlt.');
+  $('#quickPw').value = '';
+  $('#quickDlg').close();
+  Sessions.open(quickConnection({ kind, host: t.host, port: t.port || QUICK_PORT[kind], username: user }), { password });
+});
+
 /* ---------- Sitzungen: die Huelle zeigt, was der Verwalter meldet ---------- */
 // Handy und einfache Ansicht: alle Sitzungen haengen in #remote, genau eine ist sichtbar; die anderen laufen im Hintergrund (pausiert).
 // Desktop: jede Sitzung ist ein Fenster (desktop.js).
@@ -467,8 +493,8 @@ Sessions.addEventListener('closed', (e) => {
 Sessions.addEventListener('home', () => { if (!D) goHome(); });
 Sessions.addEventListener('switcher', () => { if (M) M.openSwitcher(); else goHome(); });
 
-if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), signOut, home: goHome });
-if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), devices: openDevices, signOut });
+if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), quick: quickDialog, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), signOut, home: goHome });
+if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), quick: quickDialog, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), devices: openDevices, signOut });
 
 /* ---------- Geraete und Sitzungen ---------- */
 function describeAgent(ua) {

@@ -41,7 +41,7 @@ bash install-linux-agent.sh --server https://SERVER --code ABCDE-FGHIJ
   server stores only its SHA-256, together with the host id. A new enrolment replaces the token of that host.
 - **Agent entfernen** (`DELETE /api/hosts/{id}/agent`) deletes the row: the token is dead at once and a running link is closed. Deleting the host does the same (a host with connections cannot be deleted); deleting a connection leaves the agent alone.
   On the machine, `julos-agent.py --forget` deletes the stored token.
-- `GET /api/hosts` (session) lists the user's hosts; each carries its agent as `{online, lastSeen, version, platform, outdated}` (absent when none is enrolled) plus `hostname` and `os` as the agent reported them.
+- `GET /api/hosts` (session) lists the user's hosts; each carries its agent as `{online, lastSeen, version, platform, outdated, latest?, updateAvailable, canUpdate, autoUpdate}` (absent when none is enrolled) plus `hostname` and `os` as the agent reported them. `latest` is the version this server ships, see [Updating the agent](#updating-the-agent).
 - The agent refuses plain `http://` servers (the token would travel in the clear) except `localhost`; `--allow-http` is only for the test instance.
 
 ## The link (WebSocket `/api/agent-link`)
@@ -55,8 +55,8 @@ Text frames from the agent are limited to 1 MB; larger frames close the link. Re
 
 | Direction | Message | Meaning |
 | --- | --- | --- |
-| agent → server | `{"t":"hello","agent":"0.3.0","platform":"linux-x11","api":1,"hostname":"…","os":"…"}` | first message, within 10 s; `hostname` and `os` are optional display values (up to 64 characters of letters, digits, space and `. - _ + / ( ) ,`, else ignored) |
-| server → agent | `{"t":"welcome","server":"0.2.0"}` or `{"t":"bye","reason":"agent_outdated"}` + close | agents older than `AgentLinks.MinAgentVersion` are refused |
+| agent → server | `{"t":"hello","agent":"0.4.0","platform":"linux-x11","api":1,"hostname":"…","os":"…"}` | first message, within 10 s; `hostname` and `os` are optional display values (up to 64 characters of letters, digits, space and `. - _ + / ( ) ,`, else ignored) |
+| server → agent | `{"t":"welcome","server":"0.5.0"}` or `{"t":"bye","reason":"agent_outdated"}` + close | agents older than `AgentLinks.MinAgentVersion` are refused |
 | both | `{"t":"hb"}` | the agent sends one every 20 s; the server closes a link that is silent for 75 s; the server also pings every 30 s |
 | server → agent | `{"t":"req","id":7,"method":"GET","path":"/v1/windows","body":{…}}` | one of the v1 requests below, **fixed paths only** |
 | agent → server | `{"t":"res","id":7,"status":200,"body":{…}}` | the answer (body is JSON, at most 600 kB, else `502`); no answer within 8 s gives `502` |
@@ -65,6 +65,8 @@ Text frames from the agent are limited to 1 MB; larger frames close the link. Re
 | server → agent | `{"t":"pull","id":9,"max":14680064}` | the image on the remote clipboard |
 | agent → server | `{"t":"blob","id":9,"size":N}`, binary frames, `{"t":"res","id":9,"status":200,"body":{}}` / `status 204` (no image) / error | PNG only |
 | server → agent | `{"t":"cancel","id":8}` | the browser went away: drop what you have |
+| server → agent | `{"t":"update","id":10,"path":"/agent-files/julos-agent.py","sha256":"<64 hex>","version":"0.4.0"}` | replace yourself with the file the server ships, see [Updating the agent](#updating-the-agent) (agents from 0.4.0) |
+| agent → server | `{"t":"res","id":10,"status":200,"body":{"ok":true,"version":"0.4.0","restarting":true}}` / `4xx`/`502` `{"error":"…"}` | answered **before** the restart (`restarting:false`: that version or a newer one already runs); an error leaves the old file untouched |
 
 Limits and behaviour: at most 32 open requests per link and **one transfer at a time** (the second waits up to 10 s, then `502`). Transfers are chunked, so a
 big file never sits in one message; the sender waits for each frame to be written (TCP back pressure) and gives up after 15 s per frame and 3 minutes in total.
@@ -78,6 +80,46 @@ Security properties: the token identifies one host of one user; every answer is 
 host and never sees or reaches anything of other users. The server only sends fixed requests with checked values, so there is no way to make it connect somewhere
 else (no request forgery). The agent link needs no cookie, but also no browser: an `Origin` or cookie from a web page cannot authenticate it. Audit lines in the server log
 (`AgentLink`): code created, agent enrolled/removed, link connected/disconnected, rejected token or code (with the address). No code and no token is ever logged.
+
+## Updating the agent
+
+The image ships the newest agent (`tools/julos-agent.py`, served as `GET /agent-files/julos-agent.py`). The server reads its `AGENT_VERSION` and SHA-256 from the file itself and
+keeps them until the file changes, so the announcement can never differ from what is served. The host dialog shows `Agent 0.3.0 … Update verfügbar (0.4.0)`
+when the agent's version is lower.
+
+**Update now** (`POST /api/hosts/{id}/agent/update`, session, 6 per minute and user; the body is ignored: the browser chooses neither address nor version nor checksum) sends the connected
+agent the `update` message above. Refused with `404` (no agent), `409` (not connected, already current, or an agent older than 0.4.0 that does not know `update`: enrol it once again
+with **Agent einrichten**), `503` (the server has no agent file), `502` with the agent's reason when the agent refuses or does not answer within 60 s.
+On `200` the agent restarts and reports the new version in its next `hello`; the browser polls the host list until it shows it.
+
+What the agent does (all checks before anything is replaced; any failure leaves the old file and no leftovers):
+
+1. `path` must be exactly `/agent-files/julos-agent.py`. The URL is built by the agent from **its own configured server address** plus that path, never taken from the message, so a message cannot name another host.
+   Plain `http://` is refused as for enrolment (except localhost or `--allow-http`); redirects are not followed.
+2. Download into a temp file in the folder of the agent file (at most 1 MB), SHA-256 compared with `sha256` (`422` on mismatch).
+3. The file must compile as Python and its `AGENT_VERSION` must equal `version` and be newer than the running one (never a downgrade; equal or older answers `200` with `restarting:false`).
+4. `fsync`, same file mode, then `os.replace` (atomic: the agent is never half replaced). Reply, then `exec` of the new file in the same process (same PID, service and autostart notice nothing).
+
+Only `julos-agent.py` is replaced; the clipboard helper `julos-clip.py` is not (re-run the installer for that).
+
+**Automatic update** (`PUT /api/hosts/{id}/agent/auto-update` `{"enabled":true}`, default off, per agent): when the agent connects (and when the switch is turned on) and is older than the shipped
+file and 0.4.0 or newer, the server sends the same `update` message. At most one automatic attempt per host every 10 minutes, so a failing update cannot loop.
+
+## Running the agent (Linux)
+
+```text
+julos-agent.py check               Python (3.8+), PyGObject/GTK3/Wnck, DISPLAY: names what is missing (exit code 3), nothing else is touched
+julos-agent.py status              version, running (PID), server and link state, how it is started, log file, prerequisites; exit code 3 when it is not running
+julos-agent.py stop                ends the running agent (SIGTERM; the systemd unit is stopped if there is one)
+julos-agent.py uninstall [--yes]   lists and removes: service, autostart entries, the agent files, the enrolment (token, unless --keep-config) and log. ~/julos-uploads stays
+```
+
+`uninstall` asks first (`--yes` skips the question; without a terminal it refuses without `--yes`) and never deletes program files inside a git checkout. Remove the agent in the app as well
+(**Agent entfernen**) so the token is dead on the server too.
+
+At start the agent checks its prerequisites and prints what is missing (with the `apt` package) instead of a traceback; it also refuses to start twice for the same user.
+The log is `~/.local/state/julos/agent.log` (`$XDG_STATE_HOME`, folder 0700, file 0600), 512 kB per file with three older ones kept; `agent.pid` and `agent.status` (link state for `status`) live next to it.
+`install-linux-agent.sh` checks the prerequisites first, starts the agent through an autostart entry or, with `--systemd`, as the user service `julos-agent.service` (`Restart=on-failure`; it waits for the graphical session).
 
 ## Authorisation in the server
 

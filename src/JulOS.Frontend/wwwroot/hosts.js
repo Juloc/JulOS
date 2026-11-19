@@ -1,6 +1,6 @@
 /* =====================================================================
  * Hosts (docs/HOSTS.md): reine Hilfen ohne DOM, damit Desktop-Oberflaeche und Handy-Huelle dasselbe zeigen und Node sie testen kann.
- * Ein Host ist, was GET /api/hosts liefert: { id, name, online, hostname?, os?, agent?: { online, lastSeen?, version?, platform?, outdated }, services: [{ connection, kind, online? }] }
+ * Ein Host ist, was GET /api/hosts liefert: { id, name, online, hostname?, os?, agent?: { online, lastSeen?, version?, platform?, outdated, latest?, updateAvailable, canUpdate, autoUpdate }, services: [{ connection, kind, online? }] }
  * ===================================================================== */
 
 /** 'up' (erreichbar), 'down' oder 'unknown' (nicht geprueft: Erlaubnisliste oder noch keine Antwort) */
@@ -37,7 +37,7 @@ export function agentSummary(h) {
   if (!a) return 'Kein Agent';
   const what = [a.version && 'Agent ' + a.version, a.platform].filter(Boolean).join(', ');
   const base = a.online ? 'Agent verbunden' : 'Agent getrennt' + (a.lastSeen && when(a.lastSeen) ? ' (zuletzt ' + when(a.lastSeen) + ')' : '');
-  return base + (what ? ' – ' + what : '') + (a.outdated ? ' – zu alt, bitte neu einrichten' : '');
+  return base + (what ? ' – ' + what : '') + (a.outdated ? ' – zu alt, bitte neu einrichten' : a.updateAvailable ? ' – Update verfügbar' + (a.latest ? ' (' + a.latest + ')' : '') : '');
 }
 
 /** Wie viele Dienste eines Hosts antworten, als Text ("2 von 3 Diensten erreichbar") */

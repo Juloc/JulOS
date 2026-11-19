@@ -86,6 +86,8 @@ builder.Services.AddSingleton<AgentClient>();
 // Agenten, die sich von der Ziel-Maschine aus melden (WebSocket): Einrichtung, Verbindungen, Weg eines Aufrufs
 builder.Services.AddSingleton<AgentStore>();
 builder.Services.AddSingleton<AgentLinks>();
+builder.Services.AddSingleton<AgentRelease>();
+builder.Services.AddSingleton<AgentUpdater>();
 builder.Services.AddSingleton<AgentRouter>();
 builder.Services.AddSingleton(new UploadOptions(builder.Configuration["JULOS_UPLOAD_DIR"] ?? "/uploads"));
 builder.Services.AddSingleton<ClipboardUploader>();

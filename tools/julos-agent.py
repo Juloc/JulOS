@@ -14,14 +14,29 @@ Zwei Wege zum Server, beide mit denselben Anfragen:
 - Unix-Socket (Server und Desktop laufen auf demselben Rechner): ~/julos-uploads/.agent/agent.sock (Rechte 0600),
   kein Netzwerkport. Laeuft zusaetzlich zum Netzwerkweg, ausser mit --no-socket.
 
+Betrieb (auf dem Rechner, ohne Anzeige):
+      julos-agent.py check              Sind Python, PyGObject/GTK/Wnck und die grafische Sitzung da?
+      julos-agent.py status             Laeuft er, ist er mit dem Server verbunden, fehlt etwas?
+      julos-agent.py stop               beendet den laufenden Agenten
+      julos-agent.py uninstall [--yes]  entfernt Dienst/Autostart, Programmdateien, Einrichtung und Log (mit --yes ohne Rueckfrage)
+Die Logdatei liegt in ~/.local/state/julos/agent.log (dreht sich selbst, drei alte Staende). Updates holt der Agent auf Anweisung
+des Servers selbst (nur von der eigenen Server-Adresse, mit Pruefsumme, siehe docs/AGENT_API.md).
+
 Nur die Python-Standardbibliothek (plus PyGObject fuer die Sitzung): die Installation bleibt eine Datei.
 """
-import argparse, base64, hashlib, http.server, json, os, queue, random, re, shutil, signal, socket, socketserver, ssl, struct, subprocess, sys, threading, time
+import sys
+
+MIN_PYTHON = (3, 8)
+if sys.version_info < MIN_PYTHON:
+    sys.exit("julos-agent braucht Python %d.%d oder neuer (gefunden: %s). Auf Debian/Ubuntu: neueres python3 installieren." % (MIN_PYTHON + (sys.version.split()[0],)))
+
+import argparse, base64, hashlib, hmac, http.server, json, logging, logging.handlers, os, queue, random, re, shutil, signal, socket, socketserver, ssl, stat, struct, subprocess, tempfile, threading, time
 import urllib.error, urllib.parse, urllib.request
 
-AGENT_VERSION = "0.3.0"      # der Server lehnt aeltere ab (AgentLinks.MinAgentVersion)
+AGENT_VERSION = "0.4.0"      # der Server lehnt aeltere ab (AgentLinks.MinAgentVersion); ab 0.4.0 aktualisiert er sich auf Anweisung selbst
 API_VERSION = 1
 PLATFORM = "linux-x11"
+UNIT_NAME = os.environ.get("JULOS_AGENT_UNIT") or "julos-agent.service"
 
 
 def host_info():
@@ -40,6 +55,18 @@ def host_info():
 
 CONFIG = os.environ.get("JULOS_AGENT_CONFIG") or os.path.expanduser("~/.config/julos/agent.json")
 UPLOADS = os.path.expanduser("~/julos-uploads")        # den Ordner beobachtet der Zwischenablage-Helfer (julos-clip.py)
+SCRIPT = os.path.realpath(__file__)
+# Log, Prozessnummer und Verbindungsstand liegen im Benutzerverzeichnis (nicht in /tmp: dort liest sie jeder und ein Neustart loescht sie)
+STATE_DIR = os.environ.get("JULOS_AGENT_STATE") or os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "julos")
+LOG_FILE = os.path.join(STATE_DIR, "agent.log")
+PID_FILE = os.path.join(STATE_DIR, "agent.pid")
+STATUS_FILE = os.path.join(STATE_DIR, "agent.status")
+PANEL_STATE = os.environ.get("JULOS_AGENT_PANEL_STATE") or os.path.expanduser("~/.cache/julos-agent-panels.json")
+STATE = PANEL_STATE
+LOG_BYTES = 512 * 1024       # je Datei; dazu drei alte Staende (zusammen hoechstens rund 2 MB)
+LOG_KEEP = 3
+
+log = logging.getLogger("julos-agent")
 
 
 # ---------------------------------------------------------------- Einrichtung (ohne Anzeige, vor dem Laden von GTK)
@@ -93,43 +120,432 @@ def enroll(server, code, allow_http):
     print("Eingerichtet. Der Agent meldet sich ab jetzt selbst bei", base, flush=True)
 
 
-def parse_args():
+COMMANDS = ("run", "status", "stop", "uninstall", "check")
+
+
+def parse_args(argv=None):
     p = argparse.ArgumentParser(description="JulOS Agent (siehe docs/AGENT_API.md)")
+    p.add_argument("command", nargs="?", choices=COMMANDS, default="run",
+                   help="run (Standard): Agent starten | status: Zustand zeigen | stop: laufenden Agenten beenden | uninstall: alles entfernen | check: Voraussetzungen pruefen")
     p.add_argument("--server", help="Adresse des JulOS-Servers (nur zusammen mit --code)")
     p.add_argument("--code", help="Einrichtungscode aus der App (Agent einrichten); danach endet das Programm")
     p.add_argument("--allow-http", action="store_true", help="nur zum Testen: auch ohne TLS verbinden")
     p.add_argument("--no-socket", action="store_true", help="den lokalen Unix-Socket nicht anbieten")
     p.add_argument("--forget", action="store_true", help="gespeicherte Einrichtung loeschen und beenden")
-    return p.parse_args()
+    p.add_argument("--yes", action="store_true", help="uninstall: ohne Rueckfrage")
+    p.add_argument("--keep-config", action="store_true", help="uninstall: die Einrichtung (Token) behalten")
+    return p.parse_args(argv)
 
 
-ARGS = parse_args() if __name__ == "__main__" else argparse.Namespace(server=None, code=None, allow_http=False, no_socket=False, forget=False)
-if ARGS.forget:
+# ---------------------------------------------------------------- Voraussetzungen
+def missing_requirements():
+    """Prueft, was der Agent zum Laufen braucht. Gibt (Probleme, Hinweise) zurueck, je als Liste von Texten; ohne Probleme laeuft er los."""
+    problems, notes = [], []
+    if sys.version_info < MIN_PYTHON:
+        problems.append("Python %d.%d oder neuer fehlt (gefunden: %s)." % (MIN_PYTHON + (sys.version.split()[0],)))
     try:
-        os.unlink(CONFIG)
+        import gi
+    except ImportError:
+        problems.append("PyGObject (Python-Modul gi) fehlt. Installieren: sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-wnck-3.0")
+    else:
+        for ns, ver, pkg in (("Gtk", "3.0", "gir1.2-gtk-3.0"), ("Wnck", "3.0", "gir1.2-wnck-3.0"), ("GdkPixbuf", "2.0", "gir1.2-gdkpixbuf-2.0")):
+            try:
+                gi.require_version(ns, ver)
+            except ValueError:
+                problems.append("%s %s fehlt. Installieren: sudo apt install %s" % (ns, ver, pkg))
+    if not os.environ.get("DISPLAY"):
+        if os.environ.get("XDG_SESSION_TYPE") == "wayland" or os.environ.get("WAYLAND_DISPLAY"):
+            problems.append("Wayland ohne XWayland (DISPLAY fehlt): der Agent braucht eine X11-Sitzung.")
+        else:
+            problems.append("Keine grafische Sitzung (DISPLAY ist nicht gesetzt): der Agent muss in der Sitzung des Benutzers starten (Autostart, nicht ueber SSH).")
+    if not shutil.which("xfconf-query"):
+        notes.append("xfconf-query fehlt: der Programm-Modus (Taskleiste ausblenden) geht nur unter XFCE (sudo apt install xfconf).")
+    return problems, notes
+
+
+# ---------------------------------------------------------------- Prozess, Log, Verbindungsstand
+def ensure_state_dir():
+    os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(STATE_DIR, 0o700)
     except OSError:
         pass
-    print("Einrichtung geloescht.", flush=True)
-    sys.exit(0)
-if ARGS.code or ARGS.server:
-    if not (ARGS.code and ARGS.server):
-        sys.exit("--server und --code gehoeren zusammen")
-    enroll(ARGS.server, ARGS.code, ARGS.allow_http)
-    sys.exit(0)
 
-import gi
-gi.require_version("Gtk", "3.0"); gi.require_version("Wnck", "3.0"); gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import Gtk, Gdk, Wnck, GLib, GdkPixbuf, Gio
+
+class _PrivateRotatingHandler(logging.handlers.RotatingFileHandler):
+    def _open(self):
+        fd = os.open(self.baseFilename, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)      # Log nur fuer den Besitzer lesbar
+        return os.fdopen(fd, "a", encoding="utf-8")
+
+
+def setup_logging():
+    """Log in eine Datei im Benutzerverzeichnis (mit Rotation); an einem Terminal zusaetzlich auf den Bildschirm. Auch unbehandelte Fehler landen dort."""
+    ensure_state_dir()
+    log.setLevel(logging.INFO)
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%Y-%m-%d %H:%M:%S")
+    for handler in (_PrivateRotatingHandler(LOG_FILE, maxBytes=LOG_BYTES, backupCount=LOG_KEEP, encoding="utf-8"),
+                    logging.StreamHandler(sys.stderr) if sys.stderr and sys.stderr.isatty() else None):
+        if handler:
+            handler.setFormatter(fmt)
+            log.addHandler(handler)
+    sys.excepthook = lambda t, e, tb: log.error("Unbehandelter Fehler", exc_info=(t, e, tb))
+    threading.excepthook = lambda a: log.error("Unbehandelter Fehler im Thread %s", getattr(a.thread, "name", "?"), exc_info=(a.exc_type, a.exc_value, a.exc_traceback))
+
+
+def _is_agent_process(pid):
+    """Gehoert diese Prozessnummer wirklich zu einem Agenten (und nicht zu irgendetwas, das die Nummer spaeter bekam)?"""
+    try:
+        with open("/proc/%d/cmdline" % pid, "rb") as f:
+            return b"julos-agent" in f.read()
+    except OSError:
+        return False
+
+
+def running_pid():
+    """Prozessnummer des laufenden Agenten dieses Benutzers (aus der Pid-Datei), sonst None."""
+    try:
+        with open(PID_FILE) as f:
+            pid = int(f.read().strip())
+        os.kill(pid, 0)
+    except (OSError, ValueError):
+        return None
+    return pid if _is_agent_process(pid) else None
+
+
+def write_private(path, text):
+    ensure_state_dir()
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def write_status(link, detail=""):
+    """Verbindungsstand fuer `julos-agent.py status` (reine Anzeige)."""
+    try:
+        write_private(STATUS_FILE, json.dumps({"pid": os.getpid(), "version": AGENT_VERSION, "link": link, "detail": detail[:200], "since": int(time.time())}))
+    except OSError:
+        pass
+
+
+def read_status():
+    try:
+        with open(STATUS_FILE) as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+# ---------------------------------------------------------------- Betrieb: status, stop, uninstall (ohne Anzeige)
+def autostart_dir():
+    return os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "autostart")
+
+
+def unit_file():
+    return os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "systemd", "user", UNIT_NAME)
+
+
+def systemctl(*args):
+    """systemctl --user; None, wenn es nicht geht (kein systemd, keine Sitzung)."""
+    try:
+        return subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def unit_active():
+    if not os.path.exists(unit_file()):
+        return False
+    r = systemctl("is-active", UNIT_NAME)
+    return bool(r and r.stdout.strip() == "active")
+
+
+def _clock(ts):
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+
+
+def command_status():
+    cfg = load_config()
+    pid = running_pid()
+    st = read_status()
+    problems, notes = missing_requirements()
+    print("julos-agent %s (%s, Python %s)" % (AGENT_VERSION, PLATFORM, sys.version.split()[0]))
+    print("Laeuft:            %s" % ("ja (PID %d)" % pid if pid else "nein"))
+    print("Einrichtung:       %s" % ("Server %s" % cfg["server"] if cfg else "keine (nur lokaler Socket, kein Server eingerichtet)"))
+    if cfg and pid and st.get("pid") == pid:
+        since = " seit " + _clock(st["since"]) if isinstance(st.get("since"), int) else ""
+        print("Verbindung:        %s%s%s" % (st.get("link", "unbekannt"), since, " (%s)" % st["detail"] if st.get("detail") else ""))
+    elif cfg:
+        print("Verbindung:        keine (der Agent laeuft nicht)")
+    if os.path.exists(unit_file()):
+        print("Start:             systemd-Benutzerdienst %s (%s)" % (UNIT_NAME, "aktiv" if unit_active() else "nicht aktiv"))
+    elif os.path.exists(os.path.join(autostart_dir(), "julos-agent.desktop")):
+        print("Start:             Autostart-Eintrag beim Anmelden")
+    else:
+        print("Start:             von Hand (weder Dienst noch Autostart eingerichtet)")
+    try:
+        print("Logdatei:          %s (%d kB)" % (LOG_FILE, (os.path.getsize(LOG_FILE) + 1023) // 1024))
+    except OSError:
+        print("Logdatei:          %s (noch keine)" % LOG_FILE)
+    print("Voraussetzungen:   %s" % ("alle erfuellt" if not problems else "FEHLT"))
+    for t in problems:
+        print("  - " + t)
+    for t in notes:
+        print("  Hinweis: " + t)
+    return 0 if pid else 3         # wie systemctl status: 3 = laeuft nicht
+
+
+def command_check():
+    problems, notes = missing_requirements()
+    for t in problems:
+        print("FEHLT: " + t)
+    for t in notes:
+        print("Hinweis: " + t)
+    if not problems:
+        print("Alle Voraussetzungen erfuellt.")
+    return 3 if problems else 0
+
+
+def command_stop(wait=8, hint=True):
+    unit = unit_active()
+    if unit:
+        r = systemctl("stop", UNIT_NAME)
+        print("Dienst %s gestoppt." % UNIT_NAME if r and r.returncode == 0 else "Dienst %s liess sich nicht stoppen." % UNIT_NAME)
+        return 0 if r and r.returncode == 0 else 1
+    pid = running_pid()
+    if not pid:
+        print("Der Agent laeuft nicht.")
+        return 0
+    os.kill(pid, signal.SIGTERM)
+    until = time.time() + wait
+    while time.time() < until and running_pid():
+        time.sleep(0.1)
+    if running_pid():
+        print("Der Agent (PID %d) reagiert nicht auf das Beenden: kill -9 %d" % (pid, pid))
+        return 1
+    print("Agent beendet (PID %d)." % pid)
+    if hint and os.path.exists(os.path.join(autostart_dir(), "julos-agent.desktop")):
+        print("Er startet beim naechsten Anmelden wieder; dauerhaft entfernen: julos-agent.py uninstall")
+    return 0
+
+
+def _in_checkout(path):
+    """Liegt die Datei in einem Git-Checkout (Entwicklung)? Dann wird nichts geloescht."""
+    d = os.path.dirname(os.path.realpath(path))
+    for _ in range(3):
+        if os.path.exists(os.path.join(d, ".git")):
+            return True
+        d = os.path.dirname(d)
+    return False
+
+
+def _remove(path):
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+
+
+def uninstall_plan(keep_config):
+    """Was `uninstall` entfernen wuerde: Liste aus (Beschreibung, Funktion). Nichts wird hier veraendert."""
+    plan = []
+    here = os.path.dirname(SCRIPT)
+    if running_pid() or unit_active():
+        plan.append(("laufenden Agenten beenden", lambda: command_stop(hint=False)))
+    if os.path.exists(unit_file()):
+        def drop_unit():
+            systemctl("disable", "--now", UNIT_NAME)
+            _remove(unit_file())
+            systemctl("daemon-reload")
+        plan.append(("systemd-Benutzerdienst " + UNIT_NAME, drop_unit))
+    for name in ("julos-agent.desktop", "julos-clip.desktop"):
+        path = os.path.join(autostart_dir(), name)
+        if os.path.exists(path):
+            plan.append(("Autostart-Eintrag " + path, lambda p=path: _remove(p)))
+    clip = os.path.join(here, "julos-clip.py")
+    if os.path.exists(clip):
+        plan.append(("laufenden Zwischenablage-Helfer beenden", lambda: stop_helper(clip)))
+    if os.path.exists(PANEL_STATE):
+        plan.append(("ausgeblendete Taskleiste wieder einblenden", lambda: restore_panels()))
+    if _in_checkout(SCRIPT):
+        plan.append(("(Programmdateien bleiben: sie liegen in einem Git-Checkout)", lambda: None))
+    else:
+        files = [os.path.join(here, n) for n in ("julos-agent.py", "julos-clip.py", "install-linux-agent.sh") if os.path.exists(os.path.join(here, n))]
+        for f in files:
+            plan.append(("Datei " + f, lambda f=f: _remove(f)))
+        if files and os.path.realpath(here) != os.path.realpath(os.path.expanduser("~")):
+            plan.append(("Ordner " + here + " (wenn leer)", lambda: _rmdir(here)))
+    if os.path.exists(CONFIG) and not keep_config:
+        plan.append(("Einrichtung mit Token " + CONFIG, lambda: (_remove(CONFIG), _rmdir(os.path.dirname(CONFIG)))))
+    state = [os.path.join(STATE_DIR, n) for n in os.listdir(STATE_DIR) if n.startswith(("agent.", "clip."))] if os.path.isdir(STATE_DIR) else []
+    if state:
+        plan.append(("Log und Betriebsdaten in " + STATE_DIR, lambda: ([_remove(f) for f in state], _rmdir(STATE_DIR))))
+    return plan
+
+
+def _rmdir(path):
+    try:
+        os.rmdir(path)
+    except OSError:
+        pass
+
+
+def stop_helper(clip_path):
+    """Beendet den Zwischenablage-Helfer, der genau diese Datei ausfuehrt (andere Kopien auf dem Rechner bleiben unberuehrt)."""
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        try:
+            with open("/proc/%s/cmdline" % name, "rb") as f:
+                args = f.read().split(b"\0")
+            if len(args) >= 2 and os.path.realpath(args[-2].decode()) == os.path.realpath(clip_path):
+                os.kill(int(name), signal.SIGTERM)
+        except (OSError, ValueError, UnicodeDecodeError):
+            pass
+
+
+def command_uninstall(yes, keep_config):
+    plan = uninstall_plan(keep_config)
+    if not plan:
+        print("Nichts zu entfernen.")
+        return 0
+    print("Das wird entfernt:")
+    for what, _ in plan:
+        print("  - " + what)
+    print("Der Ordner ~/julos-uploads (Fotos und Dateien fuer die Zwischenablage) bleibt. In der App den Agenten zusaetzlich entfernen (\"Agent entfernen\"), damit das Token auch dort ungueltig wird.")
+    if not yes:
+        if not sys.stdin.isatty():
+            print("Keine Rueckfrage moeglich: mit --yes bestaetigen.", file=sys.stderr)
+            return 2
+        if input("Wirklich entfernen? [j/N] ").strip().lower() not in ("j", "ja", "y", "yes"):
+            print("Abgebrochen.")
+            return 1
+    for what, action in plan:
+        try:
+            action()
+        except Exception as e:  # noqa: BLE001
+            print("Fehler bei \"%s\": %s" % (what, e), file=sys.stderr)
+    print("Entfernt.")
+    return 0
+
+
+# ---------------------------------------------------------------- Aktualisierung (auf Anweisung des Servers)
+UPDATE_PATH = "/agent-files/julos-agent.py"      # die einzige Adresse, von der sich der Agent aktualisiert (am Server, mit dem er verbunden ist)
+MAX_AGENT_FILE = 1024 * 1024
+
+
+class UpdateError(Exception):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+
+
+def version_tuple(text):
+    m = re.match(r"^(\d+)\.(\d+)\.(\d+)", str(text or ""))
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None          # ein Weiterleiten wuerde die Herkunft verlassen: abgelehnt
+
+
+def update_url(server, path, allow_http=False):
+    """Die Adresse der neuen Datei: immer die eigene Server-Adresse plus der feste Pfad. Alles andere (andere Pfade, volle Adressen, //host) wird abgelehnt."""
+    if path != UPDATE_PATH:
+        raise UpdateError(400, "Adresse nicht erlaubt: nur %s auf dem eigenen Server" % UPDATE_PATH)
+    try:
+        base = server_url(server, allow_http)
+    except SystemExit as e:
+        raise UpdateError(400, str(e))
+    return base + path
+
+
+def fetch_verified(url, sha256, dest_dir, opener=None):
+    """Laedt die Datei in eine Temp-Datei neben dem Ziel (hoechstens MAX_AGENT_FILE) und prueft die SHA-256-Summe. Gibt (Pfad, Inhalt) zurueck; bei Fehlern bleibt nichts liegen."""
+    opener = opener or urllib.request.build_opener(_NoRedirect)
+    fd, tmp = tempfile.mkstemp(prefix=".julos-agent-", suffix=".tmp", dir=dest_dir)
+    try:
+        h, data = hashlib.sha256(), bytearray()
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "julos-agent/" + AGENT_VERSION})
+            with opener.open(req, timeout=30) as r:
+                if r.status != 200:
+                    raise UpdateError(502, "Server antwortet mit HTTP %d" % r.status)
+                while True:
+                    chunk = r.read(65536)
+                    if not chunk:
+                        break
+                    data += chunk
+                    if len(data) > MAX_AGENT_FILE:
+                        raise UpdateError(413, "Datei zu gross")
+                    h.update(chunk)
+        except urllib.error.HTTPError as e:
+            raise UpdateError(502, "Server antwortet mit HTTP %d" % e.code)
+        except (urllib.error.URLError, OSError, ssl.SSLError) as e:
+            raise UpdateError(502, "Download fehlgeschlagen: %s" % getattr(e, "reason", e))
+        if not hmac.compare_digest(h.hexdigest(), sha256):
+            raise UpdateError(422, "Pruefsumme stimmt nicht: Datei verworfen")
+        with os.fdopen(fd, "wb") as f:
+            fd = None
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        return tmp, bytes(data)
+    except BaseException:
+        if fd is not None:
+            os.close(fd)
+        _remove(tmp)
+        raise
+
+
+def apply_update(server, message, script=None, allow_http=False, opener=None, current=None):
+    """
+    Aktualisiert die Agent-Datei: laden, Pruefsumme und Inhalt pruefen, dann atomar ersetzen (os.replace). Gibt (Version, ersetzt) zurueck;
+    ersetzt ist False, wenn schon diese oder eine neuere Version laeuft. Wirft UpdateError und laesst die alte Datei unberuehrt.
+    `message` ist die Anweisung des Servers: {"path": "/agent-files/julos-agent.py", "sha256": "<hex>", "version": "x.y.z"}.
+    """
+    script = script or SCRIPT
+    current = current or AGENT_VERSION
+    sha256, version = str(message.get("sha256", "")).lower(), message.get("version")
+    if not re.fullmatch(r"[0-9a-f]{64}", sha256):
+        raise UpdateError(400, "Pruefsumme ungueltig")
+    new_v = version_tuple(version)
+    if new_v is None:
+        raise UpdateError(400, "Version ungueltig")
+    url = update_url(server, message.get("path"), allow_http)
+    if new_v <= version_tuple(current):
+        return current, False
+    tmp, data = fetch_verified(url, sha256, os.path.dirname(script) or ".", opener)
+    try:
+        try:
+            compile(data, "julos-agent.py", "exec")          # ein kaputtes Skript wuerde den Agenten nicht mehr starten lassen
+        except (SyntaxError, ValueError) as e:
+            raise UpdateError(422, "Neue Datei ist kein gueltiges Python: %s" % e)
+        m = re.search(rb'^AGENT_VERSION\s*=\s*"([0-9.]+)"', data, re.M)
+        if not m or m.group(1).decode() != version:
+            raise UpdateError(422, "Version in der Datei stimmt nicht mit der Anweisung ueberein")
+        try:
+            os.chmod(tmp, stat.S_IMODE(os.stat(script).st_mode))
+        except OSError:
+            os.chmod(tmp, 0o755)
+        os.replace(tmp, script)                               # atomar: der Agent ist nie halb ersetzt
+    except BaseException:
+        _remove(tmp)
+        raise
+    return version, True
+
+
+if __name__ == "__main__":
+    ARGS = parse_args()
+else:
+    ARGS = argparse.Namespace(command="run", server=None, code=None, allow_http=False, no_socket=False, forget=False, yes=False, keep_config=False)
 
 SOCK_DIR = os.environ.get("JULOS_AGENT_DIR") or os.path.join(UPLOADS, ".agent")   # im Upload-Ordner, den ein Server auf demselben Rechner einbindet
 SOCK = os.path.join(SOCK_DIR, "agent.sock")
-STATE = os.path.expanduser("~/.cache/julos-agent-panels.json")
 IDLE_RESTORE_S = 90          # Programm-Modus faellt zurueck, wenn so lange niemand mehr anfragt
-
-Wnck.set_client_type(Wnck.ClientType.PAGER)   # Aktivierungen gelten als "Pager" (Fokus-Schutz des Fenstermanagers greift nicht)
-screen = Wnck.Screen.get_default()
-screen.force_update()
-theme = Gtk.IconTheme.get_default()
 
 mode = "desktop"
 last_request = time.time()
@@ -697,9 +1113,11 @@ class Link:
         self.put = None                       # die gerade ankommende Uebertragung
         self.cancelled = set()
         self.workers = threading.BoundedSemaphore(6)
+        self.updating = threading.Lock()
+        self.last_error = ""
 
     def log(self, *a):
-        print(time.strftime("%H:%M:%S"), "Link:", *a, flush=True)
+        log.info("Link: %s", " ".join(str(x) for x in a))
 
     def run(self):
         delay, nap = 2, 0
@@ -710,16 +1128,21 @@ class Link:
             except WsRejected as e:
                 if e.status == 401:
                     nap = 300
+                    self.last_error = "Token abgelehnt (Agent in der App entfernt?)"
                     self.log("Token abgelehnt: der Agent wurde in der App entfernt? Neu einrichten mit --server und --code.")
                 else:
+                    self.last_error = str(e)
                     self.log(str(e))
             except WsBye as e:
                 nap = 600
+                self.last_error = "Server weist diesen Agenten ab (zu alt)"
                 self.log(str(e))
             except (WsError, OSError, ssl.SSLError, ValueError) as e:
+                self.last_error = str(e)
                 self.log("getrennt:", e)
             self.ws = None
             self.abort_put()
+            write_status("getrennt", self.last_error)
             if nap:
                 time.sleep(nap); nap = 0
                 continue
@@ -782,6 +1205,7 @@ class Link:
         t, id = m.get("t"), m.get("id")
         if t == "welcome":
             self.log("verbunden mit Server", m.get("server", "?"))
+            write_status("verbunden", "Server " + str(m.get("server", "?")))
         elif t == "bye":
             raise WsBye("Server weist diesen Agenten ab (%s): bitte aktualisieren" % m.get("reason", "?"))
         elif t == "req" and isinstance(id, int):
@@ -794,6 +1218,8 @@ class Link:
             self.start_put(id, m)
         elif t == "end" and isinstance(id, int):
             self.end_put(id)
+        elif t == "update" and isinstance(id, int):
+            self.background(id, lambda: self.do_update(id, m))
         elif t == "pull" and isinstance(id, int):
             self.background(id, lambda: self.do_pull(id, int(m.get("max") or MAX_IMAGE)))
         elif t == "cancel" and isinstance(id, int):
@@ -867,6 +1293,28 @@ class Link:
             self.reply(id, status, body)
         self.background(id, done)
 
+    # ---- Aktualisierung auf Anweisung des Servers
+    def do_update(self, id, m):
+        if not self.updating.acquire(blocking=False):
+            return self.reply(id, 409, {"error": "Eine Aktualisierung laeuft schon"})
+        try:
+            try:
+                version, replaced = apply_update(self.cfg["server"], m, allow_http=bool(self.cfg.get("allow_http")))
+            except UpdateError as e:
+                self.log("Aktualisierung abgelehnt (%d): %s" % (e.status, e))
+                return self.reply(id, e.status, {"error": str(e)})
+            except OSError as e:
+                self.log("Aktualisierung fehlgeschlagen: %s" % e)
+                return self.reply(id, 500, {"error": "Datei nicht ersetzbar: %s" % (e.strerror or e)})
+            if not replaced:
+                return self.reply(id, 200, {"ok": True, "version": version, "restarting": False})
+            self.log("Aktualisiert auf %s, starte neu" % version)
+            self.reply(id, 200, {"ok": True, "version": version, "restarting": True})
+        finally:
+            self.updating.release()
+        time.sleep(0.5)                                      # die Antwort soll den Server noch erreichen
+        GLib.idle_add(restart_agent)
+
     # ---- Bild aus der Zwischenablage zum Server
     def do_pull(self, id, limit):
         status, data = ask_clipboard_image()
@@ -884,17 +1332,77 @@ class Link:
         self.reply(id, 200, {})
 
 
+def restart_agent():
+    """Startet den Agenten mit der (neuen) Datei im selben Prozess neu (exec): gleiche Prozessnummer, Dienst und Autostart merken nichts."""
+    try:
+        if mode == "apps":
+            restore_panels()
+        log.info("Neustart")
+        os.execv(sys.executable, [sys.executable, SCRIPT] + sys.argv[1:])
+    except OSError as e:
+        log.error("Neustart nicht moeglich (%s): der Agent laeuft in der alten Version weiter", e)
+    return False
+
+
 def cleanup(*_):
     try:
         if mode == "apps":
             restore_panels()
+        _remove(PID_FILE)
+        write_status("beendet")
     finally:
         sys.exit(0)
 
 
 if __name__ == "__main__":
+    if ARGS.forget:
+        _remove(CONFIG)
+        print("Einrichtung geloescht.", flush=True)
+        sys.exit(0)
+    if ARGS.code or ARGS.server:
+        if not (ARGS.code and ARGS.server):
+            sys.exit("--server und --code gehoeren zusammen")
+        enroll(ARGS.server, ARGS.code, ARGS.allow_http)
+        sys.exit(0)
+    if ARGS.command == "status":
+        sys.exit(command_status())
+    if ARGS.command == "check":
+        sys.exit(command_check())
+    if ARGS.command == "stop":
+        sys.exit(command_stop())
+    if ARGS.command == "uninstall":
+        sys.exit(command_uninstall(ARGS.yes, ARGS.keep_config))
+
+    # Ab hier startet der Agent: erst pruefen, ob er laufen kann, und ein klares Wort sagen, wenn nicht
+    _problems, _notes = missing_requirements()
+    if _problems:
+        sys.stderr.write("julos-agent kann nicht starten:\n" + "".join("  - %s\n" % t for t in _problems))
+        sys.exit(3)
+    setup_logging()
+    for _t in _notes:
+        log.warning(_t)
+    _other = running_pid()
+    if _other and _other != os.getpid():
+        log.error("Ein Agent laeuft schon (PID %d): dieser Start wird abgebrochen.", _other)
+        sys.stderr.write("Ein Agent laeuft schon (PID %d). Beenden mit: julos-agent.py stop\n" % _other)
+        sys.exit(0)
+
+    import gi
+    gi.require_version("Gtk", "3.0"); gi.require_version("Wnck", "3.0"); gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import Gtk, Gdk, Wnck, GLib, GdkPixbuf, Gio
+
+    Wnck.set_client_type(Wnck.ClientType.PAGER)   # Aktivierungen gelten als "Pager" (Fokus-Schutz des Fenstermanagers greift nicht)
+    screen = Wnck.Screen.get_default()
+    if screen is None:
+        log.error("Keine Verbindung zur grafischen Sitzung (DISPLAY=%s).", os.environ.get("DISPLAY"))
+        sys.stderr.write("julos-agent: keine Verbindung zur grafischen Sitzung (DISPLAY=%s)\n" % os.environ.get("DISPLAY"))
+        sys.exit(3)
+    screen.force_update()
+    theme = Gtk.IconTheme.get_default()
+
     signal.signal(signal.SIGTERM, cleanup)
     signal.signal(signal.SIGINT, cleanup)
+    write_private(PID_FILE, str(os.getpid()))
     # Nach einem Absturz im Programm-Modus: Panels wiederherstellen
     if os.path.exists(STATE):
         restore_panels()
@@ -903,8 +1411,11 @@ if __name__ == "__main__":
         threading.Thread(target=serve, daemon=True).start()
     if cfg:
         sweep_leftovers()
+        write_status("verbindet")
         threading.Thread(target=Link(cfg).run, daemon=True).start()
         GLib.timeout_add_seconds(3600, lambda: (sweep_leftovers(), True)[1])
+    else:
+        write_status("kein Server eingerichtet")
     GLib.timeout_add_seconds(15, idle_check)
-    print("julos-agent %s laeuft (API v%d)%s%s" % (AGENT_VERSION, API_VERSION, ", Socket " + SOCK if (not cfg or not ARGS.no_socket) else "", ", Server " + cfg["server"] if cfg else ""), flush=True)
+    log.info("julos-agent %s laeuft (API v%d)%s%s", AGENT_VERSION, API_VERSION, ", Socket " + SOCK if (not cfg or not ARGS.no_socket) else "", ", Server " + cfg["server"] if cfg else "")
     Gtk.main()

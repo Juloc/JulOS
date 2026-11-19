@@ -31,10 +31,10 @@ internal static class AgentLinkEndpoints
         var log = app.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("AgentLink");
 
         // Die drei Dateien fuer die Ziel-Maschine (kein Geheimnis, wie der Rest des Quelltexts): so passt, was dort laeuft, zur Version dieses Servers
-        app.MapGet("/agent-files/{name}", (string name, HttpContext ctx) =>
+        app.MapGet("/agent-files/{name}", (string name, HttpContext ctx, AgentRelease release) =>
         {
             if (name is not ("julos-agent.py" or "julos-clip.py" or "install-linux-agent.sh")) return Results.NotFound();
-            var path = Path.Combine(AppContext.BaseDirectory, "agent-files", name);
+            var path = Path.Combine(release.Directory, name);
             if (!File.Exists(path)) return Results.NotFound();
             ctx.Response.Headers.CacheControl = "no-cache";
             return Results.File(path, "text/plain; charset=utf-8", fileDownloadName: name);
@@ -57,7 +57,7 @@ internal static class AgentLinkEndpoints
         });
 
         // Die dauerhafte Verbindung des Agenten: Token im Kopf "Authorization: Bearer ...", nie in der Adresse (sie landet in Protokollen)
-        app.Map(LinkPath, async (HttpContext ctx, AgentStore store, AgentLinks links, HitCounter hits) =>
+        app.Map(LinkPath, async (HttpContext ctx, AgentStore store, AgentLinks links, AgentUpdater updater, HitCounter hits) =>
         {
             if (!ctx.WebSockets.IsWebSocketRequest) return Error(400, "WebSocket erwartet.");
             if (!hits.Allow("agent-link:" + Ip(ctx), 30, Minute)) return Error(429, "Zu viele Verbindungsversuche.");
@@ -71,7 +71,7 @@ internal static class AgentLinkEndpoints
             }
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
             await links.RunAsync(ws, agent.HostId, agent.UserId, info.Version,
-                a => store.TouchAsync(agent.HostId, a.Version, a.Platform, a.Hostname, a.Os, CancellationToken.None), ctx.RequestAborted);
+                a => store.TouchAsync(agent.HostId, a.Version, a.Platform, a.Hostname, a.Os, CancellationToken.None), ctx.RequestAborted, updater.OnConnectedAsync);
             return Results.Empty;
         });
 
@@ -84,6 +84,30 @@ internal static class AgentLinkEndpoints
             if (made is not { } c) return Error(404, "Host nicht gefunden.");
             log.LogInformation("Agent-Einrichtungscode erzeugt: Host {Host}, Benutzer {User}", host, id.UserName);
             return Results.Json(new AgentCodeResponse(c.Code, (int)AgentStore.CodeLifetime.TotalSeconds), AppJson.Default.AgentCodeResponse);
+        });
+
+        // Aktualisieren: der Agent holt die Datei dieses Servers selbst (feste Adresse, Pruefsumme vom Server); die Antwort kommt, bevor er neu startet.
+        // Der Browser nennt keine Adresse und keine Version: was verschickt wird, bestimmt allein der Server.
+        app.MapPost("/api/hosts/{host:guid}/agent/update", async (Guid host, HttpContext ctx, AgentStore store, AgentLinks links, AgentUpdater updater, HitCounter hits) =>
+        {
+            var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
+            if (!hits.Allow("agent-update:" + id.UserId, 6, Minute)) return Error(429, "Zu viele Anfragen, bitte kurz warten.");
+            if (await store.GetAsync(id.UserId, host, ctx.RequestAborted) is null) return Error(404, "Kein Agent eingerichtet.");
+            if (links.Get(host, id.UserId) is not { } link) return Error(409, "Der Agent ist gerade nicht verbunden.");
+            var outcome = await updater.UpdateAsync(link, ctx.RequestAborted);
+            if (!outcome.Ok) return Error(outcome.Status, outcome.Message ?? "Aktualisierung fehlgeschlagen.");
+            log.LogInformation("Agent-Update angestoßen: Host {Host}, Benutzer {User}, Version {Version}", host, id.UserName, outcome.Version);
+            return Results.Json(new AgentUpdateResponse(true, outcome.Version!), AppJson.Default.AgentUpdateResponse);
+        });
+
+        // Automatik an/aus (Standard aus): ein Agent, der sich verbindet und veraltet ist, wird dann ohne Knopfdruck aktualisiert
+        app.MapPut("/api/hosts/{host:guid}/agent/auto-update", async (Guid host, AgentAutoUpdateRequest body, HttpContext ctx, AgentStore store, AgentLinks links, AgentUpdater updater) =>
+        {
+            var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
+            if (!await store.SetAutoUpdateAsync(id.UserId, host, body.Enabled, ctx.RequestAborted)) return Error(404, "Kein Agent eingerichtet.");
+            log.LogInformation("Agent-Automatik {State}: Host {Host}, Benutzer {User}", body.Enabled ? "an" : "aus", host, id.UserName);
+            if (body.Enabled && links.Get(host, id.UserId) is { } link) _ = Task.Run(() => updater.TryAutoAsync(link));       // gleich nachziehen, wenn er schon veraltet verbunden ist
+            return Results.Json(new AgentAutoUpdateResponse(body.Enabled), AppJson.Default.AgentAutoUpdateResponse);
         });
 
         // Agent entfernen: das Token gilt sofort nicht mehr und eine laufende Verbindung wird getrennt

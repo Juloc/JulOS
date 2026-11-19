@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
+using JulOS.Frontend.Agent;
 using JulOS.Frontend.Auth;
 using JulOS.Integrations.Agent;
 using JulOS.Integrations.Reachability;
@@ -23,12 +24,14 @@ internal static class HostEndpoints
     /// Der Zustand eines Hosts: der Agent (Link, sonst die letzte Meldung aus der Datenbank) und je Verbindung, ob ihr Port antwortet.
     /// Der Host gilt als online, wenn sein Agent verbunden ist oder mindestens ein Dienst antwortet.
     /// </summary>
-    private static async Task<HostDto> Describe(HostRecord host, AgentRecord? agent, IReadOnlyList<ConnectionRecord> connections, Guid userId, AgentLinks links, TcpProbe probe, HostPolicy policy, CancellationToken ct)
+    private static async Task<HostDto> Describe(HostRecord host, AgentRecord? agent, IReadOnlyList<ConnectionRecord> connections, Guid userId, AgentLinks links, AgentRelease release, TcpProbe probe, HostPolicy policy, CancellationToken ct)
     {
         var live = links.Get(host.Id, userId) is not null ? links.Status(host.Id) : null;
         var version = live?.Version ?? agent?.Version;
         var services = await Task.WhenAll(connections.Select(async c => new HostServiceDto(c.Id, c.Kind, policy.Allows(c.Host) ? await probe.IsUpAsync(c.Host, c.Port, ct) : null)));
-        var agentDto = agent is null ? null : new HostAgentDto(live is not null, live is not null ? DateTimeOffset.UtcNow : agent.LastSeen, version, live?.Platform ?? agent.Platform, version is not null && !AgentLinks.VersionOk(version));
+        var latest = release.Latest();
+        var agentDto = agent is null ? null : new HostAgentDto(live is not null, live is not null ? DateTimeOffset.UtcNow : agent.LastSeen, version, live?.Platform ?? agent.Platform, version is not null && !AgentLinks.VersionOk(version),
+            latest?.Version, AgentLinks.IsNewer(latest?.Version, version), AgentLinks.CanUpdate(version), agent.AutoUpdate);
         var online = live is not null || services.Any(s => s.Online == true);
         return new HostDto(host.Id, host.Name, online, live?.Hostname ?? agent?.Hostname, live?.Os ?? agent?.Os, agentDto, services);
     }
@@ -39,7 +42,7 @@ internal static class HostEndpoints
 
         // Alle Hosts mit Zustand. Ein Benutzer hat immer mindestens einen (ohne einen wird der Standard-Host angelegt).
         // Die Liste loest Verbindungsversuche zu den gespeicherten Zielen aus (kurz gemerkt, TcpProbe), daher die Grenze je Benutzer.
-        app.MapGet("/api/hosts", async (HttpContext ctx, HostStore hosts, ConnectionStore connections, AgentStore agents, AgentLinks links, TcpProbe probe, HostPolicy policy, HitCounter hits) =>
+        app.MapGet("/api/hosts", async (HttpContext ctx, HostStore hosts, ConnectionStore connections, AgentStore agents, AgentLinks links, AgentRelease release, TcpProbe probe, HostPolicy policy, HitCounter hits) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (!hits.Allow("hosts:" + id.UserId, 30, Minute)) return Error(429, "Zu viele Anfragen, bitte kurz warten.");
@@ -48,7 +51,7 @@ internal static class HostEndpoints
             if (list.Count == 0) { await hosts.EnsureDefaultAsync(id.UserId, ct); list = await hosts.ListAsync(id.UserId, ct); }
             var byHost = (await connections.ListAsync(id.UserId, ct)).ToLookup(c => c.HostId);
             var agentOf = (await agents.ListAsync(id.UserId, ct)).ToDictionary(a => a.HostId);
-            var described = await Task.WhenAll(list.Select(h => Describe(h, agentOf.GetValueOrDefault(h.Id), [.. byHost[h.Id]], id.UserId, links, probe, policy, ct)));
+            var described = await Task.WhenAll(list.Select(h => Describe(h, agentOf.GetValueOrDefault(h.Id), [.. byHost[h.Id]], id.UserId, links, release, probe, policy, ct)));
             return Results.Json(new HostsResponse(described), AppJson.Default.HostsResponse);
         });
 

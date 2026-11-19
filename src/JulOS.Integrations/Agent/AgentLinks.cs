@@ -13,7 +13,15 @@ public sealed class AgentLinks(ILogger<AgentLinks> log)
     /// <summary>Aelter als diese Version spricht der Agent nicht mehr mit diesem Server.</summary>
     public static readonly Version MinAgentVersion = new(0, 3, 0);
 
+    /// <summary>Ab dieser Version nimmt der Agent die Anweisung "update" an; aeltere ignorieren sie (einmal neu einrichten).</summary>
+    public static readonly Version MinUpdateVersion = new(0, 4, 0);
+
     private readonly ConcurrentDictionary<Guid, AgentLink> _links = new();
+
+    public static bool CanUpdate(string? version) => TryParseVersion(version) is { } v && v >= MinUpdateVersion;
+
+    /// <summary>Ob <paramref name="latest"/> neuer ist als <paramref name="current"/> (beide muessen lesbar sein).</summary>
+    public static bool IsNewer(string? latest, string? current) => TryParseVersion(latest) is { } l && TryParseVersion(current) is { } c && l > c;
 
     public static bool VersionOk(string? version) => TryParseVersion(version) is { } v && v >= MinAgentVersion;
 
@@ -39,7 +47,7 @@ public sealed class AgentLinks(ILogger<AgentLinks> log)
     }
 
     /// <summary>Nimmt eine aufgebaute WebSocket-Verbindung entgegen und bedient sie, bis sie endet. <paramref name="touch"/> merkt, was der Agent von sich meldet.</summary>
-    public async Task RunAsync(WebSocket ws, Guid hostId, Guid userId, string serverVersion, Func<AgentInfo, Task> touch, CancellationToken ct)
+    public async Task RunAsync(WebSocket ws, Guid hostId, Guid userId, string serverVersion, Func<AgentInfo, Task> touch, CancellationToken ct, Func<AgentLink, Task>? connected = null)
     {
         var link = new AgentLink(ws, hostId, userId, log);
         AgentHello? hello;
@@ -57,6 +65,12 @@ public sealed class AgentLinks(ILogger<AgentLinks> log)
         else _links[hostId] = link;
         log.LogInformation("Agent-Link {Host}: verbunden (Agent {Version}, {Platform})", hostId, hello.Version ?? "?", hello.Info.Platform ?? "?");
         await touch(hello.Info).ConfigureAwait(false);
+        if (connected is not null)
+            _ = Task.Run(async () =>
+            {
+                try { await connected(link).ConfigureAwait(false); }
+                catch (Exception e) when (e is not OutOfMemoryException) { log.LogWarning("Agent-Link {Host}: Nachbearbeitung nach dem Verbinden fehlgeschlagen ({Type})", hostId, e.GetType().Name); }
+            }, CancellationToken.None);
         try { await link.LoopAsync(ct).ConfigureAwait(false); }
         finally
         {

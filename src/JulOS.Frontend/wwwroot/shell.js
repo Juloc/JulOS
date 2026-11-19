@@ -296,9 +296,18 @@ function hostDialog(h, onCreated) {
 }
 
 function showAgentState(h) {
+  const a = h.agent;
   $('#hostAgentState').textContent = agentSummary(h);
-  $('#hostAgentSetup').textContent = h.agent ? 'Neu einrichten' : 'Agent einrichten';
-  $('#hostAgentRemove').hidden = !h.agent;
+  $('#hostAgentSetup').textContent = a ? 'Neu einrichten' : 'Agent einrichten';
+  $('#hostAgentRemove').hidden = !a;
+  $('#hostAgentUpdate').hidden = !a;
+  $('#hostAgentAuto').checked = !!(a && a.autoUpdate);
+  const due = !!(a && a.updateAvailable);
+  $('#hostAgentUpdateBtn').hidden = !due;
+  $('#hostAgentUpdateBtn').disabled = !(due && a.online && a.canUpdate);
+  const hint = $('#hostAgentUpdateHint');
+  hint.textContent = !due ? '' : !a.canUpdate ? 'Dieser Agent kann sich noch nicht selbst aktualisieren: einmal neu einrichten (Agent einrichten).' : !a.online ? 'Der Agent ist gerade getrennt; aktualisieren geht, sobald er sich meldet.' : '';
+  hint.hidden = !hint.textContent;
 }
 
 $('#hostForm').addEventListener('submit', async (e) => {
@@ -340,6 +349,37 @@ $('#hostAgentCopy').addEventListener('click', async () => {
   const text = $('#hostAgentCmd').textContent;
   try { await navigator.clipboard.writeText(text); setMsg($('#hostMsg'), 'Befehle kopiert.', true); }
   catch { const r = document.createRange(); r.selectNodeContents($('#hostAgentCmd')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); setMsg($('#hostMsg'), 'Bitte markiert kopieren (Kopieren nicht erlaubt).'); }
+});
+
+// Aktualisieren: der Server schickt dem Agenten die Anweisung, der Agent holt die Datei selbst, prueft sie und startet neu; danach melden wir uns kurz bei der Liste, bis die neue Version da ist
+$('#hostAgentUpdateBtn').addEventListener('click', async (e) => {
+  const b = e.currentTarget, h = state.editingHost; if (!h) return;
+  b.disabled = true; setMsg($('#hostMsg'), '');
+  try {
+    const r = await api(`/api/hosts/${h.id}/agent/update`, { method: 'POST', body: {} });
+    setMsg($('#hostMsg'), `Agent wird auf ${r.version} aktualisiert und startet neu …`, true);
+    for (let i = 0; i < 20; i++) {
+      await new Promise((ok) => setTimeout(ok, 2000));
+      await loadHosts();
+      const now = state.hosts.find((x) => x.id === h.id);
+      if (now && now.agent && now.agent.online && !now.agent.updateAvailable) {
+        state.editingHost = now; showAgentState(now);
+        setMsg($('#hostMsg'), `Agent ist jetzt auf ${now.agent.version}.`, true);
+        if (M) M.snack('Agent aktualisiert');
+        return;
+      }
+    }
+    setMsg($('#hostMsg'), 'Der Agent hat sich noch nicht mit der neuen Version gemeldet. Bitte gleich die Liste prüfen.');
+  } catch (err) { setMsg($('#hostMsg'), err.message); }
+  finally { const now = state.hosts.find((x) => x.id === h.id); if (now) { state.editingHost = now; showAgentState(now); } }
+});
+
+$('#hostAgentAuto').addEventListener('change', async (e) => {
+  const box = e.currentTarget, h = state.editingHost; if (!h) return;
+  box.disabled = true; setMsg($('#hostMsg'), '');
+  try { await api(`/api/hosts/${h.id}/agent/auto-update`, { method: 'PUT', body: { enabled: box.checked } }); await loadHosts(); }
+  catch (err) { box.checked = !box.checked; setMsg($('#hostMsg'), err.message); }
+  finally { box.disabled = false; const now = state.hosts.find((x) => x.id === h.id); if (now) state.editingHost = now; }
 });
 
 // Entfernen braucht ein zweites Tippen (das Token gilt danach nicht mehr, der Agent trennt sich sofort)

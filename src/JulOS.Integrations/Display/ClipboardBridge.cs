@@ -5,6 +5,37 @@ namespace JulOS.Integrations.Display;
 /// <summary>Ein Eintrag der Auswahl des fernen Rechners: der relative Pfad (Trenner /, schon geprueft), die Groesse (-1, wenn unbekannt; bei Ordnern 0) und ob es ein Ordner ist.</summary>
 public readonly record struct RemoteFile(string Name, long Size, bool IsDirectory = false);
 
+/// <summary>
+/// Was mit dem Text der Zwischenablage geschah, fuer die Zwischenablage-Diagnose des Browsers und das Protokoll des Servers (nie der Inhalt, nur die Art
+/// und die Laenge in Zeichen). Die Zahlen gehen so ueber das Netz (Nachricht 15 des <see cref="ScreenProtocol"/>).
+/// </summary>
+public enum ClipNote : byte
+{
+    /// <summary>Nur der Stand des Kanals (bereit, Dateien moeglich) hat sich geaendert, zum Beispiel weil chansrv der VM bereit meldet.</summary>
+    Status = 0,
+
+    /// <summary>Text der VM kam beim Browser an (Zeichen).</summary>
+    TextFromVm = 1,
+
+    /// <summary>Die VM hat auf die Anfrage nach ihrem Text nicht oder mit nichts geantwortet (Zeitablauf, verweigert, leer).</summary>
+    TextFromVmLost = 2,
+
+    /// <summary>Die VM hat den Text des Browsers beim Einfuegen abgeholt (Zeichen).</summary>
+    TextFetchedByVm = 3,
+
+    /// <summary>Der Text des Browsers ist zu lang und wurde nicht abgelegt (UTF-8-Bytes).</summary>
+    TextTooLong = 4,
+
+    /// <summary>Der Text der VM ist zu lang und wurde nicht weitergegeben (UTF-8-Bytes, bei sehr grossen Texten die Rohgroesse).</summary>
+    TextFromVmTooLong = 5,
+
+    /// <summary>Der Browser legte Text ab, aber der Kanal der VM ist noch nicht bereit; der Text wird nachgeliefert, sobald er es ist (Zeichen).</summary>
+    TextWaiting = 6,
+
+    /// <summary>Die VM hat die Ankuendigung des Browsers abgelehnt (Format-Liste verweigert).</summary>
+    ListRefused = 7,
+}
+
 /// <summary>Wohin die Bruecke meldet, was der ferne Rechner kopiert hat. Wird auf dem Lesefaden des RDP-Clients gerufen: schnell zurueckkehren.</summary>
 public sealed class ClipboardSink
 {
@@ -25,6 +56,9 @@ public sealed class ClipboardSink
 
     /// <summary>Ergebnis eines Sendens vom Browser (Nummer, Code, Text); Nummer 0 betrifft nichts, was der Browser gestartet hat.</summary>
     public Action<uint, byte, string>? Result { get; init; }
+
+    /// <summary>Ein Ereignis der Text-Zwischenablage (Art und eine Zahl, siehe <see cref="ClipNote"/>); ohne Inhalt.</summary>
+    public Action<ClipNote, int>? Note { get; init; }
 }
 
 /// <summary>
@@ -126,9 +160,11 @@ public sealed class ClipboardBridge : IDisposable
     private LocalKind _localKind;
     private byte[]? _local;
     private string? _lastLocal;
+    private long _textEchoUntil;
     private byte[]? _dib;
     private Stash? _localFiles;
     private long _echoUntil;
+    private bool _peerCrLf;
 
     // eine laufende Uebertragung vom Browser, und die Ablage, die noch nicht vollstaendig ist
     private Upload? _upload;
@@ -164,6 +200,14 @@ public sealed class ClipboardBridge : IDisposable
         _channel = channel;
         _sink = sink;
         channel.RemoteFormats += OnRemoteFormats;
+        channel.Ready += () => _sink.Note?.Invoke(ClipNote.Status, 0);
+        channel.FormatsAcknowledged += accepted =>
+        {
+            if (!accepted)
+            {
+                _sink.Note?.Invoke(ClipNote.ListRefused, 0);
+            }
+        };
         channel.DataReceived += OnDataReceived;
         channel.DataRequested += OnDataRequested;
         channel.FileContentsRequested += OnFileContentsRequested;
@@ -230,20 +274,27 @@ public sealed class ClipboardBridge : IDisposable
 
     // ---------------------------------------------------------------- Browser legt ab
 
-    /// <summary>Der Browser hat Text abgelegt: der ferne Rechner bekommt ihn, wenn er einfuegt. Zu langer Text wird ignoriert.</summary>
+    /// <summary>
+    /// Der Browser hat Text abgelegt: der ferne Rechner bekommt ihn, wenn er einfuegt. Zu langer Text wird nicht abgelegt (der Browser erfaehrt es ueber
+    /// <see cref="ClipNote.TextTooLong"/>). Zeilenenden: LF, bis der ferne Rechner Text mit CR LF geschickt hat (ein Windows-Rechner), siehe <see cref="LineEnding"/>.
+    /// </summary>
     public void SetLocalText(string text)
     {
-        if (System.Text.Encoding.UTF8.GetByteCount(text) > MaxTextBytes)
+        var bytes = System.Text.Encoding.UTF8.GetByteCount(text);
+        if (bytes > MaxTextBytes)
         {
+            _sink.Note?.Invoke(ClipNote.TextTooLong, bytes);
             return;
         }
 
-        var data = ClipboardText.Encode(text);
+        byte[] data;
         Stash? old;
         lock (_gate)
         {
+            data = ClipboardText.Encode(text, UseCrLf);
             _local = data;
-            _lastLocal = text;
+            _lastLocal = text.Replace("\r\n", "\n");
+            _textEchoUntil = Environment.TickCount64 + (long)EchoWindow.TotalMilliseconds;
             _localKind = LocalKind.Text;
             _dib = null;
             old = _localFiles;
@@ -252,7 +303,23 @@ public sealed class ClipboardBridge : IDisposable
 
         old?.Dispose();
         _channel.AnnounceFormats([new ClipFormat(ClipboardText.FormatId, null)]);
+        if (!_channel.IsReady)
+        {
+            _sink.Note?.Invoke(ClipNote.TextWaiting, text.Length);
+        }
     }
+
+    /// <summary>Wie die Zeilenenden des Textes aus dem Browser gehen: Standard <see cref="ClipboardLineEnding.Auto"/>.</summary>
+    public ClipboardLineEnding LineEnding => _options.LineEnding;
+
+    // Unter _gate. Auto: LF (Linux, xrdp reicht den Text unveraendert weiter und ein CR landet im Terminal und im Editor), CR LF erst, wenn der ferne Rechner selbst
+    // Text mit CR LF und ohne einzelnes LF geschickt hat (Windows).
+    private bool UseCrLf => _options.LineEnding switch
+    {
+        ClipboardLineEnding.CrLf => true,
+        ClipboardLineEnding.Lf => false,
+        _ => _peerCrLf,
+    };
 
     /// <summary>
     /// Der Browser faengt an, ein Bild (Art 1, als BMP), eine Datei (Art 2) oder einen leeren Ordner (Art 3, Groesse 0) zu senden. <paramref name="name"/> ist bei Dateien
@@ -703,6 +770,11 @@ public sealed class ClipboardBridge : IDisposable
 
         if (data is null)
         {
+            if (kind == Expect.Text)
+            {
+                _sink.Note?.Invoke(ClipNote.TextFromVmLost, 0);
+            }
+
             return;
         }
 
@@ -743,25 +815,47 @@ public sealed class ClipboardBridge : IDisposable
     {
         if (data.Length > 2 * MaxTextBytes)
         {
+            _sink.Note?.Invoke(ClipNote.TextFromVmTooLong, data.Length / 2);
             return;
         }
 
-        var text = ClipboardText.Decode(data);
-        if (text.Length == 0 || System.Text.Encoding.UTF8.GetByteCount(text) > MaxTextBytes)
+        var text = ClipboardText.Decode(data, out var crlf, out var lf);
+        if (text.Length == 0)
         {
+            _sink.Note?.Invoke(ClipNote.TextFromVmLost, 0);
             return;
         }
 
-        // Manche Server melden den Text, den wir ihnen eben gegeben haben, als neue Kopie zurueck: das ist keine Neuigkeit fuer den Browser
+        var bytes = System.Text.Encoding.UTF8.GetByteCount(text);
+        if (bytes > MaxTextBytes)
+        {
+            _sink.Note?.Invoke(ClipNote.TextFromVmTooLong, bytes);
+            return;
+        }
+
+        // Manche Server melden den Text, den wir ihnen eben gegeben haben, als neue Kopie zurueck: das ist keine Neuigkeit fuer den Browser, aber nur kurz nach dem
+        // Ablegen (wer denselben Text spaeter in der VM wieder kopiert, will ihn im Browser haben)
         lock (_gate)
         {
-            if (text == _lastLocal)
+            if (crlf > 0 && lf == 0)
+            {
+                _peerCrLf = true;
+            }
+            else if (lf > 0 && crlf == 0)
+            {
+                _peerCrLf = false;
+            }
+
+            if (_lastLocal is not null && text == _lastLocal && Environment.TickCount64 < _textEchoUntil)
             {
                 return;
             }
+
+            _lastLocal = null;
         }
 
         _sink.Text?.Invoke(text);
+        _sink.Note?.Invoke(ClipNote.TextFromVm, text.Length);
     }
 
     private void ReceivedFileList(byte[] data)
@@ -1058,12 +1152,14 @@ public sealed class ClipboardBridge : IDisposable
     private void OnDataRequested(uint formatId)
     {
         byte[]? data = null;
+        var served = 0;
         lock (_gate)
         {
             switch (_localKind)
             {
                 case LocalKind.Text when formatId == ClipboardText.FormatId:
                     data = _local;
+                    served = _lastLocal?.Length ?? 0;
                     break;
                 case LocalKind.Image when formatId == DeviceIndependentBitmap.FormatId:
                     data = _dib;
@@ -1083,6 +1179,10 @@ public sealed class ClipboardBridge : IDisposable
         }
 
         _channel.SendData(data);
+        if (data is not null && served > 0)
+        {
+            _sink.Note?.Invoke(ClipNote.TextFetchedByVm, served);
+        }
     }
 
     private void OnFileContentsRequested(FileContentsRequest request)

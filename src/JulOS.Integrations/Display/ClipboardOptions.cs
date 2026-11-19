@@ -3,10 +3,23 @@ namespace JulOS.Integrations.Display;
 /// <summary>
 /// Grenzen und Ablage der Dateien in der Zwischenablage (siehe <see cref="ClipboardBridge"/>). Vom Browser kommende Dateien liegen bis zum Einfuegen im
 /// fernen Rechner als Dateien in einem Ordner des Servers (nicht im Speicher): <see cref="MaxFileBytes"/> gilt je Datei und fuer alle Dateien einer
-/// Ablage zusammen. JULOS_CLIP_MAX_MB stellt die Grenze ein (Standard 2048, also 2 GiB), JULOS_CLIP_DIR den Ordner (Standard ein Unterordner des
+/// Ablage zusammen. JULOS_CLIP_EOL (auto, lf, crlf) stellt die Zeilenenden des Textes aus dem Browser ein (Standard auto: LF, bis die VM selbst CR LF schickt). JULOS_CLIP_MAX_MB stellt die Grenze ein (Standard 2048, also 2 GiB), JULOS_CLIP_DIR den Ordner (Standard ein Unterordner des
 /// temporaeren Ordners des Servers). Dateien vom fernen Rechner zum Browser fliessen durch den Server, ohne dass er sie ablegt: dort gilt keine Grenze.
 /// </summary>
-public sealed record ClipboardOptions(long MaxFileBytes, string TempRoot)
+/// <summary>Wie die Zeilenenden von Text aus dem Browser in die VM gehen (JULOS_CLIP_EOL).</summary>
+public enum ClipboardLineEnding
+{
+    /// <summary>LF, bis der ferne Rechner Text mit CR LF geschickt hat (dann CR LF, wie es ein Windows-Rechner will).</summary>
+    Auto,
+
+    /// <summary>Immer LF (Linux).</summary>
+    Lf,
+
+    /// <summary>Immer CR LF (Windows).</summary>
+    CrLf,
+}
+
+public sealed record ClipboardOptions(long MaxFileBytes, string TempRoot, ClipboardLineEnding LineEnding = ClipboardLineEnding.Auto)
 {
     /// <summary>Hoechstens so viele Dateien (ohne Ordner) in einer Ablage.</summary>
     public const int MaxFiles = 200;
@@ -26,11 +39,17 @@ public sealed record ClipboardOptions(long MaxFileBytes, string TempRoot)
     public static ClipboardOptions Default { get; private set; } = new(DefaultMegabytes * 1024 * 1024, DefaultRoot);
 
     /// <summary>Liest JULOS_CLIP_MAX_MB und JULOS_CLIP_DIR: leer oder Unsinn ergibt den Standard, die Zahl wird auf 1 bis 65536 begrenzt.</summary>
-    public static ClipboardOptions Parse(string? megabytes, string? directory)
+    public static ClipboardOptions Parse(string? megabytes, string? directory, string? lineEnding = null)
     {
         var mb = long.TryParse(megabytes?.Trim(), out var value) && value > 0 ? Math.Min(value, LargestMegabytes) : DefaultMegabytes;
         var root = string.IsNullOrWhiteSpace(directory) ? DefaultRoot : directory.Trim();
-        return new ClipboardOptions(mb * 1024 * 1024, root);
+        var eol = (lineEnding ?? "").Trim().ToLowerInvariant() switch
+        {
+            "lf" => ClipboardLineEnding.Lf,
+            "crlf" => ClipboardLineEnding.CrLf,
+            _ => ClipboardLineEnding.Auto,
+        };
+        return new ClipboardOptions(mb * 1024 * 1024, root, eol);
     }
 
     public static void Configure(ClipboardOptions options) => Default = options;

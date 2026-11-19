@@ -67,7 +67,7 @@ public sealed class ClipboardBridgeTests
         channel.Receive(ClipServer.DataRequest(Text));
         var (answer, flags, data) = ClipServer.Parse(wire.One());
         Assert.Equal((ClipServer.DataResponseType, ClipServer.Ok), (answer, flags));
-        Assert.Equal("Hallo\r\nWelt ü\0", Encoding.Unicode.GetString(data));
+        Assert.Equal("Hallo\nWelt ü\0", Encoding.Unicode.GetString(data));          // LF: ein Linux-Desktop hinter xrdp bekommt sonst ein CR in jede Zeile
     }
 
     [Fact]
@@ -114,5 +114,153 @@ public sealed class ClipboardBridgeTests
         channel.Receive(ClipServer.MonitorReady());
         var sent = wire.Take();
         Assert.Contains(sent, m => ClipServer.Parse(m).Type == ClipServer.FormatListType && ClipServer.Parse(m).Body.Length > 0);
+    }
+
+    private static (ClipboardChannel Channel, Wire Wire, ClipboardBridge Bridge, List<string> Remote, List<(ClipNote Note, int Count)> Notes) StartedWith(ClipboardOptions? options = null)
+    {
+        var channel = new ClipboardChannel();
+        var wire = new Wire(channel);
+        var remote = new List<string>();
+        var notes = new List<(ClipNote, int)>();
+        var bridge = new ClipboardBridge(channel, new ClipboardSink { Text = remote.Add, Note = (n, c) => notes.Add((n, c)) }, options: options);
+        channel.Receive(ClipServer.Capabilities(0x3E));
+        channel.Receive(ClipServer.MonitorReady());
+        channel.Receive(ClipServer.FormatListResponse(true));
+        wire.Take();
+        notes.Clear();
+        return (channel, wire, bridge, remote, notes);
+    }
+
+    private static string Pasted(ClipboardChannel channel, Wire wire)
+    {
+        channel.Receive(ClipServer.FormatListResponse(true));
+        channel.Receive(ClipServer.DataRequest(Text));
+        var (_, _, data) = ClipServer.Parse(wire.One());
+        return Encoding.Unicode.GetString(data);
+    }
+
+    [Fact]
+    public void Lines_go_to_the_vm_with_a_lone_line_feed_until_the_vm_itself_sends_carriage_returns()
+    {
+        var (channel, wire, bridge, remote, _) = StartedWith();
+
+        bridge.SetLocalText("a\r\nb\nc");                                        // auch ein Windows-Browser liefert CR LF
+        wire.Take();
+        Assert.Equal("a\r\nb\nc\0", Pasted(channel, wire));                        // eine vorhandene CR bleibt, es kommt keine dazu
+
+        // Ein Windows-Rechner kopiert Text mit CR LF: ab jetzt will er es auch so
+        channel.Receive(ClipServer.LongFormatList((Text, null)));
+        wire.Take();
+        channel.Receive(ClipServer.DataResponse(Encoding.Unicode.GetBytes("x\r\ny\r\nz\0")));
+        Assert.Equal(["x\ny\nz"], remote);
+        bridge.SetLocalText("p\nq");
+        wire.Take();
+        Assert.Equal("p\r\nq\0", Pasted(channel, wire));
+
+        // und kopiert er Text mit einzelnem LF (xrdp), geht es wieder mit LF
+        channel.Receive(ClipServer.LongFormatList((Text, null)));
+        wire.Take();
+        channel.Receive(ClipServer.DataResponse(Encoding.Unicode.GetBytes("1\n2\0")));
+        bridge.SetLocalText("p\nq");
+        wire.Take();
+        Assert.Equal("p\nq\0", Pasted(channel, wire));
+    }
+
+    [Theory]
+    [InlineData("lf", "u\nv", "u\nv\0")]
+    [InlineData("crlf", "u\nv", "u\r\nv\0")]
+    [InlineData("auto", "u\nv", "u\nv\0")]
+    [InlineData("nonsense", "u\nv", "u\nv\0")]
+    public void The_setting_for_line_ends_wins_over_what_the_vm_showed(string setting, string text, string expected)
+    {
+        var (channel, wire, bridge, _, _) = StartedWith(ClipboardOptions.Parse(null, null, setting));
+        if (setting is "lf")
+        {
+            channel.Receive(ClipServer.LongFormatList((Text, null)));
+            wire.Take();
+            channel.Receive(ClipServer.DataResponse(Encoding.Unicode.GetBytes("1\r\n2\0")));      // zeigt CR LF, soll aber nichts aendern
+        }
+
+        bridge.SetLocalText(text);
+        wire.Take();
+        Assert.Equal(expected, Pasted(channel, wire));
+    }
+
+    [Fact]
+    public void The_same_text_copied_in_the_vm_after_a_paste_from_the_browser_reaches_the_browser()
+    {
+        var (channel, wire, bridge, remote, _) = StartedWith();
+
+        bridge.SetLocalText("A");
+        wire.Take();
+        channel.Receive(ClipServer.FormatListResponse(true));
+        // in der VM wird erst etwas anderes kopiert, dann wieder "A": beides gehoert dem Browser, auch das "A" (kein Echo mehr)
+        foreach (var copied in new[] { "B", "A" })
+        {
+            channel.Receive(ClipServer.LongFormatList((Text, null)));
+            wire.Take();
+            channel.Receive(ClipServer.DataResponse(Encoding.Unicode.GetBytes(copied + "\0")));
+        }
+
+        Assert.Equal(["B", "A"], remote);
+    }
+
+    [Fact]
+    public async Task Text_that_the_vm_reports_back_long_after_the_paste_is_a_new_copy()
+    {
+        var (channel, wire, bridge, remote, _) = StartedWith();
+
+        bridge.SetLocalText("Echo");
+        wire.Take();
+        await Task.Delay(1700);                                                 // das Echo-Fenster ist vorbei
+        channel.Receive(ClipServer.LongFormatList((Text, null)));
+        wire.Take();
+        channel.Receive(ClipServer.DataResponse(Encoding.Unicode.GetBytes("Echo\0")));
+        Assert.Equal(["Echo"], remote);
+    }
+
+    [Fact]
+    public void The_bridge_reports_what_happened_to_the_text_without_ever_naming_it()
+    {
+        var (channel, wire, bridge, _, notes) = StartedWith();
+
+        bridge.SetLocalText(new string('a', ClipboardBridge.MaxTextBytes + 1));
+        Assert.Equal([(ClipNote.TextTooLong, ClipboardBridge.MaxTextBytes + 1)], notes);
+        notes.Clear();
+
+        bridge.SetLocalText("Geheim äö");
+        wire.Take();
+        Pasted(channel, wire);
+        Assert.Equal([(ClipNote.TextFetchedByVm, 9)], notes);                     // Zeichen, nicht Bytes
+        notes.Clear();
+
+        channel.Receive(ClipServer.LongFormatList((Text, null)));
+        wire.Take();
+        channel.Receive(ClipServer.DataResponse(null));
+        channel.Receive(ClipServer.LongFormatList((Text, null)));
+        wire.Take();
+        channel.Receive(ClipServer.DataResponse(Encoding.Unicode.GetBytes("\0")));
+        channel.Receive(ClipServer.LongFormatList((Text, null)));
+        wire.Take();
+        channel.Receive(ClipServer.DataResponse(Encoding.Unicode.GetBytes("zehn Zeichen")));
+        Assert.Equal([(ClipNote.TextFromVmLost, 0), (ClipNote.TextFromVmLost, 0), (ClipNote.TextFromVm, 12)], notes);
+        Assert.DoesNotContain(notes, n => n.Count > 100);
+    }
+
+    [Fact]
+    public void Text_before_the_channel_is_ready_is_reported_as_waiting_and_the_channel_reports_when_it_is_ready()
+    {
+        var channel = new ClipboardChannel();
+        var wire = new Wire(channel);
+        var notes = new List<(ClipNote, int)>();
+        var bridge = new ClipboardBridge(channel, new ClipboardSink { Note = (n, c) => notes.Add((n, c)) });
+        bridge.SetLocalText("frueh");
+        Assert.Equal([(ClipNote.TextWaiting, 5)], notes);
+
+        channel.Receive(ClipServer.Capabilities(0x3E));
+        channel.Receive(ClipServer.MonitorReady());
+        Assert.Equal([(ClipNote.TextWaiting, 5), (ClipNote.Status, 0)], notes);
+        channel.Receive(ClipServer.FormatListResponse(false));
+        Assert.Equal((ClipNote.ListRefused, 0), notes[^1]);
     }
 }

@@ -4,6 +4,12 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Behoben
+- Mikrofon: Die Kopfzeile `Permissions-Policy` sperrte das Mikrofon für die Seite (`microphone=()`); sie erlaubt es jetzt für die eigene Seite (`microphone=(self)`), alle anderen Rechte bleiben gesperrt.
+- Stream-Engine: Der Ton wird dem RDP-Server jetzt als gewünscht gemeldet. Zuvor ging die Option „kein Ton“ an den Server, was auf Windows-Zielen den Ton verhindern kann (xrdp ignorierte sie).
+
 ## [0.4.0] - 2026-11-19
 
 ### Neu

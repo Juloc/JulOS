@@ -71,7 +71,7 @@ internal static class RemoteEndpoints
                 var options = new RdpOptions
                 {
                     Host = c.Host, Port = c.Port, UserName = c.Username, Password = password, Width = w & ~1, Height = h & ~1,
-                    KeyboardLayout = 0x407, CertificateCheck = trust.Check,
+                    KeyboardLayout = 0x407, CertificateCheck = trust.Check, Sound = true,
                 };
                 var screenTicket = screenTickets.Create(id.UserId, new ScreenTarget(options, SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid), Trust: trust));
                 return screenTicket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(screenTicket, c.Kind, w & ~1, h & ~1, "stream"), AppJson.Default.TicketResponse);

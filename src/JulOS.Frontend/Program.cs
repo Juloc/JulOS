@@ -123,7 +123,7 @@ app.Use(async (ctx, next) =>
     h["Referrer-Policy"] = "no-referrer";
     h["X-Frame-Options"] = "DENY";
     h["Content-Security-Policy"] = Csp;
-    h["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=(), usb=()";
+    h["Permissions-Policy"] = "camera=(), microphone=(self), geolocation=(), payment=(), usb=()";
     h["Cross-Origin-Opener-Policy"] = "same-origin";
     h["Cross-Origin-Resource-Policy"] = "same-origin";
     if (ctx.Request.IsHttps) h["Strict-Transport-Security"] = "max-age=31536000";

@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
 using JulOS.Frontend.Auth;
 
@@ -19,17 +20,27 @@ internal static class FileEndpoints
 
     private static FileItemDto ToDto(FileItem i) => new(i.Name, i.Path, i.IsDirectory, i.Size, i.Modified, i.Items);
 
+    private static readonly TimeSpan Minute = TimeSpan.FromMinutes(1);
+
+    /// <summary>Auflisten und Suchen gehen durch viele Verzeichniseintraege (bis 50 000 Namen je Suche): je Benutzer und Minute begrenzt.</summary>
+    private static bool Busy(HttpContext ctx, HitCounter hits, string what, int max) =>
+        !hits.Allow($"files-{what}:" + ((SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!).UserId, max, Minute);
+
+    private static IResult TooMany() => Error(429, "Zu viele Anfragen, bitte kurz warten.");
+
     public static void MapFiles(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/files/list", (string? path, FileBrowser files) =>
+        app.MapGet("/api/files/list", (string? path, HttpContext ctx, HitCounter hits, FileBrowser files) =>
         {
             if (!files.Enabled) return Off();
+            if (Busy(ctx, hits, "list", 240)) return TooMany();
             return files.List(path) is { } l ? Results.Json(new FileListingDto(l.Path, [.. l.Entries.Select(ToDto)], l.Truncated), AppJson.Default.FileListingDto) : NotFound();
         });
 
-        app.MapGet("/api/files/search", (string? path, string? q, FileBrowser files, CancellationToken ct) =>
+        app.MapGet("/api/files/search", (string? path, string? q, HttpContext ctx, HitCounter hits, FileBrowser files, CancellationToken ct) =>
         {
             if (!files.Enabled) return Off();
+            if (Busy(ctx, hits, "search", 30)) return TooMany();
             return files.Search(path, q, ct) is { } r ? Results.Json(new FileSearchDto([.. r.Results.Select(ToDto)], r.Truncated), AppJson.Default.FileSearchDto) : Error(400, "Suchtext fehlt oder der Ordner gibt es nicht.");
         });
 

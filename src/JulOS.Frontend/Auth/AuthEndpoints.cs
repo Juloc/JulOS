@@ -1,13 +1,14 @@
 using System.Text;
 using System.Text.Json;
 using JulOS.Backend.Data;
+using JulOS.Backend.Logic;
 using JulOS.Backend.Services;
 
 namespace JulOS.Frontend.Auth;
 
 internal static class AuthEndpoints
 {
-    private static string Ip(HttpContext c) => c.Connection.RemoteIpAddress?.MapToIPv4().ToString() ?? "?";
+    private static string Ip(HttpContext c) => ClientAddress.Key(c.Connection.RemoteIpAddress);
 
     private static IResult Error(int status, string message, int retryAfter = 0) =>
         Results.Text(JsonSerializer.Serialize(new ErrorBody(message, retryAfter > 0 ? retryAfter : null), AppJson.Default.ErrorBody), "application/json", Encoding.UTF8, status);

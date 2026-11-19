@@ -61,7 +61,18 @@ public sealed class AuthService(UserStore users, SessionStore sessions, Password
         return new(true, 200, User: pending.Name, Token: token, RecoveryLeft: RecoveryCodes.Count);
     }
 
+    /// <summary>So viele Anmeldungen einer Adresse duerfen gleichzeitig geprueft werden (die Passwortpruefung braucht 64 MiB je Versuch).</summary>
+    public const int MaxLoginsInFlightPerAddress = 3;
+
     public async Task<AuthResult> LoginAsync(string? userName, string? password, string? code, string ip, string? userAgent, CancellationToken ct = default)
+    {
+        var busy = "ip:" + ip;
+        if (!limiter.TryBegin(busy, MaxLoginsInFlightPerAddress)) return new(false, 429, "Zu viele Versuche. Bitte später erneut versuchen.", 5);
+        try { return await LoginCoreAsync(userName, password, code, ip, userAgent, ct); }
+        finally { limiter.End(busy); }
+    }
+
+    private async Task<AuthResult> LoginCoreAsync(string? userName, string? password, string? code, string ip, string? userAgent, CancellationToken ct)
     {
         var name = PasswordPolicy.NormalizeUserName(userName);
         var wait = TimeSpan.Zero;

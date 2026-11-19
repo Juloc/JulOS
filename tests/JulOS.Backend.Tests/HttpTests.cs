@@ -293,4 +293,23 @@ public sealed class HttpTests
         Assert.True(last.Headers.Contains("Retry-After"));
         Assert.True((await Json(last)).GetProperty("retryAfter").GetInt32() > 0);
     }
+
+    [Fact]
+    public async Task File_search_is_limited_per_user_and_minute()
+    {
+        var dir = Directory.CreateTempSubdirectory("julos-http-search-");
+        try
+        {
+            await using var db = await TestDb.CreateAsync();
+            await using var app = new Server(db, dir.FullName);
+            var c = app.Client();
+            var (cookie, _, _) = await SetupAsync(c);
+            for (var i = 0; i < 30; i++) Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Get("/api/files/search?q=x", cookie))).StatusCode);
+            var over = await c.SendAsync(Get("/api/files/search?q=x", cookie));
+            Assert.Equal(HttpStatusCode.TooManyRequests, over.StatusCode);
+            // das Auflisten hat sein eigenes Fenster
+            Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Get("/api/files/list", cookie))).StatusCode);
+        }
+        finally { dir.Delete(true); }
+    }
 }

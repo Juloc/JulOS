@@ -130,4 +130,29 @@ public sealed class LogicTests
         code.MarkUsed();
         Assert.False(code.Matches(code.Value));
     }
+
+    [Theory]
+    [InlineData("203.0.113.7", "203.0.113.7")]
+    [InlineData("::ffff:203.0.113.7", "203.0.113.7")]
+    [InlineData("2001:db8:1:2:aaaa:bbbb:cccc:dddd", "2001:db8:1:2::/64")]
+    [InlineData("2001:db8:1:2::1", "2001:db8:1:2::/64")]
+    public void Client_addresses_are_keyed_by_ipv4_address_or_ipv6_prefix(string address, string key) =>
+        Assert.Equal(key, ClientAddress.Key(System.Net.IPAddress.Parse(address)));
+
+    [Fact]
+    public void Client_address_key_without_address_is_a_placeholder() => Assert.Equal("?", ClientAddress.Key(null));
+
+    [Fact]
+    public void Login_limiter_caps_the_checks_running_at_the_same_time_per_key()
+    {
+        var limiter = new LoginLimiter();
+        Assert.True(limiter.TryBegin("ip:a", 2));
+        Assert.True(limiter.TryBegin("ip:a", 2));
+        Assert.False(limiter.TryBegin("ip:a", 2));       // die dritte wird abgewiesen und zaehlt nicht mit
+        Assert.True(limiter.TryBegin("ip:b", 2));        // andere Schluessel sind frei
+        limiter.End("ip:a");
+        Assert.True(limiter.TryBegin("ip:a", 2));        // ein Platz wurde frei
+        limiter.End("ip:a"); limiter.End("ip:a");
+        Assert.True(limiter.TryBegin("ip:a", 1));        // alles frei: wieder von vorn
+    }
 }

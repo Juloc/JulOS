@@ -359,13 +359,20 @@ async function openApps(session) {
   if (!session.W.apps) { try { session.W.apps = (await agent('/apps')).apps || []; } catch (e) { session.toast('Programme: ' + e.message); session.W.apps = []; } }
   renderApps('');
 }
+/** Symbol vom Agenten (Base64 eines PNG) als Bild. Nie in HTML-Text einsetzen: der Wert kommt aus der Sitzung der Ziel-Maschine. */
+function iconImg(b64) {
+  if (typeof b64 !== 'string' || !b64 || b64.length > 200000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(b64)) return null;
+  const img = document.createElement('img'); img.alt = ''; img.src = 'data:image/png;base64,' + b64;
+  return img;
+}
 function renderApps(q) {
   const s = appsTarget; if (!s) return;
   const list = $('#appsList'); list.replaceChildren();
   const f = (s.W.apps || []).filter((a) => a.name.toLowerCase().includes(q.toLowerCase())).slice(0, 80);
   for (const a of f) {
     const d = document.createElement('div'); d.className = 'appitem'; d.setAttribute('role', 'button');
-    d.innerHTML = (a.icon ? `<img alt="" src="data:image/png;base64,${a.icon}">` : '<span style="width:32px"></span>') + `<span></span>`; d.lastChild.textContent = a.name;
+    const name = document.createElement('span'); name.textContent = a.name;
+    d.append(iconImg(a.icon) || Object.assign(document.createElement('span'), { style: 'width:32px' }), name);
     d.addEventListener('click', async () => {
       $('#appsDlg').close();
       try { await agent('/apps/launch', 'POST', { id: a.id }); s.toast('Starte ' + a.name + ' …', 2200); setTimeout(() => s.pollWindows(), 1500); } catch (e) { s.toast('Start: ' + e.message); }
@@ -923,9 +930,9 @@ export class RemoteSession extends Session {
     mode.addEventListener('click', () => this.toggleMode()); row.appendChild(mode);
     for (const w of W.list) {
       const c = document.createElement('div'); c.className = 'chip' + (w.active ? ' active' : '') + (w.minimized ? ' min' : ''); c.setAttribute('role', 'button');
-      const img = w.icon ? `<img alt="" src="data:image/png;base64,${w.icon}">` : '';
       const t = document.createElement('span'); t.textContent = (w.title || w.app || '?').slice(0, 40);
-      c.innerHTML = img; c.appendChild(t);
+      const img = iconImg(w.icon); if (img) c.appendChild(img);
+      c.appendChild(t);
       let timer = null, longDone = false;
       c.addEventListener('pointerdown', () => { longDone = false; timer = setTimeout(() => { longDone = true; this.openWinSheet(w); }, 480); });
       const cancel = () => clearTimeout(timer);

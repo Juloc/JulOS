@@ -16,6 +16,9 @@ internal static partial class AgentEndpoints
 {
     private static readonly TimeSpan Minute = TimeSpan.FromMinutes(1);
 
+    // Ein Upload liegt bis zu 64 MB im Speicher; ohne Obergrenze der gleichzeitigen wuerden 20 Anfragen je Minute und Benutzer sich zu GB summieren
+    private static readonly SemaphoreSlim UploadGate = new(4);
+
     [GeneratedRegex("^[a-zA-Z0-9_-]{1,16}$")] private static partial Regex LogKey();
 
     private static IResult Error(int status, string message) =>
@@ -99,6 +102,8 @@ internal static partial class AgentEndpoints
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (!hits.Allow("upload:" + id.UserId, 20, Minute)) return Error(429, "Zu viele Uploads, bitte kurz warten.");
+            if (!UploadGate.Wait(0)) return Error(429, "Es laufen schon mehrere Uploads, bitte kurz warten.");
+            try {
             if (ctx.Request.ContentLength is > ClipboardUploader.MaxBytes) return Error(413, "Bild zu groß.");
             if (ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit) limit.MaxRequestBodySize = ClipboardUploader.MaxBytes;
 
@@ -120,6 +125,7 @@ internal static partial class AgentEndpoints
                 UploadOutcome.HelperFailed => Error(500, "Helfer: " + r.Detail),
                 _ => Error(504, "Der Helfer in der Sitzung der Ziel-Maschine antwortet nicht (läuft tools/julos-clip.py?)."),
             };
+            } finally { UploadGate.Release(); }
         });
 
         // Datei in die Zwischenablage der Ziel-Maschine (Engine ohne eigenen Dateikanal): Datei im Body, Name URL-kodiert im Kopf X-File-Name,
@@ -128,6 +134,8 @@ internal static partial class AgentEndpoints
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (!hits.Allow("upload-file:" + id.UserId, 20, Minute)) return Error(429, "Zu viele Uploads, bitte kurz warten.");
+            if (!UploadGate.Wait(0)) return Error(429, "Es laufen schon mehrere Uploads, bitte kurz warten.");
+            try {
             if (ctx.Request.ContentLength is > ClipboardFileUploader.MaxBytes) return Error(413, "Datei zu groß (höchstens 64 MB).");
             if (ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit) limit.MaxRequestBodySize = ClipboardFileUploader.MaxBytes;
             string name;
@@ -156,6 +164,7 @@ internal static partial class AgentEndpoints
                 FileOutcome.HelperFailed => Error(500, "Helfer: " + r.Detail),
                 _ => Error(504, "Der Helfer in der Sitzung der Ziel-Maschine antwortet nicht (läuft tools/julos-clip.py?)."),
             };
+            } finally { UploadGate.Release(); }
         });
 
         // Bild aus der Zwischenablage der Ziel-Maschine holen (Engine, die Bilder nicht selbst meldet): PNG im Answer, 204 wenn dort kein Bild liegt

@@ -14,6 +14,24 @@ public sealed class ProtocolTests
         Assert.Equal("5.audio;", Encoding.UTF8.GetString(GuacProtocol.Encode("audio")));
     }
 
+    // Die Werte entstehen zur Laufzeit: ein allein stehendes Surrogat in einem Attribut machte der Compiler zu U+FFFD
+    [Theory]
+    [InlineData("", 0xDC00, ",3.evil;")]                 // allein stehendes Low-Surrogat: wurde nicht mitgezaehlt, UTF-8 schrieb aber ein Zeichen
+    [InlineData("a", 0xDC00, "b,1.x")]
+    [InlineData("", 0xD800, "")]                         // allein stehendes High-Surrogat
+    [InlineData("\U0001F600", 0xDE00, ",1.x;")]            // gueltiges Paar, danach ein Low-Surrogat
+    public void Encode_keeps_the_structure_when_a_value_has_unpaired_surrogates(string before, int surrogate, string after)
+    {
+        var value = before + (char)surrogate + after;
+        var bytes = GuacProtocol.Encode("connect", "host", value, "last");
+        var parts = GuacProtocol.Parse(bytes);                  // genau eine Anweisung mit genau drei Argumenten
+        Assert.Equal(4, parts.Length);
+        Assert.Equal(["connect", "host"], parts[..2]);
+        Assert.Equal("last", parts[3]);
+        Assert.Equal(bytes.Length - 1, new InstructionScanner().Scan(bytes));
+        Assert.Equal(before + '\uFFFD' + after, parts[2]);
+    }
+
     [Theory]
     [InlineData("select", "rdp")]
     [InlineData("clipboard", "a,b;c.d", "mit ; und , und . drin")]

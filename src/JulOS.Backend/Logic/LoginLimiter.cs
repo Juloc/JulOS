@@ -45,6 +45,24 @@ public sealed class LoginLimiter(TimeProvider? clock = null)
 
     public void Succeed(string key) => _entries.TryRemove(key, out _);
 
+    // Gleichzeitig laufende Pruefungen je Schluessel: Fehlversuche werden erst nach der (teuren) Passwortpruefung gezaehlt, ein Schwall
+    // gleichzeitiger Anfragen kaeme also an der Sperre vorbei und wuerde den Argon2-Speicher und die Warteschlange fuellen.
+    private readonly ConcurrentDictionary<string, int> _running = new();
+
+    /// <summary>Meldet eine Pruefung an. false, wenn zu diesem Schluessel schon <paramref name="max"/> laufen; sonst muss <see cref="End"/> folgen.</summary>
+    public bool TryBegin(string key, int max)
+    {
+        var n = _running.AddOrUpdate(key, 1, (_, c) => c + 1);
+        if (n <= max) return true;
+        End(key);
+        return false;
+    }
+
+    public void End(string key)
+    {
+        if (_running.AddOrUpdate(key, 0, (_, c) => c - 1) <= 0) _running.TryRemove(new KeyValuePair<string, int>(key, 0));
+    }
+
     public void Sweep()
     {
         var now = _clock.GetUtcNow();

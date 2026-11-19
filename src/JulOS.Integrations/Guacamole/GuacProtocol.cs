@@ -17,7 +17,30 @@ public static class GuacProtocol
         return Encoding.UTF8.GetBytes(sb.ToString());
     }
 
-    private static void Element(StringBuilder sb, string value) => sb.Append(CodePoints(value)).Append('.').Append(value);
+    private static void Element(StringBuilder sb, string value)
+    {
+        value = WellFormed(value);
+        sb.Append(CodePoints(value)).Append('.').Append(value);
+    }
+
+    /// <summary>
+    /// Ersetzt allein stehende Surrogate durch U+FFFD. Sonst zaehlt <see cref="CodePoints"/> sie nicht, UTF-8 schreibt aber ein Zeichen daraus:
+    /// guacd liest dann ein Zeichen zu wenig, der Rest des Werts wuerde als Struktur der Anweisung gelesen (Einschleusen eigener Parameter).
+    /// </summary>
+    public static string WellFormed(string value)
+    {
+        var clean = true;
+        for (var i = 0; i < value.Length && clean; i++)
+        {
+            var c = value[i];
+            if (char.IsHighSurrogate(c) && i + 1 < value.Length && char.IsLowSurrogate(value[i + 1])) i++;
+            else if (char.IsSurrogate(c)) clean = false;
+        }
+        if (clean) return value;
+        var sb = new StringBuilder(value.Length);
+        foreach (var rune in value.EnumerateRunes()) sb.Append(rune.ToString());
+        return sb.ToString();
+    }
 
     public static int CodePoints(string s)
     {

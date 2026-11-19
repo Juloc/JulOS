@@ -31,6 +31,8 @@ if (args.Length > 0 && args[0] == "user") return await UserCli.RunAsync(args[1..
 if (args.Length > 0 && args[0] == "backup") return await BackupCli.RunAsync(args[1..]);
 // Diagnose ohne Datenbank: dotnet JulOS.dll diag encoders
 if (args.Length > 0 && args[0] == "diag") return DiagCli.Run(args[1..]);
+// Gesundheitspruefung fuer den Container-Healthcheck: dotnet JulOS.dll health
+if (args.Length > 0 && args[0] == "health") return await HealthCli.RunAsync();
 
 var builder = WebApplication.CreateSlimBuilder(args);
 builder.WebHost.ConfigureKestrel(o => o.AddServerHeader = false);

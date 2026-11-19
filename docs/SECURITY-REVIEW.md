@@ -23,7 +23,7 @@ session or a compromised target machine can reach.
 | 5 | Medium | Failed-login counters used `MapToIPv4()`: one IPv6 connection could rotate through counters, different IPv6 networks shared one | **Fixed** |
 | 6 | Medium | Unlimited parallel login requests: the lockout only counts after the 64 MiB Argon2 check | **Fixed** |
 | 7 | Low | Account lockout can be used to keep the owner out (up to 15 minutes per request) | Open (accepted trade-off) |
-| 8 | Low | `/data` is not writable with the Compose files as shipped, so `secret.key` is never created; README says otherwise | Open (deployment) |
+| 8 | Low | `/data` is not writable with the Compose files as shipped, so `secret.key` is never created; README says otherwise | **Fixed** (Compose: volume `julos-data` + `julos-data-init`) |
 | 9 | Low | API bodies were limited only by Kestrel's 30 MB default | **Fixed** (64 KiB) |
 | 10 | Low | Uploads: up to 20 per minute at 64 MB each held in memory at once; `files/` could fill the disk for 7 days | **Fixed** (4 at a time, 2 GiB quota) |
 | 11 | Low | File list and search had no rate limit (up to 50 000 names per search) | **Fixed** |
@@ -31,7 +31,7 @@ session or a compromised target machine can reach.
 | 13 | Low | Clipboard transfers allocate the announced size up front (up to 64 MB per session) | Open |
 | 14 | Low | Agent icons were put into HTML text (`app.js`) | **Fixed** (DOM image after base64 check) |
 | 15 | Low | Guacamole instruction encoder miscounted unpaired UTF-16 surrogates | **Fixed** (not reachable today) |
-| 16 | Low | Compose files: no `no-new-privileges`, no `cap_drop`, floating image tags, `host.docker.internal` for the server and guacd | Open |
+| 16 | Low | Compose files: no `no-new-privileges`, no `cap_drop`, floating image tags, `host.docker.internal` for the server and guacd | Partly fixed (`no-new-privileges`, `cap_drop`, health check; read-only root and digests open) |
 | 17 | Low | `Permissions-Policy: microphone=()` will block the planned microphone feature | Open (coordinate with that work) |
 | 18 | Info | `/api/health` is public and names the version | Accepted (release checks use it) |
 
@@ -80,7 +80,9 @@ session or a compromised target machine can reach.
 - **Impact:** anyone who can reach the login can send five wrong logins for the known user name and lock the owner out for 30 s, doubling up to 15 minutes while the attacker keeps asking (one request per lock expiry). Sessions that already exist are not affected, and the lockout also applies to unknown user names, so it does not reveal whether a name exists.
 - **Suggested fix if it ever matters:** do not count (or do not enforce) the account lockout for requests from an address that has signed in before (device cookie), or add the lockout only after a correct password. The mTLS option in the Caddyfile example removes the problem for the internet side.
 
-### 8. `/data` and `secret.key` with the shipped Compose files (Low, open)
+### 8. `/data` and `secret.key` with the shipped Compose files (Low, **fixed**)
+
+- **Fix:** both Compose files mount the named volume `julos-data` at `/data`; `julos-data-init` (runs once, only `CHOWN`) gives it to `JULOS_UID`, the server mounts it `nocopy`. Checked on a throwaway container: `secret.key` is created, mode 0600, owned by the server user. Details in DEVELOPMENT.md "Container hardening and health". The original finding follows.
 
 - **Where:** `Dockerfile` (`mkdir /data && chown $APP_UID /data`), `docker-compose.yml` / `docker-compose.image.yml` (`user: ${JULOS_UID:-1000}`, no `/data` volume), `README.md:57` (says the image's Compose stacks have a volume at `/data`).
 - **Proof:** `docker run --user 1000:1000 ... touch /data/x` on the current image: "Permission denied" (the directory belongs to the image's `app` user).
@@ -103,7 +105,9 @@ session or a compromised target machine can reach.
 - **Icons:** `app.js` built `<img src="data:image/png;base64,${icon}">` from the agent's answer (window and app icons). The agent is the user's own helper on the target, and the strict CSP (no inline script) would have stopped script execution, but attribute injection and HTML injection were possible if the agent answer were wrong or the socket were replaced. Icons are now created as DOM images after a base64 check (`iconImg`).
 - **Guacamole encoder:** `GuacProtocol.CodePoints` did not count an unpaired low surrogate, UTF-8 writes one character for it, so guacd would read one character too few and take the rest of the value as instruction structure (injection of extra connect parameters such as `drive-path`). Proof: with the check disabled, three of four new test cases fail. **Not reachable today:** `System.Text.Json` refuses lone surrogates in the request (checked: `JsonException`), so every password and user name arrives well-formed. Fixed as defence in depth (`GuacProtocol.WellFormed`).
 
-### 16. Compose and images (Low, open)
+### 16. Compose and images (Low, partly fixed)
+
+- **Done:** `no-new-privileges` and `cap_drop: ALL` on the server (it started, answered `/api/health` and created `secret.key` with both), a health check, and `read_only` as a commented option. **Open:** digests, the read-only root by default (full run not tried), `host.docker.internal` on guacd (guacd is gone since 0.5.0, so that part is moot).
 
 `docker-compose*.yml`: the server container could run with `security_opt: [no-new-privileges:true]` and `cap_drop: [ALL]` (it binds an unprivileged port) and a read-only root file system with a tmpfs for `/tmp`; none of this was tried on a running stack here. Image tags (`postgres:18`, `guacamole/guacd:1.6.0`, `mcr.microsoft.com/dotnet/*:10.0`) float; pinning digests in the live stack avoids surprise updates but needs a bump routine. `host.docker.internal:host-gateway` is on the server (needed for the VM) and also on guacd (needed only if desktops are reached through the host). The workflow uses actions pinned to major tags, not commit hashes.
 

@@ -4,6 +4,14 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveroeffentlicht]
+
+### Neu
+- Compose: Gesundheitsprüfung für den Dienst `julos` (`dotnet JulOS.dll health` fragt `/api/health` und prüft auch die Datenbank), Datenordner `/data` als benanntes Volume mit einem einmaligen Starter, der es dem Server-Benutzer gibt (damit der Schlüssel für gespeicherte Passwörter wirklich entsteht), `no-new-privileges` und `cap_drop: ALL`; ein schreibgeschütztes Wurzeldateisystem steht als auskommentierte Möglichkeit bereit. Siehe [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+### Geändert
+- Dockerfile: die SDK-Stufe läuft mit `--platform=$BUILDPLATFORM`, der arm64-Bau braucht dafür keine Emulation mehr.
+
 ## [0.5.0] - 2026-11-19
 
 ### Neu

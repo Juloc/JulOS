@@ -97,7 +97,7 @@ Die App selbst braucht diesen Weg nicht mehr: die Stream-Engine sendet Bilder un
 - `tools/julos-agent.py` Linux-Agent (Fenster, Programme, Programm-Modus, ausgehende Verbindung zum Server), `tools/julos-clip.py` Foto-Helfer
 - `tools/install-linux-agent.sh`, `tools/julos-user.sh`, `tools/make-client-cert.sh`
 - `docs/AGENT_API.md` Agent-API, `docs/ARCHITECTURE.md` Stack und Sicherheitskonzept, `docs/MODULES.md` die optionalen Module Caddy und DDNS (nur lesen, standardmaessig aus), `caddy/Caddyfile.example`
-- `.github/workflows/docker.yml` baut das Image fuer `ghcr.io/<owner>/<repo>` (amd64 + arm64)
+- `.github/workflows/docker.yml` baut das Image fuer `ghcr.io/<owner>/<repo>` (amd64 + arm64; die SDK-Stufe laeuft nativ, ohne Emulation)
 
 ## Ausblick
 

@@ -1,5 +1,7 @@
 # JulOS-Server (.NET), siehe docs/ARCHITECTURE.md
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+# Das SDK laeuft immer auf der Plattform des Bauenden ($BUILDPLATFORM), auch wenn das Image fuer arm64 gebaut wird: die Ausgabe ist reines .NET
+# (keine nativen Pakete, keine Runtime-Kennung) und deshalb auf beiden Architekturen gleich. So braucht der arm64-Bau keine Emulation fuer restore und publish.
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 COPY global.json Directory.Build.props Directory.Packages.props JulOS.slnx ./
 COPY src/JulOS.Backend/JulOS.Backend.csproj src/JulOS.Backend/

@@ -147,6 +147,12 @@ dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj    # 
 | `JULOS_STREAM_KEEP_SECONDS` | how long a stream (RDP) session lives on without a browser after the connection dropped, default `300`, `0` = off, at most `3600`; see SESSIONS.md |
 | `JULOS_TRUSTED_PROXIES` | networks whose `X-Forwarded-*` headers are trusted (default: private networks) |
 
+## Container hardening and health
+
+The Compose files (`docker-compose.yml`, `docker-compose.image.yml`) run the server with `no-new-privileges` and `cap_drop: ALL`, and give it a health check: `dotnet JulOS.dll health` asks `/api/health` on the server's own port (the runtime image has no `curl`) and is healthy only when the database answers too (`ok: true`). `docker compose ps` shows `healthy` after the first 40 s. `/data` is a named volume (`julos-data`); the short-lived service `julos-data-init` hands it to `JULOS_UID`, and the server mounts it `nocopy` because Docker would otherwise give an empty volume the owner of the image folder (`app`) on every start and the server could not write `secret.key` there. Checked on a throwaway container: `secret.key` appears in the volume as user 1020, `healthy` within 15 s, `health` exits 1 against a wrong port. The root file system stays writable by default; `read_only: true` with a `tmpfs` for `/tmp` is in the Compose files as a commented option: start and health check were checked with it, a full run (RDP with a GPU, uploads, backup) was not. Image tags are not pinned to digests (needs a bump routine).
+
+The image is built for amd64 and arm64 by one workflow. The SDK stage is `--platform=$BUILDPLATFORM`: restore and publish run natively on the builder and only the small runtime stage is made for arm64 (the output is plain .NET, no native packages, so it is the same for both). Not verified here: an actual arm64 build (needs the builder, the first run of the workflow shows it).
+
 ## Things learned from the test instance
 
 - Connecting a second time to a disconnected xrdp session ("reconnected session") works, and a full picture (about 80 KB of image data) arrives about 1.3 s after connecting. The browser client hides its loading overlay as soon as the remote reports a picture size, not when the picture is "not black".

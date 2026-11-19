@@ -51,3 +51,12 @@ test('control characters and over-long values are refused', () => {
   assert.ok(readLogin({ user: 'anna', password: 'p'.repeat(257) }).error);
   assert.equal(readLogin({ user: 'a'.repeat(256), password: 'p'.repeat(256) }).error, undefined);
 });
+
+test('VNC: ein VNC-Server fragt nur nach dem Passwort: eigene Texte, und ohne Benutzer geht die Eingabe durch', () => {
+  assert.notEqual(loginStep(LOGIN_MISSING, 0, 'vnc').text, loginStep(LOGIN_MISSING, 0, 'desktop').text);
+  assert.notEqual(loginStep(LOGIN_REJECTED, 0, 'vnc').text, loginStep(LOGIN_REJECTED, 0, 'desktop').text);
+  assert.equal(loginStep(LOGIN_REJECTED, 1, 'vnc').text, loginStep(LOGIN_REJECTED, 1, 'desktop').text);       // "auch das wurde abgelehnt" gilt fuer beide
+  assert.ok(readLogin({ user: '', password: 'geheim' }).error, 'RDP braucht einen Benutzer');
+  assert.deepEqual(readLogin({ user: '', password: 'geheim' }, { user: false }), { user: '', password: 'geheim', domain: '' });
+  assert.ok(readLogin({ user: '', password: '' }, { user: false }).error, 'ein Passwort bleibt Pflicht');
+});

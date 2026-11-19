@@ -5,7 +5,7 @@ Selbst gehostet und Open Source. Was wir jetzt bauen: [docs/SCOPE.md](docs/SCOPE
 
 Das erste Stueck ist ein Fernzugriff, gebaut fuer das **Handy**: deine normale Android-Tastatur (Vorschlaege,
 Autokorrektur, Bilder), eine anpassbare Sondertasten-Leiste, eine Fensterleiste in der App statt der Taskleiste,
-dynamische Aufloesung, Material-You-Farben und installierbare PWA. Darunter ist es normaler Fernzugriff (RDP, von der eigenen Anzeige-Engine als H.264 gestreamt)
+dynamische Aufloesung, Material-You-Farben und installierbare PWA. Darunter ist es normaler Fernzugriff (RDP oder VNC, von der eigenen Anzeige-Engine als H.264 gestreamt)
 auf den eigenen Rechner, nichts liegt in einer Cloud.
 
 [English version](README.md)
@@ -52,8 +52,9 @@ tools/install-linux-agent.sh    # in der grafischen Sitzung des Zielrechners
 ```
 
 `http://<BIND_IP>:8080` oeffnen (auf `localhost` oder ueber HTTPS; das Sitzungs-Cookie braucht einen sicheren Kontext), Setup-Code eingeben, Benutzername und Passwort waehlen und den
-Authenticator-Code bestaetigen. Danach eine Verbindung anlegen (Desktop = RDP, Terminal = SSH) und antippen. Das Passwort des Ziels tippst du bei jeder Verbindung ein, oder es wird auf Wunsch verschluesselt gespeichert (braucht `JULOS_SECRET_KEY` in `.env`: `openssl rand -base64 32`, sichern wie ein Passwort). Datenbank und Schlüssel sichert der Server täglich nach `~/julos-backup` (Einrichtung und Wiederherstellung: [docs/BACKUP.md](docs/BACKUP.md), englisch); den Ordner zusätzlich vom Rechner wegkopieren).
+Authenticator-Code bestaetigen. Danach eine Verbindung anlegen (Desktop = RDP, Desktop (VNC) = VNC, Terminal = SSH) und antippen. Das Passwort des Ziels tippst du bei jeder Verbindung ein, oder es wird auf Wunsch verschluesselt gespeichert (braucht `JULOS_SECRET_KEY` in `.env`: `openssl rand -base64 32`, sichern wie ein Passwort). Datenbank und Schlüssel sichert der Server täglich nach `~/julos-backup` (Einrichtung und Wiederherstellung: [docs/BACKUP.md](docs/BACKUP.md), englisch); den Ordner zusätzlich vom Rechner wegkopieren).
 Eine Desktop-Verbindung streamt die eigene Anzeige-Engine von JulOS (eigener RDP-Client auf dem Server, H.264 im Browser mit WebCodecs dekodiert; der Browser braucht H.264 und einen sicheren Kontext, sonst sagt die App es und bietet "Neu verbinden" an). Sie spielt auch den Ton des Desktops ab und kann das Mikrofon des Browsers an den Desktop senden (aus, bis du es im Menü einschaltest). Siehe [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Eine **VNC**-Verbindung (RFB 3.3 bis 3.8; ohne Anmeldung, VNC-Passwort oder VeNCrypt mit Zertifikat; Raw, CopyRect, RRE, Hextile, Zlib und ZRLE; Text in der Zwischenablage; der Desktop folgt dem Fenster, wo der Server es kann) läuft durch dieselbe Engine, Bildkodierung und Sitzungen; beim VNC-Passwort zählen nur die ersten 8 Zeichen und reines VNC ist nicht verschlüsselt, also nur im vertrauten Netz oder mit VeNCrypt benutzen. Umfang und Grenzen: [docs/VNC.md](docs/VNC.md) (englisch).
 Mit einer Grafikkarte im Container kodiert die Stream-Engine darauf (VAAPI, wahlweise H.265), siehe [docs/ENCODERS.md](docs/ENCODERS.md).
 Wahlweise (`JULOS_RDP_GFX=on`, standardmäßig aus) reicht die Stream-Engine das H.264 weiter, das ein RDP-Server durch seine Grafik-Pipeline schickt, statt neu zu kodieren, und fällt auf den eigenen Kodierer zurück, wenn der Server das nicht kann; das gängige xrdp von Debian kann es nicht, siehe [docs/RDPGFX.md](docs/RDPGFX.md).
 Reißt bei der Stream-Engine nur die Verbindung zum Browser ab (Handy wechselt das Netz, Tab im Hintergrund), bleibt die RDP-Sitzung `JULOS_STREAM_KEEP_SECONDS` Sekunden auf dem Server (Standard 300, 0 = aus) und der Browser hängt sich ohne neuen Login wieder an ([docs/SESSIONS.md](docs/SESSIONS.md)). Sie kann auch einen Ordner des Servers als Laufwerk in den Desktop reichen, nur Lesen, solange kein zweiter Schalter Schreiben erlaubt; standardmäßig aus, in der Server-Einstellung (`JULOS_DRIVE_ROOT`) und je Verbindung ([docs/DRIVES.md](docs/DRIVES.md)).
@@ -96,7 +97,7 @@ Die App selbst braucht diesen Weg nicht mehr: die Stream-Engine sendet Bilder un
 
 ## Aufbau
 
-- `src/JulOS.Frontend` Host: Web-Client (`wwwroot`: PWA), HTTP-API, WebSocket; `src/JulOS.Backend` Konten, Sitzungen, Verbindungen (PostgreSQL); `src/JulOS.Integrations` Anzeige-Engine (RDP-Client, H.264), SSH-Client und Agent-Client; `src/JulOS.Workers` Hintergrundjobs
+- `src/JulOS.Frontend` Host: Web-Client (`wwwroot`: PWA), HTTP-API, WebSocket; `src/JulOS.Backend` Konten, Sitzungen, Verbindungen (PostgreSQL); `src/JulOS.Integrations` Anzeige-Engine (RDP- und VNC-Client, H.264), SSH-Client und Agent-Client; `src/JulOS.Workers` Hintergrundjobs
 - `tests/` (`frontend/` laeuft mit node), `database/` (SQL-Migrationen), `deploy/dev/` die Test-Instanz mit Wegwerf-Zielen fuer SSH und RDP (siehe [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md); Test auf dem echten Handy: [docs/PHONE-TEST.md](docs/PHONE-TEST.md))
 - `tools/julos-agent.py` Linux-Agent (Fenster, Programme, Programm-Modus, ausgehende Verbindung zum Server), `tools/julos-clip.py` Foto-Helfer
 - `tools/install-linux-agent.sh`, `tools/julos-user.sh`, `tools/make-client-cert.sh`

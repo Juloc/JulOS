@@ -132,3 +132,58 @@ test('umlauts go through their German keys only on the German layout, otherwise 
   assert.ok(press('de').includes(OUT.key) && !press('de').includes(OUT.unicode));
   assert.ok(press('qwertz').includes(OUT.unicode) && !press('qwertz').includes(OUT.key));
 });
+
+// ---- VNC: Tasten gehen als X11-Keysym (Nachricht 18), nicht als Scancode oder Zeichen ----
+
+function vncClient() {
+  const c = new StreamClient('ws://x/screen', 'de', { keysyms: true });
+  c.connect('a=1');
+  const sent = FakeSocket.last.sent;
+  sent.length = 0;
+  return { c, sent };
+}
+const KEYSYM = 18;
+const keysymMessage = (keysym, down) => [KEYSYM, (keysym >>> 24) & 255, (keysym >>> 16) & 255, (keysym >>> 8) & 255, keysym & 255, down];
+
+test('VNC: a typed character is the keysym of that character, pressed and released as the browser did', () => {
+  const { c, sent } = vncClient();
+  c.sendKeyEvent(1, 0x7a);                // z
+  c.sendKeyEvent(0, 0x7a);
+  c.sendKeyEvent(1, 0xfc);                // ue: Latin-1 keysyms are their own value
+  c.sendKeyEvent(1, 0x01000000 + 0x20ac); // the euro sign as a Unicode keysym
+  assert.deepEqual(sent, [keysymMessage(0x7a, 1), keysymMessage(0x7a, 0), keysymMessage(0xfc, 1), keysymMessage(0x01000000 + 0x20ac, 1)]);
+});
+
+test('VNC: keys without a character and modifiers go as their keysyms, Ctrl+C as Ctrl down, c down, c up, Ctrl up', () => {
+  const { c, sent } = vncClient();
+  c.sendKeyEvent(1, 0xffe3);
+  c.sendKeyEvent(1, 0x63);
+  c.sendKeyEvent(0, 0x63);
+  c.sendKeyEvent(0, 0xffe3);
+  c.sendKeyEvent(1, 0xff0d);              // Return
+  c.sendKeyEvent(1, 0xffbe);              // F1
+  assert.deepEqual(sent.slice(0, 6), [keysymMessage(0xffe3, 1), keysymMessage(0x63, 1), keysymMessage(0x63, 0), keysymMessage(0xffe3, 0), keysymMessage(0xff0d, 1), keysymMessage(0xffbe, 1)]);
+  assert.ok(sent.every((m) => m[0] === KEYSYM), 'no scancodes and no characters');
+});
+
+test('VNC: losing the focus releases every key that is held', () => {
+  const { c, sent } = vncClient();
+  c.sendKeyEvent(1, 0xffe3);
+  c.sendKeyEvent(1, 0x61);
+  c.sendKeyEvent(0, 0x61);
+  sent.length = 0;
+  c.releaseAll();
+  assert.deepEqual(sent, [keysymMessage(0xffe3, 0)]);
+  sent.length = 0;
+  c.releaseAll();
+  assert.deepEqual(sent, [], 'nothing held, nothing sent');
+});
+
+test('RDP clients still send scancodes and characters (no keysym message)', () => {
+  const { c, sent } = client();
+  c.sendKeyEvent(1, 0xff0d);
+  c.sendKeyEvent(1, 0x61);
+  assert.ok(sent.every((m) => m[0] !== KEYSYM));
+  assert.equal(sent[0][0], OUT.key);
+  assert.equal(sent[1][0], OUT.unicode);
+});

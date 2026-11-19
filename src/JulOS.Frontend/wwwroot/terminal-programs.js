@@ -13,14 +13,15 @@ export const ASSISTANTS = ['claude', 'codex'];
 export const programOf = (c) => (c && c.kind === 'terminal' && PROGRAMS.includes(c.program) ? c.program : 'shell');
 export const isAssistant = (c) => ASSISTANTS.includes(programOf(c));
 
-/** Symbol und Beschriftung der Art einer Verbindung: 'claude' | 'codex' | 'terminal' | 'desktop' (Symbole: mobile.js und desktop.js). */
+/** Symbol und Beschriftung der Art einer Verbindung: 'claude' | 'codex' | 'terminal' | 'desktop' | 'vnc' (Symbole: mobile.js und desktop.js). */
 export function tileKind(c) {
-  if (!c || c.kind !== 'terminal') return 'desktop';
+  if (!c) return 'desktop';
+  if (c.kind !== 'terminal') return c.kind === 'vnc' ? 'vnc' : 'desktop';
   const p = programOf(c);
   return p === 'claude' || p === 'codex' ? p : 'terminal';
 }
 /** Schluessel (tk) der Art fuer Untertitel: Claude Code, Codex, Terminal, Desktop. */
-export const KIND_KEY = { claude: tk('prog.claude'), codex: tk('prog.codex'), terminal: tk('shell.kindTerminal'), desktop: tk('shell.kindDesktop') };
+export const KIND_KEY = { claude: tk('prog.claude'), codex: tk('prog.codex'), terminal: tk('shell.kindTerminal'), desktop: tk('shell.kindDesktop'), vnc: tk('shell.kindVnc') };
 
 /** Die Verbindungen mit diesem Programm. */
 export const withProgram = (conns, program) => conns.filter((c) => c.kind === 'terminal' && programOf(c) === program);

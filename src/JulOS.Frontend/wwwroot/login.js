@@ -20,14 +20,16 @@ export const isLoginError = (code) => code === LOGIN_REJECTED || code === LOGIN_
 /**
  * Was nach einem Anmeldefehler geschieht. tries: wie viele neue Versuche schon gemacht wurden (0 beim ersten Fehlschlag).
  * Gibt {ask: true, attempt, of, text} (Dialog zeigen) oder {ask: false, text} (aufgeben) zurueck.
+ * kind 'vnc': ein VNC-Server kennt nur ein Passwort (keinen Benutzer), die Texte sagen das.
  */
-export function loginStep(code, tries) {
+export function loginStep(code, tries, kind) {
   const used = Math.max(0, Number(tries) || 0);
   if (used >= MAX_LOGIN_TRIES) return { ask: false, text: t('login.giveUp', { n: MAX_LOGIN_TRIES }) };
   const attempt = used + 1;
+  const vnc = kind === 'vnc';
   const text = code === LOGIN_MISSING
-    ? t('login.missing')
-    : used === 0 ? t('login.rejected') : t('login.rejectedAgain');
+    ? (vnc ? t('login.missingVnc') : t('login.missing'))
+    : used === 0 ? (vnc ? t('login.rejectedVnc') : t('login.rejected')) : t('login.rejectedAgain');
   return { ask: true, attempt, of: MAX_LOGIN_TRIES, text };
 }
 
@@ -40,11 +42,11 @@ export function userOfTarget(target) {
 /**
  * Liest die Eingabe des Dialogs. Benutzer und Domaene werden beschnitten (Leerzeichen am Rand), Steuerzeichen und mehr als 256 Zeichen
  * gelten als Fehler (der Server prueft dasselbe). Das Passwort bleibt unveraendert (Leerzeichen koennen dazugehoeren), darf nicht leer sein.
- * Gibt {user, password, domain} oder {error} zurueck.
+ * Gibt {user, password, domain} oder {error} zurueck. Mit { user: false } (VNC) ist kein Benutzer noetig.
  */
-export function readLogin({ user = '', password = '', domain = '' } = {}) {
+export function readLogin({ user = '', password = '', domain = '' } = {}, { user: needUser = true } = {}) {
   const u = String(user).trim(), d = String(domain).trim(), p = String(password);
-  if (!u) return { error: t('login.needUser') };
+  if (needUser && !u) return { error: t('login.needUser') };
   if (!p) return { error: t('login.needPassword') };
   if (p.length > 256) return { error: t('login.passwordTooLong') };
   // eslint-disable-next-line no-control-regex

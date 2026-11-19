@@ -132,6 +132,33 @@ public sealed class RemoteHttpTests
     }
 
     [Fact]
+    public async Task A_vnc_ticket_needs_no_password_and_a_failed_connection_is_reported()
+    {
+        Assert.SkipUnless(JulOS.Integrations.Display.ScreenStream.IsAvailable, "libopenh264 fehlt: ohne Kodierer gibt es keine Desktop-Verbindung");
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db);
+        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (cookie, userId) = await SignedInAsync(app, c, db);
+        var connection = await new ConnectionStore(db.Data).CreateAsync(userId, "Alt", "vnc", "127.0.0.1", 1, "");
+
+        var response = await c.SendAsync(Post("/api/remote/ticket", new { connection = connection.Id, width = 858, height = 1449 }, cookie));      // ohne Passwort
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var j = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal(("vnc", "stream"), (j.GetProperty("kind").GetString(), j.GetProperty("engine").GetString()));
+        var ticket = j.GetProperty("ticket").GetString()!;
+
+        // Das Ziel ist nicht erreichbar: der Server sagt es im Klartext und schliesst
+        using var ws = await OpenAsync(app, ticket, cookie);
+        var (code, text) = await ReadErrorAsync(ws);
+        Assert.True(code is 0 or 515 or 520, $"unexpected status {code}: {text}");
+        Assert.Contains("VNC", text);
+
+        // Alle anderen Arten brauchen weiter ein Passwort
+        var rdp = await new ConnectionStore(db.Data).CreateAsync(userId, "PC", "desktop", "127.0.0.1", 1, "tester");
+        Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Post("/api/remote/ticket", new { connection = rdp.Id }, cookie))).StatusCode);
+    }
+
+    [Fact]
     public async Task Ticket_and_socket_need_a_session_and_the_own_origin()
     {
         Assert.SkipUnless(JulOS.Integrations.Display.ScreenStream.IsAvailable, "libopenh264 fehlt: ohne Kodierer gibt es keine Desktop-Verbindung");

@@ -85,7 +85,20 @@ internal static partial class AgentEndpoints
             catch (AgentUnavailableException) { return Results.Text("""{"available":false}""", "application/json", Encoding.UTF8); }
         });
 
-        app.MapGet("/api/agent/windows", (HttpContext ctx, AgentRouter router) => ViaAgent(ctx, router, HttpMethod.Get, "/v1/windows", null));
+        // Die Fensterliste kommt vom Agenten (nicht vertrauenswuerdig): jede Fenster-ID wird vom Client in einen Pfad gesetzt (/windows/<id>/activate), eine ID wie
+        // "../../auth/logout-others?" liesse den Browser bei einem Klick eine andere Route des Servers aufrufen. Darum nur Zahlen (wie bei POST unten), alles andere faellt weg.
+        app.MapGet("/api/agent/windows", async (HttpContext ctx, AgentRouter router) =>
+        {
+            var target = await router.ResolveAsync(ctx);
+            if (target.Rejection is { } rejected) return rejected;
+            if (target.Route == AgentRoute.Offline) return Error(502, "Der Agent ist gerade nicht verbunden.");
+            try
+            {
+                var reply = await target.SendAsync(HttpMethod.Get, "/v1/windows", null, ctx.RequestAborted);
+                return Results.Text(reply.Status == 200 ? WindowList.Sanitize(reply.Json) : reply.Json, "application/json", Encoding.UTF8, reply.Status);
+            }
+            catch (AgentUnavailableException) { return AgentGone(); }
+        });
         app.MapGet("/api/agent/apps", (HttpContext ctx, AgentRouter router) => ViaAgent(ctx, router, HttpMethod.Get, "/v1/apps", null));
 
         app.MapPost("/api/agent/windows/{id}/{action}", (string id, string action, ActivateRequest? body, HttpContext ctx, AgentRouter router) =>

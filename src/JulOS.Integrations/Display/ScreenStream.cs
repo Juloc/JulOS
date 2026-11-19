@@ -127,6 +127,10 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     private readonly LinkPacer _pacer;
     private readonly Lock _pacerGate = new();
     private int _kilobits;
+
+    // Die Stufe, die der Browser gewaehlt hat (int wegen Volatile), und die, mit der der Kodierer zuletzt eingestellt wurde
+    private int _quality = (int)StreamQuality.Auto;
+    private int _appliedQuality = (int)StreamQuality.Auto;
     private long _lastAckAt, _lastSentAt, _lastUpdateAt;
     private int _sequence;
     private int _disposed;
@@ -657,6 +661,25 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         }
     }
 
+    /// <summary>Die gewaehlte Bildrate-Stufe dieser Sitzung (siehe <see cref="StreamQuality"/>).</summary>
+    public StreamQuality Quality => (StreamQuality)Volatile.Read(ref _quality);
+
+    /// <summary>
+    /// Der Browser waehlt Bildrate und Bitrate (Nachricht 31): ein kleinster Abstand zwischen zwei Bildern und eine Obergrenze der Bitrate, bei
+    /// "Automatisch" wie bisher. Wirkt ab dem naechsten Bild; die Leitungsmessung darf die Bitrate weiter darunter senken. Solange die Bilder des
+    /// Servers durchgereicht werden (RDPGFX), gibt es nichts zu begrenzen.
+    /// </summary>
+    public void SetQuality(StreamQuality quality)
+    {
+        if (Interlocked.Exchange(ref _quality, (int)quality) != (int)quality)
+        {
+            Wake();
+        }
+    }
+
+    /// <summary>Die Bitrate (kbit/s), die gerade gilt (Leitungsmessung und Stufe zusammen); nur fuer Tests und Diagnose.</summary>
+    internal int CurrentKilobits => Volatile.Read(ref _kilobits);
+
     /// <summary>Das Senden eines Bildes an den WebSocket hat so lange gedauert: ein voller Sendepuffer bremst (siehe <see cref="LinkPacer"/>).</summary>
     public void SocketSent(long elapsedMilliseconds)
     {
@@ -901,7 +924,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
                 if (hasChange)
                 {
-                    var due = needKey ? now : lastEncodedAt + encoder.SuggestedInterval(pixels);
+                    var due = needKey ? now : lastEncodedAt + Math.Max(encoder.SuggestedInterval(pixels), StreamQualityPolicy.MinIntervalMs(Quality));
                     if (now >= due)
                     {
                         if (Convert(frame, left, top, width, height))
@@ -985,28 +1008,32 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     }
 
     // Langsame Leitung: Bitrate und Fenster folgen dem, was die Messung (LinkPacer) sagt.
-    private void AdaptToLink()
+    internal void AdaptToLink()
     {
-        if (!PacerAllowed)
+        var quality = Volatile.Read(ref _quality);
+        var qualityChanged = quality != _appliedQuality;
+        if (!PacerAllowed && !qualityChanged)
         {
             return;
         }
 
-        int kilobits, window;
+        int paced, window;
         lock (_pacerGate)
         {
-            if (!_pacer.Update(Environment.TickCount64))
+            if (!(PacerAllowed && _pacer.Update(Environment.TickCount64)) && !qualityChanged)
             {
                 return;
             }
 
-            (kilobits, window) = (_pacer.Kilobits, _pacer.Window);
+            (paced, window) = (_pacer.Kilobits, _pacer.Window);
         }
 
+        _appliedQuality = quality;
+        var kilobits = StreamQualityPolicy.Kilobits((StreamQuality)quality, _maxKilobitsPerSecond, paced);
         if (kilobits != _kilobits)
         {
-            _log?.LogDebug("Leitung: Bitrate {From} -> {To} kbit/s, Fenster {Window}", _kilobits, kilobits, window);
-            _kilobits = kilobits;
+            _log?.LogDebug("Leitung: Bitrate {From} -> {To} kbit/s, Fenster {Window}, Stufe {Quality}", _kilobits, kilobits, window, (StreamQuality)quality);
+            Volatile.Write(ref _kilobits, kilobits);
             _encoder?.TrySetBitrate(kilobits);
         }
 

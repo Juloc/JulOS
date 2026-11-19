@@ -49,6 +49,9 @@ namespace JulOS.Integrations.Display;
 ///  17 Beenden        (der Benutzer schliesst die Sitzung: der Server haelt sie nicht fuer ein Wiederverbinden)
 ///  30 Codecs         menge(1: Bit0 H.264, Bit1 H.265)   (was der Dekodierer kann; beim Verbinden steht dasselbe in der Adresse als codecs=, und noch einmal
 ///                                                        mit nur H.264, wenn der H.265-Dekodierer nicht geht: der Server wechselt dann mit einem Schluesselbild)
+///  31 Bildrate       stufe(1: 0 automatisch, 1 hoechstens 60 Bilder/s, 2 hoechstens 30, 3 sparsam: 15 Bilder/s und weniger Bitrate; siehe StreamQuality)
+///                                                        (je Sitzung, gilt bis zur naechsten Nachricht und bleibt beim Wiederaufnehmen; unbekannte Stufen werden ignoriert;
+///                                                        ohne Wirkung, solange die Bilder des Servers durchgereicht werden, RDPGFX)
 /// </summary>
 public static class ScreenProtocol
 {
@@ -58,7 +61,7 @@ public static class ScreenProtocol
     public const byte FromBrowserAck = 1, FromBrowserMove = 2, FromBrowserButton = 3, FromBrowserWheel = 4, FromBrowserKey = 5,
         FromBrowserUnicode = 6, FromBrowserResize = 7, FromBrowserKeyFrame = 8, FromBrowserClipboard = 9,
         FromBrowserSendBegin = 10, FromBrowserSendChunk = 11, FromBrowserSendEnd = 12, FromBrowserSendCancel = 13,
-        FromBrowserFileRequest = 14, FromBrowserFileCancel = 15, FromBrowserPause = 16, FromBrowserEnd = 17, FromBrowserCodecs = 30;
+        FromBrowserFileRequest = 14, FromBrowserFileCancel = 15, FromBrowserPause = 16, FromBrowserEnd = 17, FromBrowserCodecs = 30, FromBrowserQuality = 31;
 
     /// <summary>Nachrichten, die laenger als eine Eingabe sein duerfen (Text, Dateiname, Stueck einer Datei).</summary>
     public static bool MayBeLong(byte type) => type is FromBrowserClipboard or FromBrowserSendBegin or FromBrowserSendChunk or FromBrowserMicrophone;

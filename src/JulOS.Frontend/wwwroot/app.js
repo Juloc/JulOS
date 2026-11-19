@@ -329,6 +329,15 @@ function toggleFullscreen() {
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   else document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => toast('Vollbild nicht möglich'));
 }
+// Im Vollbild die Systemtasten (Esc, Alt+Tab, Windows-Taste, Strg+W/T/N) an den fernen Rechner geben statt an den Browser (Tastatursperre: nur Chrome und
+// Edge, nur im Vollbild und nur auf sicheren Seiten). Esc gedrueckt halten beendet das Vollbild weiterhin.
+const LOCKED_KEYS = ['Escape', 'Tab', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight', 'KeyW', 'KeyT', 'KeyN', 'F4', 'F5'];
+document.addEventListener('fullscreenchange', () => {
+  const kb = navigator.keyboard;
+  if (!kb || !kb.lock) return;
+  if (document.fullscreenElement) kb.lock(LOCKED_KEYS).catch(() => { /* nicht erlaubt: die Tasten bleiben beim Browser */ });
+  else if (kb.unlock) kb.unlock();
+});
 function openClipDlg() {
   const s = cur();
   el.remoteClip.value = (s && s.clipText) || '';
@@ -1218,7 +1227,7 @@ export class RemoteSession extends Session {
     const fwd = (state) => {
       if (this.client !== client) return;
       const s = display.getScale() || 1;
-      client.sendMouseState(mouseState(state.x / s, state.y / s, state.left, state.middle, state.right, state.up, state.down));
+      client.sendMouseState({ ...state, x: state.x / s, y: state.y / s });
     };
     mouse.onmousedown = mouse.onmouseup = mouse.onmousemove = fwd;
     mouse.onmouseout = () => {};

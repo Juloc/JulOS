@@ -13,6 +13,8 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 - Konto in der Oberfläche: Passwort ändern und Authenticator neu einrichten im Profil der Handy-Shell und in den Desktop-Einstellungen (auch im System-Menü). Beides verlangt jedes Mal das aktuelle Passwort; ein neuer Authenticator gilt erst, wenn sein erster Code eingegeben wurde, und bringt neue Wiederherstellungscodes (die alten entfallen). Andere Geräte werden abgemeldet, dieses bleibt angemeldet. Mit Ratenbegrenzung wie bei der Anmeldung und Einträgen im Server-Log.
 - Das Authenticator-Geheimnis wird auch als QR-Code gezeigt (bei der Ersteinrichtung und beim Neueinrichten), im Browser erzeugt, ohne externe Bibliothek.
 
+- Eingabe: Die Zurück- und Vorwärts-Taste der Maus erreichen jetzt das Ziel (Taste 3 und 4), das Mausrad geht auch waagerecht und in feinen Schritten durch (Windows-Einheiten statt fester Rasten), und beim Fokusverlust oder Tab-Wechsel werden alle gedrückten Tasten und Maustasten am Ziel losgelassen (kein hängendes Alt mehr nach Alt+Tab). Im Vollbild werden Systemtasten (Esc, Alt+Tab, Windows-Taste, Strg+W/T/N) mit der Tastatursperre des Browsers (Chrome, Edge) an das Ziel gegeben.
+
 ### Geändert
 - Dockerfile: die SDK-Stufe läuft mit `--platform=$BUILDPLATFORM`, der arm64-Bau braucht dafür keine Emulation mehr.
 

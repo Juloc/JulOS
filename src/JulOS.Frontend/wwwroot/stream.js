@@ -11,7 +11,7 @@
  *                      30 Kodierer (codec, GPU ja/nein, Name: nur zum Anzeigen); ein Bild hat in flags Bit 1 gesetzt, wenn es H.265 ist
  *                      40 Nachbesserung (x, y, breite, hoehe u16, PNG: ein ruhendes Rechteck verlustfrei, kommt ueber das Video),
  *                      41 Nachbesserung weg (anzahl u16, je x, y, breite, hoehe: dort hat sich der Bildschirm geaendert)
- *   Browser -> Server: 1 Bestaetigung (Folgenummer u32: alle Bilder bis dahin), 2 Maus bewegt, 3 Maustaste, 4 Mausrad, 5 Taste (Scancode), 6 Zeichen, 7 Fenstergroesse, 8 Schluesselbild,
+ *   Browser -> Server: 1 Bestaetigung (Folgenummer u32: alle Bilder bis dahin), 2 Maus bewegt, 3 Maustaste (0 links, 1 Mitte, 2 rechts, 3 zurueck, 4 vor), 4 Mausrad (Betrag i16 in Windows-Einheiten, 120 je Raste; Byte: waagerecht), 5 Taste (Scancode), 6 Zeichen, 7 Fenstergroesse, 8 Schluesselbild,
  *                      9 Zwischenablage (UTF-8-Text, bis 1 MiB; der ferne Rechner holt ihn, wenn er einfuegt),
  *                      10 Senden Anfang (Bild als BMP oder Datei), 11 Stueck, 12 Ende, 13 Abbruch, 14 Datei der VM holen, 15 Holen Abbruch,
  *                      16 Pause (1 = die Ansicht ist nicht zu sehen: der Server kodiert nicht, 0 = weiter),
@@ -176,7 +176,9 @@ export class StreamClient {
     this.state = 0;
     this.socket = null; this.decoder = null; this.codec = '';
     this.connected = false; this.closing = false;
-    this.last = { x: -1, y: -1, left: false, middle: false, right: false, up: false, down: false };
+    this.last = { x: -1, y: -1, left: false, middle: false, right: false, back: false, forward: false, up: false, down: false };
+    this.focusLost = (e) => { if (e.type === 'blur' || document.hidden) this.releaseAll(); };
+    this.held = new Set();      // gedrueckte Tasten (Scancode und Erweiterung), damit sie beim Fokusverlust losgelassen werden koennen
     this.mods = { ctrl: false, alt: false, super: false };
     this.layout = layout;
     this.stats = { pictures: 0, dropped: 0, bytes: 0 };
@@ -219,6 +221,7 @@ export class StreamClient {
     socket.binaryType = 'arraybuffer';
     this.socket = socket;
     this.watch = setInterval(() => this.watchDecoder(), 500);
+    window.addEventListener('blur', this.focusLost); document.addEventListener('visibilitychange', this.focusLost);
     socket.onmessage = (e) => { if (this.socket === socket) this.receive(e.data); };
     socket.onclose = () => { if (this.socket === socket) this.finish(); };
     socket.onerror = () => { if (this.socket === socket && !this.connected && this.onerror) this.onerror({ code: 520, message: 'Keine Verbindung zum Server.' }); };
@@ -226,7 +229,7 @@ export class StreamClient {
 
   // keep: nur die Leitung kappen (der Server haelt die Sitzung, ein neuer Client nimmt sie mit dem Token wieder auf); sonst "Beenden" melden
   disconnect(keep = false) {
-    clearInterval(this.watch);
+    clearInterval(this.watch); this.unwatchFocus();
     this.closing = true;
     if (!keep) this.send1(OUT.end);
     const s = this.socket; this.socket = null;
@@ -237,7 +240,7 @@ export class StreamClient {
   }
 
   finish() {
-    clearInterval(this.watch);
+    clearInterval(this.watch); this.unwatchFocus();
     this.socket = null; this.closeDecoder(); this.audio.close();
     for (const t of this.transfers.values()) t.result({ code: 4, text: 'Verbindung beendet.' });
     for (const f of this.fetches.values()) f.fail('Verbindung beendet.');
@@ -496,12 +499,33 @@ export class StreamClient {
       const b = new DataView(new ArrayBuffer(5)); b.setUint8(0, OUT.move); b.setUint16(1, x); b.setUint16(3, y); this.send(b.buffer);
       this.display.setPointer(x, y); l.x = x; l.y = y;
     }
-    for (const [name, button] of [['left', 0], ['middle', 1], ['right', 2]]) {
+    for (const [name, button] of [['left', 0], ['middle', 1], ['right', 2], ['back', 3], ['forward', 4]]) {
       if (!!s[name] !== l[name]) { this.send(Uint8Array.of(OUT.button, button, s[name] ? 1 : 0)); l[name] = !!s[name]; }
     }
     for (const [name, delta] of [['up', 120], ['down', -120]]) {
-      if (s[name] && !l[name]) { const b = new DataView(new ArrayBuffer(4)); b.setUint8(0, OUT.wheel); b.setInt16(1, delta); b.setUint8(3, 0); this.send(b.buffer); }
+      if (s[name] && !l[name]) this.sendWheel(delta, false);
       l[name] = !!s[name];
+    }
+    // Raddrehung in Windows-Einheiten (120 je Raste, auch feinere Schritte), senkrecht und waagerecht
+    if (s.wheel) this.sendWheel(s.wheel, false);
+    if (s.hwheel) this.sendWheel(s.hwheel, true);
+  }
+
+  unwatchFocus() { window.removeEventListener('blur', this.focusLost); document.removeEventListener('visibilitychange', this.focusLost); }
+
+  sendWheel(delta, horizontal) {
+    const b = new DataView(new ArrayBuffer(4)); b.setUint8(0, OUT.wheel); b.setInt16(1, Math.max(-32768, Math.min(32767, Math.round(delta)))); b.setUint8(3, horizontal ? 1 : 0); this.send(b.buffer);
+  }
+
+  // Alles loslassen, was am fernen Rechner gedrueckt ist: sonst bleibt eine Taste haengen, wenn der Browser den Fokus verliert (Alt+Tab, Tab-Wechsel,
+  // Dialog), weil das Loslassen dann nie bei uns ankommt. Der ferne Rechner bekommt die Freigabe, die Tasten- und Umschaltzustaende hier werden geloescht.
+  releaseAll() {
+    for (const code of this.held) this.send(Uint8Array.of(OUT.key, code >> 1, (code & 1)));
+    this.held.clear();
+    this.mods.ctrl = this.mods.alt = this.mods.super = false;
+    const l = this.last;
+    for (const [name, button] of [['left', 0], ['middle', 1], ['right', 2], ['back', 3], ['forward', 4]]) {
+      if (l[name]) { this.send(Uint8Array.of(OUT.button, button, 0)); l[name] = false; }
     }
   }
 
@@ -533,7 +557,11 @@ export class StreamClient {
     if (altgr) this.key(0x38, 1, false);
   }
 
-  key(scancode, extended, pressed) { this.send(Uint8Array.of(OUT.key, scancode, (extended ? 1 : 0) | (pressed ? 2 : 0))); }
+  key(scancode, extended, pressed) {
+    const id = (scancode << 1) | (extended ? 1 : 0);
+    if (pressed) this.held.add(id); else this.held.delete(id);
+    this.send(Uint8Array.of(OUT.key, scancode, (extended ? 1 : 0) | (pressed ? 2 : 0)));
+  }
 
   // Text fuer die Zwischenablage des fernen Rechners (UTF-8): eine Nachricht, der ferne Rechner holt ihn, wenn er einfuegt
   sendClipboardText(text) {

@@ -6,21 +6,21 @@
  * Textfarben sind auf WCAG AA (4,5:1) gegen die Flaechen geprueft, Bedienelement-Raender und Symbole auf 3:1. */
 html.desktop {
   /* Text */
-  --dk-ink: #1f2340; --dk-t1: #25284a; --dk-t2: #3a3d63; --dk-t3: #4a4d70; --dk-sub: #565a7c; --dk-hint: #5f6385; --dk-dis: #8e92b0;
+  --dk-ink: #1f2340; --dk-t1: #25284a; --dk-t2: #3a3d63; --dk-t3: #4a4d70; --dk-sub: #50547a; --dk-hint: #52567a; --dk-dis: #8e92b0;
   /* Akzent und Zustaende */
   --dk-accent: #6a58e6; --dk-accent2: #4c64da; --dk-accent-text: #4b3fb8; --dk-accent-strong: #3a29b8; --dk-accent-ring: rgba(106, 88, 230, .6);
-  --dk-ok: #1fa971; --dk-ok-text: #14744f; --dk-ok-ring: rgba(31, 169, 113, .2); --dk-ok-bg: rgba(47, 184, 114, .16);
-  --dk-bad-text: #b3262b; --dk-bad-bg: rgba(229, 72, 77, .15);
-  --dk-st-off: #6f7494; --dk-st-ok: #1f9d63; --dk-st-busy: #c27a00; --dk-st-bad: #d13438;
+  --dk-ok: #1fa971; --dk-ok-text: #0d5f3e; --dk-ok-ring: rgba(31, 169, 113, .2); --dk-ok-bg: rgba(47, 184, 114, .16);
+  --dk-bad-text: #a31f24; --dk-bad-bg: rgba(229, 72, 77, .15);
+  --dk-st-off: #646989; --dk-st-ok: #167a4d; --dk-st-busy: #9a5d00; --dk-st-bad: #c52b30;
   --dk-star: #f3b400; --dk-star-edge: #9a6a00; --dk-dir: #b86a0c; --dk-dir-fill: rgba(247, 199, 106, .55);
   --dk-close: #d13438; --dk-close-fg: #fff; --dk-av1: #c2478a; --dk-av2: #6a58e6; --dk-av-fg: #fff;
   --dk-pri-a: #6a58e6; --dk-pri-b: #4c64da; --dk-pri-fg: #fff; --dk-pri-shw: 96, 90, 230; --dk-hot-a: #d98a2b; --dk-hot-b: #d13438;
   /* Flaechen: Glas, Karten, Felder */
   --dk-body: #d9d4f2;
-  --dk-glass: rgba(255, 255, 255, .64); --dk-glass-strong: rgba(255, 255, 255, .82); --dk-glass-session: rgba(255, 255, 255, .78); --dk-edge: rgba(255, 255, 255, .78);
-  --dk-bar: rgba(255, 255, 255, .5); --dk-bar-edge: rgba(255, 255, 255, .7); --dk-dock: rgba(255, 255, 255, .55); --dk-dock-edge: rgba(255, 255, 255, .8); --dk-knob: rgba(255, 255, 255, .6);
+  --dk-glass: rgba(255, 255, 255, .74); --dk-glass-strong: rgba(255, 255, 255, .9); --dk-glass-session: rgba(255, 255, 255, .82); --dk-edge: rgba(255, 255, 255, .78);
+  --dk-bar: rgba(255, 255, 255, .62); --dk-bar-edge: rgba(255, 255, 255, .7); --dk-dock: rgba(255, 255, 255, .68); --dk-dock-edge: rgba(255, 255, 255, .8); --dk-knob: rgba(255, 255, 255, .6);
   --dk-card: rgba(255, 255, 255, .72); --dk-card-edge: rgba(255, 255, 255, .9); --dk-card-hi: rgba(255, 255, 255, .92); --dk-card-dim: rgba(255, 255, 255, .4);
-  --dk-field: rgba(255, 255, 255, .8); --dk-ctl-edge: #7f7ba8; --dk-overlay-box: rgba(255, 255, 255, .94);
+  --dk-field: rgba(255, 255, 255, .8); --dk-ctl-edge: #706c9e; --dk-overlay-box: rgba(255, 255, 255, .94);
   --dk-dlg: rgba(255, 255, 255, .92); --dk-dlg-backdrop: rgba(60, 50, 110, .28);
   --dk-hover: rgba(106, 88, 230, .14); --dk-hover-lo: rgba(106, 88, 230, .1); --dk-hover-n: rgba(90, 80, 150, .14); --dk-sel: rgba(106, 88, 230, .17);
   --dk-line: rgba(90, 80, 150, .12); --dk-line2: rgba(90, 80, 150, .2); --dk-scroll: rgba(90, 80, 150, .22); --dk-soft: rgba(106, 88, 230, .1);
@@ -29,7 +29,7 @@ html.desktop {
   --dk-shadow: 0 18px 48px rgba(var(--dk-shw), .22), 0 2px 8px rgba(var(--dk-shw), .08);
   --dk-hero-bg: linear-gradient(180deg, #f6d9ea, #d7dcf6); --dk-hero-a: rgba(255, 255, 255, .72); --dk-hero-b: rgba(255, 255, 255, .12);
   /* Material-Namen, die der Rest der Oberflaeche (style.css) benutzt */
-  --dk-surface: #f7f5fd; --dk-surface-container: #fbfaff; --dk-surface-high: #efecfa; --dk-on-surface: #1f2340; --dk-on-variant: #565a7c; --dk-outline: #c9c6e4;
+  --dk-surface: #f7f5fd; --dk-surface-container: #fbfaff; --dk-surface-high: #efecfa; --dk-on-surface: #1f2340; --dk-on-variant: #50547a; --dk-outline: #c9c6e4;
   --dk-primary: #6a58e6; --dk-on-primary: #ffffff; --dk-primary-container: #e4defc; --dk-on-primary-container: #2a1f7a;
   --dk-secondary-container: #ebe8f9; --dk-on-secondary-container: #2b2d52; --dk-error: #c62828; --dk-on-error: #ffffff; --dk-error-container: #ffe0dc;
   /* Hintergrundbild (desktop.js, scene()) und Logo */
@@ -39,18 +39,18 @@ html.desktop {
   --dk-tile-fg: #fff; --dk-logo-a: #a06cf0; --dk-logo-b: #3f8cf5; --dk-logo-hi: #fff;
 }
 html.desktop[data-scheme="dark"] {
-  --dk-ink: #f3f1fc; --dk-t1: #ebe9f7; --dk-t2: #d3d0ea; --dk-t3: #bab7d8; --dk-sub: #b4b1d0; --dk-hint: #a5a2c4; --dk-dis: #6f6c8e;
+  --dk-ink: #f3f1fc; --dk-t1: #ebe9f7; --dk-t2: #d3d0ea; --dk-t3: #bab7d8; --dk-sub: #bdbad9; --dk-hint: #b9b6d6; --dk-dis: #6f6c8e;
   --dk-accent: #9a8cff; --dk-accent2: #7b95ff; --dk-accent-text: #bcb1ff; --dk-accent-strong: #d3ccff; --dk-accent-ring: rgba(169, 156, 255, .65);
   --dk-ok: #34c48a; --dk-ok-text: #5fd9a6; --dk-ok-ring: rgba(52, 196, 138, .28); --dk-ok-bg: rgba(52, 196, 138, .18);
   --dk-bad-text: #ff9a9d; --dk-bad-bg: rgba(255, 110, 115, .18);
-  --dk-st-off: #8e8cac; --dk-st-ok: #3ccf8c; --dk-st-busy: #f0b030; --dk-st-bad: #ff7a7d;
+  --dk-st-off: #9a98b8; --dk-st-ok: #3ccf8c; --dk-st-busy: #f0b030; --dk-st-bad: #ff7a7d;
   --dk-star-edge: #ffd24d; --dk-dir: #f0b25a; --dk-dir-fill: rgba(240, 178, 90, .25);
   --dk-pri-a: #9a8cff; --dk-pri-b: #7b95ff; --dk-pri-fg: #14123a; --dk-pri-shw: 0, 0, 0; --dk-hot-a: #f0b030; --dk-hot-b: #ff7a7d;
   --dk-body: #0e0d18;
-  --dk-glass: rgba(26, 25, 40, .62); --dk-glass-strong: rgba(26, 25, 40, .9); --dk-glass-session: rgba(26, 25, 40, .8); --dk-edge: rgba(255, 255, 255, .12);
-  --dk-bar: rgba(20, 19, 32, .6); --dk-bar-edge: rgba(255, 255, 255, .1); --dk-dock: rgba(24, 23, 38, .6); --dk-dock-edge: rgba(255, 255, 255, .14); --dk-knob: rgba(24, 23, 38, .7);
+  --dk-glass: rgba(24, 23, 38, .8); --dk-glass-strong: rgba(24, 23, 38, .94); --dk-glass-session: rgba(24, 23, 38, .86); --dk-edge: rgba(255, 255, 255, .12);
+  --dk-bar: rgba(18, 17, 30, .74); --dk-bar-edge: rgba(255, 255, 255, .1); --dk-dock: rgba(22, 21, 36, .72); --dk-dock-edge: rgba(255, 255, 255, .14); --dk-knob: rgba(24, 23, 38, .7);
   --dk-card: rgba(255, 255, 255, .06); --dk-card-edge: rgba(255, 255, 255, .1); --dk-card-hi: rgba(255, 255, 255, .13); --dk-card-dim: rgba(255, 255, 255, .03);
-  --dk-field: rgba(255, 255, 255, .08); --dk-ctl-edge: #8a87b8; --dk-overlay-box: rgba(26, 25, 40, .96);
+  --dk-field: rgba(255, 255, 255, .08); --dk-ctl-edge: #9a97c8; --dk-overlay-box: rgba(26, 25, 40, .96);
   --dk-dlg: rgba(28, 27, 42, .95); --dk-dlg-backdrop: rgba(4, 3, 12, .6);
   --dk-hover: rgba(169, 156, 255, .18); --dk-hover-lo: rgba(169, 156, 255, .12); --dk-hover-n: rgba(255, 255, 255, .1); --dk-sel: rgba(169, 156, 255, .26);
   --dk-line: rgba(255, 255, 255, .1); --dk-line2: rgba(255, 255, 255, .18); --dk-scroll: rgba(255, 255, 255, .22); --dk-soft: rgba(169, 156, 255, .14);
@@ -172,7 +172,7 @@ html.desktop .sv .sv-overlay .box { border-radius: 20px; background: var(--dk-ov
 .dk-main { overflow-y: auto; padding: 0 20px 22px; min-width: 0; }
 .dk-main::-webkit-scrollbar { width: 8px; } .dk-main::-webkit-scrollbar-thumb { background: var(--dk-scroll); border-radius: 8px; }
 .dk-main h3 { margin: 20px 0 10px; font-size: 15.5px; font-weight: 650; color: var(--dk-t1); display: flex; align-items: center; gap: 10px; }
-.dk-main h3 .dk-more { margin-left: auto; font-size: 13px; font-weight: 500; color: var(--dk-accent); }
+.dk-main h3 .dk-more { margin-left: auto; font-size: 13px; font-weight: 500; color: var(--dk-accent-text); }
 .dk-hero { position: relative; height: 150px; border-radius: 16px; overflow: hidden; margin-top: 2px; background: var(--dk-hero-bg); }
 .dk-hero .dk-wp { position: absolute; inset: 0; }
 .dk-hero .dk-wp svg { width: 100%; height: 100%; }
@@ -338,7 +338,7 @@ html.desktop .sv .sv-overlay .box { border-radius: 20px; background: var(--dk-ov
 @media (prefers-reduced-motion: reduce) { .dk-dock, .dk-knob { transition: none; } }
 
 /* ---------- Tastatur: wohin wird getippt ---------- */
-.dk-keys { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; margin-right: 4px; border-radius: 99px; font-size: 12px; color: var(--dk-hint); background: var(--dk-hover-lo); white-space: nowrap; }
+.dk-keys { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; margin-right: 4px; border-radius: 99px; font-size: 12px; color: var(--dk-sub); background: var(--dk-hover-lo); white-space: nowrap; }
 .dk-keys[hidden] { display: none; }
 .dk-keys svg.dk-i { width: 14px; height: 14px; }
 .dk-keys.on { color: var(--dk-accent-strong); background: var(--dk-sel); font-weight: 600; }
@@ -401,3 +401,6 @@ html.desktop .sv .sv-menu [data-only="phone"] { display: none; }
 .dk-gh .dk-fi2 svg { width: 16px; height: 16px; }
 .dk-star svg { fill: none; }
 .dk-star.on svg { fill: var(--dk-star); stroke: var(--dk-star-edge); }
+
+/* Platzhaltertext in den Dialogen: lesbar in beiden Schemata (der Standard des Browsers ist ein festes Grau) */
+html.desktop dialog ::placeholder { color: var(--dk-hint); opacity: 1; }

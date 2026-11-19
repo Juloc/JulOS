@@ -314,6 +314,49 @@ public sealed class BackupCopyTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Real_sftp_target_logs_in_with_a_private_key_file_with_and_without_passphrase(bool withPassphrase)
+    {
+        var (host, port, password) = RealSshTests.Target();
+        Assert.SkipUnless(File.Exists("/usr/bin/ssh-keygen"), "ssh-keygen fehlt");
+        var keyDir = Dir("keys");
+        var keyFile = Path.Combine(keyDir, "id_test");
+        var passphrase = withPassphrase ? "wegwerf-phrase" : "";
+        using (var gen = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("/usr/bin/ssh-keygen", ["-q", "-t", "ed25519", "-N", passphrase, "-C", "julos-test", "-f", keyFile]) { RedirectStandardError = true })!)
+        {
+            await gen.WaitForExitAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(0, gen.ExitCode);
+        }
+        var pub = File.ReadAllText(keyFile + ".pub");
+        const string authorized = "/config/.ssh/authorized_keys";
+        using var admin = new SftpClient(host, port, "tester", password);
+        admin.Connect();
+        var before = admin.ReadAllBytes(authorized);                                           // Wegwerf-Ziel: vorher merken, hinterher zuruecksetzen
+        try
+        {
+            admin.WriteAllBytes(authorized, [.. before, .. System.Text.Encoding.ASCII.GetBytes(pub)]);
+            var data = Dir("kd");
+            var o = new BackupCopyOptions(BackupCopyMode.Sftp, Host: host, Port: port, User: "tester", RemotePath: "/config", KeyFile: keyFile,
+                KeyPassphraseFile: withPassphrase ? WriteFile("phrase", passphrase + "\n") : null, HostKeyFile: Path.Combine(data, BackupCopyOptions.HostKeyFileName));
+            await using var t = new SftpBackupTarget(o, NullLogger.Instance);
+            await t.OpenAsync(TestContext.Current.CancellationToken);                          // Anmeldung nur mit dem Schluessel (kein Passwort in den Einstellungen)
+            await t.PutAsync("julos-key-test.bin", new MemoryStream([9, 8, 7]), TestContext.Current.CancellationToken);
+            Assert.Equal([9, 8, 7], await t.ReadAsync("julos-key-test.bin", TestContext.Current.CancellationToken));
+            await t.DeleteAsync("julos-key-test.bin", TestContext.Current.CancellationToken);
+            Assert.Null(await t.ReadAsync("julos-key-test.bin", TestContext.Current.CancellationToken));
+
+            if (withPassphrase)                                                                // falsche Passphrase: klare Meldung
+            {
+                var wrong = o with { KeyPassphraseFile = WriteFile("phrase2", "falsch") };
+                var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () => { await using var w = new SftpBackupTarget(wrong, NullLogger.Instance); await w.OpenAsync(TestContext.Current.CancellationToken); });
+                Assert.Contains("Schlüssel", ex.Message);
+            }
+        }
+        finally { admin.WriteAllBytes(authorized, before); }
+    }
+
     [Fact]
     public async Task Real_sftp_target_fails_with_a_clear_message_for_a_wrong_password_and_a_missing_folder()
     {

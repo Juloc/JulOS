@@ -21,7 +21,7 @@ public sealed class SshNetSftpSession : ISftpSession
         if (o.PrivateKeyFile is not null)
         {
             try { methods.Add(new PrivateKeyAuthenticationMethod(o.User, new PrivateKeyFile(o.PrivateKeyFile, o.KeyPassphrase))); }
-            catch (Exception e) when (e is SshException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+            catch (Exception e) when (e is Renci.SshNet.Common.SshException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
             {
                 throw new SshException(SshFailure.Failed, "Der private SFTP-Schlüssel lässt sich nicht lesen (Datei, Format oder Passphrase falsch).", e);
             }
@@ -65,7 +65,7 @@ public sealed class SshNetSftpSession : ISftpSession
         {
             Client.UploadFile(data, tempPath, canOverride: true);
             try { Client.RenameFile(tempPath, finalPath, isPosix: true); }                 // ersetzt atomar (OpenSSH); sonst unten
-            catch (SshException) when (Client.Exists(finalPath))
+            catch (Exception) when (Client.Exists(finalPath))                     // Ziel ohne ersetzendes Umbenennen: erst die alte Datei weg
             {
                 Client.DeleteFile(finalPath);
                 Client.RenameFile(tempPath, finalPath);

@@ -11,6 +11,8 @@ import { KB_SETTLE_MS, StageBase, effectiveStage, panOffset, panDrag, normalizeK
 import { Session, Sessions } from './sessions.js';
 import { createPrefs } from './prefs.js';
 import { isScheme, normalizeScheme, isDark } from './scheme.js';
+import { t, tp, tk, applyDom, getPref, setPref, isPref } from './i18n.js';
+import { serverMsg } from './i18n-errors.js';
 import { LIMITS, fmtSize, bmpFromImage, pngFromBytes, filesFromTransfer, itemsFromFiles, planSend, topLevel, progressText, startDownload, saveBlob } from './clip.js';
 
 /* =====================================================================
@@ -24,6 +26,8 @@ import { LIMITS, fmtSize, bmpFromImage, pngFromBytes, filesFromTransfer, itemsFr
  * ist, sagt Sessions.active.
  * ===================================================================== */
 const $ = (s, r = document) => r.querySelector(s);
+applyDom(document);     // statische Texte der Seite in der gewaehlten Sprache (der Text im HTML bleibt als deutscher Rueckfall)
+$('#pasteBox').dataset.ph = t('app.pasteHere');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 /** Wohin das Ticket gilt: eine gespeicherte Verbindung oder (Quick Connect) die Angaben der Sitzung selbst. */
@@ -39,6 +43,7 @@ export const prefs = createPrefs({
   storage: localStorage,
   local: () => ({
     keybar: normalizeRows(store.get('rows4', null)) ? { rows: store.get('rows4', null) } : null,       // null: nie veraendert, nichts hochzuladen
+    lang: localStorage.getItem('pd.lang') !== null ? { lang: getPref() } : null,
     theme: localStorage.getItem('pd.seed') !== null || localStorage.getItem('pd.scheme') !== null ? { seed: validSeed(S.seed) ? S.seed : 'system', scheme: S.scheme } : null,
   }),
 });
@@ -228,11 +233,11 @@ const charKeysym = (ch) => {
 
 function parseChord(str) {
   const parts = String(str).split('+').map((s) => s.trim().toLowerCase()).filter(Boolean);
-  if (!parts.length) throw new Error('Keine Tasten angegeben');
+  if (!parts.length) throw new Error(t('app.errNoKeys'));
   return parts.map((p) => {
     if (KS[p] !== undefined) return KS[p];
     if ([...p].length === 1) return charKeysym(p);
-    throw new Error('Unbekannte Taste: ' + p);
+    throw new Error(t('app.errUnknownKey', { key: p }));
   });
 }
 
@@ -257,6 +262,17 @@ const DEFAULT_ROWS = [
     ACT('expand_less', 'expand'), ACT('keyboard', 'keyboard') ] },
 ];
 const clone = (o) => JSON.parse(JSON.stringify(o));
+/** Standardtitel der Gruppen und Standardbeschriftungen der Tasten: gespeichert (lokal und auf dem Server) steht der deutsche Text; angezeigt wird er in der Sprache der
+    Oberflaeche, aber nur, wenn er genau dem Standard entspricht (eigene Beschriftungen bleiben, wie sie sind). */
+const ROW_TITLES = { keys: ['Tasten', tk('app.keys')], combos: ['Combos', tk('app.rowCombos')], funcs: ['Funktionen', tk('app.rowFuncs')], bar: ['Leiste', tk('app.rowBar')] };
+const KEY_LABELS = {
+  Entf: tk('app.keyDel'), Pos1: tk('app.keyHome'), Ende: tk('app.keyEnd'), 'Bild↑': tk('app.keyPgUp'), 'Bild↓': tk('app.keyPgDn'), Strg: tk('app.keyCtrl'),
+  'Strg+C': tk('app.keyCtrlC'), 'Strg+V': tk('app.keyCtrlV'), 'Strg+X': tk('app.keyCtrlX'), 'Strg+A': tk('app.keyCtrlA'), 'Strg+Z': tk('app.keyCtrlZ'),
+  'Strg+F': tk('app.keyCtrlF'), 'Strg+⇧+T': tk('app.keyCtrlShiftT'), 'Bild einfügen': tk('app.photoTitle'), 'Foto wählen': tk('app.keyChoosePhoto'),
+  'Datei senden': tk('app.sendFile'), 'Ordner senden': tk('app.sendFolder'), 'Text senden': tk('app.sendText'), Passwort: tk('app.password'),
+};
+const rowTitle = (row) => { const d = ROW_TITLES[row.id]; return d && row.title === d[0] ? t(d[1]) : row.title; };
+const keyLabel = (label) => (Object.hasOwn(KEY_LABELS, label) ? t(KEY_LABELS[label]) : label);
 /** Prueft eine gespeicherte Tastenbelegung (lokal oder vom Server); ohne die festen Gruppen taugt sie nicht (null). */
 function normalizeRows(saved) {
   if (!(Array.isArray(saved) && saved.some((r) => r.fixed) && ['keys', 'combos', 'funcs'].every((id) => saved.some((r) => r.id === id)))) return null;
@@ -321,16 +337,16 @@ function enableDrag(btn) {
 }
 /* ----- Editor fuer eine Taste ----- */
 function updateKeyEditorHints() {
-  const t = el.keyType.value;
-  if (t === 'chord') { el.keyValueLabel.textContent = 'Tasten'; el.keyHint.textContent = 'Mit + verbinden, z. B. ctrl+shift+t, alt+f4, win+d, f5, pageup. Namen: ctrl/strg, alt, shift, win, esc, tab, enter, backspace, delete, home, end, pageup, pagedown, left/up/right/down, space, f1–f12 oder ein Zeichen.'; }
-  else if (t === 'mod') { el.keyValueLabel.textContent = 'Umschalter'; el.keyHint.textContent = 'ctrl, alt, shift oder win. Erster Tipp: gilt für die nächste Taste (Rahmen). Zweiter Tipp: bleibt gedrückt (gefüllt). Dritter Tipp: aus.'; }
-  else if (t === 'action') { el.keyValueLabel.textContent = 'Aktion'; el.keyHint.textContent = 'Mögliche Aktionen: ' + Object.keys(ACTIONS).join(', ') + '. Ein Symbol als Beschriftung geht mit Doppelpunkt, zum Beispiel :image, :keyboard, :zoom_in.'; }
-  else { el.keyValueLabel.textContent = 'Text'; el.keyHint.textContent = 'Dieser Text wird bei Tipp wie von Hand eingetippt (zum Beispiel ein Befehl oder /clear).'; }
+  const type = el.keyType.value;
+  if (type === 'chord') { el.keyValueLabel.textContent = t('app.keys'); el.keyHint.textContent = t('app.keyHintChord'); }
+  else if (type === 'mod') { el.keyValueLabel.textContent = t('app.keyValToggle'); el.keyHint.textContent = t('app.keyHintMod'); }
+  else if (type === 'action') { el.keyValueLabel.textContent = t('app.keyValAction'); el.keyHint.textContent = t('app.keyHintAction', { actions: Object.keys(ACTIONS).join(', ') }); }
+  else { el.keyValueLabel.textContent = t('app.keyValText'); el.keyHint.textContent = t('app.keyHintText'); }
 }
 function openKeyEditor(r, i) {
   editRow = r; editIndex = i;
   const def = i >= 0 ? rows[r].items[i] : { label: '', type: 'chord', value: '' };
-  el.keyDlgTitle.textContent = i >= 0 ? 'Taste bearbeiten' : `Neue Taste in „${rows[r].title}“`;
+  el.keyDlgTitle.textContent = i >= 0 ? t('app.keyEditTitle') : t('app.keyNewIn', { group: rowTitle(rows[r]) });
   el.keyLabel.value = def.label; el.keyType.value = def.type; el.keyValue.value = def.value; el.keyScope.value = def.scope || 'both';
   el.keyDelete.hidden = i < 0; el.keyLeft.hidden = i < 0; el.keyRight.hidden = i < 0;
   updateKeyEditorHints();
@@ -340,11 +356,11 @@ el.keyType.addEventListener('change', updateKeyEditorHints);
 el.keySave.addEventListener('click', () => {
   const def = { label: el.keyLabel.value.trim() || el.keyValue.value.trim().slice(0, 10) || '?', type: el.keyType.value, value: el.keyValue.value.trim() };
   if (el.keyScope.value !== 'both') def.scope = el.keyScope.value;
-  if (!def.value) { toast('Bitte Tasten oder Text angeben'); return; }
+  if (!def.value) { toast(t('app.keyNeedValue')); return; }
   try {
     if (def.type === 'chord') parseChord(def.value);
-    if (def.type === 'mod' && !MODNAME[def.value.toLowerCase()]) throw new Error('Umschalter: ctrl, alt, shift oder win');
-    if (def.type === 'action' && !ACTIONS[def.value.toLowerCase()]) throw new Error('Aktion: ' + Object.keys(ACTIONS).join(', '));
+    if (def.type === 'mod' && !MODNAME[def.value.toLowerCase()]) throw new Error(t('app.errModValue'));
+    if (def.type === 'action' && !ACTIONS[def.value.toLowerCase()]) throw new Error(t('app.errActionList', { actions: Object.keys(ACTIONS).join(', ') }));
   } catch (e) { toast(e.message, 2600); return; }
   if (editIndex >= 0) rows[editRow].items[editIndex] = def; else rows[editRow].items.push(def);
   saveRows(); el.keyDlg.close(); renderAllRows();
@@ -353,7 +369,7 @@ el.keyDelete.addEventListener('click', () => { if (editIndex >= 0) { rows[editRo
 const moveKey = (d) => {
   const items = rows[editRow].items, j = editIndex + d;
   if (editIndex < 0 || j < 0 || j >= items.length) return;
-  const [m] = items.splice(editIndex, 1); items.splice(j, 0, m); editIndex = j; saveRows(); renderAllRows(); toast('Verschoben');
+  const [m] = items.splice(editIndex, 1); items.splice(j, 0, m); editIndex = j; saveRows(); renderAllRows(); toast(t('app.moved'));
 };
 el.keyLeft.addEventListener('click', () => moveKey(-1));
 el.keyRight.addEventListener('click', () => moveKey(1));
@@ -368,7 +384,7 @@ function toggleExpanded() {
 }
 function toggleFullscreen() {
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-  else document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => toast('Vollbild nicht möglich'));
+  else document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => toast(t('app.fullscreenFailed')));
 }
 // Im Vollbild die Systemtasten (Esc, Alt+Tab, Windows-Taste, Strg+W/T/N) an den fernen Rechner geben statt an den Browser (Tastatursperre: nur Chrome und
 // Edge, nur im Vollbild und nur auf sicheren Seiten). Esc gedrueckt halten beendet das Vollbild weiterhin.
@@ -410,7 +426,7 @@ let appsTarget = null;
 async function openApps(session) {
   appsTarget = session;
   $('#appsDlg').showModal(); $('#appsSearch').value = '';
-  if (!session.W.apps) { try { session.W.apps = (await agent(session.conn.id, '/apps')).apps || []; } catch (e) { session.toast('Programme: ' + e.message); session.W.apps = []; } }
+  if (!session.W.apps) { try { session.W.apps = (await agent(session.conn.id, '/apps')).apps || []; } catch (e) { session.toast(t('app.errApps', { msg: e.message })); session.W.apps = []; } }
   renderApps('');
 }
 /** Symbol vom Agenten (Base64 eines PNG) als Bild. Nie in HTML-Text einsetzen: der Wert kommt aus der Sitzung der Ziel-Maschine. */
@@ -429,11 +445,11 @@ function renderApps(q) {
     d.append(iconImg(a.icon) || Object.assign(document.createElement('span'), { style: 'width:32px' }), name);
     d.addEventListener('click', async () => {
       $('#appsDlg').close();
-      try { await agent(s.conn.id, '/apps/launch', 'POST', { id: a.id }); s.toast('Starte ' + a.name + ' …', 2200); setTimeout(() => s.pollWindows(), 1500); } catch (e) { s.toast('Start: ' + e.message); }
+      try { await agent(s.conn.id, '/apps/launch', 'POST', { id: a.id }); s.toast(t('app.starting', { name: a.name }), 2200); setTimeout(() => s.pollWindows(), 1500); } catch (e) { s.toast(t('app.errStart', { msg: e.message })); }
     });
     list.appendChild(d);
   }
-  if (!f.length) list.textContent = 'Nichts gefunden.';
+  if (!f.length) list.textContent = t('app.nothingFound');
 }
 $('#appsSearch').addEventListener('input', (e) => renderApps(e.target.value));
 
@@ -463,11 +479,11 @@ const mid2 = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 const profiles = store.get('profiles', {});                   // Anzeigegroesse je Programm (Klasse), nur im Programm-Modus
 const defaultProfile = (cls) => (/claude/i.test(cls || '') ? 0.56 : null);   // Claude schmal: dann zeigt die App Burger-Menue statt Seitenleiste
 const PROFILE = { stablePolls: 2, minGap: 8000 };
-/** Verstaendliche Texte zu den Statuscodes, die der Server mit einem Fehler schickt (siehe ScreenProtocol.cs). */
+/** Verstaendliche Texte (Woerterbuchschluessel, mit t() aufgeloest) zu den Statuscodes, die der Server mit einem Fehler schickt (siehe ScreenProtocol.cs). */
 const ERROR_TEXT = {
-  513: 'Der Server ist gerade ausgelastet.', 514: 'Das Ziel antwortet nicht (Zeitüberschreitung).', 515: 'Die Verbindung zum Ziel ist fehlgeschlagen.',
-  519: 'Das Ziel wurde nicht gefunden.', 520: 'Das Ziel ist nicht erreichbar.', 769: 'Anmeldung am Ziel abgelehnt. Bitte Benutzername und Passwort prüfen.', 770: 'Das Ziel verlangt Benutzer und Passwort.',
-  777: 'Die Sitzung wurde in einem anderen Fenster oder auf einem anderen Gerät übernommen.',
+  513: tk('app.err513'), 514: tk('app.err514'), 515: tk('app.err515'),
+  519: tk('app.err519'), 520: tk('app.err520'), 769: tk('app.err769'), 770: tk('app.err770'),
+  777: tk('app.err777'),
   797: null,        // zu viele Sitzungen: der Server schickt den Text selbst ("Es sind schon 8 Sitzungen offen ...")
 };
 
@@ -510,13 +526,14 @@ export class RemoteSession extends Session {
     this.wireTouch();
     this.wireUi();
     this.wireDrop();
-    this.setState('disconnected', 'Noch nicht verbunden');
+    this.setState('disconnected', t('app.stateNotConnected'));
   }
 
   /* ---------- Aufbau der Ansicht aus der Vorlage ---------- */
   buildDom() {
     const root = $('#svTemplate').content.firstElementChild.cloneNode(true);
     const q = (c) => root.querySelector('.' + c);
+    applyDom(root);                                  // Texte der Vorlage in der gewaehlten Sprache
     this.element = root;
     this.el = {
       topbar: q('sv-topbar'), rowWin: q('sv-rowWin'), winSheet: q('sv-winSheet'), stage: q('sv-stage'), display: q('sv-display'), touch: q('sv-touch'),
@@ -564,8 +581,8 @@ export class RemoteSession extends Session {
   hasSibling() { return this.kind === 'desktop' && !!this.conn.target && Sessions.list().some((s) => s !== this && s.kind === 'desktop' && s.conn.target === this.conn.target); }
   takenBySibling() {
     this.fatal = true; this.connected = false; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer);
-    this.setState('taken', 'Übernommen');
-    this.showOverlay('Eine andere Sitzung zu diesem Ziel hat den Desktop übernommen: ein RDP-Ziel gibt je Benutzer nur einen Desktop her. „Neu verbinden“ holt ihn hierher zurück (dann reißt die andere ab).');
+    this.setState('taken', t('app.stateTaken'));
+    this.showOverlay(t('app.takenBySibling'));
   }
 
   /* ---------- Vertrag: einhaengen, sichtbar, Fokus, aufraeumen ---------- */
@@ -591,8 +608,7 @@ export class RemoteSession extends Session {
     const a = client.audio;
     a.label = this.title;
     a.onchange = () => { if (this.client === client) this.updateAudioMenu(); };
-    a.onmicwait = (offered) => this.toast(offered ? 'Das Mikrofon ist an, aber im Desktop nimmt noch kein Programm auf.'
-      : 'Das Mikrofon ist an. Der Desktop meldet noch keinen Mikrofon-Kanal; er wird erst geöffnet, wenn dort ein Programm aufnimmt.', 5200);
+    a.onmicwait = (offered) => this.toast(offered ? t('app.micWaitOffered') : t('app.micWaitChannel'), 5200);
     a.setActive(this.visible && Sessions.active === this);
   }
   startAudio(client) {
@@ -610,11 +626,11 @@ export class RemoteSession extends Session {
     const a = this.audioOf();
     for (const act of ['sound', 'volume', 'mic']) { const row = this.el.menu.querySelector(`[data-act="${act}"]`); if (row) row.hidden = !a; }
     if (!a) return;
-    const set = (c, t) => { const n = this.el.menu.querySelector(c); if (n) n.textContent = t; };
-    set('.mv-sound', !a.remote.output ? 'kein Ton vom Rechner' : !a.wanted ? 'aus' : a.state === 'running' ? 'an' : 'bitte antippen');
-    set('.mv-volume', Math.round(a.volume * 100) + ' %');
-    set('.mv-mic', !a.micOn ? (StreamAudio.micOwner && StreamAudio.micOwner !== a ? 'läuft in „' + (StreamAudio.micOwner.label || 'anderer Sitzung') + '“' : 'aus')
-      : a.remote.recording ? 'an, nimmt auf' : 'an, wartet auf Programm');
+    const set = (c, txt) => { const n = this.el.menu.querySelector(c); if (n) n.textContent = txt; };
+    set('.mv-sound', !a.remote.output ? t('app.soundNone') : !a.wanted ? t('app.off') : a.state === 'running' ? t('app.on') : t('app.soundTap'));
+    set('.mv-volume', t('app.percent', { n: Math.round(a.volume * 100) }));
+    set('.mv-mic', !a.micOn ? (StreamAudio.micOwner && StreamAudio.micOwner !== a ? t('app.micRunningIn', { name: StreamAudio.micOwner.label || t('app.otherSession') }) : t('app.off'))
+      : a.remote.recording ? t('app.micRecording') : t('app.micWaiting'));
   }
   async audioAction(act) {
     const a = this.audioOf(); if (!a) return;
@@ -640,15 +656,15 @@ export class RemoteSession extends Session {
     this.popped = r;
     this.resume.confirm();                               // ein Bild kam schon (Voraussetzung fuer das Fenster): das Token darf die Sitzung wieder aufnehmen
     this.intentional = true; this.teardown(true);        // nur die Leitung kappen: der Server haelt die Sitzung, das Fenster nimmt sie mit dem Token auf
-    this.setState('connected', 'In eigenem Fenster');
-    this.el.reconnectBtn.textContent = 'Wieder anheften';
-    this.showOverlay('Diese Sitzung läuft in einem eigenen Fenster.');
+    this.setState('connected', t('app.stateOwnWindow'));
+    this.el.reconnectBtn.textContent = t('app.reattach');
+    this.showOverlay(t('app.sessionInOwnWindow'));
   }
   /** Das Fenster ist zu oder will zurueck (oder der Benutzer tippt "Wieder anheften"): die Sitzung hier wieder aufnehmen. */
   popBack() {
     const p = this.popped; if (!p) return;
     this.popped = null; p.stop();
-    this.el.reconnectBtn.textContent = 'Neu verbinden';
+    this.el.reconnectBtn.textContent = t('app.reconnect');
     this.quality = normalizeQuality(store.get('q.' + this.conn.id, this.quality)); this.statusBar.setQuality(this.quality);
     setPerf(store.get('perf', S.perf));                  // was im Fenster geschaltet wurde, gilt auch hier
     if (this.disposed) return;
@@ -662,7 +678,7 @@ export class RemoteSession extends Session {
     this.quality = id; store.set('q.' + this.conn.id, id);
     if (this.client instanceof StreamClient) this.client.setQuality(id);
     this.statusBar.setQuality(id); this.updateMenuLabels();
-    this.toast('Bildrate: ' + qualityOf(id).label, 1800);
+    this.toast(t('app.toastFrameRate', { label: qualityOf(id).label }), 1800);
   }
   applyPause() { if (this.client instanceof StreamClient) this.client.setPaused(!this.visible || document.hidden); }
   refreshAll() { this.updateMenuLabels(); this.renderRows(); }
@@ -675,7 +691,7 @@ export class RemoteSession extends Session {
     this.password = null;
     this.unmount();
   }
-  disconnect() { this.intentional = true; this.teardown(); this.setState('disconnected', 'Getrennt'); }
+  disconnect() { this.intentional = true; this.teardown(); this.setState('disconnected', t('app.stateDisconnected')); }
   /** Seite war im Hintergrund oder gesperrt (Handy): die Verbindung ist danach meist tot, das Bild aber noch da. Beim Zurueckkommen neu verbinden. */
   onPageVisible(away) {
     this.applyPause();
@@ -694,17 +710,17 @@ export class RemoteSession extends Session {
     const wrap = document.createElement('div'); wrap.className = 'term-dialog';
     const box = document.createElement('div'); box.className = 'box'; box.setAttribute('role', 'alertdialog');
     const add = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; n.textContent = text; box.appendChild(n); return n; };
-    add('h2', '', 'Das Zertifikat des Ziels hat sich geändert');
-    add('p', '', 'Das kann ein Angriff sein (jemand gibt sich als dein Rechner aus) oder ein neu aufgesetzter Rechner. Die Verbindung wurde nicht aufgebaut und dein Passwort nicht gesendet.');
-    for (const [label, value] of [['Bisher', err.previous], ['Jetzt', err.fingerprint]]) { const r = add('p', 'fp', ''); r.appendChild(Object.assign(document.createElement('span'), { textContent: label })); r.appendChild(Object.assign(document.createElement('code'), { textContent: value || '–' })); }
-    add('p', 'hint', 'Vertraue dem neuen Zertifikat nur, wenn du weißt, dass sich das Ziel geändert hat. Vergleiche im Zweifel auf dem Ziel mit „openssl x509 -noout -fingerprint -sha256“ auf dem Zertifikat des RDP-Dienstes.');
-    const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'primary'; cancel.textContent = 'Abbrechen';
-    const trust = document.createElement('button'); trust.type = 'button'; trust.className = 'danger'; trust.textContent = 'Neuem Zertifikat vertrauen';
-    cancel.addEventListener('click', () => { wrap.remove(); this.requestClose('Verbindung abgebrochen: das Zertifikat des Ziels hat sich geändert.'); });
+    add('h2', '', t('app.certTitle'));
+    add('p', '', t('app.certText'));
+    for (const [label, value] of [[t('app.certBefore'), err.previous], [t('app.certNow'), err.fingerprint]]) { const r = add('p', 'fp', ''); r.appendChild(Object.assign(document.createElement('span'), { textContent: label })); r.appendChild(Object.assign(document.createElement('code'), { textContent: value || '–' })); }
+    add('p', 'hint', t('app.certHint'));
+    const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'primary'; cancel.textContent = t('common.cancel');
+    const trust = document.createElement('button'); trust.type = 'button'; trust.className = 'danger'; trust.textContent = t('app.certTrust');
+    cancel.addEventListener('click', () => { wrap.remove(); this.requestClose(t('app.certCancelled')); });
     trust.addEventListener('click', () => { wrap.remove(); this.fatal = false; this.acceptCert = err.fingerprint; this.retry = 0; this.start(); });
     const actions = document.createElement('div'); actions.className = 'actions'; actions.append(cancel, trust); box.appendChild(actions);
     wrap.appendChild(box); this.el.stage.appendChild(wrap);
-    this.el.overlay.hidden = true; this.setState('error', 'Zertifikat geändert');
+    this.el.overlay.hidden = true; this.setState('error', t('app.stateCertChanged'));
     cancel.focus();
   }
   /** Anmeldung am Ziel abgelehnt (769) oder Anmeldedaten verlangt (770): Dialog mit Benutzer, Passwort und Domaene, bis zu drei neue Versuche. Jeder Versuch
@@ -718,23 +734,23 @@ export class RemoteSession extends Session {
     const wrap = document.createElement('div'); wrap.className = 'term-dialog'; this.loginBox = wrap;
     const form = document.createElement('form'); form.className = 'box'; form.setAttribute('role', 'dialog'); form.autocomplete = 'off';
     const add = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; n.textContent = text; form.appendChild(n); return n; };
-    add('h2', '', 'Anmeldung am Ziel');
+    add('h2', '', t('app.loginTitle'));
     add('p', '', step.text);
-    add('p', 'hint', `Versuch ${step.attempt} von ${step.of}. Das Passwort gilt nur für diese Sitzung und wird nicht gespeichert.`);
+    add('p', 'hint', t('app.loginAttempt', { attempt: step.attempt, of: step.of }));
     const field = (label, type, value, name) => {
       const l = document.createElement('label'); l.className = 'login-field'; l.append(Object.assign(document.createElement('span'), { textContent: label }));
       const i = document.createElement('input'); i.type = type; i.value = value || ''; i.name = name; i.autocomplete = type === 'password' ? 'off' : 'off'; i.spellcheck = false; i.autocapitalize = 'off'; i.maxLength = 256;
       l.appendChild(i); form.appendChild(l); return i;
     };
-    const user = field('Benutzer', 'text', this.loginUser ?? userOfTarget(this.conn.target), 'user');
-    const pw = field('Passwort', 'password', '', 'pw');
-    const domain = field('Domäne (optional)', 'text', this.loginDomain ?? this.conn.domain ?? '', 'domain');
+    const user = field(t('app.user'), 'text', this.loginUser ?? userOfTarget(this.conn.target), 'user');
+    const pw = field(t('app.password'), 'password', '', 'pw');
+    const domain = field(t('app.domainOptional'), 'text', this.loginDomain ?? this.conn.domain ?? '', 'domain');
     const msg = add('p', 'hint login-msg', ''); msg.setAttribute('role', 'alert');
-    const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'danger'; cancel.textContent = 'Abbrechen';
-    const ok = document.createElement('button'); ok.type = 'submit'; ok.className = 'primary'; ok.textContent = 'Anmelden';
+    const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'danger'; cancel.textContent = t('common.cancel');
+    const ok = document.createElement('button'); ok.type = 'submit'; ok.className = 'primary'; ok.textContent = t('app.signIn');
     const actions = document.createElement('div'); actions.className = 'actions'; actions.append(cancel, ok); form.appendChild(actions);
     const done = () => { this.loginBox = null; wrap.remove(); };
-    cancel.addEventListener('click', () => { done(); this.password = null; this.requestClose('Anmeldung abgebrochen.'); });
+    cancel.addEventListener('click', () => { done(); this.password = null; this.requestClose(t('app.loginCancelled')); });
     form.addEventListener('submit', (ev) => {
       ev.preventDefault();
       const r = readLogin({ user: user.value, password: pw.value, domain: domain.value });
@@ -746,7 +762,7 @@ export class RemoteSession extends Session {
       this.start();
     });
     wrap.appendChild(form); this.el.stage.appendChild(wrap);
-    this.el.overlay.hidden = true; this.setState('error', 'Anmeldung nötig');
+    this.el.overlay.hidden = true; this.setState('error', t('app.stateLoginNeeded'));
     (user.value ? pw : user).focus();
   }
   showBusy(msg) { // Fortschritt mit Animation, ohne Knoepfe
@@ -783,12 +799,12 @@ export class RemoteSession extends Session {
   streamFailed(message) {
     this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer);
     this.connected = false;
-    this.setState('error', 'Keine Verbindung');
+    this.setState('error', t('app.stateNoConnection'));
     this.showOverlay(message);
   }
 
   async start() {
-    if (this.popped) { const p = this.popped; this.popped = null; p.stop(); this.el.reconnectBtn.textContent = 'Neu verbinden'; }   // zurueck ins Hauptfenster: das Fenster gibt die Leitung ab
+    if (this.popped) { const p = this.popped; this.popped = null; p.stop(); this.el.reconnectBtn.textContent = t('app.reconnect'); }   // zurueck ins Hauptfenster: das Fenster gibt die Leitung ab
     this.intentional = false; this.fatal = false; this.connectStarted = Date.now();
     if (this.loginBox) { this.loginBox.remove(); this.loginBox = null; }
     if (this.client && this.client.drawn) this.resume.confirm();      // ein Bild kam schon (zum Beispiel Seite wieder sichtbar, bevor der tote Socket gemeldet wurde): das Token darf die Sitzung aufnehmen
@@ -796,7 +812,7 @@ export class RemoteSession extends Session {
     const gen = this.gen;
     const stale = () => gen !== this.gen || this.disposed;
     const resuming = this.everConnected && this.resume.usable();
-    const busyText = resuming ? 'Verbindung wird wiederhergestellt …' : this.everConnected ? 'Verbinde neu …' : 'Verbinde …';
+    const busyText = resuming ? t('app.busyResuming') : this.everConnected ? t('app.busyReconnecting') : t('app.connecting');
     this.setState(this.everConnected ? 'reconnecting' : 'connecting', busyText);
     this.showBusy(busyText);
     // Hatte der letzte Desktop dieser Verbindung eine Fensterleiste, den Platz dafuer schon jetzt freihalten: sonst schrumpft die Stage kurz nach dem Verbinden
@@ -813,7 +829,7 @@ export class RemoteSession extends Session {
     // Ohne H.264-Dekodierer im Browser (WebCodecs, braucht HTTPS oder localhost) gibt es keine Bildschirmverbindung: das sagt die Sitzung klar, statt etwas anderes zu versuchen
     if (!(await StreamClient.supported())) {
       if (stale()) return;
-      return this.streamFailed('Dieser Browser kann das Bild nicht dekodieren (H.264 mit WebCodecs, die Seite braucht HTTPS). Bitte einen aktuellen Browser nutzen und „Neu verbinden“ tippen.');
+      return this.streamFailed(t('app.errNoDecoder'));
     }
     if (stale()) return;
     let ticket, driveMode = null, keyLayout = 'de';
@@ -825,14 +841,14 @@ export class RemoteSession extends Session {
         body: JSON.stringify({ ...ticketTarget(this.conn), sid: this.id, password: this.password || undefined, username: this.loginUser, domain: this.loginDomain, width: w, height: h, acceptCert: acceptCert || undefined }) });
       const data = await resp.json().catch(() => ({}));
       if (stale()) return;
-      if (resp.status === 401) return this.requestClose('Die Sitzung ist abgelaufen. Bitte neu anmelden.', 'auth');
-      if (!resp.ok) throw new Error(data.error || 'Fehler ' + resp.status);
+      if (resp.status === 401) return this.requestClose(t('app.sessionExpired'), 'auth');
+      if (!resp.ok) throw new Error(data.error ? serverMsg(data.error) : t('app.errStatus', { status: resp.status }));
       ticket = data.ticket; driveMode = data.drive || null; keyLayout = data.layout || 'de';
     } catch (e) {
       if (stale()) return;
-      const msg = e.name === 'TimeoutError' || e.name === 'TypeError' ? 'Keine Verbindung zum Server. Netz prüfen.' : e.message;
+      const msg = e.name === 'TimeoutError' || e.name === 'TypeError' ? t('app.errNoServer') : e.message;
       if (!this.everConnected) return this.requestClose(msg);
-      this.setState('error', 'Fehler');
+      this.setState('error', t('app.stateError'));
       return this.showOverlay(msg);
     }
 
@@ -867,19 +883,19 @@ export class RemoteSession extends Session {
       if (st === 3) { // verbunden
         clearTimeout(this.connectTimer);
         this.connected = true; this.everConnected = true; this.connectedAt = Date.now(); this.frameSeen = false; this.resume.connected();
-        this.setState('connected', 'Verbunden');
-        if (driveMode && !this.driveNoted) { this.driveNoted = true; this.toast(driveMode === 'rw' ? 'Laufwerk vom Server ist freigegeben (Lesen und Schreiben)' : 'Laufwerk vom Server ist freigegeben (nur Lesen)', 4000); }
-        if (this.hasSibling()) this.toast('Hinweis: Eine andere Sitzung läuft zum selben Ziel und Benutzer. Ein RDP-Ziel gibt je Benutzer nur einen Desktop her, die Sitzungen übernehmen ihn gegenseitig.', 6000);
+        this.setState('connected', t('app.stateConnected'));
+        if (driveMode && !this.driveNoted) { this.driveNoted = true; this.toast(driveMode === 'rw' ? t('app.driveSharedRw') : t('app.driveSharedRo'), 4000); }
+        if (this.hasSibling()) this.toast(t('app.siblingNote'), 6000);
         this.startWindowBar(); this.fitDisplay(); this.pushSize(); this.waitForFrame(client); this.applyPause();
         if (cur() === this) focusKbForHardware();
         this.startAudio(client);
-        setTimeout(() => { if (this.client === client && !client.drawn && !this.streamWorked) this.streamFailed('Es kommt kein Bild an. Der Browser kann das Bild vielleicht nicht dekodieren. „Neu verbinden“ tippen.'); }, 10000);   // Groesse gemeldet, aber nie ein Bild: der Dekodierer geht nicht
+        setTimeout(() => { if (this.client === client && !client.drawn && !this.streamWorked) this.streamFailed(t('app.errNoPicture')); }, 10000);   // Groesse gemeldet, aber nie ein Bild: der Dekodierer geht nicht
         // Die Zaehler der Wiederholung gelten erst als zurueckgesetzt, wenn die Verbindung wirklich haelt (sonst endlos: verbunden, sofort getrennt, neu ...)
         setTimeout(() => { if (this.client === client && this.connected) { this.firstLogin = false; this.retry = 0; this.loginTries = 0; } }, 12000);
       } else if (st === 5) { // getrennt
         this.connected = false;
         if (client.drawn) { this.streamWorked = true; this.resume.confirm(); }      // die Sitzung am Ziel gibt es wirklich: ein Token darf sie wieder aufnehmen
-        if (!client.closing && !this.streamWorked && !this.intentional && !this.fatal) return this.streamFailed('Die Verbindung wurde getrennt, bevor ein Bild kam. „Neu verbinden“ tippen.');   // ohne Fehlermeldung getrennt
+        if (!client.closing && !this.streamWorked && !this.intentional && !this.fatal) return this.streamFailed(t('app.errLostBeforePicture'));   // ohne Fehlermeldung getrennt
         if (this.intentional || this.fatal) return;
         if (!this.everConnected) return; // Fehler wird von onerror gemeldet
         if (this.hasSibling() && !this.resume.usable()) return this.takenBySibling();
@@ -894,15 +910,15 @@ export class RemoteSession extends Session {
       if (err && err.code === 800) { this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); return this.certDialog(err); }   // Zertifikat des Ziels geaendert: der Benutzer entscheidet
       const code = err && err.code;
       if (isLoginError(code)) { this.connected = false; return this.loginDialog(code); }   // Anmeldung abgelehnt oder Anmeldedaten verlangt: neu fragen, die Sitzung bleibt
-      const known = ERROR_TEXT[code];
-      const msg = known || ((err && err.message) ? err.message : 'Verbindungsfehler');
+      const known = ERROR_TEXT[code] ? t(ERROR_TEXT[code]) : null;
+      const msg = known || ((err && err.message) ? serverMsg(err.message) : t('app.errConnection'));
       this.connected = false;
-      if (code === 777) { this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); this.setState('taken', 'Übernommen'); return this.showOverlay(msg); }   // anderswo uebernommen: nicht zurueckholen, sonst streiten sich zwei Fenster
+      if (code === 777) { this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); this.setState('taken', t('app.stateTaken')); return this.showOverlay(msg); }   // anderswo uebernommen: nicht zurueckholen, sonst streiten sich zwei Fenster
       if (code === 797) { this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); return this.requestClose(msg); }   // Obergrenze der Sitzungen: Meldung des Servers, Sitzung zu
-      if (!this.everConnected) this.requestClose(known || 'Verbindung nicht möglich: ' + msg);
+      if (!this.everConnected) this.requestClose(known || t('app.errCannotConnect', { msg }));
       else if (this.hasSibling()) this.takenBySibling();
       else if (this.firstLogin && Date.now() - this.connectedAt < 12000) this.loginDialog(769);
-      else { this.setState('error', 'Fehler'); this.showOverlay(msg); }
+      else { this.setState('error', t('app.stateError')); this.showOverlay(msg); }
     };
     client.onclipboard = (data) => {
       this.clipText = data;
@@ -910,8 +926,8 @@ export class RemoteSession extends Session {
       // Strg+C / Strg+X in der VM: Text gleich in die Zwischenablage dieses Browsers legen (braucht HTTPS oder localhost und eine eben erfolgte Eingabe).
       // Nur fuer die aktive Sitzung: eine im Hintergrund darf die Zwischenablage nicht ueberschreiben.
       if (cur() !== this) return;
-      if (navigator.clipboard && navigator.clipboard.writeText && document.hasFocus()) navigator.clipboard.writeText(data).then(() => this.toast('Kopiert', 1200), () => this.toast('Text aus der VM kopiert (Symbol Zwischenablage)', 2200));
-      else this.toast('Text aus der VM kopiert (Symbol Zwischenablage)', 2200);
+      if (navigator.clipboard && navigator.clipboard.writeText && document.hasFocus()) navigator.clipboard.writeText(data).then(() => this.toast(t('app.copied'), 1200), () => this.toast(t('app.textCopiedFromVm'), 2200));
+      else this.toast(t('app.textCopiedFromVm'), 2200);
     };
 
     // Bilder und Dateien der VM meldet der Stream selbst
@@ -928,7 +944,7 @@ export class RemoteSession extends Session {
       if (this.client !== client || this.connected) return;
       if (resumeToken && this.resume.usable()) { try { client.disconnect(true); } catch { /* egal */ } this.client = null; this.scheduleReconnect(); return; }
       try { client.disconnect(); } catch { /* egal */ }
-      this.streamFailed('Die Verbindung kommt nicht zustande. Netz prüfen und „Neu verbinden“ tippen.');
+      this.streamFailed(t('app.errNoConnect'));
     }, resumeToken ? 8000 : 20000);
   }
 
@@ -936,7 +952,7 @@ export class RemoteSession extends Session {
   waitForFrame(client) {
     const started = Date.now();
     let probes = 0, sizedAt = 0, released = false;
-    this.showBusy('Bild wird geladen …');
+    this.showBusy(t('app.loadingPicture'));
     const probe = document.createElement('canvas'); probe.width = probe.height = 8;
     const pc = probe.getContext('2d', { willReadFrequently: true });
     let seen = { w: 0, h: 0, max: 0 };
@@ -974,17 +990,17 @@ export class RemoteSession extends Session {
     this.resume.lost();
     if (this.resume.usable()) {
       const wait = this.resume.nextDelay();
-      this.setState('reconnecting', 'Verbindung wird wiederhergestellt …');
-      this.showBusy('Verbindung wird wiederhergestellt …');
+      this.setState('reconnecting', t('app.busyResuming'));
+      this.showBusy(t('app.busyResuming'));
       clearTimeout(this.retryTimer);
       this.retryTimer = setTimeout(() => { if (!this.intentional && !this.disposed) this.start(); }, wait);
       return;
     }
-    if (this.retry >= 3) { this.setState('disconnected', 'Getrennt'); this.showOverlay('Verbindung getrennt. Läuft die Sitzung noch in einem anderen Fenster oder auf einem anderen Gerät?'); return; }
+    if (this.retry >= 3) { this.setState('disconnected', t('app.stateDisconnected')); this.showOverlay(t('app.errLostOtherWindow')); return; }
     this.retry += 1;
     const wait = 1500 * this.retry;
-    this.setState('reconnecting', 'Verbindung getrennt, neuer Versuch …');
-    this.showBusy(`Verbindung getrennt – neuer Versuch in ${Math.round(wait / 1000)} s …`);
+    this.setState('reconnecting', t('app.stateLostRetry'));
+    this.showBusy(t('app.busyLostRetry', { n: Math.round(wait / 1000) }));
     clearTimeout(this.retryTimer);
     this.retryTimer = setTimeout(() => { if (!this.intentional && !this.disposed && this.hasCredentials()) this.start(); }, wait);
   }
@@ -1080,7 +1096,7 @@ export class RemoteSession extends Session {
 
   zoomPercent() { return Math.round(100 / this.k); }
   showZoomPop() {                                   // Zoomstufe nur kurz einblenden
-    this.el.zoomPop.textContent = this.zoomPercent() + ' %'; this.el.zoomPop.classList.add('show');
+    this.el.zoomPop.textContent = t('app.percent', { n: this.zoomPercent() }); this.el.zoomPop.classList.add('show');
     clearTimeout(this.zoomTimer); this.zoomTimer = setTimeout(() => this.el.zoomPop.classList.remove('show'), 900);
   }
   setK(k, announce = true) {
@@ -1130,7 +1146,7 @@ export class RemoteSession extends Session {
     W.candCls = null; W.profileAt = Date.now();
     W.lastCls = cls;
     const k = profiles[cls] ?? defaultProfile(cls);
-    if (k && Math.abs(k - this.k) > 0.02) { this.setK(k, false); this.toast('Anzeige für ' + (act.app || cls) + ' angepasst', 1800); }
+    if (k && Math.abs(k - this.k) > 0.02) { this.setK(k, false); this.toast(t('app.profileApplied', { name: act.app || cls }), 1800); }
   }
   rememberProfile() {                               // Zoom von Hand: fuer das aktive Programm merken (nur im Programm-Modus)
     if (this.W.mode !== 'apps' || !this.W.lastCls) return;
@@ -1166,21 +1182,21 @@ export class RemoteSession extends Session {
     row.scrollLeft = keepScroll;
   }
   async activateWindow(id, maximize) {
-    try { await agent(this.conn.id, `/windows/${id}/activate`, 'POST', { maximize }); setTimeout(() => this.pollWindows(), 350); } catch (e) { this.toast('Fenster: ' + e.message); }
+    try { await agent(this.conn.id, `/windows/${id}/activate`, 'POST', { maximize }); setTimeout(() => this.pollWindows(), 350); } catch (e) { this.toast(t('app.errWindow', { msg: e.message })); }
   }
   async toggleMode() {
     const W = this.W;
-    try { const d = await agent(this.conn.id, '/mode', 'POST', { mode: W.mode === 'apps' ? 'desktop' : 'apps' }); W.mode = d.mode; W.lastCls = null; this.renderWindows(); this.toast(W.mode === 'apps' ? 'Programm-Modus: Taskleiste der VM ausgeblendet' : 'Desktop-Modus', 2200); setTimeout(() => this.pollWindows(), 500); }
-    catch (e) { this.toast('Modus: ' + e.message); }
+    try { const d = await agent(this.conn.id, '/mode', 'POST', { mode: W.mode === 'apps' ? 'desktop' : 'apps' }); W.mode = d.mode; W.lastCls = null; this.renderWindows(); this.toast(W.mode === 'apps' ? t('app.modeAppsToast') : t('app.modeDesktopToast'), 2200); setTimeout(() => this.pollWindows(), 500); }
+    catch (e) { this.toast(t('app.errMode', { msg: e.message })); }
   }
   openWinSheet(w) {
     const sh = this.el.winSheet; sh.replaceChildren();
     const item = (ic, text, fn) => { const d = document.createElement('div'); d.className = 'mi'; d.setAttribute('role', 'menuitem'); d.innerHTML = `<span class="mic">${ico(ic)}</span><span class="mt">${text}</span>`; d.addEventListener('click', () => { this.closeWinSheet(); fn(); }); sh.appendChild(d); };
-    item('window', 'Nach vorn und maximieren', () => this.activateWindow(w.id, true));
-    item('window', 'Nach vorn (Größe lassen)', () => this.activateWindow(w.id, false));
-    item('minimize', 'Minimieren', async () => { try { await agent(this.conn.id, `/windows/${w.id}/minimize`, 'POST', {}); setTimeout(() => this.pollWindows(), 300); } catch (e) { this.toast(e.message); } });
-    item('close', 'Schließen', async () => { try { await agent(this.conn.id, `/windows/${w.id}/close`, 'POST', {}); setTimeout(() => this.pollWindows(), 500); } catch (e) { this.toast(e.message); } });
-    item('palette', 'Anzeigegröße für dieses Programm merken', () => { profiles[w.class] = this.k; store.set('profiles', profiles); this.toast('Gemerkt: ' + this.zoomPercent() + ' % für ' + (w.app || w.class)); });
+    item('window', t('app.winFrontMax'), () => this.activateWindow(w.id, true));
+    item('window', t('app.winFront'), () => this.activateWindow(w.id, false));
+    item('minimize', t('app.winMinimise'), async () => { try { await agent(this.conn.id, `/windows/${w.id}/minimize`, 'POST', {}); setTimeout(() => this.pollWindows(), 300); } catch (e) { this.toast(e.message); } });
+    item('close', t('common.close'), async () => { try { await agent(this.conn.id, `/windows/${w.id}/close`, 'POST', {}); setTimeout(() => this.pollWindows(), 500); } catch (e) { this.toast(e.message); } });
+    item('palette', t('app.winRemember'), () => { profiles[w.class] = this.k; store.set('profiles', profiles); this.toast(t('app.rememberedFor', { pct: this.zoomPercent(), name: w.app || w.class })); });
     sh.hidden = false; this.el.scrim.hidden = false;
   }
   closeWinSheet() { this.el.winSheet.hidden = true; if (this.el.menu.hidden) this.el.scrim.hidden = true; }
@@ -1238,13 +1254,13 @@ export class RemoteSession extends Session {
     try {
       if (def.type === 'mod') {
         const name = MODNAME[String(def.value).toLowerCase()];
-        if (!name) throw new Error('Unbekannter Umschalter');
+        if (!name) throw new Error(t('app.errUnknownMod'));
         this.cycleMod(name);
       } else if (def.type === 'text') {
         await this.typeText(def.value || '');
       } else if (def.type === 'action') {
         const f = ACTIONS[String(def.value).toLowerCase()];
-        if (!f) throw new Error('Unbekannte Aktion');
+        if (!f) throw new Error(t('app.errUnknownAction'));
         f(this);
       } else {
         await this.sendChord(parseChord(def.value));
@@ -1264,7 +1280,7 @@ export class RemoteSession extends Session {
       if (this.actOn[act]) b.classList.add('on');
       if (act === 'sessions' && Sessions.count > 1) b.dataset.badge = String(Sessions.count);
     }
-    if (isIcon && ICONS[icon]) { b.innerHTML = ico(icon); b.classList.add('ic'); } else b.textContent = def.label;
+    if (isIcon && ICONS[icon]) { b.innerHTML = ico(icon); b.classList.add('ic'); } else b.textContent = keyLabel(def.label);
     b.dataset.r = String(r); b.dataset.i = String(i);
     if (def.type === 'mod') b.dataset.mod = MODNAME[String(def.value).toLowerCase()] || '';
     b.addEventListener('click', () => {
@@ -1278,14 +1294,14 @@ export class RemoteSession extends Session {
     const wrap = document.createElement('div');
     wrap.className = 'row ' + (bar ? 'bar' : 'grp') + (S.editing ? ' editing' : '');
     const rk = document.createElement('div'); rk.className = 'rk'; rk.dataset.r = String(r);
-    if (label && !bar) { const t = document.createElement('div'); t.className = 'gt'; t.textContent = row.title; rk.appendChild(t); }
+    if (label && !bar) { const t = document.createElement('div'); t.className = 'gt'; t.textContent = rowTitle(row); rk.appendChild(t); }
     row.items.forEach((def, i) => { if (S.editing || keyInScope(def, this.kind)) rk.appendChild(this.keyEl(def, r, i)); });
     if (S.editing) {
-      const add = document.createElement('div'); add.setAttribute('role', 'button'); add.className = 'k add'; add.innerHTML = ico('add') + '<span>Taste</span>';
+      const add = document.createElement('div'); add.setAttribute('role', 'button'); add.className = 'k add'; add.innerHTML = ico('add') + `<span>${t('app.key')}</span>`;
       add.addEventListener('click', () => openKeyEditor(r, -1)); rk.appendChild(add);
       if (bar || r === rows.length - 1) {
-        const done = document.createElement('div'); done.setAttribute('role', 'button'); done.className = 'k'; done.textContent = 'Fertig';
-        done.addEventListener('click', () => { S.editing = false; renderAllRows(); toast('Tasten gespeichert'); }); rk.appendChild(done);
+        const done = document.createElement('div'); done.setAttribute('role', 'button'); done.className = 'k'; done.textContent = t('app.done');
+        done.addEventListener('click', () => { S.editing = false; renderAllRows(); toast(t('app.keysSaved')); }); rk.appendChild(done);
       }
     }
     wrap.append(rk);
@@ -1301,7 +1317,7 @@ export class RemoteSession extends Session {
       const heads = document.createElement('div'); heads.className = 'acc'; heads.setAttribute('role', 'tablist');
       for (const { row } of groups) {
         const open = row.id === S.group;
-        const h = document.createElement('div'); h.setAttribute('role', 'tab'); h.className = 'acch' + (open ? ' sel' : ''); h.setAttribute('aria-label', row.title); h.setAttribute('aria-expanded', open ? 'true' : 'false');
+        const h = document.createElement('div'); h.setAttribute('role', 'tab'); h.className = 'acch' + (open ? ' sel' : ''); h.setAttribute('aria-label', rowTitle(row)); h.setAttribute('aria-expanded', open ? 'true' : 'false');
         h.innerHTML = ico(row.icon || 'apps') + ico(open ? 'expand_less' : 'expand_more');
         h.addEventListener('click', () => { S.group = open ? '' : row.id; store.set('group', S.group); renderAllRows(); });
         heads.appendChild(h);
@@ -1323,14 +1339,14 @@ export class RemoteSession extends Session {
    *  Menue dieser Sitzung (kein Dialog, damit die Tastatur offen bleibt)
    * ===================================================================== */
   updateMenuLabels() {
-    const set = (c, t) => { const n = this.el.menu.querySelector(c); if (n) n.textContent = t; };
-    set('.mv-kb', S.kbMode === 'rich' ? 'mit Bildern' : S.kbMode === 'normal' ? 'mit Vorschlägen' : 'ohne Vorschläge');
+    const set = (c, txt) => { const n = this.el.menu.querySelector(c); if (n) n.textContent = txt; };
+    set('.mv-kb', S.kbMode === 'rich' ? t('app.kbWithImages') : S.kbMode === 'normal' ? t('app.kbWithSuggestions') : t('app.kbWithoutSuggestions'));
     set('.mv-kbresize', kbModeLabel(S.kbResize));
-    set('.mv-touch', S.touchMode === 'direct' ? 'Tippen = Klick' : 'Touchpad');
-    set('.mv-autokb', S.autoKb ? 'an' : 'aus');
-    set('.mv-autopaste', S.autoPaste ? 'an' : 'aus');
+    set('.mv-touch', S.touchMode === 'direct' ? t('app.touchTap') : t('app.touchPad'));
+    set('.mv-autokb', S.autoKb ? t('app.on') : t('app.off'));
+    set('.mv-autopaste', S.autoPaste ? t('app.on') : t('app.off'));
     set('.mv-count', String(Sessions.count));
-    set('.mv-perf', S.perf ? 'an' : 'aus');
+    set('.mv-perf', S.perf ? t('app.on') : t('app.off'));
     set('.mv-quality', qualityOf(this.quality).label);
     this.updateAudioMenu();
   }
@@ -1344,7 +1360,7 @@ export class RemoteSession extends Session {
     if (act === 'kbResize') {
       S.kbResize = nextKbMode(S.kbResize); store.set('kbResize', S.kbResize);
       for (const s of remotes()) { s.updateMenuLabels(); s.applyPan(); s.scheduleSize(); }
-      toast(S.kbResize === 'pan' ? 'Bild wird verschoben, die Auflösung bleibt' : 'Auflösung folgt der Tastatur', 2200);
+      toast(S.kbResize === 'pan' ? t('app.kbResizePan') : t('app.kbResizeFollow'), 2200);
       return;
     }
     if (act === 'perf') { setPerf(!S.perf); return; }
@@ -1361,8 +1377,8 @@ export class RemoteSession extends Session {
     else if (act === 'switcher') Sessions.requestSwitcher();
     else if (act === 'home') Sessions.requestHome();
     else if (act === 'extra') Sessions.open(this.conn, { password: this.password, extra: true });
-    else if (act === 'editKeys') { S.editing = true; renderAllRows(); toast('Taste antippen = bearbeiten, gedrückt halten = verschieben (auch in andere Zeilen)', 3600); }
-    else if (act === 'resetKeys') { if (confirm('Sondertasten auf Standard zurücksetzen?')) { rows = clone(DEFAULT_ROWS); localStorage.removeItem('pd.rows4'); prefs.reset('keybar'); renderAllRows(); } }
+    else if (act === 'editKeys') { S.editing = true; renderAllRows(); toast(t('app.editKeysToast'), 3600); }
+    else if (act === 'resetKeys') { if (confirm(t('app.confirmResetKeys'))) { rows = clone(DEFAULT_ROWS); localStorage.removeItem('pd.rows4'); prefs.reset('keybar'); renderAllRows(); } }
     else if (act === 'password') openPwDialog();
     else if (act === 'theme') openThemeDialog();
     else if (act === 'install') installApp();
@@ -1422,8 +1438,8 @@ export class RemoteSession extends Session {
   /* Vom Browser an die VM. Ein einzelnes Bild wird wie ein kopiertes Bild behandelt (und mit Strg+V eingefuegt, wenn das eingeschaltet ist), alles
      andere sind Dateien. Gibt true zurueck, wenn etwas angekommen ist. */
   async sendToRemote(list) {
-    if (!this.connected || !this.client) { this.toast('Nicht verbunden'); return false; }
-    if (this.xferAbort) { this.toast('Es läuft schon eine Übertragung.', 2400); return false; }
+    if (!this.connected || !this.client) { this.toast(t('app.notConnected')); return false; }
+    if (this.xferAbort) { this.toast(t('app.transferRunning'), 2400); return false; }
     // Entweder Dateien (File) oder Eintraege { path, file | dir } aus einem Ordner (clip.js)
     const items = (list || []).map((f) => (f && (f.file || f.dir) ? f : f && f.size !== undefined ? { path: f.webkitRelativePath || f.name, file: f } : null)).filter(Boolean);
     if (!items.length) return false;
@@ -1437,35 +1453,35 @@ export class RemoteSession extends Session {
     try {
       for (let i = 0; i < plan.list.length; i++) {
         const it = plan.list[i], size = it.file ? it.file.size : 0, label = many ? ` (${i + 1}/${plan.list.length})` : '';
-        const progress = (done) => this.showXfer(`Sende ${it.path}${label} … ${progressText(before + done, plan.total)}`, null);
-        this.showXfer(`Sende ${it.path}${label} …`, null);
+        const progress = (done) => this.showXfer(t('app.sendingProgress', { path: it.path, label, progress: progressText(before + done, plan.total) }), null);
+        this.showXfer(t('app.sending', { path: it.path, label }), null);
         const r = await this.client.sendTransfer(it.kind, it.file, it.path, i, plan.list.length, progress, ctl.signal);
         if (ctl.signal.aborted) return false;
-        if (r.code !== 0) { this.toast(r.text || 'Senden fehlgeschlagen', 4200); this.dbg('file-error', { c: r.code }); return false; }
+        if (r.code !== 0) { this.toast(r.text || t('app.sendFailed'), 4200); this.dbg('file-error', { c: r.code }); return false; }
         before += size;
       }
-    } catch (e) { if (!ctl.signal.aborted) this.toast('Senden: ' + e.message, 4200); return false; }
+    } catch (e) { if (!ctl.signal.aborted) this.toast(t('app.errSend', { msg: e.message }), 4200); return false; }
     finally { this.hideXfer(); }
     this.dbg('file-sent', { n: plan.list.length, kb: Math.round(plan.total / 1024), folder });
-    this.toast(folder ? 'Ordner liegt in der Zwischenablage der VM – dort einfügen (Strg+V)' : many ? 'Dateien liegen in der Zwischenablage der VM – dort einfügen (Strg+V)' : 'Datei liegt in der Zwischenablage der VM – dort einfügen (Strg+V)', 4200);
+    this.toast(folder ? t('app.sentFolder') : many ? t('app.sentFiles') : t('app.sentFile'), 4200);
     return true;
   }
 
   async sendImage(file) {
-    if (file.size > LIMITS.imageBytes) { this.toast(`Bild zu groß (höchstens ${LIMITS.imageBytes / 1048576} MB).`, 3600); return false; }
+    if (file.size > LIMITS.imageBytes) { this.toast(t('app.imageTooBig', { mb: LIMITS.imageBytes / 1048576 }), 3600); return false; }
     const ctl = this.xferAbort = new AbortController();
     try {
-      this.showXfer('Bild wird umgewandelt …', null);
+      this.showXfer(t('app.imageConverting'), null);
       const { blob } = await bmpFromImage(file);
-      this.showXfer('Bild wird gesendet …', null);
-      const r = await this.client.sendTransfer(1, blob, '', 0, 1, (d, t) => this.showXfer(`Bild wird gesendet … ${Math.round(100 * d / t)} %`, null), ctl.signal);
+      this.showXfer(t('app.imageSending'), null);
+      const r = await this.client.sendTransfer(1, blob, '', 0, 1, (d, tot) => this.showXfer(t('app.imageSendingPct', { p: Math.round(100 * d / tot) }), null), ctl.signal);
       if (ctl.signal.aborted) return false;
-      if (r.code !== 0) { this.toast(r.text || 'Senden fehlgeschlagen', 4200); return false; }
-    } catch (e) { if (!ctl.signal.aborted) this.toast('Bild: ' + e.message, 4200); return false; }
+      if (r.code !== 0) { this.toast(r.text || t('app.sendFailed'), 4200); return false; }
+    } catch (e) { if (!ctl.signal.aborted) this.toast(t('app.errImage', { msg: e.message }), 4200); return false; }
     finally { this.hideXfer(); }
     this.dbg('image-sent', { kb: Math.round(file.size / 1024), auto: S.autoPaste });
-    if (S.autoPaste) { await sleep(250); await this.sendChord([KS.ctrl, charKeysym('v')]); this.toast('Bild eingefügt (Strg+V)'); }
-    else this.toast('Bild liegt in der Zwischenablage der VM – dort Strg+V', 3500);
+    if (S.autoPaste) { await sleep(250); await this.sendChord([KS.ctrl, charKeysym('v')]); this.toast(t('app.imagePasted')); }
+    else this.toast(t('app.imageInClipboard'), 3500);
     return true;
   }
 
@@ -1474,37 +1490,37 @@ export class RemoteSession extends Session {
     this.remoteItem.image = png; this.remoteItem.files = null; if (cur() === this) renderRemoteItem();
     // Ohne Fokus oder ohne frische Eingabe verweigert der Browser das Schreiben: dann wartet das Bild im Dialog
     if (cur() === this && document.hasFocus()) {
-      try { await copyImageToLocal(png); this.toast('Bild aus der VM kopiert', 2200); this.dbg('remote-image', { kb: Math.round(png.size / 1024), how, copied: true }); return; } catch { /* Dialog */ }
+      try { await copyImageToLocal(png); this.toast(t('app.imageCopiedFromVm'), 2200); this.dbg('remote-image', { kb: Math.round(png.size / 1024), how, copied: true }); return; } catch { /* Dialog */ }
     }
     this.dbg('remote-image', { kb: Math.round(png.size / 1024), how, copied: false });
-    this.toast('Bild aus der VM – tippen zum Kopieren', 6000, () => { Sessions.activate(this.id); openClipDlg(); });
+    this.toast(t('app.imageFromVmTap'), 6000, () => { Sessions.activate(this.id); openClipDlg(); });
   }
   async onRemoteImage(format, bytes) {
-    try { await this.showRemoteImage(await pngFromBytes(bytes, format), 'push'); } catch (e) { this.toast('Bild aus der VM nicht lesbar: ' + e.message, 3600); }
+    try { await this.showRemoteImage(await pngFromBytes(bytes, format), 'push'); } catch (e) { this.toast(t('app.errImageUnreadable', { msg: e.message }), 3600); }
   }
   onRemoteFiles(batch, list) {
     if (!list.length) { this.remoteItem.files = null; if (cur() === this) renderRemoteItem(); return; }
     this.remoteItem.files = { batch, list }; this.remoteItem.image = null; if (cur() === this) renderRemoteItem();
     const rows = topLevel(list), n = list.filter((f) => !f.dir).length;
-    this.toast((rows.length === 1 && !rows[0].dir ? 'Datei aus der VM: ' + rows[0].name : rows.length === 1 ? 'Ordner aus der VM: ' + rows[0].name : n + ' Dateien aus der VM') + ' – tippen zum Laden', 6000, () => { Sessions.activate(this.id); openClipDlg(); });
+    this.toast(t('app.tapToLoad', { what: rows.length === 1 && !rows[0].dir ? t('app.fileFromVm', { name: rows[0].name }) : rows.length === 1 ? t('app.folderFromVm', { name: rows[0].name }) : t('app.filesFromVm', { n }) }), 6000, () => { Sessions.activate(this.id); openClipDlg(); });
   }
   /* Download aus der VM: path ist eine Datei oder ein Ordner der Liste (leer: alles). Der Server schickt "bereit" mit einem Ticket, der Browser holt es selbst
      (Download-Verwaltung des Browsers, ZIP bei Ordnern); hier laeuft nur die Anzeige des Fortschritts, den der Server meldet. */
   downloadRemote(batch, path, label) {
     if (!this.client || !this.client.requestDownload) return;
-    if (this.dl) { this.toast('Es läuft schon ein Download.', 2400); return; }
+    if (this.dl) { this.toast(t('app.downloadRunning'), 2400); return; }
     this.dl = { batch, label };
-    this.showXfer(`Lade ${label} …`, () => { if (this.client && this.client.cancelDownload) this.client.cancelDownload(batch); this.dl = null; });
+    this.showXfer(t('app.downloading', { label }), () => { if (this.client && this.client.cancelDownload) this.client.cancelDownload(batch); this.dl = null; });
     this.xferAbort = new AbortController();
     this.client.requestDownload(batch, path);
   }
   onFileState(st) {
     const dl = this.dl;
     if (!dl || st.batch !== dl.batch) return;
-    if (st.state === 'ready') { startDownload(st.text, dl.label); this.showXfer(`Lade ${dl.label} …`); }
-    else if (st.state === 'running') this.showXfer(`Lade ${dl.label} … ${progressText(st.done, st.total)}`);
-    else if (st.state === 'done') { this.dl = null; this.hideXfer(); this.toast(`Geladen: ${dl.label} (${fmtSize(st.done)}) – im Download-Ordner des Browsers`, 4200); }
-    else { this.dl = null; this.hideXfer(); this.toast(st.text || 'Download fehlgeschlagen', 4200); }
+    if (st.state === 'ready') { startDownload(st.text, dl.label); this.showXfer(t('app.downloading', { label: dl.label })); }
+    else if (st.state === 'running') this.showXfer(t('app.downloadingProgress', { label: dl.label, progress: progressText(st.done, st.total) }));
+    else if (st.state === 'done') { this.dl = null; this.hideXfer(); this.toast(t('app.downloaded', { label: dl.label, size: fmtSize(st.done) }), 4200); }
+    else { this.dl = null; this.hideXfer(); this.toast(st.text || t('app.downloadFailed'), 4200); }
   }
   /* Ablegen von Dateien auf das Bild dieser Sitzung */
   wireDrop() {
@@ -1517,10 +1533,10 @@ export class RemoteSession extends Session {
       if (!hasFiles(e)) return;
       e.preventDefault(); depth = 0; st.classList.remove('dropping');
       const { items, skipped } = await filesFromTransfer(e.dataTransfer);
-      if (skipped.length) this.toast('Nicht lesbar: ' + skipped.slice(0, 2).join(', '), 3200);
-      if (items.length) { try { await this.sendToRemote(items); } catch (err) { this.toast('Senden: ' + err.message, 4200); } }
+      if (skipped.length) this.toast(t('app.unreadable', { list: skipped.slice(0, 2).join(', ') }), 3200);
+      if (items.length) { try { await this.sendToRemote(items); } catch (err) { this.toast(t('app.errSend', { msg: err.message }), 4200); } }
     });
-    this.el.xferCancel.addEventListener('click', () => { if (this.xferAbort) this.xferAbort.abort(); if (this.xferCancelExtra) this.xferCancelExtra(); this.hideXfer(); this.toast('Abgebrochen'); });
+    this.el.xferCancel.addEventListener('click', () => { if (this.xferAbort) this.xferAbort.abort(); if (this.xferCancelExtra) this.xferCancelExtra(); this.hideXfer(); this.toast(t('app.cancelled')); });
   }
 
   /* ---------- Touch-Gesten (je Sitzung, auf deren Touch-Ebene) ---------- */
@@ -1580,7 +1596,7 @@ export class RemoteSession extends Session {
         if (G.decided) G.moved = true;
         if (G.decided === 'pinch' && d > 10) {
           G.newK = clamp(G.k0 * (G.d0 / d), 0.35, 1.8);
-          this.toast('Anzeige ' + Math.round(100 / G.newK) + ' %', 600);
+          this.toast(t('app.displayPct', { p: Math.round(100 / G.newK) }), 600);
         } else if (G.decided === 'scroll') {
           let dy = m.y - G.midLast.y; G.midLast = m;
           const max = this.panMax();
@@ -1685,7 +1701,7 @@ async function handleKbFiles(files) {
   const list = [...files];
   if (!list.length) return false;
   dbg('kbfiles', { n: list.length, t: String(list[0].type).slice(0, 20), kb: Math.round(list[0].size / 1024) });
-  try { await sendToRemote(list); } catch (e) { toast('Senden: ' + e.message, 4200); }
+  try { await sendToRemote(list); } catch (e) { toast(t('app.errSend', { msg: e.message }), 4200); }
   return true;
 }
 function onKbPaste(e) {
@@ -1818,27 +1834,27 @@ new MutationObserver((list) => {
  * ===================================================================== */
 document.querySelectorAll('dialog [data-act="close"]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
 
-el.typeBtn.addEventListener('click', async () => { const t = el.sendText.value; el.clipDlg.close(); const s = cur(); if (t && s) { await sleep(150); await s.typeText(t); toast('Eingetippt'); } });
+el.typeBtn.addEventListener('click', async () => { const txt = el.sendText.value; el.clipDlg.close(); const s = cur(); if (txt && s) { await sleep(150); await s.typeText(txt); toast(t('app.typed')); } });
 el.pasteBtn.addEventListener('click', () => {
   const s = cur();
   if (!s || !s.client || !el.sendText.value) return;
-  if (s.pasteText) { s.pasteText(el.sendText.value); toast('Eingefügt', 1400); return; }        // Terminal: als Einfuegen in die Shell
+  if (s.pasteText) { s.pasteText(el.sendText.value); toast(t('app.pasted'), 1400); return; }        // Terminal: als Einfuegen in die Shell
   s.client.sendClipboardText(el.sendText.value);
-  toast('In die Zwischenablage der VM gelegt (dort Strg+V)', 2200);
+  toast(t('app.putInVmClipboard'), 2200);
 });
 el.copyBtn.addEventListener('click', async () => {
-  const t = el.remoteClip.value;
-  try { await navigator.clipboard.writeText(t); toast('Kopiert'); }
-  catch { el.remoteClip.focus(); el.remoteClip.select(); try { document.execCommand('copy'); toast('Kopiert'); } catch { toast('Bitte Text markieren und kopieren'); } }
+  const txt = el.remoteClip.value;
+  try { await navigator.clipboard.writeText(txt); toast(t('app.copied')); }
+  catch { el.remoteClip.focus(); el.remoteClip.select(); try { document.execCommand('copy'); toast(t('app.copied')); } catch { toast(t('app.selectAndCopy')); } }
 });
 
 /* ----- Datei senden und Bilder/Dateien aus der VM: der Dialog gehoert der aktiven Sitzung ----- */
 const fileInput = $('#fileInput');
-const sendToRemote = (list) => { const s = cur(); if (!s) { toast('Nicht verbunden'); return Promise.resolve(false); } return s.sendToRemote(list); };
+const sendToRemote = (list) => { const s = cur(); if (!s) { toast(t('app.notConnected')); return Promise.resolve(false); } return s.sendToRemote(list); };
 function pickFile() { fileInput.value = ''; fileInput.click(); }
 fileInput.addEventListener('change', async () => {
   const files = [...(fileInput.files || [])];
-  if (files.length) try { await sendToRemote(files); } catch (e) { toast('Senden: ' + e.message, 4200); }
+  if (files.length) try { await sendToRemote(files); } catch (e) { toast(t('app.errSend', { msg: e.message }), 4200); }
 });
 $('#sendFileBtn').addEventListener('click', () => { el.clipDlg.close(); pickFile(); });
 // Ordner senden: der Auswahldialog des Browsers (webkitdirectory) liefert alle Dateien mit ihrem Pfad (leere Ordner nennt er nicht)
@@ -1846,12 +1862,12 @@ const folderInput = $('#folderInput');
 function pickFolder() { folderInput.value = ''; folderInput.click(); }
 folderInput.addEventListener('change', async () => {
   const items = itemsFromFiles(folderInput.files || []);
-  if (items.length) try { await sendToRemote(items); } catch (e) { toast('Senden: ' + e.message, 4200); }
+  if (items.length) try { await sendToRemote(items); } catch (e) { toast(t('app.errSend', { msg: e.message }), 4200); }
 });
 $('#sendFolderBtn').addEventListener('click', () => { el.clipDlg.close(); pickFolder(); });
 
 const itemBox = $('#remoteItem'), itemImg = $('#remoteImg'), itemFiles = $('#remoteFiles'), itemImgRow = $('#remoteImgRow'), itemAllRow = $('#remoteAllRow');
-$('#filesAllBtn').addEventListener('click', () => { const s = cur(); if (s && s.remoteItem.files) s.downloadRemote(s.remoteItem.files.batch, '', 'Dateien-aus-der-VM.zip'); });
+$('#filesAllBtn').addEventListener('click', () => { const s = cur(); if (s && s.remoteItem.files) s.downloadRemote(s.remoteItem.files.batch, '', t('app.zipName')); });
 function renderRemoteItem() {
   const s = cur(), item = s ? s.remoteItem : { image: null, files: null };
   itemBox.hidden = !(item.image || item.files);
@@ -1863,8 +1879,8 @@ function renderRemoteItem() {
     for (const row of rows) {
       const li = document.createElement('li'), nm = document.createElement('span'), sz = document.createElement('span'), b = document.createElement('button');
       nm.className = 'nm'; nm.textContent = row.dir ? row.name + '/' : row.name;
-      sz.className = 'sz'; sz.textContent = row.dir ? `${row.count} ${row.count === 1 ? 'Datei' : 'Dateien'}${row.size >= 0 ? ', ' + fmtSize(row.size) : ''}` : fmtSize(row.size);
-      b.type = 'button'; b.textContent = row.dir ? 'Als ZIP' : 'Laden'; b.className = 'ghost';
+      sz.className = 'sz'; sz.textContent = row.dir ? `${tp('app.fileCount', row.count)}${row.size >= 0 ? ', ' + fmtSize(row.size) : ''}` : fmtSize(row.size);
+      b.type = 'button'; b.textContent = row.dir ? t('app.asZip') : t('app.download'); b.className = 'ghost';
       b.addEventListener('click', () => s.downloadRemote(item.files.batch, row.path, row.dir ? row.name + '.zip' : row.name));
       li.append(nm, sz, b); itemFiles.append(li);
     }
@@ -1872,19 +1888,19 @@ function renderRemoteItem() {
   }
 }
 async function copyImageToLocal(blob) {
-  if (!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem)) throw new Error('Kopieren ist hier nicht möglich (HTTPS nötig)');
+  if (!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem)) throw new Error(t('app.copyNotPossible'));
   await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
 }
 $('#imgCopyBtn').addEventListener('click', async () => {
   const s = cur(); if (!s || !s.remoteItem.image) return;
-  try { await copyImageToLocal(s.remoteItem.image); toast('Bild kopiert'); } catch (e) { toast(e.message || 'Kopieren nicht erlaubt, bitte Speichern', 3600); }
+  try { await copyImageToLocal(s.remoteItem.image); toast(t('app.imageCopied')); } catch (e) { toast(e.message || t('app.copyNotAllowed'), 3600); }
 });
-$('#imgSaveBtn').addEventListener('click', () => { const s = cur(); if (s && s.remoteItem.image) saveBlob(s.remoteItem.image, 'bild-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '') + '.png'); });
+$('#imgSaveBtn').addEventListener('click', () => { const s = cur(); if (s && s.remoteItem.image) saveBlob(s.remoteItem.image, t('app.imageFileBase') + '-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '') + '.png'); });
 
 /* =====================================================================
  *  Material-You-Design: Palette aus einer Grundfarbe
  * ===================================================================== */
-const SWATCHES = [['#4f86f7', 'Blau'], ['#00a67e', 'Grün'], ['#e5484d', 'Rot'], ['#9a67ea', 'Violett'], ['#f5a524', 'Orange'], ['#e5599a', 'Pink'], ['#0aa5b8', 'Türkis'], ['#8a8f98', 'Grau']];
+const SWATCHES = [['#4f86f7', tk('app.swBlue')], ['#00a67e', tk('app.swGreen')], ['#e5484d', tk('app.swRed')], ['#9a67ea', tk('app.swViolet')], ['#f5a524', tk('app.swOrange')], ['#e5599a', tk('app.swPink')], ['#0aa5b8', tk('app.swTurquoise')], ['#8a8f98', tk('app.swGrey')]];
 function hexToHsl(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex || ''); if (!m) return null;
   const n = parseInt(m[1], 16); const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
@@ -1931,11 +1947,11 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if
 
 function openThemeDialog() {
   el.swatches.replaceChildren();
-  const sys = document.createElement('div'); sys.className = 'sw sys' + (S.seed === 'system' ? ' sel' : ''); sys.textContent = 'System';
+  const sys = document.createElement('div'); sys.className = 'sw sys' + (S.seed === 'system' ? ' sel' : ''); sys.textContent = t('app.system');
   sys.addEventListener('click', () => { S.seed = 'system'; saveTheme(); applyTheme(); openThemeDialog(); });
   el.swatches.appendChild(sys);
   for (const [hex, name] of SWATCHES) {
-    const s = document.createElement('div'); s.className = 'sw' + (S.seed.toLowerCase() === hex ? ' sel' : ''); s.style.background = hex; s.title = name;
+    const s = document.createElement('div'); s.className = 'sw' + (S.seed.toLowerCase() === hex ? ' sel' : ''); s.style.background = hex; s.title = t(name);
     s.addEventListener('click', () => { S.seed = hex; saveTheme(); applyTheme(); openThemeDialog(); });
     el.swatches.appendChild(s);
   }
@@ -1968,18 +1984,26 @@ el.imgSeedInput.addEventListener('change', async () => {
   const f = el.imgSeedInput.files && el.imgSeedInput.files[0]; if (!f) return;
   try {
     const hex = await seedFromImage(f);
-    if (!hex) { toast('Im Bild keine kräftige Farbe gefunden', 3000); return; }
-    S.seed = hex; saveTheme(); applyTheme(); openThemeDialog(); toast('Farbe aus Bild übernommen', 2000); dbg('seedimg', { c: hex });
-  } catch (e) { toast('Bild konnte nicht gelesen werden', 3000); }
+    if (!hex) { toast(t('app.noStrongColour'), 3000); return; }
+    S.seed = hex; saveTheme(); applyTheme(); openThemeDialog(); toast(t('app.colourTaken'), 2000); dbg('seedimg', { c: hex });
+  } catch (e) { toast(t('app.imageUnreadable'), 3000); }
 });
 el.seedInput.addEventListener('input', () => { S.seed = el.seedInput.value; saveTheme(); applyTheme(); });
 el.schemeSel.addEventListener('change', () => { S.scheme = el.schemeSel.value; saveTheme(); applyTheme(); });
 /** Die gewaehlte Helligkeit: 'auto' (wie das System), 'light' oder 'dark'. Handy und Desktop teilen sie (Server-Einstellung "theme"). */
 export const getScheme = () => S.scheme;
 /** Fuer die Handy- und die Desktop-Oberflaeche: Farbe und Hell/Dunkel setzen, speichern und anwenden. */
+/** Sprache der Oberflaeche waehlen (de, en, system): lokal und auf dem Server merken, dann die Seite neu laden (die Oberflaeche liest die Sprache beim Start). */
+export function setLanguage(choice) {
+  if (!isPref(choice)) return;
+  setPref(choice);
+  prefs.push('lang', { lang: choice });          // geht nach dem Neuladen hinaus, falls es vorher nicht mehr klappt (prefs.js merkt es als offen)
+  setTimeout(() => location.reload(), 150);
+}
 export function setTheme({ seed, scheme }) { if (seed) S.seed = seed; if (scheme) S.scheme = scheme; saveTheme(); applyTheme(); }
-/** Was der Server fuer diesen Benutzer hat (prefs.sync): Tastenleiste und Theme uebernehmen, lokale Kopie auffrischen, neu zeichnen. */
-export function applyServerPrefs({ keybar, theme } = {}) {
+/** Was der Server fuer diesen Benutzer hat (prefs.sync): Tastenleiste, Theme und Sprache uebernehmen, lokale Kopie auffrischen, neu zeichnen. */
+export function applyServerPrefs({ keybar, theme, lang } = {}) {
+  if (lang && isPref(lang.lang) && lang.lang !== getPref()) setPref(lang.lang);   // gilt ab dem naechsten Laden der Seite (shell.js laedt beim Anmelden neu)
   const r = keybar && normalizeRows(keybar.rows);
   if (r) { rows = r; store.set('rows4', rows); renderAllRows(); }
   if (theme && validSeed(theme.seed) && isScheme(theme.scheme)) { S.seed = theme.seed; S.scheme = theme.scheme; store.set('seed', S.seed); store.set('scheme', S.scheme); applyTheme(); }
@@ -1998,7 +2022,7 @@ function openPhotoDlg() {
 }
 /* Eine Taste: Bild aus der Zwischenablage senden (Bild kopieren, dann tippen). Ohne HTTPS oder ohne Erlaubnis: Dialog. */
 async function pasteImageFromClipboard() {
-  if (!(window.isSecureContext && navigator.clipboard && navigator.clipboard.read)) { openPhotoDlg(); toast('Ohne HTTPS nur über das Einfügefeld', 3200); return; }
+  if (!(window.isSecureContext && navigator.clipboard && navigator.clipboard.read)) { openPhotoDlg(); toast(t('app.noHttpsPasteField'), 3200); return; }
   try {
     const items = await navigator.clipboard.read();
     dbg('clipread', { n: items.length, types: items.map((i) => i.types.join('+')).join(',').slice(0, 80) });
@@ -2007,9 +2031,9 @@ async function pasteImageFromClipboard() {
       if (type) { const b = await item.getType(type); await handleKbFiles([new File([b], 'zwischenablage', { type })]); return; }
     }
     // Die Google-Tastatur legt kopierte Bilder so ab, dass Chrome nur Text sieht: dann gleich die Galerie anbieten, statt nichts zu tun
-    toast('Kein Bild in der Zwischenablage. Wähle eines aus der Galerie.', 3200);
+    toast(t('app.noImageInClipboardGallery'), 3200);
     pickPhoto();
-  } catch (e) { dbg('clipread-error', { n: e.name }); openPhotoDlg(); toast('Zwischenablage nicht erlaubt, bitte Einfügefeld nutzen', 3200); }
+  } catch (e) { dbg('clipread-error', { n: e.name }); openPhotoDlg(); toast(t('app.clipNotAllowed'), 3200); }
 }
 async function sendPhotoFiles(files) {
   const ok = await handleKbFiles(files);
@@ -2023,8 +2047,8 @@ $('#photoClip').addEventListener('click', async () => {
       const type = item.types.find((t) => t.startsWith('image/'));
       if (type) { const b = await item.getType(type); await sendPhotoFiles([new File([b], 'zwischenablage', { type })]); return; }
     }
-    toast('In der Zwischenablage ist kein Bild', 2600);
-  } catch (e) { toast('Zwischenablage nicht lesbar: ' + (e.message || e.name), 3600); }
+    toast(t('app.noImageInClipboard'), 2600);
+  } catch (e) { toast(t('app.errClipUnreadable', { msg: e.message || e.name }), 3600); }
 });
 pasteBox.addEventListener('paste', (e) => {
   const dt = e.clipboardData; dbg('pastebox', { files: dt && dt.files ? dt.files.length : 0, types: dt ? [...dt.types].join(',').slice(0, 60) : '' });
@@ -2042,14 +2066,14 @@ new MutationObserver((list) => {
     const imgs = n.nodeType === 1 ? (n.tagName === 'IMG' ? [n] : [...n.querySelectorAll('img')]) : [];
     for (const im of imgs) {
       const src = im.currentSrc || im.src;
-      if (src) fetch(src).then((r) => r.blob()).then((b) => sendPhotoFiles([new File([b], 'tastatur-bild', { type: b.type || 'image/png' })])).catch(() => toast('Bild konnte nicht gelesen werden', 3000));
+      if (src) fetch(src).then((r) => r.blob()).then((b) => sendPhotoFiles([new File([b], 'tastatur-bild', { type: b.type || 'image/png' })])).catch(() => toast(t('app.imageUnreadable'), 3000));
     }
   }
 }).observe(pasteBox, { childList: true, subtree: true });
 el.photoInput.addEventListener('change', async () => {
   const f = el.photoInput.files && el.photoInput.files[0];
   if (!f) return;
-  try { const s = cur(); if (!s) throw new Error('nicht verbunden'); await s.sendToRemote([f]); } catch (e) { toast('Foto: ' + e.message, 4200); dbg('photo-error', { m: String(e.message).slice(0, 20) }); }
+  try { const s = cur(); if (!s) throw new Error(t('app.notConnectedLc')); await s.sendToRemote([f]); } catch (e) { toast(t('app.errPhoto', { msg: e.message }), 4200); dbg('photo-error', { m: String(e.message).slice(0, 20) }); }
 });
 /* =====================================================================
  *  Passwort per Passwortmanager (Bitwarden) holen und in die VM tippen
@@ -2060,13 +2084,13 @@ function openPwDialog() {
 }
 async function typePw(both) {
   const u = el.pwUser.value, p = el.pwPass.value;
-  if (!p) { toast('Kein Passwort im Feld'); return; }
+  if (!p) { toast(t('app.noPasswordInField')); return; }
   el.pwUser.value = ''; el.pwPass.value = ''; el.pwDlg.close();
   await sleep(250);
   const s = cur(); if (!s) return;
   if (both) { if (u) { await s.typeText(u); await s.tapKey(KS.tab); } await s.typeText(p); await s.tapKey(KS.enter); }
   else await s.typeText(p);
-  toast('Eingetippt');
+  toast(t('app.typed'));
 }
 el.pwTypePass.addEventListener('click', () => typePw(false));
 el.pwTypeBoth.addEventListener('click', () => typePw(true));
@@ -2109,12 +2133,12 @@ if (location.search.includes('debug')) window.__pd = { Sessions, S, rows: () => 
 /* ---------- PWA: Service Worker und Installation ---------- */
 let installEvent = null;
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvent = e; });
-window.addEventListener('appinstalled', () => { installEvent = null; toast('Installiert'); });
+window.addEventListener('appinstalled', () => { installEvent = null; toast(t('app.installed')); });
 async function installApp() {
   if (installEvent) { installEvent.prompt(); try { await installEvent.userChoice; } catch { /* egal */ } installEvent = null; return; }
-  if (window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches) { toast('Läuft schon als App'); return; }
-  if (!window.isSecureContext) toast('Zum Installieren braucht die Seite HTTPS (zum Beispiel über Caddy).', 4200);
-  else toast('Im Browser-Menü „App installieren“ oder „Zum Startbildschirm“ wählen.', 4200);
+  if (window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches) { toast(t('app.alreadyApp')); return; }
+  if (!window.isSecureContext) toast(t('app.installNeedsHttps'), 4200);
+  else toast(t('app.installViaMenu'), 4200);
 }
 if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
@@ -2130,10 +2154,10 @@ export const remoteApi = {
   mod: (name) => (cur() ? cur().mods[name] : none.off),
   cycleMod: (name) => cur() && cur().cycleMod(name),
   /** Eine der frei belegbaren Gruppen ('keys', 'combos', 'funcs') samt Index fuer den Editor */
-  group: (id) => { const r = rows.findIndex((x) => x.id === id); return r < 0 ? null : { index: r, title: rows[r].title, items: rows[r].items }; },
+  group: (id) => { const r = rows.findIndex((x) => x.id === id); return r < 0 ? null : { index: r, title: rowTitle(rows[r]), items: rows[r].items }; },
   press: (def) => cur() && cur().activateKey(def),
   editKey: (r, i) => openKeyEditor(r, i),
-  resetKeys: () => { if (confirm('Sondertasten auf Standard zurücksetzen?')) { rows = clone(DEFAULT_ROWS); localStorage.removeItem('pd.rows4'); prefs.reset('keybar'); renderAllRows(); } },
+  resetKeys: () => { if (confirm(t('app.confirmResetKeys'))) { rows = clone(DEFAULT_ROWS); localStorage.removeItem('pd.rows4'); prefs.reset('keybar'); renderAllRows(); } },
   /** Ansicht */
   zoomPercent: () => (cur() ? cur().zoomPercent() : 100),
   setZoomPercent: (p) => { const s = cur(); if (s) { s.setK(100 / p); s.rememberProfile(); } },
@@ -2170,7 +2194,7 @@ if (micPill) {
   const showMic = () => {
     const owner = StreamAudio.micOwner;
     micPill.hidden = !(owner && owner.micOn);
-    if (!micPill.hidden) micPill.lastChild.textContent = owner.label ? 'Mikrofon an · ' + owner.label : 'Mikrofon an';
+    if (!micPill.hidden) micPill.lastChild.textContent = owner.label ? t('app.micOnNamed', { name: owner.label }) : t('app.micOn');
     for (const x of Sessions.list()) if (x instanceof RemoteSession) x.updateAudioMenu();
   };
   StreamAudio.watchMic(showMic);

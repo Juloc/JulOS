@@ -23,40 +23,40 @@
     <!-- Ersteinrichtung (nur solange es noch kein Konto gibt): Schritt 1, Konto anlegen -->
     <section id="setup" class="screen center" hidden>
       <form id="setupForm" class="card" autocomplete="on">
-        <h1>JulOS einrichten</h1>
-        <p class="sub">Lege das erste Konto an. Den Setup-Code findest du im Log des Servers.</p>
-        <label>Setup-Code
+        <h1 data-i18n="app.setupTitle">JulOS einrichten</h1>
+        <p class="sub" data-i18n="app.setupIntro">Lege das erste Konto an. Den Setup-Code findest du im Log des Servers.</p>
+        <label data-i18n="app.setupCode">Setup-Code
           <input id="setupCode" type="text" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" required>
         </label>
-        <label>Benutzername
+        <label data-i18n="app.username">Benutzername
           <input id="setupUser" name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required>
         </label>
-        <label>Passwort (mindestens 12 Zeichen)
+        <label data-i18n="app.setupPassword">Passwort (mindestens 12 Zeichen)
           <input id="setupPw" name="new-password" type="password" autocomplete="new-password" minlength="12" required>
         </label>
-        <label>Passwort wiederholen
+        <label data-i18n="app.setupPasswordRepeat">Passwort wiederholen
           <input id="setupPw2" type="password" autocomplete="new-password" minlength="12" required>
         </label>
-        <button type="submit" class="primary">Weiter</button>
+        <button type="submit" class="primary" data-i18n="app.next">Weiter</button>
         <p id="setupMsg" class="msg" role="alert"></p>
       </form>
 
       <!-- Schritt 2: Authenticator und Wiederherstellungscodes -->
       <form id="setupSecretForm" class="card" hidden autocomplete="off">
-        <h1>Authenticator</h1>
-        <p class="sub">Scanne den QR-Code oder füge den Schlüssel in deine Authenticator-App ein (zum Beispiel Bitwarden, Aegis oder Google Authenticator).</p>
+        <h1 data-i18n="app.authTitle">Authenticator</h1>
+        <p class="sub" data-i18n="app.authIntro">Scanne den QR-Code oder füge den Schlüssel in deine Authenticator-App ein (zum Beispiel Bitwarden, Aegis oder Google Authenticator).</p>
         <div id="setupQr" class="qr"></div>
-        <a id="setupOtpLink" class="btn ghost" href="#">In der Authenticator-App öffnen</a>
-        <p class="hint">Oder den Schlüssel von Hand eintragen:</p>
+        <a id="setupOtpLink" class="btn ghost" href="#" data-i18n="app.openInAuth">In der Authenticator-App öffnen</a>
+        <p class="hint" data-i18n="app.enterKeyByHand">Oder den Schlüssel von Hand eintragen:</p>
         <code id="setupSecret" class="mono"></code>
-        <h2>Wiederherstellungscodes</h2>
-        <p class="hint">Jeder Code gilt einmal und ersetzt den Authenticator, falls das Handy weg ist. Speichere sie jetzt, sie werden nicht noch einmal gezeigt.</p>
+        <h2 data-i18n="app.recoveryCodes">Wiederherstellungscodes</h2>
+        <p class="hint" data-i18n="app.recoveryHint">Jeder Code gilt einmal und ersetzt den Authenticator, falls das Handy weg ist. Speichere sie jetzt, sie werden nicht noch einmal gezeigt.</p>
         <pre id="setupRecovery" class="mono"></pre>
-        <div class="row"><button id="setupCopy" type="button" class="ghost">Codes kopieren</button></div>
-        <label>Code aus der App
+        <div class="row"><button id="setupCopy" type="button" class="ghost" data-i18n="app.copyCodes">Codes kopieren</button></div>
+        <label data-i18n="app.codeFromApp">Code aus der App
           <input id="setupTotp" type="text" inputmode="numeric" pattern="[0-9 ]*" autocomplete="one-time-code" required>
         </label>
-        <button type="submit" class="primary">Einrichtung abschließen</button>
+        <button type="submit" class="primary" data-i18n="app.finishSetup">Einrichtung abschließen</button>
         <p id="setupSecretMsg" class="msg" role="alert"></p>
       </form>
     </section>
@@ -65,17 +65,17 @@
     <section id="login" class="screen center" hidden>
       <form id="loginForm" class="card" method="post" action="#" autocomplete="on">
         <h1>JulOS</h1>
-        <p class="sub">Anmelden</p>
-        <label>Benutzername
+        <p class="sub" data-i18n="app.signIn">Anmelden</p>
+        <label data-i18n="app.username">Benutzername
           <input id="loginUser" name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required>
         </label>
-        <label>Passwort
+        <label data-i18n="app.password">Passwort
           <input id="loginPw" name="password" type="password" autocomplete="current-password" required>
         </label>
-        <label>Code aus der Authenticator-App (oder Wiederherstellungscode)
+        <label data-i18n="app.loginCode">Code aus der Authenticator-App (oder Wiederherstellungscode)
           <input id="loginCode" type="text" autocomplete="one-time-code" autocapitalize="none" autocorrect="off" spellcheck="false" required>
         </label>
-        <button id="loginBtn" type="submit" class="primary">Anmelden</button>
+        <button id="loginBtn" type="submit" class="primary" data-i18n="app.signIn">Anmelden</button>
         <p id="loginMsg" class="msg" role="alert"></p>
       </form>
     </section>
@@ -86,15 +86,15 @@
         <h1>JulOS</h1>
         <button id="accountBtn" type="button" class="chip" aria-haspopup="menu"><span id="accountName"></span></button>
         <div id="accountMenu" class="sheet" hidden role="menu">
-          <button type="button" role="menuitem" data-act="account">Passwort und Authenticator</button>
-          <button type="button" role="menuitem" data-act="devices">Geräte und Sitzungen</button>
-          <button type="button" role="menuitem" data-act="signout">Abmelden</button>
+          <button type="button" role="menuitem" data-act="account" data-i18n="app.menuAccount">Passwort und Authenticator</button>
+          <button type="button" role="menuitem" data-act="devices" data-i18n="app.devices">Geräte und Sitzungen</button>
+          <button type="button" role="menuitem" data-act="signout" data-i18n="app.menuSignOut">Abmelden</button>
         </div>
       </header>
       <p id="homeMsg" class="msg wide" role="alert"></p>
       <div id="connList" class="connlist"></div>
-      <p id="connEmpty" class="empty" hidden>Noch keine Verbindung. Lege den Computer an, den du steuern willst.</p>
-      <button id="addConn" type="button" class="fab" aria-label="Verbindung hinzufügen"><span data-ic="add"></span><span class="faclabel">Hinzufügen</span></button>
+      <p id="connEmpty" class="empty" hidden data-i18n="app.connEmpty">Noch keine Verbindung. Lege den Computer an, den du steuern willst.</p>
+      <button id="addConn" type="button" class="fab" aria-label="Verbindung hinzufügen" data-i18n-aria-label="app.addConnection"><span data-ic="add"></span><span class="faclabel" data-i18n="common.add">Hinzufügen</span></button>
     </section>
 
     <!-- Handy-Oberflaeche (Material 3; mobile.js baut sie, nur auf schmalen oder Touch-Bildschirmen) -->
@@ -108,7 +108,7 @@
     <section id="remote" hidden></section>
 
     <!-- Anzeige, solange das Mikrofon einer Sitzung an ist (gilt fuer die ganze Seite, auch wenn die Sitzung im Hintergrund ist); Antippen beendet es -->
-    <button id="micLive" type="button" hidden title="Mikrofon beenden"><span class="dot"></span><span class="mlt">Mikrofon an</span></button>
+    <button id="micLive" type="button" hidden title="Mikrofon beenden" data-i18n-title="app.micStop"><span class="dot"></span><span class="mlt" data-i18n="app.micOn">Mikrofon an</span></button>
 
     <!-- Vorlage einer Fernsteuer-Sitzung (app.js klont sie pro Sitzung) -->
     <template id="svTemplate">
@@ -122,14 +122,14 @@
           <div class="sv-display"></div>
           <div class="sv-touch"></div>
           <div class="sv-toast" aria-live="polite"></div>
-          <div class="sv-xfer" hidden role="status"><span class="sv-xferText"></span><button class="sv-xferCancel" type="button">Abbrechen</button></div>
+          <div class="sv-xfer" hidden role="status"><span class="sv-xferText"></span><button class="sv-xferCancel" type="button" data-i18n="common.cancel">Abbrechen</button></div>
           <div class="sv-zoom" aria-hidden="true"></div>
           <div class="sv-overlay" hidden>
             <div class="box">
               <div class="sv-spinner spinner" hidden aria-hidden="true"></div>
-              <p class="sv-overlayMsg">Verbindung getrennt</p>
-              <button class="sv-reconnect" type="button">Neu verbinden</button>
-              <button class="sv-close ghost" type="button">Sitzung schließen</button>
+              <p class="sv-overlayMsg" data-i18n="app.overlayDisconnected">Verbindung getrennt</p>
+              <button class="sv-reconnect" type="button" data-i18n="app.reconnect">Neu verbinden</button>
+              <button class="sv-close ghost" type="button" data-i18n="app.closeSession">Sitzung schließen</button>
             </div>
           </div>
         </div>
@@ -138,26 +138,26 @@
         <nav class="sv-dock">
           <!-- Menü: kein Dialog, damit die Tastatur offen bleibt -->
           <div class="sv-menu" hidden role="menu">
-            <div class="mi" role="menuitem" data-act="reconnect"><span class="mic" data-ic="refresh"></span><span class="mt">Neu verbinden</span></div>
-            <div class="mi" role="menuitem" data-act="switcher" data-only="phone"><span class="mic" data-ic="layers"></span><span class="mt">Sitzungen</span><span class="mv mv-count"></span></div>
-            <div class="mi" role="menuitem" data-act="home" data-only="phone"><span class="mic" data-ic="home"></span><span class="mt">Zur Startseite (Sitzung bleibt offen)</span></div>
-            <div class="mi" role="menuitem" data-act="extra"><span class="mic" data-ic="add"></span><span class="mt">Weitere Sitzung zu diesem Ziel</span></div>
-            <div class="mi" role="menuitem" data-act="kbMode"><span class="mic" data-ic="keyboard"></span><span class="mt">Tastatur</span><span class="mv mv-kb"></span></div>
-            <div class="mi" role="menuitem" data-act="kbResize"><span class="mic" data-ic="layers"></span><span class="mt">Bei Tastatur</span><span class="mv mv-kbresize"></span></div>
-            <div class="mi" role="menuitem" data-act="autoKb"><span class="mic" data-ic="auto_kb"></span><span class="mt">Auto-Tastatur bei Textfeld</span><span class="mv mv-autokb"></span></div>
-            <div class="mi" role="menuitem" data-act="touchMode"><span class="mic" data-ic="touch"></span><span class="mt">Finger</span><span class="mv mv-touch"></span></div>
-            <div class="mi" role="menuitem" data-act="autoPaste"><span class="mic" data-ic="image"></span><span class="mt">Foto sofort einfügen</span><span class="mv mv-autopaste"></span></div>
-            <div class="mi" role="menuitem" data-act="perf"><span class="mic" data-ic="speed"></span><span class="mt">Leistung anzeigen</span><span class="mv mv-perf"></span></div>
-            <div class="mi" role="menuitem" data-act="quality"><span class="mic" data-ic="speed"></span><span class="mt">Bildrate</span><span class="mv mv-quality"></span></div>
-            <div class="mi" role="menuitem" data-act="sound" hidden><span class="mic" data-ic="volume"></span><span class="mt">Ton vom Rechner</span><span class="mv mv-sound"></span></div>
-            <div class="mi" role="menuitem" data-act="volume" hidden><span class="mic" data-ic="volume"></span><span class="mt">Lautstärke</span><span class="mv mv-volume"></span></div>
-            <div class="mi" role="menuitem" data-act="mic" hidden><span class="mic" data-ic="mic"></span><span class="mt">Mikrofon</span><span class="mv mv-mic"></span></div>
-            <div class="mi" role="menuitem" data-act="password"><span class="mic" data-ic="key"></span><span class="mt">Passwort aus Passwortmanager</span></div>
-            <div class="mi" role="menuitem" data-act="theme"><span class="mic" data-ic="palette"></span><span class="mt">Farben und Design</span></div>
-            <div class="mi" role="menuitem" data-act="editKeys"><span class="mic" data-ic="edit"></span><span class="mt">Sondertasten bearbeiten</span></div>
-            <div class="mi" role="menuitem" data-act="resetKeys"><span class="mic" data-ic="restart"></span><span class="mt">Sondertasten zurücksetzen</span></div>
-            <div class="mi" role="menuitem" data-act="install"><span class="mic" data-ic="download"></span><span class="mt">Als App installieren</span></div>
-            <div class="mi" role="menuitem" data-act="logout"><span class="mic" data-ic="logout"></span><span class="mt">Sitzung beenden</span></div>
+            <div class="mi" role="menuitem" data-act="reconnect"><span class="mic" data-ic="refresh"></span><span class="mt" data-i18n="app.reconnect">Neu verbinden</span></div>
+            <div class="mi" role="menuitem" data-act="switcher" data-only="phone"><span class="mic" data-ic="layers"></span><span class="mt" data-i18n="app.menuSessions">Sitzungen</span><span class="mv mv-count"></span></div>
+            <div class="mi" role="menuitem" data-act="home" data-only="phone"><span class="mic" data-ic="home"></span><span class="mt" data-i18n="app.menuHome">Zur Startseite (Sitzung bleibt offen)</span></div>
+            <div class="mi" role="menuitem" data-act="extra"><span class="mic" data-ic="add"></span><span class="mt" data-i18n="app.menuExtra">Weitere Sitzung zu diesem Ziel</span></div>
+            <div class="mi" role="menuitem" data-act="kbMode"><span class="mic" data-ic="keyboard"></span><span class="mt" data-i18n="app.menuKeyboard">Tastatur</span><span class="mv mv-kb"></span></div>
+            <div class="mi" role="menuitem" data-act="kbResize"><span class="mic" data-ic="layers"></span><span class="mt" data-i18n="app.menuKbResize">Bei Tastatur</span><span class="mv mv-kbresize"></span></div>
+            <div class="mi" role="menuitem" data-act="autoKb"><span class="mic" data-ic="auto_kb"></span><span class="mt" data-i18n="app.menuAutoKb">Auto-Tastatur bei Textfeld</span><span class="mv mv-autokb"></span></div>
+            <div class="mi" role="menuitem" data-act="touchMode"><span class="mic" data-ic="touch"></span><span class="mt" data-i18n="app.menuTouch">Finger</span><span class="mv mv-touch"></span></div>
+            <div class="mi" role="menuitem" data-act="autoPaste"><span class="mic" data-ic="image"></span><span class="mt" data-i18n="app.menuAutoPaste">Foto sofort einfügen</span><span class="mv mv-autopaste"></span></div>
+            <div class="mi" role="menuitem" data-act="perf"><span class="mic" data-ic="speed"></span><span class="mt" data-i18n="app.menuPerf">Leistung anzeigen</span><span class="mv mv-perf"></span></div>
+            <div class="mi" role="menuitem" data-act="quality"><span class="mic" data-ic="speed"></span><span class="mt" data-i18n="app.menuQuality">Bildrate</span><span class="mv mv-quality"></span></div>
+            <div class="mi" role="menuitem" data-act="sound" hidden><span class="mic" data-ic="volume"></span><span class="mt" data-i18n="app.menuSound">Ton vom Rechner</span><span class="mv mv-sound"></span></div>
+            <div class="mi" role="menuitem" data-act="volume" hidden><span class="mic" data-ic="volume"></span><span class="mt" data-i18n="app.menuVolume">Lautstärke</span><span class="mv mv-volume"></span></div>
+            <div class="mi" role="menuitem" data-act="mic" hidden><span class="mic" data-ic="mic"></span><span class="mt" data-i18n="app.menuMic">Mikrofon</span><span class="mv mv-mic"></span></div>
+            <div class="mi" role="menuitem" data-act="password"><span class="mic" data-ic="key"></span><span class="mt" data-i18n="app.menuPassword">Passwort aus Passwortmanager</span></div>
+            <div class="mi" role="menuitem" data-act="theme"><span class="mic" data-ic="palette"></span><span class="mt" data-i18n="app.themeTitle">Farben und Design</span></div>
+            <div class="mi" role="menuitem" data-act="editKeys"><span class="mic" data-ic="edit"></span><span class="mt" data-i18n="app.menuEditKeys">Sondertasten bearbeiten</span></div>
+            <div class="mi" role="menuitem" data-act="resetKeys"><span class="mic" data-ic="restart"></span><span class="mt" data-i18n="app.menuResetKeys">Sondertasten zurücksetzen</span></div>
+            <div class="mi" role="menuitem" data-act="install"><span class="mic" data-ic="download"></span><span class="mt" data-i18n="app.menuInstall">Als App installieren</span></div>
+            <div class="mi" role="menuitem" data-act="logout"><span class="mic" data-ic="logout"></span><span class="mt" data-i18n="app.menuEndSession">Sitzung beenden</span></div>
           </div>
 
           <div class="sv-rowsTop"></div>
@@ -169,64 +169,64 @@
     <!-- Verbindung anlegen/aendern -->
     <dialog id="connDlg">
       <form id="connForm" method="dialog" autocomplete="off">
-        <h2 id="connDlgTitle">Verbindung</h2>
+        <h2 id="connDlgTitle" data-i18n="app.connection">Verbindung</h2>
         <label>Name <input id="connName" type="text" maxlength="60" autocomplete="off" required></label>
-        <label>Art
+        <label data-i18n="app.kind">Art
           <select id="connKind"><option value="desktop">Desktop (RDP)</option><option value="terminal">Terminal (SSH)</option></select>
         </label>
         <label id="connHostRow">Host
           <select id="connHostSel"></select>
         </label>
-        <label id="connFolderRow">Ordner
+        <label id="connFolderRow" data-i18n="app.folder">Ordner
           <select id="connFolderSel"></select>
         </label>
         <div id="connDriveRow" hidden>
-          <label class="check"><input id="connDrive" type="checkbox"> Ordner des Servers als Laufwerk freigeben</label>
-          <label id="connDriveWriteRow" class="check" hidden><input id="connDriveWrite" type="checkbox"> Schreiben erlauben</label>
-          <p id="connDriveHint" class="hint">Der Server reicht einen festen Ordner als Laufwerk in den Desktop. Alles darin sieht jeder, der den Desktop bedient. Standard: aus, und wenn an, nur Lesen. Nur mit dem Stream.</p>
-          <p id="connDriveWriteHint" class="hint" hidden>Mit Schreiben kann der Desktop in diesem Ordner Dateien anlegen, ändern, umbenennen und löschen (bis 1 GiB je Datei).</p>
-          <p id="connDriveOff" class="hint" hidden>Am Server ist kein Ordner eingerichtet (JULOS_DRIVE_ROOT).</p>
+          <label class="check" data-i18n="app.driveShare"><input id="connDrive" type="checkbox"> Ordner des Servers als Laufwerk freigeben</label>
+          <label id="connDriveWriteRow" class="check" hidden data-i18n="app.driveWrite"><input id="connDriveWrite" type="checkbox"> Schreiben erlauben</label>
+          <p id="connDriveHint" class="hint" data-i18n="app.driveHint">Der Server reicht einen festen Ordner als Laufwerk in den Desktop. Alles darin sieht jeder, der den Desktop bedient. Standard: aus, und wenn an, nur Lesen. Nur mit dem Stream.</p>
+          <p id="connDriveWriteHint" class="hint" hidden data-i18n="app.driveWriteHint">Mit Schreiben kann der Desktop in diesem Ordner Dateien anlegen, ändern, umbenennen und löschen (bis 1 GiB je Datei).</p>
+          <p id="connDriveOff" class="hint" hidden data-i18n="app.driveOff">Am Server ist kein Ordner eingerichtet (JULOS_DRIVE_ROOT).</p>
         </div>
-        <label>Adresse <input id="connHost" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Name oder IP-Adresse" required></label>
+        <label data-i18n="app.address">Adresse <input id="connHost" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Name oder IP-Adresse" data-i18n-placeholder="app.addressPh" required></label>
         <label>Port <input id="connPort" type="text" inputmode="numeric" autocomplete="off" placeholder="3389"></label>
-        <label>Benutzername auf dem Ziel <input id="connUser" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
-        <label id="connDomainRow"><span>Domäne <span class="opt">(optional, nur Desktop)</span></span> <input id="connDomain" type="text" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="leer = keine Windows-Domäne"></label>
-        <label id="connLayoutRow"><span>Tastaturlayout des Ziels <span class="opt">(nur Desktop)</span></span>
+        <label data-i18n="app.userOnTarget">Benutzername auf dem Ziel <input id="connUser" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
+        <label id="connDomainRow"><span data-i18n="app.domain">Domäne <span class="opt" data-i18n="app.optionalDesktopOnly">(optional, nur Desktop)</span></span> <input id="connDomain" type="text" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="leer = keine Windows-Domäne" data-i18n-placeholder="app.domainPh"></label>
+        <label id="connLayoutRow"><span data-i18n="app.layoutLabel">Tastaturlayout des Ziels <span class="opt" data-i18n="app.desktopOnly">(nur Desktop)</span></span>
           <select id="connLayout">
-            <option value="de">Deutsch</option><option value="de-at">Deutsch (Österreich)</option><option value="de-ch">Deutsch (Schweiz)</option>
-            <option value="en-us">Englisch (USA)</option><option value="en-gb">Englisch (Vereinigtes Königreich)</option>
-            <option value="fr">Französisch</option><option value="es">Spanisch</option><option value="it">Italienisch</option>
+            <option value="de" data-i18n="app.layoutDe">Deutsch</option><option value="de-at" data-i18n="app.layoutDeAt">Deutsch (Österreich)</option><option value="de-ch" data-i18n="app.layoutDeCh">Deutsch (Schweiz)</option>
+            <option value="en-us" data-i18n="app.layoutEnUs">Englisch (USA)</option><option value="en-gb" data-i18n="app.layoutEnGb">Englisch (Vereinigtes Königreich)</option>
+            <option value="fr" data-i18n="app.layoutFr">Französisch</option><option value="es" data-i18n="app.layoutEs">Spanisch</option><option value="it" data-i18n="app.layoutIt">Italienisch</option>
           </select>
         </label>
-        <label><span>Passwort <span class="opt">(optional)</span></span>
-          <input id="connPw" type="password" autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="leer = bei jeder Verbindung tippen">
+        <label><span data-i18n="app.password">Passwort <span class="opt" data-i18n="app.optional">(optional)</span></span>
+          <input id="connPw" type="password" autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="leer = bei jeder Verbindung tippen" data-i18n-placeholder="app.connPwPh">
         </label>
-        <label id="connForgetRow" class="check" hidden><input id="connForget" type="checkbox"> Gespeichertes Passwort löschen</label>
+        <label id="connForgetRow" class="check" hidden data-i18n="app.forgetPassword"><input id="connForget" type="checkbox"> Gespeichertes Passwort löschen</label>
         <p id="connPwHint" class="hint"></p>
-        <label><span>Notizen <span class="opt">(optional)</span></span> <textarea id="connNotes" rows="2" maxlength="500" autocomplete="off" placeholder="Wofür ist das Ziel, Besonderheiten …"></textarea></label>
+        <label><span data-i18n="app.notes">Notizen <span class="opt" data-i18n="app.optional">(optional)</span></span> <textarea id="connNotes" rows="2" maxlength="500" autocomplete="off" placeholder="Wofür ist das Ziel, Besonderheiten …" data-i18n-placeholder="app.notesPh"></textarea></label>
         <p id="connMsg" class="msg" role="alert"></p>
         <div class="row">
-          <button id="connSave" type="submit" class="primary">Speichern</button>
-          <button id="connUp" type="button" class="ghost" aria-label="In der Liste nach oben" title="In der Liste nach oben" hidden>▲</button>
-          <button id="connDown" type="button" class="ghost" aria-label="In der Liste nach unten" title="In der Liste nach unten" hidden>▼</button>
-          <button id="connDelete" type="button" class="danger" hidden>Löschen</button>
-          <button class="ghost close" data-act="close" type="button">Abbrechen</button>
+          <button id="connSave" type="submit" class="primary" data-i18n="common.save">Speichern</button>
+          <button id="connUp" type="button" class="ghost" aria-label="In der Liste nach oben" title="In der Liste nach oben" data-i18n-aria-label="app.moveUp" data-i18n-title="app.moveUp" hidden>▲</button>
+          <button id="connDown" type="button" class="ghost" aria-label="In der Liste nach unten" title="In der Liste nach unten" data-i18n-aria-label="app.moveDown" data-i18n-title="app.moveDown" hidden>▼</button>
+          <button id="connDelete" type="button" class="danger" hidden data-i18n="common.delete">Löschen</button>
+          <button class="ghost close" data-act="close" type="button" data-i18n="common.cancel">Abbrechen</button>
         </div>
       </form>
     </dialog>
 
     <!-- Ordner fuer Verbindungen verwalten (docs/FOLDERS.md) -->
     <dialog id="folderDlg">
-      <h2>Ordner</h2>
+      <h2 data-i18n="app.folder">Ordner</h2>
       <div id="folderList" class="folderlist"></div>
       <form id="folderForm" method="dialog" autocomplete="off">
         <label>Name <input id="folderName" type="text" maxlength="40" autocomplete="off" required></label>
-        <div id="folderIcons" class="foldericons" role="radiogroup" aria-label="Symbol"></div>
+        <div id="folderIcons" class="foldericons" role="radiogroup" aria-label="Symbol" data-i18n-aria-label="app.icon"></div>
         <p id="folderMsg" class="msg" role="alert"></p>
         <div class="row">
-          <button id="folderSave" type="submit" class="primary">Anlegen</button>
-          <button id="folderNew" type="button" class="ghost" hidden>Neu</button>
-          <button class="ghost close" data-act="close" type="button">Schließen</button>
+          <button id="folderSave" type="submit" class="primary" data-i18n="app.create">Anlegen</button>
+          <button id="folderNew" type="button" class="ghost" hidden data-i18n="app.new">Neu</button>
+          <button class="ghost close" data-act="close" type="button" data-i18n="common.close">Schließen</button>
         </div>
       </form>
     </dialog>
@@ -238,33 +238,33 @@
         <label>Name <input id="hostName" type="text" maxlength="60" autocomplete="off" required></label>
         <p id="hostInfo" class="hint" hidden></p>
         <section id="hostAgent" class="agentbox" hidden>
-          <h3>Agent auf diesem Host</h3>
+          <h3 data-i18n="app.hostAgent">Agent auf diesem Host</h3>
           <p id="hostAgentState" class="agentstate"></p>
-          <p class="hint">Der Agent läuft in der Sitzung des Ziels und gibt der App die Fensterleiste, den Programmstart sowie Fotos und Dateien für die Zwischenablage. Er meldet sich von dort aus beim Server, auf dem Host lauscht nichts. Ein Host hat einen Agenten, er gilt für alle Verbindungen dieses Hosts.</p>
+          <p class="hint" data-i18n="app.hostAgentHint">Der Agent läuft in der Sitzung des Ziels und gibt der App die Fensterleiste, den Programmstart sowie Fotos und Dateien für die Zwischenablage. Er meldet sich von dort aus beim Server, auf dem Host lauscht nichts. Ein Host hat einen Agenten, er gilt für alle Verbindungen dieses Hosts.</p>
           <div id="hostAgentCode" hidden>
-            <p class="hint">Dieser Code gilt <b>10 Minuten</b> und nur <b>einmal</b>. Er wird nur jetzt angezeigt.</p>
+            <p class="hint"><span data-i18n="app.hostCodeA">Dieser Code gilt </span><b data-i18n="app.hostCodeB">10 Minuten</b><span data-i18n="app.hostCodeC"> und nur </span><b data-i18n="app.hostCodeD">einmal</b><span data-i18n="app.hostCodeE">. Er wird nur jetzt angezeigt.</span></p>
             <p id="hostAgentCodeText" class="agentcode"></p>
-            <p class="hint">Auf dem Host, in einem Terminal der grafischen Sitzung:</p>
+            <p class="hint" data-i18n="app.hostCodeCmd">Auf dem Host, in einem Terminal der grafischen Sitzung:</p>
             <pre id="hostAgentCmd" class="agentcmd"></pre>
-            <button id="hostAgentCopy" type="button" class="ghost">Befehle kopieren</button>
+            <button id="hostAgentCopy" type="button" class="ghost" data-i18n="app.copyCommands">Befehle kopieren</button>
           </div>
           <div id="hostAgentUpdate" hidden>
             <p id="hostAgentUpdateHint" class="hint" hidden></p>
             <div class="row">
-              <button id="hostAgentUpdateBtn" type="button" class="primary" hidden>Jetzt aktualisieren</button>
+              <button id="hostAgentUpdateBtn" type="button" class="primary" hidden data-i18n="app.updateNow">Jetzt aktualisieren</button>
             </div>
-            <label class="check"><input id="hostAgentAuto" type="checkbox"> Automatisch aktualisieren, wenn eine neue Version da ist</label>
+            <label class="check" data-i18n="app.autoUpdate"><input id="hostAgentAuto" type="checkbox"> Automatisch aktualisieren, wenn eine neue Version da ist</label>
           </div>
           <div class="row">
-            <button id="hostAgentSetup" type="button" class="ghost">Agent einrichten</button>
-            <button id="hostAgentRemove" type="button" class="danger" hidden>Agent entfernen</button>
+            <button id="hostAgentSetup" type="button" class="ghost" data-i18n="app.agentSetup">Agent einrichten</button>
+            <button id="hostAgentRemove" type="button" class="danger" hidden data-i18n="app.agentRemove">Agent entfernen</button>
           </div>
         </section>
         <p id="hostMsg" class="msg" role="alert"></p>
         <div class="row">
-          <button id="hostSave" type="submit" class="primary">Speichern</button>
-          <button id="hostDelete" type="button" class="danger" hidden>Löschen</button>
-          <button class="ghost close" data-act="close" type="button">Abbrechen</button>
+          <button id="hostSave" type="submit" class="primary" data-i18n="common.save">Speichern</button>
+          <button id="hostDelete" type="button" class="danger" hidden data-i18n="common.delete">Löschen</button>
+          <button class="ghost close" data-act="close" type="button" data-i18n="common.cancel">Abbrechen</button>
         </div>
       </form>
     </dialog>
@@ -272,12 +272,12 @@
     <!-- Passwort fuer die Verbindung -->
     <dialog id="startDlg">
       <form id="startForm" method="dialog" autocomplete="on">
-        <h2 id="startTitle">Verbinden</h2>
-        <label>Benutzername <input id="startUser" name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" readonly></label>
-        <label>Passwort <input id="startPw" name="password" type="password" autocomplete="current-password" required></label>
+        <h2 id="startTitle" data-i18n="app.connect">Verbinden</h2>
+        <label data-i18n="app.username">Benutzername <input id="startUser" name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" readonly></label>
+        <label data-i18n="app.password">Passwort <input id="startPw" name="password" type="password" autocomplete="current-password" required></label>
         <div class="row">
-          <button id="startGo" type="submit" class="primary">Verbinden</button>
-          <button class="ghost close" data-act="close" type="button">Abbrechen</button>
+          <button id="startGo" type="submit" class="primary" data-i18n="app.connect">Verbinden</button>
+          <button class="ghost close" data-act="close" type="button" data-i18n="common.cancel">Abbrechen</button>
         </div>
       </form>
     </dialog>
@@ -286,198 +286,198 @@
     <dialog id="quickDlg">
       <form id="quickForm" method="dialog" autocomplete="off">
         <h2>Quick Connect</h2>
-        <p class="hint">Eine einzelne Sitzung, ohne Speichern: Adresse und Passwort bleiben nirgends hängen, auch nicht auf dem Server.</p>
-        <label>Art
+        <p class="hint" data-i18n="app.quickHint">Eine einzelne Sitzung, ohne Speichern: Adresse und Passwort bleiben nirgends hängen, auch nicht auf dem Server.</p>
+        <label data-i18n="app.kind">Art
           <select id="quickKind"><option value="desktop">Desktop (RDP)</option><option value="terminal">Terminal (SSH)</option></select>
         </label>
-        <label>Adresse <input id="quickHost" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Name oder IP-Adresse, auch benutzer@adresse:port" required></label>
-        <label>Benutzername auf dem Ziel <input id="quickUser" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
-        <label>Passwort <input id="quickPw" type="password" autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false" required></label>
+        <label data-i18n="app.address">Adresse <input id="quickHost" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Name oder IP-Adresse, auch benutzer@adresse:port" data-i18n-placeholder="app.quickHostPh" required></label>
+        <label data-i18n="app.userOnTarget">Benutzername auf dem Ziel <input id="quickUser" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
+        <label data-i18n="app.password">Passwort <input id="quickPw" type="password" autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false" required></label>
         <p id="quickMsg" class="msg" role="alert"></p>
         <div class="row">
-          <button id="quickGo" type="submit" class="primary">Verbinden</button>
-          <button class="ghost close" data-act="close" type="button">Abbrechen</button>
+          <button id="quickGo" type="submit" class="primary" data-i18n="app.connect">Verbinden</button>
+          <button class="ghost close" data-act="close" type="button" data-i18n="common.cancel">Abbrechen</button>
         </div>
       </form>
     </dialog>
 
     <!-- Geraete und Sitzungen -->
     <dialog id="devicesDlg">
-      <h2>Geräte und Sitzungen</h2>
+      <h2 data-i18n="app.devices">Geräte und Sitzungen</h2>
       <div id="devicesList" class="devlist"></div>
       <p id="devicesMsg" class="msg" role="alert"></p>
       <div class="row">
-        <button id="logoutOthers" type="button" class="danger">Alle anderen abmelden</button>
-        <button class="ghost close" data-act="close" type="button">Schließen</button>
+        <button id="logoutOthers" type="button" class="danger" data-i18n="app.signOutOthers">Alle anderen abmelden</button>
+        <button class="ghost close" data-act="close" type="button" data-i18n="common.close">Schließen</button>
       </div>
     </dialog>
 
     <!-- Konto: Passwort aendern, Authenticator neu einrichten (account.js) -->
     <dialog id="accountDlg">
-      <h2>Konto</h2>
+      <h2 data-i18n="app.account">Konto</h2>
       <div id="acctMain">
-        <h3>Passwort ändern</h3>
+        <h3 data-i18n="app.changePassword">Passwort ändern</h3>
         <form id="pwForm" autocomplete="on">
-          <label>Aktuelles Passwort <input id="pwCur" type="password" autocomplete="current-password" required></label>
-          <label>Neues Passwort (mindestens 12 Zeichen) <input id="pwNew" type="password" autocomplete="new-password" minlength="12" required></label>
-          <label>Neues Passwort wiederholen <input id="pwNew2" type="password" autocomplete="new-password" minlength="12" required></label>
-          <p class="hint">Alle anderen Geräte werden dabei abgemeldet.</p>
-          <div class="dlg-btns"><button type="submit" class="primary">Passwort ändern</button></div>
+          <label data-i18n="app.currentPassword">Aktuelles Passwort <input id="pwCur" type="password" autocomplete="current-password" required></label>
+          <label data-i18n="app.newPassword">Neues Passwort (mindestens 12 Zeichen) <input id="pwNew" type="password" autocomplete="new-password" minlength="12" required></label>
+          <label data-i18n="app.newPasswordRepeat">Neues Passwort wiederholen <input id="pwNew2" type="password" autocomplete="new-password" minlength="12" required></label>
+          <p class="hint" data-i18n="app.othersSignedOut">Alle anderen Geräte werden dabei abgemeldet.</p>
+          <div class="dlg-btns"><button type="submit" class="primary" data-i18n="app.changePassword">Passwort ändern</button></div>
           <p id="pwMsg" class="msg" role="alert"></p>
         </form>
-        <h3>Authenticator neu einrichten</h3>
+        <h3 data-i18n="app.totpAgain">Authenticator neu einrichten</h3>
         <form id="totpBeginForm" autocomplete="off">
-          <p class="hint">Du bekommst einen neuen Schlüssel (als Text und QR-Code) und neue Wiederherstellungscodes. Der alte Authenticator und die alten Codes gelten erst nach der Bestätigung nicht mehr; alle anderen Geräte werden abgemeldet.</p>
-          <label>Aktuelles Passwort <input id="totpCur" type="password" autocomplete="current-password" required></label>
-          <div class="dlg-btns"><button type="submit" class="primary">Neuen Schlüssel anfordern</button></div>
+          <p class="hint" data-i18n="app.totpAgainHint">Du bekommst einen neuen Schlüssel (als Text und QR-Code) und neue Wiederherstellungscodes. Der alte Authenticator und die alten Codes gelten erst nach der Bestätigung nicht mehr; alle anderen Geräte werden abgemeldet.</p>
+          <label data-i18n="app.currentPassword">Aktuelles Passwort <input id="totpCur" type="password" autocomplete="current-password" required></label>
+          <div class="dlg-btns"><button type="submit" class="primary" data-i18n="app.requestNewKey">Neuen Schlüssel anfordern</button></div>
           <p id="totpMsg" class="msg" role="alert"></p>
         </form>
       </div>
       <form id="totpFinishForm" hidden autocomplete="off">
-        <h3>Neuer Authenticator</h3>
-        <p class="hint">Scanne den QR-Code oder trage den Schlüssel in deiner Authenticator-App ein (zum Beispiel Bitwarden, Aegis oder Google Authenticator), dann gib den ersten Code ein. Erst danach gilt der neue Schlüssel.</p>
+        <h3 data-i18n="app.newAuth">Neuer Authenticator</h3>
+        <p class="hint" data-i18n="app.newAuthHint">Scanne den QR-Code oder trage den Schlüssel in deiner Authenticator-App ein (zum Beispiel Bitwarden, Aegis oder Google Authenticator), dann gib den ersten Code ein. Erst danach gilt der neue Schlüssel.</p>
         <div id="acctQr" class="qr"></div>
-        <a id="acctOtpLink" class="btn ghost" href="#">In der Authenticator-App öffnen</a>
-        <p class="hint">Oder den Schlüssel von Hand eintragen:</p>
+        <a id="acctOtpLink" class="btn ghost" href="#" data-i18n="app.openInAuth">In der Authenticator-App öffnen</a>
+        <p class="hint" data-i18n="app.enterKeyByHand">Oder den Schlüssel von Hand eintragen:</p>
         <code id="acctSecret" class="mono"></code>
-        <label>Code aus der App <input id="totpCode" type="text" inputmode="numeric" pattern="[0-9 ]*" autocomplete="one-time-code" required></label>
-        <div class="dlg-btns"><button type="submit" class="primary">Bestätigen und ersetzen</button><button id="totpAbort" type="button" class="ghost">Abbrechen</button></div>
+        <label data-i18n="app.codeFromApp">Code aus der App <input id="totpCode" type="text" inputmode="numeric" pattern="[0-9 ]*" autocomplete="one-time-code" required></label>
+        <div class="dlg-btns"><button type="submit" class="primary" data-i18n="app.confirmReplace">Bestätigen und ersetzen</button><button id="totpAbort" type="button" class="ghost" data-i18n="common.cancel">Abbrechen</button></div>
         <p id="totpFinishMsg" class="msg" role="alert"></p>
       </form>
       <div id="totpDone" hidden>
-        <h3>Neue Wiederherstellungscodes</h3>
-        <p class="hint">Der neue Authenticator gilt. Jeder Code gilt einmal und ersetzt den Authenticator, falls das Handy weg ist; die alten Codes sind ungültig. Speichere diese jetzt, sie werden nicht noch einmal gezeigt.</p>
+        <h3 data-i18n="app.newRecoveryCodes">Neue Wiederherstellungscodes</h3>
+        <p class="hint" data-i18n="app.newRecoveryHint">Der neue Authenticator gilt. Jeder Code gilt einmal und ersetzt den Authenticator, falls das Handy weg ist; die alten Codes sind ungültig. Speichere diese jetzt, sie werden nicht noch einmal gezeigt.</p>
         <pre id="acctRecovery" class="mono"></pre>
-        <div class="dlg-btns"><button id="acctCopy" type="button" class="ghost">Codes kopieren</button></div>
+        <div class="dlg-btns"><button id="acctCopy" type="button" class="ghost" data-i18n="app.copyCodes">Codes kopieren</button></div>
         <p id="totpDoneMsg" class="msg" role="alert"></p>
       </div>
-      <div class="row"><button class="ghost close" data-act="close" type="button">Schließen</button></div>
+      <div class="row"><button class="ghost close" data-act="close" type="button" data-i18n="common.close">Schließen</button></div>
     </dialog>
 
     <!-- Netzwerkwerkzeuge: Ping, DNS, Port-Test gegen gespeicherte Ziele (nettools.js) -->
     <dialog id="netDlg">
-      <h2>Netzwerkwerkzeuge</h2>
-      <p class="hint">Prüft vom Server aus, nicht von diesem Gerät, und nur Ziele deiner gespeicherten Verbindungen (und nur, was die Erlaubnisliste des Servers zulässt).</p>
-      <label>Ziel <select id="netTarget"></select></label>
-      <div class="dlg-btns"><button id="netPing" type="button" class="ghost">Ping</button><button id="netDns" type="button" class="ghost">DNS-Abfrage</button></div>
-      <label>Ports <span class="opt">(bis zu 10, mit Komma getrennt)</span> <input id="netPorts" type="text" inputmode="numeric" autocomplete="off" placeholder="22, 3389"></label>
-      <div class="dlg-btns"><button id="netPortGo" type="button" class="primary">Ports prüfen</button></div>
+      <h2 data-i18n="app.netTitle">Netzwerkwerkzeuge</h2>
+      <p class="hint" data-i18n="app.netHint">Prüft vom Server aus, nicht von diesem Gerät, und nur Ziele deiner gespeicherten Verbindungen (und nur, was die Erlaubnisliste des Servers zulässt).</p>
+      <label data-i18n="app.target">Ziel <select id="netTarget"></select></label>
+      <div class="dlg-btns"><button id="netPing" type="button" class="ghost">Ping</button><button id="netDns" type="button" class="ghost" data-i18n="app.dnsLookup">DNS-Abfrage</button></div>
+      <label>Ports <span class="opt" data-i18n="app.portsHint">(bis zu 10, mit Komma getrennt)</span> <input id="netPorts" type="text" inputmode="numeric" autocomplete="off" placeholder="22, 3389"></label>
+      <div class="dlg-btns"><button id="netPortGo" type="button" class="primary" data-i18n="app.checkPorts">Ports prüfen</button></div>
       <pre id="netOut" class="mono" aria-live="polite"></pre>
       <p id="netMsg" class="msg" role="alert"></p>
-      <div class="row"><button class="ghost close" data-act="close" type="button">Schließen</button></div>
+      <div class="row"><button class="ghost close" data-act="close" type="button" data-i18n="common.close">Schließen</button></div>
     </dialog>
 
     <!-- Text senden / Zwischenablage -->
     <dialog id="clipDlg">
-      <h2>Text senden</h2>
-      <p class="hint">Hier einfügen oder tippen. „Eintippen“ schreibt den Text wie von Hand in die VM.</p>
+      <h2 data-i18n="app.sendText">Text senden</h2>
+      <p class="hint" data-i18n="app.sendTextHint">Hier einfügen oder tippen. „Eintippen“ schreibt den Text wie von Hand in die VM.</p>
       <textarea id="sendText" rows="5" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
       <div class="row">
-        <button id="typeBtn" type="button">Eintippen</button>
-        <button id="pasteBtn" type="button" class="ghost">In Remote-Zwischenablage</button>
+        <button id="typeBtn" type="button" data-i18n="app.typeIn">Eintippen</button>
+        <button id="pasteBtn" type="button" class="ghost" data-i18n="app.toRemoteClipboard">In Remote-Zwischenablage</button>
       </div>
-      <h3>Datei oder Bild senden</h3>
-      <p class="hint">Bild, Datei oder Ordner kommt in die Zwischenablage der VM (dort Strg+V). Auch per Ablegen auf das Bild und Strg+V.</p>
+      <h3 data-i18n="app.sendFileOrImage">Datei oder Bild senden</h3>
+      <p class="hint" data-i18n="app.sendFileHint">Bild, Datei oder Ordner kommt in die Zwischenablage der VM (dort Strg+V). Auch per Ablegen auf das Bild und Strg+V.</p>
       <div class="row">
-        <button id="sendFileBtn" type="button">Datei senden</button>
-        <button id="sendFolderBtn" type="button" class="ghost">Ordner senden</button>
+        <button id="sendFileBtn" type="button" data-i18n="app.sendFile">Datei senden</button>
+        <button id="sendFolderBtn" type="button" class="ghost" data-i18n="app.sendFolder">Ordner senden</button>
       </div>
-      <h3>Von der VM kopiert</h3>
+      <h3 data-i18n="app.copiedFromVm">Von der VM kopiert</h3>
       <textarea id="remoteClip" rows="4" readonly></textarea>
       <div class="row">
-        <button id="copyBtn" type="button" class="ghost">Auf dem Handy kopieren</button>
+        <button id="copyBtn" type="button" class="ghost" data-i18n="app.copyOnPhone">Auf dem Handy kopieren</button>
       </div>
       <div id="remoteItem" hidden>
-        <h3 id="remoteItemTitle">Bild oder Datei aus der VM</h3>
-        <img id="remoteImg" alt="Bild aus der VM" hidden>
+        <h3 id="remoteItemTitle" data-i18n="app.itemFromVm">Bild oder Datei aus der VM</h3>
+        <img id="remoteImg" alt="Bild aus der VM" data-i18n-alt="app.imageFromVm" hidden>
         <ul id="remoteFiles" hidden></ul>
         <div class="row" id="remoteAllRow" hidden>
-          <button id="filesAllBtn" type="button" class="ghost">Alles als ZIP laden</button>
+          <button id="filesAllBtn" type="button" class="ghost" data-i18n="app.downloadAllZip">Alles als ZIP laden</button>
         </div>
         <div class="row" id="remoteImgRow" hidden>
-          <button id="imgCopyBtn" type="button">Bild kopieren</button>
-          <button id="imgSaveBtn" type="button" class="ghost">Speichern</button>
+          <button id="imgCopyBtn" type="button" data-i18n="app.copyImage">Bild kopieren</button>
+          <button id="imgSaveBtn" type="button" class="ghost" data-i18n="common.save">Speichern</button>
         </div>
       </div>
       <div class="row">
-        <button class="ghost close" data-act="close" type="button">Schließen</button>
+        <button class="ghost close" data-act="close" type="button" data-i18n="common.close">Schließen</button>
       </div>
     </dialog>
 
     <!-- Taste bearbeiten -->
     <dialog id="keyDlg">
-      <h2 id="keyDlgTitle">Taste</h2>
-      <label>Beschriftung <input id="keyLabel" type="text" maxlength="12" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
-      <label>Art
+      <h2 id="keyDlgTitle" data-i18n="app.key">Taste</h2>
+      <label data-i18n="app.keyLabel">Beschriftung <input id="keyLabel" type="text" maxlength="12" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+      <label data-i18n="app.kind">Art
         <select id="keyType">
-          <option value="chord">Kombination (z. B. ctrl+shift+t)</option>
-          <option value="mod">Umschalter (hält Strg/Alt/Shift/Win)</option>
-          <option value="text">Text eintippen</option>
-          <option value="action">Aktion (zum Beispiel zoomin, keyboard)</option>
+          <option value="chord" data-i18n="app.keyTypeChord">Kombination (z. B. ctrl+shift+t)</option>
+          <option value="mod" data-i18n="app.keyTypeMod">Umschalter (hält Strg/Alt/Shift/Win)</option>
+          <option value="text" data-i18n="app.keyTypeText">Text eintippen</option>
+          <option value="action" data-i18n="app.keyTypeAction">Aktion (zum Beispiel zoomin, keyboard)</option>
         </select>
       </label>
-      <label>Gilt für
-        <select id="keyScope"><option value="both">Desktop und Terminal</option><option value="desktop">Nur Desktop</option><option value="terminal">Nur Terminal</option></select>
+      <label data-i18n="app.keyScope">Gilt für
+        <select id="keyScope"><option value="both" data-i18n="app.scopeBoth">Desktop und Terminal</option><option value="desktop" data-i18n="app.scopeDesktop">Nur Desktop</option><option value="terminal" data-i18n="app.scopeTerminal">Nur Terminal</option></select>
       </label>
-      <label id="keyValueWrap"><span id="keyValueLabel">Tasten</span>
+      <label id="keyValueWrap"><span id="keyValueLabel" data-i18n="app.keys">Tasten</span>
         <input id="keyValue" type="text" autocapitalize="off" autocorrect="off" spellcheck="false">
       </label>
       <p class="hint" id="keyHint"></p>
       <div class="row">
-        <button id="keyLeft" type="button" class="ghost">◀ nach links</button>
-        <button id="keyRight" type="button" class="ghost">nach rechts ▶</button>
+        <button id="keyLeft" type="button" class="ghost" data-i18n="app.keyMoveLeft">◀ nach links</button>
+        <button id="keyRight" type="button" class="ghost" data-i18n="app.keyMoveRight">nach rechts ▶</button>
       </div>
       <div class="row">
-        <button id="keySave" type="button">Speichern</button>
-        <button id="keyDelete" type="button" class="danger">Löschen</button>
-        <button class="ghost close" data-act="close" type="button">Abbrechen</button>
+        <button id="keySave" type="button" data-i18n="common.save">Speichern</button>
+        <button id="keyDelete" type="button" class="danger" data-i18n="common.delete">Löschen</button>
+        <button class="ghost close" data-act="close" type="button" data-i18n="common.cancel">Abbrechen</button>
       </div>
     </dialog>
 
     <!-- Farben (Material-You-Stil) -->
     <dialog id="themeDlg">
-      <h2>Farben und Design</h2>
-      <p class="hint">Ein Browser kann die Farben deines Android-Hintergrunds nicht direkt lesen. Material You berechnet sie aus dem Hintergrundbild. Das kannst du hier nachmachen: „Farbe aus Bild“ nimmt dein Hintergrundbild oder einen Screenshot deines Startbildschirms und leitet daraus die Palette ab.</p>
-      <div class="row"><button id="imgSeedBtn" type="button">Farbe aus Bild</button></div>
+      <h2 data-i18n="app.themeTitle">Farben und Design</h2>
+      <p class="hint" data-i18n="app.themeHint">Ein Browser kann die Farben deines Android-Hintergrunds nicht direkt lesen. Material You berechnet sie aus dem Hintergrundbild. Das kannst du hier nachmachen: „Farbe aus Bild“ nimmt dein Hintergrundbild oder einen Screenshot deines Startbildschirms und leitet daraus die Palette ab.</p>
+      <div class="row"><button id="imgSeedBtn" type="button" data-i18n="app.colourFromImage">Farbe aus Bild</button></div>
       <div id="swatches" class="swatches"></div>
-      <label>Eigene Farbe <input id="seedInput" type="color" value="#4f86f7"></label>
-      <label>Hell / Dunkel
-        <select id="schemeSel"><option value="auto">System (wie das Gerät)</option><option value="dark">Dunkel</option><option value="light">Hell</option></select>
+      <label data-i18n="app.ownColour">Eigene Farbe <input id="seedInput" type="color" value="#4f86f7"></label>
+      <label data-i18n="app.lightDark">Hell / Dunkel
+        <select id="schemeSel"><option value="auto" data-i18n="app.schemeAuto">System (wie das Gerät)</option><option value="dark" data-i18n="app.schemeDark">Dunkel</option><option value="light" data-i18n="app.schemeLight">Hell</option></select>
       </label>
-      <button class="ghost close" data-act="close" type="button">Fertig</button>
+      <button class="ghost close" data-act="close" type="button" data-i18n="app.done">Fertig</button>
     </dialog>
 
     <!-- Passwort per Passwortmanager (Bitwarden) holen und in die VM tippen -->
     <dialog id="pwDlg">
-      <h2>Passwort einfügen</h2>
-      <p class="hint">Tippe ins Feld „Passwort“. Bitwarden schlägt nur Zugänge für <em>diese</em> Seite vor. Für eine andere Seite tippe im Bitwarden-Vorschlag auf „Tresor öffnen“ und wähle den Eintrag, oder füge das kopierte Passwort ein. „Eintippen“ schreibt es dann in das aktive Feld der VM. Nichts wird gespeichert.</p>
+      <h2 data-i18n="app.pwInsert">Passwort einfügen</h2>
+      <p class="hint"><span data-i18n="app.pwHintA">Tippe ins Feld „Passwort“. Bitwarden schlägt nur Zugänge für </span><em data-i18n="app.pwHintB">diese</em><span data-i18n="app.pwHintC"> Seite vor. Für eine andere Seite tippe im Bitwarden-Vorschlag auf „Tresor öffnen“ und wähle den Eintrag, oder füge das kopierte Passwort ein. „Eintippen“ schreibt es dann in das aktive Feld der VM. Nichts wird gespeichert.</span></p>
       <form id="pwForm" autocomplete="on">
-        <label>Benutzername <input id="pwUser" name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
-        <label>Passwort <input id="pwPass" name="password" type="password" autocomplete="current-password"></label>
+        <label data-i18n="app.username">Benutzername <input id="pwUser" name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
+        <label data-i18n="app.password">Passwort <input id="pwPass" name="password" type="password" autocomplete="current-password"></label>
         <div class="row">
-          <button id="pwTypePass" type="button">Passwort eintippen</button>
-          <button id="pwTypeBoth" type="button" class="ghost">Benutzer ⇥ Passwort ⏎</button>
+          <button id="pwTypePass" type="button" data-i18n="app.pwTypePass">Passwort eintippen</button>
+          <button id="pwTypeBoth" type="button" class="ghost" data-i18n="app.pwTypeBoth">Benutzer ⇥ Passwort ⏎</button>
         </div>
       </form>
-      <button class="ghost close" data-act="close" type="button">Schließen</button>
+      <button class="ghost close" data-act="close" type="button" data-i18n="common.close">Schließen</button>
     </dialog>
 
     <!-- Bild einfügen: Galerie/Kamera, Zwischenablage (auch Google-Tastatur) -->
     <dialog id="photoDlg">
-      <h2>Bild einfügen</h2>
-      <div class="row"><button id="photoPick" type="button">Foto wählen (Galerie, Kamera)</button></div>
-      <div class="row"><button id="photoClip" type="button" class="ghost">Aus Zwischenablage einfügen</button></div>
-      <p class="hint">Chrome auf Android nimmt Bilder direkt aus der Google-Tastatur nicht an (Meldung „unterstützt Bilder hier nicht“). Der Weg: Bild kopieren, dann „Aus Zwischenablage einfügen“ (oder die Taste mit dem Foto-Plus in „Funktionen“). Alternativ das Feld unten lange antippen und „Einfügen“ wählen. Das Bild wird sofort gesendet.</p>
-      <div id="pasteBox" contenteditable="true" role="textbox" aria-label="Bild hier einfügen" autocapitalize="none" autocorrect="off" spellcheck="false" data-ph="Hier einfügen"></div>
-      <button class="ghost close" data-act="close" type="button">Schließen</button>
+      <h2 data-i18n="app.photoTitle">Bild einfügen</h2>
+      <div class="row"><button id="photoPick" type="button" data-i18n="app.photoPick">Foto wählen (Galerie, Kamera)</button></div>
+      <div class="row"><button id="photoClip" type="button" class="ghost" data-i18n="app.photoClip">Aus Zwischenablage einfügen</button></div>
+      <p class="hint" data-i18n="app.photoHint">Chrome auf Android nimmt Bilder direkt aus der Google-Tastatur nicht an (Meldung „unterstützt Bilder hier nicht“). Der Weg: Bild kopieren, dann „Aus Zwischenablage einfügen“ (oder die Taste mit dem Foto-Plus in „Funktionen“). Alternativ das Feld unten lange antippen und „Einfügen“ wählen. Das Bild wird sofort gesendet.</p>
+      <div id="pasteBox" contenteditable="true" role="textbox" aria-label="Bild hier einfügen" data-i18n-aria-label="app.pasteImageHere" autocapitalize="none" autocorrect="off" spellcheck="false" data-ph="Hier einfügen"></div>
+      <button class="ghost close" data-act="close" type="button" data-i18n="common.close">Schließen</button>
     </dialog>
 
     <!-- Programme starten (Fensterleiste) -->
     <dialog id="appsDlg">
-      <h2>Programm starten</h2>
-      <input id="appsSearch" type="search" placeholder="Suchen …" autocomplete="off" autocapitalize="none" spellcheck="false">
+      <h2 data-i18n="app.appsTitle">Programm starten</h2>
+      <input id="appsSearch" type="search" placeholder="Suchen …" data-i18n-placeholder="app.searchEllipsis" autocomplete="off" autocapitalize="none" spellcheck="false">
       <div id="appsList" class="applist"></div>
-      <button class="ghost close" data-act="close" type="button">Schließen</button>
+      <button class="ghost close" data-act="close" type="button" data-i18n="common.close">Schließen</button>
     </dialog>
   </main>
 
@@ -488,10 +488,10 @@
 
   <!-- Eingabefeld für die Android-Tastatur (unsichtbar) -->
   <input id="kb" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"
-         enterkeyhint="enter" aria-label="Tastatureingabe" data-lpignore="true" data-form-type="other">
+         enterkeyhint="enter" aria-label="Tastatureingabe" data-i18n-aria-label="app.kbInput" data-lpignore="true" data-form-type="other">
 
   <!-- Eingabefeld, das Bilder aus der Tastatur annimmt (Sticker, GIFs, kopierte Bilder) -->
-  <div id="kbRich" contenteditable="true" role="textbox" aria-label="Tastatureingabe mit Bildern" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="enter"></div>
+  <div id="kbRich" contenteditable="true" role="textbox" aria-label="Tastatureingabe mit Bildern" data-i18n-aria-label="app.kbInputRich" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="enter"></div>
 
   <script type="module" src="shell.js"></script>
 </body>

@@ -4,6 +4,8 @@
  * die Huellen (Handy: Umschalter, Desktop: Fenster) haengen es ein und hoeren auf die Ereignisse des Verwalters.
  * ===================================================================== */
 
+import { t } from './i18n.js';
+
 /** Zufaellige Sitzungskennung (8 bis 40 Zeichen aus A-Z a-z 0-9 - _), die der Server als Teil des Slots nimmt. */
 export function newSid() {
   const bytes = new Uint8Array(12);
@@ -26,7 +28,7 @@ export class Session extends EventTarget {
     this.kind = kind || conn.kind;
     this._title = title || conn.name;
     this.state = 'disconnected';
-    this.stateText = 'Getrennt';
+    this.stateText = t('app.stateDisconnected');
     this.element = null;          // Wurzelelement, gehoert der Sitzung
     this.visible = true;
   }
@@ -95,7 +97,7 @@ class SessionManager extends EventTarget {
       if (there.length) { const s = there.find((x) => x === this.active) || there[0]; this.activate(s.id, { reveal: true }); return s; }
     }
     const make = this.factories.get(conn.kind) || this.factories.get('*');
-    if (!make) throw new Error('Keine Sitzungsart für ' + conn.kind);
+    if (!make) throw new Error(t('app.errNoSessionKind', { kind: conn.kind }));
     const session = make(conn, { sid: newSid(), title: this.titleFor(conn), password: opts.password });
     this.sessions.push(session);
     session.addEventListener('statechange', () => this.emit('statechange', { session }));

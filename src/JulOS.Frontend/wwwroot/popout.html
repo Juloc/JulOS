@@ -11,15 +11,15 @@
   <header class="po-bar">
     <span class="po-title" id="poTitle"></span>
     <span class="po-sp"></span>
-    <label class="po-field">Bildrate <select id="poQuality"></select></label>
-    <button type="button" id="poPerf" aria-pressed="false">Statusleiste</button>
-    <button type="button" id="poBack" class="po-primary" title="Die Sitzung wieder in das Hauptfenster holen">Wieder anheften</button>
+    <label class="po-field" data-i18n="popout.frameRate">Bildrate <select id="poQuality"></select></label>
+    <button type="button" id="poPerf" aria-pressed="false" data-i18n="popout.statusBar">Statusleiste</button>
+    <button type="button" id="poBack" class="po-primary" title="Die Sitzung wieder in das Hauptfenster holen" data-i18n-title="popout.backTitle" data-i18n="app.reattach">Wieder anheften</button>
   </header>
   <main class="po-stage" id="poStage">
     <div class="po-display" id="poDisplay"></div>
-    <div class="po-touch" id="poTouch" tabindex="0" aria-label="Fernen Desktop bedienen"></div>
+    <div class="po-touch" id="poTouch" tabindex="0" aria-label="Fernen Desktop bedienen" data-i18n-aria-label="popout.controlDesktop"></div>
     <div class="sv-perf" id="poPerfBar"></div>
-    <div class="po-overlay" id="poOverlay"><p id="poMsg">Verbinde …</p><button type="button" id="poClose" hidden>Fenster schließen</button></div>
+    <div class="po-overlay" id="poOverlay"><p id="poMsg" data-i18n="app.connecting">Verbinde …</p><button type="button" id="poClose" hidden data-i18n="popout.closeWindow">Fenster schließen</button></div>
   </main>
   <script type="module" src="popout.js"></script>
 </body>

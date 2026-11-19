@@ -15,6 +15,7 @@
 #   --allow-http nur zum Testen: auch ohne TLS verbinden
 # Danach auf diesem Rechner:  python3 julos-agent.py status | stop | uninstall   (Log: ~/.local/state/julos/agent.log)
 #
+# (Der Agent wird hier immer mit --desktop gestartet: ohne GTK/Anzeige meldet er den Mangel, statt still zum Host-Agenten zu werden; Rechner ohne Desktop: install-host-agent.sh.)
 # Voraussetzung: python3 (3.8 oder neuer) mit PyGObject, GTK3 und Wnck:  sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-wnck-3.0
 set -euo pipefail
 dir="$(cd "$(dirname "$0")" && pwd)"
@@ -33,10 +34,10 @@ while [ $# -gt 0 ]; do
 done
 command -v python3 >/dev/null || { echo "python3 fehlt: sudo apt install python3 python3-gi gir1.2-gtk-3.0 gir1.2-wnck-3.0" >&2; exit 1; }
 # Voraussetzungen klar benennen, bevor etwas eingerichtet wird
-python3 "$agent" check || { echo "Bitte das Fehlende installieren und dieses Skript erneut starten." >&2; exit 1; }
+python3 "$agent" check --desktop || { echo "Bitte das Fehlende installieren und dieses Skript erneut starten." >&2; exit 1; }
 if [ -n "$server$code" ]; then
   [ -n "$server" ] && [ -n "$code" ] || { echo "--server und --code gehoeren zusammen" >&2; exit 2; }
-  python3 "$agent" --server "$server" --code "$code" ${extra[@]+"${extra[@]}"}   # tauscht den Code gegen ein Token (ohne Anzeige)
+  python3 "$agent" --desktop --server "$server" --code "$code" ${extra[@]+"${extra[@]}"}   # tauscht den Code gegen ein Token (ohne Anzeige)
 fi
 config="${XDG_CONFIG_HOME:-$HOME/.config}"
 state="${XDG_STATE_HOME:-$HOME/.local/state}/julos"
@@ -55,7 +56,7 @@ autostart() {   # $1 = Name ohne Endung
 [Desktop Entry]
 Type=Application
 Name=JulOS ${1#julos-}
-Exec=/usr/bin/python3 "$dir/$1.py"
+Exec=/usr/bin/python3 "$dir/$1.py"$([ "$1" = julos-agent ] && echo " --desktop")
 X-GNOME-Autostart-enabled=true
 NoDisplay=true
 DESKTOP
@@ -73,7 +74,7 @@ After=graphical-session.target
 
 [Service]
 # Ohne grafische Sitzung (DISPLAY fehlt) beendet sich der Agent mit einer klaren Meldung im Log und wird spaeter erneut versucht
-ExecStart=/usr/bin/python3 "$escaped"
+ExecStart=/usr/bin/python3 "$escaped" --desktop
 Restart=on-failure
 RestartSec=30
 
@@ -92,7 +93,7 @@ else
 fi
 if [ "$start" = 1 ]; then
   sleep 1
-  [ "$systemd" = 1 ] || (setsid nohup python3 "$agent" >/dev/null 2>&1 </dev/null &)      # der Agent schreibt sein Log selbst (mit Rotation)
+  [ "$systemd" = 1 ] || (setsid nohup python3 "$agent" --desktop >/dev/null 2>&1 </dev/null &)      # der Agent schreibt sein Log selbst (mit Rotation)
   (setsid nohup python3 "$dir/julos-clip.py" >"$state/clip.log" 2>&1 </dev/null &)
   sleep 2
   python3 "$agent" status || true

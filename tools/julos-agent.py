@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
-"""JulOS Agent fuer Linux (X11, XFCE getestet)
+"""JulOS Agent fuer Linux: Desktop-Modus (X11, XFCE getestet) und Host-Modus (Server ohne Desktop)
 
-Laeuft in der grafischen Sitzung und stellt dem Server die "Agent-API v1" bereit
+Zwei Betriebsarten, eine Datei, eine Verbindung zum Server:
+- Desktop-Modus (Standard, wenn GTK/Wnck da sind): laeuft in der grafischen Sitzung, siehe unten.
+- Host-Modus (--host, oder automatisch ohne GTK/Wnck): fuer Rechner ohne Desktop (Docker-VM, Proxmox-Host, Debian/Ubuntu-Server).
+  Nur Python-Standardbibliothek, laeuft als eigener Benutzer ohne Anmeldung (tools/install-host-agent.sh). Er meldet seine Faehigkeiten
+  (sysinfo, updates, services, docker) und beantwortet die LESENDEN Anfragen /v1/host/* (docs/HOST-AGENT.md). Schreibaktionen gibt es noch nicht.
+
+Desktop-Modus: laeuft in der grafischen Sitzung und stellt dem Server die "Agent-API v1" bereit
 (siehe docs/AGENT_API.md): Fensterliste, Fenster aktivieren/schliessen, Programmliste und
 Programmstart, den Programm-Modus (Taskleiste der Sitzung ausblenden) sowie Foto, Datei und Zwischenablage
 fuer den Helfer julos-clip.py.
@@ -30,12 +36,13 @@ MIN_PYTHON = (3, 8)
 if sys.version_info < MIN_PYTHON:
     sys.exit("julos-agent braucht Python %d.%d oder neuer (gefunden: %s). Auf Debian/Ubuntu: neueres python3 installieren." % (MIN_PYTHON + (sys.version.split()[0],)))
 
-import argparse, base64, hashlib, hmac, http.server, json, logging, logging.handlers, os, queue, random, re, shutil, signal, socket, socketserver, ssl, stat, struct, subprocess, tempfile, threading, time
+import argparse, base64, hashlib, hmac, http.client, http.server, json, logging, logging.handlers, os, queue, random, re, shutil, signal, socket, socketserver, ssl, stat, struct, subprocess, tempfile, threading, time
 import urllib.error, urllib.parse, urllib.request
 
-AGENT_VERSION = "0.4.0"      # der Server lehnt aeltere ab (AgentLinks.MinAgentVersion); ab 0.4.0 aktualisiert er sich auf Anweisung selbst
+AGENT_VERSION = "0.5.0"      # der Server lehnt aeltere ab (AgentLinks.MinAgentVersion); ab 0.4.0 aktualisiert er sich auf Anweisung selbst; ab 0.5.0 gibt es den Host-Modus
 API_VERSION = 1
-PLATFORM = "linux-x11"
+PLATFORM = "linux-x11"         # im Host-Modus "linux-host" (HOST_PLATFORM)
+HOST_PLATFORM = "linux-host"
 UNIT_NAME = os.environ.get("JULOS_AGENT_UNIT") or "julos-agent.service"
 
 
@@ -97,10 +104,10 @@ def server_url(text, allow_http):
     return urllib.parse.urlunsplit((u.scheme, u.netloc, u.path.rstrip("/"), "", ""))
 
 
-def enroll(server, code, allow_http):
-    """Tauscht den einmaligen Code aus der App gegen ein Token und merkt es (0600)."""
+def enroll(server, code, allow_http, platform=None):
+    """Tauscht den einmaligen Code aus der App gegen ein Token und merkt es (0600). platform: Plattform dieses Agenten (Host-Modus: linux-host)."""
     base = server_url(server, allow_http)
-    body = json.dumps({"code": code, "version": AGENT_VERSION, "platform": PLATFORM, **host_info()}).encode()
+    body = json.dumps({"code": code, "version": AGENT_VERSION, "platform": platform or PLATFORM, **host_info()}).encode()
     req = urllib.request.Request(base + "/api/agent-link/enroll", data=body, headers={"Content-Type": "application/json", "User-Agent": "julos-agent/" + AGENT_VERSION})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
@@ -131,6 +138,11 @@ def parse_args(argv=None):
     p.add_argument("--code", help="Einrichtungscode aus der App (Agent einrichten); danach endet das Programm")
     p.add_argument("--allow-http", action="store_true", help="nur zum Testen: auch ohne TLS verbinden")
     p.add_argument("--no-socket", action="store_true", help="den lokalen Unix-Socket nicht anbieten")
+    p.add_argument("--host", action="store_true", help="Host-Modus (Rechner ohne Desktop: Systemwerte, Updates, Dienste, Docker; nur Python-Standardbibliothek)")
+    p.add_argument("--desktop", action="store_true", help="Desktop-Modus erzwingen (ohne GTK/Anzeige mit Fehlermeldung beenden statt in den Host-Modus zu wechseln)")
+    p.add_argument("--allow-updates", action="store_true", help="Host-Modus: Installieren von Updates erlauben (wirkt erst mit Stufe 3 des Host-Agenten; sonst /etc/julos-agent/permissions)")
+    p.add_argument("--allow-reboot", action="store_true", help="Host-Modus: Neustart erlauben (wirkt erst mit Stufe 3 des Host-Agenten)")
+    p.add_argument("--docker-socket", help="Host-Modus: Docker-Socket (Standard /var/run/docker.sock); nur lesend benutzt, ein Socket-Proxy ist besser als die Gruppe docker")
     p.add_argument("--forget", action="store_true", help="gespeicherte Einrichtung loeschen und beenden")
     p.add_argument("--yes", action="store_true", help="uninstall: ohne Rueckfrage")
     p.add_argument("--keep-config", action="store_true", help="uninstall: die Einrichtung (Token) behalten")
@@ -138,26 +150,53 @@ def parse_args(argv=None):
 
 
 # ---------------------------------------------------------------- Voraussetzungen
-def missing_requirements():
-    """Prueft, was der Agent zum Laufen braucht. Gibt (Probleme, Hinweise) zurueck, je als Liste von Texten; ohne Probleme laeuft er los."""
-    problems, notes = [], []
-    if sys.version_info < MIN_PYTHON:
-        problems.append("Python %d.%d oder neuer fehlt (gefunden: %s)." % (MIN_PYTHON + (sys.version.split()[0],)))
+def gtk_stack_problems():
+    """Was vom Desktop-Unterbau fehlt (PyGObject, GTK, Wnck, GdkPixbuf), als Liste von Texten."""
+    problems = []
     try:
         import gi
     except ImportError:
-        problems.append("PyGObject (Python-Modul gi) fehlt. Installieren: sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-wnck-3.0")
-    else:
-        for ns, ver, pkg in (("Gtk", "3.0", "gir1.2-gtk-3.0"), ("Wnck", "3.0", "gir1.2-wnck-3.0"), ("GdkPixbuf", "2.0", "gir1.2-gdkpixbuf-2.0")):
-            try:
-                gi.require_version(ns, ver)
-            except ValueError:
-                problems.append("%s %s fehlt. Installieren: sudo apt install %s" % (ns, ver, pkg))
+        return ["PyGObject (Python-Modul gi) fehlt. Installieren: sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-wnck-3.0"]
+    for ns, ver, pkg in (("Gtk", "3.0", "gir1.2-gtk-3.0"), ("Wnck", "3.0", "gir1.2-wnck-3.0"), ("GdkPixbuf", "2.0", "gir1.2-gdkpixbuf-2.0")):
+        try:
+            gi.require_version(ns, ver)
+        except ValueError:
+            problems.append("%s %s fehlt. Installieren: sudo apt install %s" % (ns, ver, pkg))
+    return problems
+
+
+def choose_mode(args):
+    """'host' oder 'desktop'. --host und --desktop entscheiden; sonst Host-Modus nur, wenn der Desktop-Unterbau (GTK/Wnck) fehlt.
+    Ist er da, aber DISPLAY nicht, bleibt es beim Desktop-Modus mit klarer Fehlermeldung (ein Desktop-Rechner soll nicht still zum Host werden,
+    nur weil der Dienst vor der Anmeldung startet)."""
+    if getattr(args, "host", False):
+        return "host"
+    if getattr(args, "desktop", False):
+        return "desktop"
+    return "host" if gtk_stack_problems() else "desktop"
+
+
+def host_requirements():
+    """Voraussetzungen des Host-Modus: nur Python."""
+    if sys.version_info < MIN_PYTHON:
+        return ["Python %d.%d oder neuer fehlt (gefunden: %s)." % (MIN_PYTHON + (sys.version.split()[0],))], []
+    notes = [] if sys.platform.startswith("linux") else ["Kein Linux: die Systemwerte des Host-Modus gibt es nur unter Linux."]
+    return [], notes
+
+
+def missing_requirements(mode="desktop"):
+    """Prueft, was der Agent zum Laufen braucht. Gibt (Probleme, Hinweise) zurueck, je als Liste von Texten; ohne Probleme laeuft er los."""
+    if mode == "host":
+        return host_requirements()
+    problems, notes = [], []
+    if sys.version_info < MIN_PYTHON:
+        problems.append("Python %d.%d oder neuer fehlt (gefunden: %s)." % (MIN_PYTHON + (sys.version.split()[0],)))
+    problems += gtk_stack_problems()
     if not os.environ.get("DISPLAY"):
         if os.environ.get("XDG_SESSION_TYPE") == "wayland" or os.environ.get("WAYLAND_DISPLAY"):
             problems.append("Wayland ohne XWayland (DISPLAY fehlt): der Agent braucht eine X11-Sitzung.")
         else:
-            problems.append("Keine grafische Sitzung (DISPLAY ist nicht gesetzt): der Agent muss in der Sitzung des Benutzers starten (Autostart, nicht ueber SSH).")
+            problems.append("Keine grafische Sitzung (DISPLAY ist nicht gesetzt): der Agent muss in der Sitzung des Benutzers starten (Autostart, nicht ueber SSH). Auf einem Rechner ohne Desktop: julos-agent.py --host")
     if not shutil.which("xfconf-query"):
         notes.append("xfconf-query fehlt: der Programm-Modus (Taskleiste ausblenden) geht nur unter XFCE (sudo apt install xfconf).")
     return problems, notes
@@ -178,13 +217,14 @@ class _PrivateRotatingHandler(logging.handlers.RotatingFileHandler):
         return os.fdopen(fd, "a", encoding="utf-8")
 
 
-def setup_logging():
-    """Log in eine Datei im Benutzerverzeichnis (mit Rotation); an einem Terminal zusaetzlich auf den Bildschirm. Auch unbehandelte Fehler landen dort."""
+def setup_logging(console=False):
+    """Log in eine Datei im Benutzerverzeichnis (mit Rotation); an einem Terminal zusaetzlich auf den Bildschirm (console: immer, so landet es bei einem
+    Systemdienst im Journal). Auch unbehandelte Fehler landen dort."""
     ensure_state_dir()
     log.setLevel(logging.INFO)
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%Y-%m-%d %H:%M:%S")
     for handler in (_PrivateRotatingHandler(LOG_FILE, maxBytes=LOG_BYTES, backupCount=LOG_KEEP, encoding="utf-8"),
-                    logging.StreamHandler(sys.stderr) if sys.stderr and sys.stderr.isatty() else None):
+                    logging.StreamHandler(sys.stderr) if sys.stderr and (console or sys.stderr.isatty()) else None):
         if handler:
             handler.setFormatter(fmt)
             log.addHandler(handler)
@@ -224,7 +264,7 @@ def write_private(path, text):
 def write_status(link, detail=""):
     """Verbindungsstand fuer `julos-agent.py status` (reine Anzeige)."""
     try:
-        write_private(STATUS_FILE, json.dumps({"pid": os.getpid(), "version": AGENT_VERSION, "link": link, "detail": detail[:200], "since": int(time.time())}))
+        write_private(STATUS_FILE, json.dumps({"pid": os.getpid(), "version": AGENT_VERSION, "mode": RUN_MODE, "link": link, "detail": detail[:200], "since": int(time.time())}))
     except OSError:
         pass
 
@@ -266,12 +306,23 @@ def _clock(ts):
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
 
 
+def system_unit_active():
+    """Laeuft der Host-Agent als systemd-Systemdienst (tools/install-host-agent.sh)?"""
+    try:
+        r = subprocess.run(["systemctl", "is-active", UNIT_NAME], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.stdout.strip() == "active"
+
+
 def command_status():
     cfg = load_config()
     pid = running_pid()
     st = read_status()
-    problems, notes = missing_requirements()
-    print("julos-agent %s (%s, Python %s)" % (AGENT_VERSION, PLATFORM, sys.version.split()[0]))
+    mode = choose_mode(ARGS)
+    problems, notes = missing_requirements(mode)
+    print("julos-agent %s (%s, Python %s)" % (AGENT_VERSION, HOST_PLATFORM if mode == "host" else PLATFORM, sys.version.split()[0]))
+    print("Modus:             %s" % ("Host (ohne Desktop; Faehigkeiten: %s)" % (", ".join(host_caps()) or "keine") if mode == "host" else "Desktop"))
     print("Laeuft:            %s" % ("ja (PID %d)" % pid if pid else "nein"))
     print("Einrichtung:       %s" % ("Server %s" % cfg["server"] if cfg else "keine (nur lokaler Socket, kein Server eingerichtet)"))
     if cfg and pid and st.get("pid") == pid:
@@ -279,7 +330,9 @@ def command_status():
         print("Verbindung:        %s%s%s" % (st.get("link", "unbekannt"), since, " (%s)" % st["detail"] if st.get("detail") else ""))
     elif cfg:
         print("Verbindung:        keine (der Agent laeuft nicht)")
-    if os.path.exists(unit_file()):
+    if system_unit_active():
+        print("Start:             systemd-Systemdienst %s (aktiv)" % UNIT_NAME)
+    elif os.path.exists(unit_file()):
         print("Start:             systemd-Benutzerdienst %s (%s)" % (UNIT_NAME, "aktiv" if unit_active() else "nicht aktiv"))
     elif os.path.exists(os.path.join(autostart_dir(), "julos-agent.desktop")):
         print("Start:             Autostart-Eintrag beim Anmelden")
@@ -298,7 +351,9 @@ def command_status():
 
 
 def command_check():
-    problems, notes = missing_requirements()
+    mode = choose_mode(ARGS)
+    problems, notes = missing_requirements(mode)
+    print("Modus: %s" % ("Host (ohne Desktop)" if mode == "host" else "Desktop"))
     for t in problems:
         print("FEHLT: " + t)
     for t in notes:
@@ -309,6 +364,9 @@ def command_check():
 
 
 def command_stop(wait=8, hint=True):
+    if system_unit_active():
+        print("Der Agent laeuft als Systemdienst: sudo systemctl stop %s (entfernen: tools/install-host-agent.sh --uninstall)" % UNIT_NAME)
+        return 1
     unit = unit_active()
     if unit:
         r = systemctl("stop", UNIT_NAME)
@@ -538,10 +596,635 @@ def apply_update(server, message, script=None, allow_http=False, opener=None, cu
     return version, True
 
 
+# ---------------------------------------------------------------- Host-Modus (Rechner ohne Desktop; nur Standardbibliothek, siehe docs/HOST-AGENT.md)
+# Alles hier LIEST nur: Systemwerte, Update-Liste, fehlgeschlagene Dienste, Docker-Container. Schreibaktionen (Updates installieren, Neustart) kommen
+# mit Stufe 3; die Rechtepruefung dafuer (lokale Datei oder Aufrufparameter) und die Nachrichtenform stehen schon, damit sie dort anschliessen koennen.
+HOST_CAPS_ALL = ("sysinfo", "updates", "services", "docker")
+# Schreibaktionen (Stufe 3): Pfad -> Recht. Bis dahin antwortet der Agent mit 403 (nicht erlaubt) oder 501 (erlaubt, aber noch nicht gebaut).
+CONTROL_PATHS = {"/v1/host/updates/install": "updates", "/v1/host/reboot": "reboot"}
+CONTROL_RIGHTS = ("updates", "reboot")
+PERMISSIONS_FILE = os.environ.get("JULOS_AGENT_PERMISSIONS") or "/etc/julos-agent/permissions"
+DOCKER_SOCKET = os.environ.get("JULOS_AGENT_DOCKER_SOCKET") or "/var/run/docker.sock"
+CMD_TIMEOUT = 30
+MAX_OUTPUT = 8 * 1024 * 1024
+MAX_PACKAGES = 500           # die Antwort bleibt weit unter den 600 kB, die der Server annimmt
+MAX_CONTAINERS = 100
+MAX_ITEMS = 64               # Platten, Adressen, Dienste
+RUN_MODE = "desktop"         # was dieser Prozess ist: "desktop" oder "host" (fuer Statusdatei und hello)
+
+def clean(text, limit=200):
+    """Text aus dem System fuer die Anzeige: nur druckbare Zeichen (keine Steuerzeichen, kein Zeilenumbruch), hoechstens limit Zeichen (der Server prueft noch einmal)."""
+    return "".join(c for c in str(text if text is not None else "") if c.isprintable()).strip()[:limit]
+
+
+def run_cmd(argv, timeout=CMD_TIMEOUT):
+    """Ein festes Programm ohne Shell: (Rueckgabewert, Ausgabe, Fehlerausgabe); None, wenn es fehlt, nicht startet oder zu lange braucht. Immer englische Meldungen (LC_ALL=C)."""
+    env = dict(os.environ, LC_ALL="C", LANG="C", PATH=os.environ.get("PATH", "") + ":/usr/local/sbin:/usr/sbin:/sbin")
+    try:
+        p = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, timeout=timeout, env=env)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return p.returncode, p.stdout[:MAX_OUTPUT].decode("utf-8", "replace"), p.stderr[:65536].decode("utf-8", "replace")
+
+
+def read_text(path, limit=1024 * 1024):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read(limit)
+    except OSError:
+        return ""
+
+
+# ---- Rechte (Stufe 3): am Server nach Stufe 'control' geprueft, hier noch einmal lokal
+def parse_permissions(text):
+    """Die Datei /etc/julos-agent/permissions: je Zeile ein Recht (updates, reboot), '#' beginnt einen Kommentar. Unbekanntes wird ignoriert."""
+    out = set()
+    for line in text.splitlines():
+        word = line.split("#", 1)[0].strip().lower()
+        if word in CONTROL_RIGHTS:
+            out.add(word)
+    return out
+
+
+def read_permissions(path=None, trusted_uids=(0,)):
+    """Rechte aus der lokalen Datei. Sie zaehlt nur, wenn sie einem vertrauten Benutzer (root) gehoert und fuer Gruppe und andere nicht beschreibbar ist:
+    der Agent selbst (eigener Benutzer) kann sich so keine Rechte geben."""
+    path = path or PERMISSIONS_FILE
+    try:
+        st = os.stat(path)
+    except OSError:
+        return set()
+    if st.st_uid not in trusted_uids or st.st_mode & 0o022 or not stat.S_ISREG(st.st_mode):
+        log.warning("Rechte-Datei %s ignoriert: sie muss root gehoeren und darf nur root beschreibbar sein.", path)
+        return set()
+    return parse_permissions(read_text(path, 4096))
+
+
+def permissions(args=None):
+    """Was dieser Agent lokal erlaubt: Aufrufparameter (--allow-updates, --allow-reboot) plus Datei."""
+    args = args if args is not None else ARGS
+    granted = set(read_permissions())
+    if getattr(args, "allow_updates", False):
+        granted.add("updates")
+    if getattr(args, "allow_reboot", False):
+        granted.add("reboot")
+    return granted
+
+
+# ---- Systemwerte
+def read_os_release(path="/etc/os-release"):
+    out = {}
+    for line in read_text(path, 16384).splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key.strip() in ("PRETTY_NAME", "ID", "VERSION_ID", "NAME"):
+            out[key.strip()] = value.strip().strip('"').strip("'")
+    return out
+
+
+def read_meminfo(proc="/proc"):
+    """Arbeitsspeicher und Auslagerung in Bytes (MemAvailable gilt als frei, nicht MemFree)."""
+    kb = {}
+    for line in read_text(os.path.join(proc, "meminfo"), 65536).splitlines():
+        m = re.match(r"^(\w+):\s+(\d+)\s*kB", line)
+        if m:
+            kb[m.group(1)] = int(m.group(2))
+    total = kb.get("MemTotal", 0) * 1024
+    avail = kb.get("MemAvailable", kb.get("MemFree", 0)) * 1024
+    swap = kb.get("SwapTotal", 0) * 1024
+    return {"totalBytes": total, "availableBytes": min(avail, total) if total else avail, "swapTotalBytes": swap, "swapFreeBytes": min(kb.get("SwapFree", 0) * 1024, swap)}
+
+
+def read_uptime(proc="/proc"):
+    try:
+        return int(float(read_text(os.path.join(proc, "uptime"), 256).split()[0]))
+    except (IndexError, ValueError):
+        return None
+
+
+def read_load(proc="/proc"):
+    try:
+        return [float(x) for x in read_text(os.path.join(proc, "loadavg"), 256).split()[:3]] or None
+    except ValueError:
+        return None
+
+
+REAL_FS = {"ext2", "ext3", "ext4", "xfs", "btrfs", "zfs", "f2fs", "vfat", "exfat", "ntfs", "ntfs3", "reiserfs", "jfs", "ubifs", "overlay", "bcachefs"}
+SKIP_MOUNT_PREFIXES = ("/snap/", "/var/lib/docker/", "/var/lib/containers/", "/var/lib/kubelet/", "/run/", "/sys/", "/proc/", "/dev/")
+
+
+def unescape_mount(text):
+    return re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), text)
+
+
+def read_disks(proc="/proc", statvfs=os.statvfs, isdir=os.path.isdir):
+    """Datentraeger mit Fuellstand (nur echte Dateisysteme, kein tmpfs/Netzlaufwerk: ein totes NFS wuerde die Abfrage haengen lassen).
+    Doppelte Einbindungen desselben Geraets (Container, systemd-Schutz) zaehlen einmal, mit dem kuerzesten Pfad."""
+    best = {}
+    for line in read_text(os.path.join(proc, "mounts"), 262144).splitlines():
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        dev, mount, fs = parts[0], unescape_mount(parts[1]), parts[2]
+        if fs not in REAL_FS or mount.startswith(SKIP_MOUNT_PREFIXES):
+            continue
+        if not isdir(mount):
+            continue                                       # eine einzelne Datei als Mount (/etc/hosts im Container) ist keine Platte
+        if fs == "overlay" and mount != "/":
+            continue                                       # in einem Container ist "/" ein overlay; weitere sind Docker-Schichten
+        key = dev if dev.startswith("/") else mount
+        if key in best and len(best[key][0]) <= len(mount):
+            continue
+        best[key] = (mount, fs)
+    out = []
+    for mount, fs in best.values():
+        try:
+            st = statvfs(mount)
+        except OSError:
+            continue
+        total = st.f_blocks * st.f_frsize
+        if total <= 0:
+            continue
+        used = (st.f_blocks - st.f_bfree) * st.f_frsize
+        avail = st.f_bavail * st.f_frsize
+        denom = used + avail                               # wie df: Prozent vom benutzbaren Teil
+        out.append({"mount": clean(mount, 120), "fs": fs, "totalBytes": total, "usedBytes": used, "freeBytes": avail, "percent": round(100.0 * used / denom, 1) if denom > 0 else 0.0})
+    out.sort(key=lambda d: (d["mount"] != "/", d["mount"]))
+    return out[:MAX_ITEMS]
+
+
+_IP_LINE = re.compile(r"^\d+:\s+(\S+)\s+(inet6?)\s+([0-9a-fA-F:.]+)/(\d+)\s.*?\bscope\s+(\S+)")
+
+
+def parse_ip_addr(text):
+    """Ausgabe von `ip -o addr show`: Adressen ausser Loopback und Link-lokal (und ohne die virtuellen veth-Paare von Containern)."""
+    out = []
+    for line in text.splitlines():
+        m = _IP_LINE.match(line)
+        if not m:
+            continue
+        iface, fam, addr, prefix, scope = m.groups()
+        if scope in ("host", "link") or iface.startswith("veth") or iface == "lo":
+            continue
+        out.append({"iface": clean(iface.split("@")[0], 20), "family": 6 if fam == "inet6" else 4, "address": addr, "prefix": int(prefix)})
+    return out
+
+
+def parse_fib_trie(text):
+    """Ersatz ohne `ip` (Minimal-Container): die lokalen IPv4-Adressen aus /proc/net/fib_trie."""
+    out, last = [], None
+    for line in text.splitlines():
+        m = re.match(r"^\s*\|--\s+(\d+\.\d+\.\d+\.\d+)\s*$", line)
+        if m:
+            last = m.group(1)
+        elif last and "/32 host LOCAL" in line:
+            if not last.startswith("127.") and not any(a["address"] == last for a in out):
+                out.append({"iface": "", "family": 4, "address": last, "prefix": 32})
+            last = None
+    return out
+
+
+def read_addresses(proc="/proc"):
+    r = run_cmd(["ip", "-o", "addr", "show"], 5)
+    found = parse_ip_addr(r[1]) if r and r[0] == 0 else parse_fib_trie(read_text(os.path.join(proc, "net", "fib_trie"), 262144))
+    return found[:MAX_ITEMS]
+
+
+CONTAINER_VIRTS = {"lxc", "lxc-libvirt", "openvz", "docker", "podman", "systemd-nspawn", "rkt", "wsl", "proot", "pouch"}
+
+
+def detect_virt(proc="/proc", exists=os.path.exists):
+    """Laeuft dieser Rechner virtualisiert? ('none', 'vm' oder 'container') plus der Name, den systemd-detect-virt nennt (kvm, qemu, lxc, docker ...)."""
+    r = run_cmd(["systemd-detect-virt"], 5)
+    name = r[1].strip().lower() if r and r[1].strip() else ""
+    if not name:
+        if exists("/.dockerenv"):
+            name = "docker"
+        elif re.search(r"^flags\s*:.*\bhypervisor\b", read_text(os.path.join(proc, "cpuinfo"), 262144), re.M):
+            name = "vm"
+        else:
+            name = "none"
+    kind = "none" if name == "none" else "container" if name in CONTAINER_VIRTS else "vm"
+    return {"kind": kind, "name": clean(name, 24)}
+
+
+def detect_proxmox(exists=os.path.exists):
+    """Ist das ein Proxmox-Host (VE, Backup Server, Mail Gateway)? {'product': 've', 'version': '8.x'} oder None."""
+    for product, marks in (("ve", ("/usr/bin/pveversion", "/etc/pve")), ("pbs", ("/usr/sbin/proxmox-backup-manager", "/etc/proxmox-backup")), ("pmg", ("/usr/bin/pmgversion", "/etc/pmg"))):
+        if any(exists(m) for m in marks):
+            version = ""
+            if product == "ve":
+                r = run_cmd(["pveversion"], 10)
+                m = re.search(r"pve-manager/([0-9][0-9.]*)", r[1]) if r else None
+                version = m.group(1) if m else ""
+            return {"product": product, "version": version}
+    return None
+
+
+# ---- Netzwerk und Gesundheit der Platten (SMART, RAID, ZFS); alles lesend
+def read_netdev(proc="/proc"):
+    """Zaehler je Netzwerkschnittstelle aus /proc/net/dev (Bytes seit dem Start; die Rate rechnet der Betrachter aus zwei Ablesungen). Ohne Loopback und Container-Paare."""
+    out = []
+    for line in read_text(os.path.join(proc, "net", "dev"), 65536).splitlines()[2:]:
+        name, sep, rest = line.partition(":")
+        name, f = name.strip(), rest.split()
+        if not sep or len(f) < 9 or name == "lo" or name.startswith(("veth", "docker", "br-", "virbr", "tap")):
+            continue
+        if int(f[0]) or int(f[8]):
+            out.append({"iface": clean(name, 20), "rxBytes": int(f[0]), "txBytes": int(f[8])})
+    return out[:MAX_ITEMS]
+
+
+def parse_mdstat(text):
+    """/proc/mdstat: je Verbund {name, level, state (ok, degraded, recovering, inactive), active, total, syncPercent?}. '[UU]' = beide Platten da, '_' = fehlt."""
+    arrays, cur = [], None
+    for line in text.splitlines():
+        m = re.match(r"^(md\w+)\s*:\s*(\w+)(?:\s*\([^)]*\))?\s*(\w+)?", line)
+        if m:
+            cur = {"name": clean(m.group(1), 16), "level": clean(m.group(3) or "", 16), "state": "ok" if m.group(2) == "active" else "inactive", "active": 0, "total": 0}
+            arrays.append(cur)
+            continue
+        if cur is None:
+            continue
+        m = re.search(r"\[(\d+)/(\d+)\]\s*\[([U_]+)\]", line)
+        if m:
+            cur["total"], cur["active"] = int(m.group(1)), int(m.group(2))
+            if cur["active"] < cur["total"] and cur["state"] == "ok":
+                cur["state"] = "degraded"
+        m = re.search(r"(resync|recovery|reshape|check)\s*=\s*([\d.]+)%", line)
+        if m:
+            cur["syncPercent"] = float(m.group(2))
+            if m.group(1) != "check" and cur["state"] != "inactive":      # check ist nur die regelmaessige Pruefung eines gesunden Verbunds
+                cur["state"] = "recovering"
+    return arrays[:MAX_ITEMS]
+
+
+def parse_zpool_status(text):
+    """`zpool status -x`: 'all pools are healthy' oder je Pool 'pool: name' und 'state: DEGRADED'."""
+    if "all pools are healthy" in text:
+        return {"healthy": True, "pools": []}
+    pools, name = [], None
+    for line in text.splitlines():
+        m = re.match(r"^\s*pool:\s*(\S+)", line)
+        if m:
+            name = m.group(1)
+            continue
+        m = re.match(r"^\s*state:\s*(\w+)", line)
+        if m and name:
+            pools.append({"name": clean(name, 40), "state": clean(m.group(1), 16)})
+            name = None
+    return {"healthy": False, "pools": pools[:MAX_ITEMS]}
+
+
+def parse_smart_health(text):
+    """Ausgabe von `smartctl -H`: 'ok' (PASSED / OK), 'failing' (FAILED), sonst 'unknown'; 'no_access', wenn der Zugriff verweigert wurde."""
+    low = text.lower()
+    if "permission denied" in low or "operation not permitted" in low:
+        return "no_access"
+    if "failed" in low and ("overall-health" in low or "health status" in low):
+        return "failing"
+    if re.search(r"overall-health self-assessment test result:\s*passed", low) or re.search(r"smart health status:\s*ok", low):
+        return "ok"
+    return "unknown"
+
+
+def collect_smart():
+    """SMART-Kurzstatus je Platte ueber smartctl, wenn es das Programm gibt und der Dienst-Benutzer die Platten lesen darf; sonst {'available': False, 'reason': ...}."""
+    if not shutil.which("smartctl"):
+        return {"available": False, "reason": "no_smartctl"}
+    scan = run_cmd(["smartctl", "--scan"], 10)
+    names = []
+    for line in (scan[1] if scan else "").splitlines():
+        m = re.match(r"^(/dev/\S+)", line)
+        if m:
+            names.append(m.group(1))
+    if not names:
+        return {"available": False, "reason": "no_devices"}
+    devices, denied = [], 0
+    for dev in names[:16]:
+        r = run_cmd(["smartctl", "-H", dev], 8)
+        health = parse_smart_health((r[1] + r[2]) if r else "")
+        if health == "no_access":
+            denied += 1
+        devices.append({"name": clean(dev, 40), "health": "unknown" if health == "no_access" else health})
+    if denied == len(devices):
+        return {"available": False, "reason": "no_access"}
+    return {"available": True, "devices": devices}
+
+
+def collect_zfs():
+    if not shutil.which("zpool"):
+        return None
+    r = run_cmd(["zpool", "status", "-x"], 10)
+    return parse_zpool_status(r[1]) if r and r[0] == 0 else None
+
+
+def compute_health(proc="/proc"):
+    return {"smart": collect_smart(), "md": parse_mdstat(read_text(os.path.join(proc, "mdstat"), 65536)), "zfs": collect_zfs(), "checkedAt": int(time.time())}
+
+
+HEALTH = {"t": 0, "data": None, "busy": False}
+HEALTH_TTL = 600             # SMART und ZFS aendern sich langsam und smartctl braucht Sekunden: hoechstens alle 10 Minuten, im Hintergrund
+
+
+def health_snapshot(compute=None, now=None):
+    """Der letzte Stand der Platten-Gesundheit; ist er aelter als HEALTH_TTL, wird er im Hintergrund neu gelesen (die Antwort wartet nicht darauf).
+    Beim ersten Mal gibt es noch nichts: {'pending': True}."""
+    compute = compute or compute_health
+    now = time.time() if now is None else now
+    if now - HEALTH["t"] > HEALTH_TTL and not HEALTH["busy"]:
+        HEALTH["busy"] = True
+
+        def work():
+            try:
+                HEALTH["data"], HEALTH["t"] = compute(), time.time()
+            except Exception as e:  # noqa: BLE001
+                log.warning("Gesundheitsabfrage fehlgeschlagen: %s", e)
+                HEALTH["t"] = time.time()
+            finally:
+                HEALTH["busy"] = False
+        threading.Thread(target=work, daemon=True).start()
+    return HEALTH["data"] or {"pending": True}
+
+
+def collect_sysinfo(proc="/proc", etc="/etc", var_run="/var/run", statvfs=os.statvfs, exists=os.path.exists):
+    osr = read_os_release(os.path.join(etc, "os-release"))
+    un = os.uname()
+    reboot = exists(os.path.join(var_run, "reboot-required"))
+    pkgs = [clean(l, 80) for l in read_text(os.path.join(var_run, "reboot-required.pkgs"), 8192).split() if l][:20] if reboot else []
+    return {
+        "hostname": clean(socket.gethostname(), 64),
+        "os": clean(osr.get("PRETTY_NAME") or osr.get("NAME"), 64), "osId": clean(osr.get("ID"), 24), "osVersion": clean(osr.get("VERSION_ID"), 24),
+        "kernel": clean(un.release, 64), "arch": clean(un.machine, 16),
+        "uptimeSeconds": read_uptime(proc), "load": read_load(proc), "cpuCount": os.cpu_count() or 0,
+        "memory": read_meminfo(proc), "disks": read_disks(proc, statvfs), "addresses": read_addresses(proc), "network": read_netdev(proc),
+        "health": health_snapshot(),
+        "rebootRequired": reboot, "rebootPackages": pkgs,
+        "virt": detect_virt(proc, exists), "proxmox": detect_proxmox(exists),
+        "collectedAt": int(time.time()),
+    }
+
+
+# ---- Updates (apt; dnf, apk und pacman nur das Einfachste)
+_APT_INST = re.compile(r"^Inst (\S+) (?:\[(\S+)\] )?\((\S+) (.*?)(?: \[[^\]]*\])?\)")
+
+
+def is_security_origin(origin):
+    """Debian ('Debian-Security:12/stable-security'), Ubuntu ('Ubuntu:22.04/jammy-security', auch ESM): 'security' in der Herkunft."""
+    return "security" in origin.lower()
+
+
+def parse_apt_simulation(text):
+    """Ausgabe von `apt-get -s dist-upgrade`: {'packages': [{name, from, to, security, new}], 'keptBack': [...], 'removals': n}.
+    'Inst name [alt] (neu Herkunft [arch])'; ohne [alt] ist es ein neues Paket (Abhaengigkeit, zum Beispiel ein neuer Kernel)."""
+    packages, kept, removals, in_kept = [], [], 0, False
+    for line in text.splitlines():
+        if in_kept:
+            if line.startswith(" "):
+                kept += line.split()
+                continue
+            in_kept = False
+        if line.startswith("The following packages have been kept back"):
+            in_kept = True
+            continue
+        m = _APT_INST.match(line)
+        if m:
+            name, old, new, origin = m.groups()
+            packages.append({"name": clean(name, 80), "from": clean(old, 64) or None, "to": clean(new, 64), "security": is_security_origin(origin), "new": old is None})
+        elif line.startswith("Remv "):
+            removals += 1
+    return {"packages": packages, "keptBack": [clean(k, 80) for k in kept if k], "removals": removals}
+
+
+def apt_lists_checked(lists="/var/lib/apt/lists", stamp="/var/lib/apt/periodic/update-success-stamp"):
+    """Wann wurden die Paketlisten zuletzt aktualisiert (Epoche)? Das Stempelfile der automatischen Aktualisierung, sonst die neueste Listendatei.
+    Die Listen selbst zu aktualisieren (apt-get update) ist Sache von root, nicht dieses Agenten."""
+    times = []
+    try:
+        times.append(os.stat(stamp).st_mtime)
+    except OSError:
+        pass
+    try:
+        for name in os.listdir(lists):
+            if name in ("lock", "partial", "auxfiles"):
+                continue
+            try:
+                times.append(os.stat(os.path.join(lists, name)).st_mtime)
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return int(max(times)) if times else None
+
+
+def collect_updates_apt():
+    sim = run_cmd(["apt-get", "-s", "-q", "-o", "Debug::NoLocking=true", "dist-upgrade"], 60)
+    if sim is None:
+        return 500, {"error": "apt_failed", "detail": "apt-get startet nicht oder braucht zu lange"}
+    rc, out, err = sim
+    if rc != 0:
+        return 500, {"error": "apt_failed", "detail": clean(" ".join((err or out).split())[-200:], 200)}
+    parsed = parse_apt_simulation(out)
+    hold = run_cmd(["apt-mark", "showhold"], 10)
+    held = [clean(x, 80) for x in hold[1].split()] if hold and hold[0] == 0 else []
+    return 200, finish_updates("apt", parsed["packages"], parsed["keptBack"], held, apt_lists_checked(), parsed["removals"])
+
+
+def parse_dnf_check_update(text):
+    out = []
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) == 3 and re.search(r"\.[A-Za-z0-9_]+$", parts[0]) and re.match(r"^\d|^\d+:", parts[1]):
+            out.append({"name": clean(parts[0].rsplit(".", 1)[0], 80), "from": None, "to": clean(parts[1], 64), "security": None, "new": False})
+    return out
+
+
+def parse_apk_upgradable(text):
+    out = []
+    for line in text.splitlines():
+        m = re.match(r"^(.+?)-(\d[^\s-]*-r\d+) \S+ \{[^}]*\} \([^)]*\) \[upgradable from: (.+?)-(\d[^\s-]*-r\d+)\]", line)
+        if m:
+            out.append({"name": clean(m.group(1), 80), "from": clean(m.group(4), 64), "to": clean(m.group(2), 64), "security": None, "new": False})
+    return out
+
+
+def parse_checkupdates(text):
+    out = []
+    for line in text.splitlines():
+        m = re.match(r"^(\S+) (\S+) -> (\S+)$", line.strip())
+        if m:
+            out.append({"name": clean(m.group(1), 80), "from": clean(m.group(2), 64), "to": clean(m.group(3), 64), "security": None, "new": False})
+    return out
+
+
+def finish_updates(manager, packages, kept, held, lists_checked, removals=0):
+    """Die Antwort des Agenten: Sicherheitsupdates zuerst, die Liste bei MAX_PACKAGES abgeschnitten. security ist null, wo der Paketmanager es nicht sagt."""
+    now = int(time.time())
+    known = manager == "apt"
+    total = len(packages)
+    ordered = sorted(packages, key=lambda p: (not p["security"], p["name"]))
+    return {
+        "manager": manager, "count": total, "security": sum(1 for p in packages if p["security"]) if known else None,
+        "securityKnown": known, "truncated": total > MAX_PACKAGES, "packages": ordered[:MAX_PACKAGES],
+        "keptBack": kept[:MAX_ITEMS], "held": held[:MAX_ITEMS], "removals": removals,
+        "listsCheckedAt": lists_checked, "listsAgeSeconds": max(0, now - lists_checked) if lists_checked else None, "checkedAt": now,
+    }
+
+
+def update_manager(which=shutil.which):
+    for tool, name in (("apt-get", "apt"), ("dnf", "dnf"), ("apk", "apk"), ("checkupdates", "pacman")):
+        if which(tool):
+            return name
+    return None
+
+
+def collect_updates():
+    manager = update_manager()
+    if manager == "apt":
+        return collect_updates_apt()
+    if manager == "dnf":
+        r = run_cmd(["dnf", "-q", "-C", "check-update"], 60)          # -C: nur den Zwischenspeicher, nichts aktualisieren; Rueckgabewert 100 = Updates da
+        if r and r[0] in (0, 100):
+            return 200, finish_updates("dnf", parse_dnf_check_update(r[1]), [], [], None)
+    elif manager == "apk":
+        r = run_cmd(["apk", "list", "-u"], 30)
+        if r and r[0] == 0:
+            return 200, finish_updates("apk", parse_apk_upgradable(r[1]), [], [], None)
+    elif manager == "pacman":
+        r = run_cmd(["checkupdates"], 60)                              # Rueckgabewert 2 = keine Updates
+        if r and r[0] in (0, 2):
+            return 200, finish_updates("pacman", parse_checkupdates(r[1]), [], [], None)
+    elif manager is None:
+        return 404, {"error": "unsupported", "detail": "kein Paketmanager gefunden"}
+    return 500, {"error": "update_check_failed", "detail": manager}
+
+
+# ---- Dienste (systemd)
+def parse_failed_units(text):
+    out = []
+    for line in text.splitlines():
+        line = line.lstrip("●* ").rstrip()
+        parts = line.split(None, 4)
+        if len(parts) >= 4 and parts[0].endswith((".service", ".socket", ".timer", ".mount", ".target", ".path", ".scope", ".slice")):
+            out.append({"unit": clean(parts[0], 80), "sub": clean(parts[3], 24), "description": clean(parts[4] if len(parts) > 4 else "", 100)})
+    return out
+
+
+def systemd_running(exists=os.path.exists):
+    return exists("/run/systemd/system")
+
+
+def collect_services():
+    if not systemd_running():
+        return 404, {"error": "unsupported", "detail": "kein systemd"}
+    r = run_cmd(["systemctl", "--failed", "--no-legend", "--plain", "--no-pager"], 15)
+    if r is None or r[0] != 0:
+        return 500, {"error": "systemctl_failed"}
+    state = run_cmd(["systemctl", "is-system-running"], 10)
+    failed = parse_failed_units(r[1])
+    return 200, {"state": clean(state[1].strip(), 24) if state else "unknown", "count": len(failed), "failed": failed[:MAX_ITEMS], "checkedAt": int(time.time())}
+
+
+# ---- Docker (nur lesend: genau eine Anfrage, GET /containers/json)
+class _UnixHTTP(http.client.HTTPConnection):
+    def __init__(self, path, timeout=5):
+        super().__init__("localhost", timeout=timeout)
+        self._path = path
+
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(self._path)
+
+
+def summarize_containers(items):
+    """Die Antwort von /containers/json (all=1) in die Anzeigeform: laufende zuerst, hoechstens MAX_CONTAINERS."""
+    out = []
+    for c in items if isinstance(items, list) else []:
+        if not isinstance(c, dict):
+            continue
+        names = c.get("Names") if isinstance(c.get("Names"), list) else []
+        out.append({"id": clean(str(c.get("Id", ""))[:12], 12), "name": clean((names[0] if names else "").lstrip("/"), 64), "image": clean(c.get("Image"), 100),
+                    "state": clean(c.get("State"), 16), "status": clean(c.get("Status"), 64)})
+    running = sum(1 for c in out if c["state"] == "running")
+    restarting = sum(1 for c in out if c["state"] == "restarting")        # Container in einer Neustart-Schleife
+    out.sort(key=lambda c: (c["state"] != "running", c["name"]))
+    return {"available": True, "running": running, "restarting": restarting, "total": len(out), "containers": out[:MAX_CONTAINERS], "truncated": len(out) > MAX_CONTAINERS}
+
+
+def collect_docker(socket_path=None):
+    path = socket_path or getattr(ARGS, "docker_socket", None) or DOCKER_SOCKET
+    if not os.path.exists(path):
+        return 200, {"available": False, "reason": "no_socket"}
+    conn = _UnixHTTP(path)
+    try:
+        conn.request("GET", "/containers/json?all=1", headers={"Host": "docker", "User-Agent": "julos-agent/" + AGENT_VERSION})
+        r = conn.getresponse()
+        data = r.read(4 * 1024 * 1024 + 1)
+        if r.status != 200 or len(data) > 4 * 1024 * 1024:
+            return 200, {"available": False, "reason": "error"}
+        return 200, summarize_containers(json.loads(data.decode("utf-8", "replace")))
+    except PermissionError:
+        return 200, {"available": False, "reason": "no_access"}
+    except (OSError, ValueError, http.client.HTTPException):
+        return 200, {"available": False, "reason": "error"}
+    finally:
+        conn.close()
+
+
+def host_caps(exists=os.path.exists, which=shutil.which):
+    """Was dieser Rechner kann; das meldet der Agent in seinem hello. docker steht auch ohne Zugriff dabei (die Antwort sagt dann 'kein Zugriff')."""
+    caps = ["sysinfo"] if sys.platform.startswith("linux") else []
+    if update_manager(which):
+        caps.append("updates")
+    if systemd_running(exists):
+        caps.append("services")
+    if exists(getattr(ARGS, "docker_socket", None) or DOCKER_SOCKET):
+        caps.append("docker")
+    return caps
+
+
+HOST_READS = {          # Pfad -> (Faehigkeit, Funktion); die Funktionen werden erst beim Aufruf nachgeschlagen
+    "/v1/host/sysinfo": ("sysinfo", lambda: (200, collect_sysinfo())),
+    "/v1/host/updates": ("updates", lambda: collect_updates()),
+    "/v1/host/services": ("services", lambda: collect_services()),
+    "/v1/host/docker": ("docker", lambda: collect_docker()),
+}
+
+
+def host_api(method, path, body):
+    """Die Anfragen an einen Host-Agenten (docs/HOST-AGENT.md). Gibt (Status, Objekt) zurueck. Nur feste Pfade; ein Desktop-Pfad ist hier 404."""
+    path = path.split("?")[0]
+    try:
+        if method == "GET":
+            if path == "/v1/health":
+                return 200, {"ok": True, "api": API_VERSION, "platform": HOST_PLATFORM, "mode": "host", "caps": host_caps(), "allow": sorted(permissions())}
+            hit = HOST_READS.get(path)
+            if hit:
+                if hit[0] not in host_caps():
+                    return 404, {"error": "unsupported"}
+                return hit[1]()
+            return 404, {"error": "unbekannt"}
+        if method == "POST" and path in CONTROL_PATHS:
+            need = CONTROL_PATHS[path]
+            if need not in permissions():
+                return 403, {"error": "not_permitted", "need": need}
+            return 501, {"error": "not_implemented"}                 # Stufe 3
+        return 404, {"error": "unbekannt"}
+    except Exception as e:  # noqa: BLE001
+        log.error("Host-Anfrage %s fehlgeschlagen: %s", path, e)
+        return 500, {"error": "failed", "detail": clean(e, 120)}
+
+
+def host_hello():
+    """Was der Host-Agent im hello zusaetzlich meldet: die Plattform (linux-host: daran erkennt der Server einen Agenten ohne Desktop), Faehigkeiten und lokal erlaubte Schreibrechte."""
+    return {"platform": HOST_PLATFORM, "caps": host_caps(), "allow": sorted(permissions())}
+
+
 if __name__ == "__main__":
     ARGS = parse_args()
 else:
-    ARGS = argparse.Namespace(command="run", server=None, code=None, allow_http=False, no_socket=False, forget=False, yes=False, keep_config=False)
+    ARGS = argparse.Namespace(command="run", server=None, code=None, allow_http=False, no_socket=False, forget=False, yes=False, keep_config=False,
+                          host=False, desktop=False, allow_updates=False, allow_reboot=False, docker_socket=None)
 
 SOCK_DIR = os.environ.get("JULOS_AGENT_DIR") or os.path.join(UPLOADS, ".agent")   # im Upload-Ordner, den ein Server auf demselben Rechner einbindet
 SOCK = os.path.join(SOCK_DIR, "agent.sock")
@@ -1107,8 +1790,14 @@ def ask_clipboard_image():
 class Link:
     """Haelt die ausgehende WebSocket-Verbindung zum Server (mit Wiederverbinden) und beantwortet seine Anfragen."""
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, handler=None, hello=None, restart=None, transfers=True):
+        """handler: beantwortet "req" (Standard: die Desktop-API api, im Host-Modus host_api); hello: was zusaetzlich im hello steht (Plattform, Faehigkeiten);
+        restart: startet nach einer Aktualisierung neu (Standard: ueber GTK); transfers: Foto, Datei und Zwischenablage (nur Desktop)."""
         self.cfg = cfg
+        self.handler = handler
+        self.hello_extra = hello
+        self.restart = restart
+        self.transfers = transfers
         self.ws = None
         self.put = None                       # die gerade ankommende Uebertragung
         self.cancelled = set()
@@ -1153,7 +1842,8 @@ class Link:
         ws = WsClient.connect(self.cfg["server"], {"Authorization": "Bearer " + self.cfg["token"]}, bool(self.cfg.get("allow_http")))
         self.ws = ws
         try:
-            ws.send_text(json.dumps({"t": "hello", "agent": AGENT_VERSION, "platform": PLATFORM, "api": API_VERSION, **host_info()}))
+            extra = self.hello_extra() if callable(self.hello_extra) else (self.hello_extra or {})
+            ws.send_text(json.dumps({"t": "hello", "agent": AGENT_VERSION, "platform": PLATFORM, "api": API_VERSION, **host_info(), **extra}))
             stop = threading.Event()
             threading.Thread(target=self.heartbeat, args=(ws, stop), daemon=True).start()
             try:
@@ -1211,12 +1901,14 @@ class Link:
         elif t == "req" and isinstance(id, int):
             method, path, body = m.get("method"), m.get("path"), m.get("body")
             if method in ("GET", "POST") and isinstance(path, str) and path.startswith("/v1/"):
-                self.background(id, lambda: self.reply(id, *api(method, path, body)))
+                self.background(id, lambda: self.reply(id, *(self.handler or api)(method, path, body)))
             else:
                 self.reply(id, 400, {"error": "ungueltig"})
+        elif t in ("put", "pull") and isinstance(id, int) and not self.transfers:
+            self.reply(id, 404, {"error": "unsupported"})            # ein Host ohne Desktop hat keine Zwischenablage
         elif t == "put" and isinstance(id, int):
             self.start_put(id, m)
-        elif t == "end" and isinstance(id, int):
+        elif t == "end" and isinstance(id, int) and self.transfers:
             self.end_put(id)
         elif t == "update" and isinstance(id, int):
             self.background(id, lambda: self.do_update(id, m))
@@ -1313,7 +2005,10 @@ class Link:
         finally:
             self.updating.release()
         time.sleep(0.5)                                      # die Antwort soll den Server noch erreichen
-        GLib.idle_add(restart_agent)
+        if self.restart:
+            self.restart()
+        else:
+            GLib.idle_add(restart_agent)
 
     # ---- Bild aus der Zwischenablage zum Server
     def do_pull(self, id, limit):
@@ -1354,6 +2049,19 @@ def cleanup(*_):
         sys.exit(0)
 
 
+def run_host(cfg):
+    """Der Host-Modus: ohne Anzeige, ohne GTK, ohne Unix-Socket; die Verbindung zum Server laeuft im Hauptthread bis zum Beenden."""
+    signal.signal(signal.SIGTERM, cleanup)
+    signal.signal(signal.SIGINT, cleanup)
+    write_private(PID_FILE, str(os.getpid()))
+    write_status("verbindet")
+    log.info("julos-agent %s laeuft im Host-Modus (API v%d), Faehigkeiten: %s, Server %s", AGENT_VERSION, API_VERSION, ", ".join(host_caps()) or "keine", cfg["server"])
+    allowed = permissions()
+    if allowed:
+        log.info("Lokal erlaubte Schreibrechte: %s (wirken erst mit Stufe 3)", ", ".join(sorted(allowed)))
+    Link(cfg, handler=host_api, hello=host_hello, restart=restart_agent, transfers=False).run()
+
+
 if __name__ == "__main__":
     if ARGS.forget:
         _remove(CONFIG)
@@ -1362,7 +2070,7 @@ if __name__ == "__main__":
     if ARGS.code or ARGS.server:
         if not (ARGS.code and ARGS.server):
             sys.exit("--server und --code gehoeren zusammen")
-        enroll(ARGS.server, ARGS.code, ARGS.allow_http)
+        enroll(ARGS.server, ARGS.code, ARGS.allow_http, HOST_PLATFORM if choose_mode(ARGS) == "host" else None)
         sys.exit(0)
     if ARGS.command == "status":
         sys.exit(command_status())
@@ -1374,17 +2082,26 @@ if __name__ == "__main__":
         sys.exit(command_uninstall(ARGS.yes, ARGS.keep_config))
 
     # Ab hier startet der Agent: erst pruefen, ob er laufen kann, und ein klares Wort sagen, wenn nicht
-    _problems, _notes = missing_requirements()
+    RUN_MODE = choose_mode(ARGS)
+    _problems, _notes = missing_requirements(RUN_MODE)
     if _problems:
         sys.stderr.write("julos-agent kann nicht starten:\n" + "".join("  - %s\n" % t for t in _problems))
         sys.exit(3)
-    setup_logging()
+    setup_logging(console=RUN_MODE == "host")
     for _t in _notes:
         log.warning(_t)
     _other = running_pid()
     if _other and _other != os.getpid():
         log.error("Ein Agent laeuft schon (PID %d): dieser Start wird abgebrochen.", _other)
         sys.stderr.write("Ein Agent laeuft schon (PID %d). Beenden mit: julos-agent.py stop\n" % _other)
+        sys.exit(0)
+    if RUN_MODE == "host":
+        _cfg = load_config()
+        if not _cfg:
+            log.error("Host-Modus: noch nicht eingerichtet (kein Token).")
+            sys.stderr.write("julos-agent (Host-Modus) ist noch nicht eingerichtet. In der App beim Host \"Agent per SSH installieren\" waehlen, oder:\n  julos-agent.py --host --server https://SERVER --code CODE\n")
+            sys.exit(2)
+        run_host(_cfg)
         sys.exit(0)
 
     import gi

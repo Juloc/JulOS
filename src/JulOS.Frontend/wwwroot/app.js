@@ -1,5 +1,6 @@
 import Guacamole from '/lib/guacamole-common.min.js';
 import { StreamClient } from './stream.js';
+import { StreamAudio } from './stream-audio.js';
 import { SizeGate, LayoutLog } from './layoutlog.js';
 import { Session, Sessions } from './sessions.js';
 import { LIMITS, fmtSize, bmpFromImage, pngFromBytes, filesFromTransfer, xhrUpload, saveBlob } from './clip.js';
@@ -24,6 +25,8 @@ const store = {
 
 /* ---------- Material-Icons (inline SVG, 24 px) ---------- */
 const ICONS = {
+  volume: 'M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z',
+  mic: 'M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z',
   keyboard: 'M20 5H4c-1.1 0-1.99.9-1.99 2L2 17c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zm-1 2H5v-2h2v2zm0-3H5V8h2v2zm9 7H8v-2h8v2zm0-4h-2v-2h2v2zm0-3h-2V8h2v2zm3 3h-2v-2h2v2zm0-3h-2V8h2v2z',
   zoom_in: 'M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14zm2.5-4h-2v2H9v-2H7V9h2V7h1v2h2v1z',
   zoom_out: 'M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14zM7 9h5v1H7z',
@@ -518,12 +521,59 @@ export class RemoteSession extends Session {
   setVisible(on) {
     on = !!on;
     this.visible = on; this.element.hidden = !on;
-    this.applyPause();
+    this.applyPause(); this.applyAudio();
     if (on) {
       this.fitDisplay(); this.scheduleSize(80); if (this.W.available) this.pollWindows(); this.refreshAll();
       if (cur() === this && prevValue) { setKbVal(''); prevValue = ''; }       // Text, der fuer die vorige Sitzung im Eingabefeld stand, nicht in diese uebertragen
     }
     else { this.closeMenu(); this.closeWinSheet(); }
+  }
+  /* ---------- Ton (nur beim Stream; jede Sitzung hat ihr eigenes Audio, siehe stream-audio.js) ---------- */
+  audioOf() { return this.client instanceof StreamClient ? this.client.audio : null; }
+  wireAudio(client) {
+    const a = client.audio;
+    a.label = this.title;
+    a.onchange = () => { if (this.client === client) this.updateAudioMenu(); };
+    a.onmicwait = (offered) => this.toast(offered ? 'Das Mikrofon ist an, aber im Desktop nimmt noch kein Programm auf.'
+      : 'Das Mikrofon ist an. Der Desktop meldet noch keinen Mikrofon-Kanal; er wird erst geöffnet, wenn dort ein Programm aufnimmt.', 5200);
+    a.setActive(this.visible && Sessions.active === this);
+  }
+  startAudio(client) {
+    // Wie zuletzt: Ton an, wenn der Benutzer ihn nicht ausgeschaltet hat. Ohne Eingabe seit dem Laden der Seite bleibt der Browser stumm,
+    // bis die erste Eingabe kommt (stream-audio.js wartet darauf).
+    const a = client.audio;
+    a.setVolume(store.get('volume', 1));
+    this.applyAudio();
+    if (store.get('audio', true)) a.enable().then(() => a.connected(), (e) => this.toast(e.message, 3600));
+    this.updateAudioMenu();
+  }
+  /** Ton nur fuer die sichtbare und aktive Sitzung; die anderen bekommen vom Server nichts geschickt. */
+  applyAudio() { const a = this.audioOf(); if (a) a.setActive(this.visible && Sessions.active === this); }
+  updateAudioMenu() {
+    const a = this.audioOf();
+    for (const act of ['sound', 'volume', 'mic']) { const row = this.el.menu.querySelector(`[data-act="${act}"]`); if (row) row.hidden = !a; }
+    if (!a) return;
+    const set = (c, t) => { const n = this.el.menu.querySelector(c); if (n) n.textContent = t; };
+    set('.mv-sound', !a.remote.output ? 'kein Ton vom Rechner' : !a.wanted ? 'aus' : a.state === 'running' ? 'an' : 'bitte antippen');
+    set('.mv-volume', Math.round(a.volume * 100) + ' %');
+    set('.mv-mic', !a.micOn ? (StreamAudio.micOwner && StreamAudio.micOwner !== a ? 'läuft in „' + (StreamAudio.micOwner.label || 'anderer Sitzung') + '“' : 'aus')
+      : a.remote.recording ? 'an, nimmt auf' : 'an, wartet auf Programm');
+  }
+  async audioAction(act) {
+    const a = this.audioOf(); if (!a) return;
+    a.label = this.title;
+    try {
+      if (act === 'sound') {
+        if (a.wanted && a.state === 'running') { a.disable(); store.set('audio', false); }
+        else { store.set('audio', true); await a.enable(); a.connected(); }
+      } else if (act === 'volume') {
+        const next = a.volume > 0.8 ? 0.6 : a.volume > 0.5 ? 0.3 : a.volume > 0.2 ? 0 : 1;
+        a.setVolume(next); store.set('volume', next);
+      } else if (act === 'mic') {
+        if (a.micOn) a.stopMic(); else await a.startMic();
+      }
+    } catch (e) { this.toast(e.message, 4800); }
+    this.updateAudioMenu();
   }
   applyPause() { if (this.client instanceof StreamClient) this.client.setPaused(!this.visible || document.hidden); }
   refreshAll() { this.updateMenuLabels(); this.renderRows(); }
@@ -573,6 +623,7 @@ export class RemoteSession extends Session {
     this.stopWindowBar(); this.el.topbar.hidden = true;
     this.el.display.replaceChildren();
     this.resetMods();
+    this.updateAudioMenu();
   }
 
   /** Der Stream kam nicht zustande (es wurde nie ein Bild gezeichnet): einmal mit Guacamole neu verbinden, statt einen Fehler zu zeigen.
@@ -635,6 +686,7 @@ export class RemoteSession extends Session {
     const tunnel = isStream ? null : new Guacamole.WebSocketTunnel(wsBase + '/api/remote/ws');
     const client = isStream ? new StreamClient(wsBase + '/api/remote/screen') : new Guacamole.Client(tunnel);
     this.engine = engine;
+    if (isStream) this.wireAudio(client);
     const display = client.getDisplay();
     this.tunnel = tunnel; this.client = client; this.display = display; this.lastSent = { w, h }; this.gate = new SizeGate();
     this.lay.note('conn', { engine });
@@ -657,6 +709,7 @@ export class RemoteSession extends Session {
         if (this.hasSibling()) this.toast('Hinweis: Eine andere Sitzung läuft zum selben Ziel und Benutzer. Ein RDP-Ziel gibt je Benutzer nur einen Desktop her, die Sitzungen übernehmen ihn gegenseitig.', 6000);
         this.startWindowBar(); this.fitDisplay(); this.pushSize(); this.waitForFrame(client); this.applyPause();
         if (cur() === this) focusKbForHardware();
+        if (isStream) this.startAudio(client);
         if (isStream) setTimeout(() => { if (this.client === client && !client.drawn) this.fallBackFromStream(client); }, 10000);   // Groesse gemeldet, aber nie ein Bild: der Dekodierer geht nicht
         // Die Zaehler der Wiederholung gelten erst als zurueckgesetzt, wenn die Verbindung wirklich haelt (sonst endlos: verbunden, sofort getrennt, neu ...)
         setTimeout(() => { if (this.client === client && this.connected) { this.firstLogin = false; this.retry = 0; } }, 12000);
@@ -1110,6 +1163,7 @@ export class RemoteSession extends Session {
     set('.mv-autokb', S.autoKb ? 'an' : 'aus');
     set('.mv-autopaste', S.autoPaste ? 'an' : 'aus');
     set('.mv-count', String(Sessions.count));
+    this.updateAudioMenu();
   }
   openMenu() { applyKbMode(); this.updateMenuLabels(); this.el.menu.hidden = false; this.el.scrim.hidden = false; this.setActOn('menu', true); }
   closeMenu() { this.el.menu.hidden = true; if (this.el.winSheet.hidden) this.el.scrim.hidden = true; this.setActOn('menu', false); }
@@ -1117,6 +1171,7 @@ export class RemoteSession extends Session {
   onMenuClick(e) {
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (!act) return;
+    if (['sound', 'volume', 'mic'].includes(act)) { this.audioAction(act); return; }
     if (['kbMode', 'autoKb', 'touchMode', 'autoPaste'].includes(act)) {
       if (act === 'kbMode') S.kbMode = S.kbMode === 'rich' ? 'normal' : S.kbMode === 'normal' ? 'direct' : 'rich';
       if (act === 'autoKb') S.autoKb = !S.autoKb;
@@ -1926,3 +1981,19 @@ export const remoteApi = {
   blurKeys: () => { if (kbFocused()) el.kb.blur(); },
   hasKeys: () => kbFocused(),
 };
+
+/* ---------- Ton mehrerer Sitzungen: nur die aktive spielt, das Mikrofon hat eine, eine Anzeige fuer alle ---------- */
+const applyAllAudio = () => { for (const x of Sessions.list()) if (x instanceof RemoteSession) x.applyAudio(); };
+Sessions.addEventListener('activated', applyAllAudio);
+Sessions.addEventListener('closed', applyAllAudio);
+const micPill = document.getElementById('micLive');
+if (micPill) {
+  const showMic = () => {
+    const owner = StreamAudio.micOwner;
+    micPill.hidden = !(owner && owner.micOn);
+    if (!micPill.hidden) micPill.lastChild.textContent = owner.label ? 'Mikrofon an · ' + owner.label : 'Mikrofon an';
+    for (const x of Sessions.list()) if (x instanceof RemoteSession) x.updateAudioMenu();
+  };
+  StreamAudio.watchMic(showMic);
+  micPill.addEventListener('click', () => StreamAudio.stopMic());
+}

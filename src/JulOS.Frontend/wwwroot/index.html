@@ -105,6 +105,9 @@
          haengt desktop.js sie je in ein eigenes Fenster. -->
     <section id="remote" hidden></section>
 
+    <!-- Anzeige, solange das Mikrofon einer Sitzung an ist (gilt fuer die ganze Seite, auch wenn die Sitzung im Hintergrund ist); Antippen beendet es -->
+    <button id="micLive" type="button" hidden title="Mikrofon beenden"><span class="dot"></span><span class="mlt">Mikrofon an</span></button>
+
     <!-- Vorlage einer Fernsteuer-Sitzung (app.js klont sie pro Sitzung) -->
     <template id="svTemplate">
       <div class="sv">
@@ -141,6 +144,9 @@
             <div class="mi" role="menuitem" data-act="autoKb"><span class="mic" data-ic="auto_kb"></span><span class="mt">Auto-Tastatur bei Textfeld</span><span class="mv mv-autokb"></span></div>
             <div class="mi" role="menuitem" data-act="touchMode"><span class="mic" data-ic="touch"></span><span class="mt">Finger</span><span class="mv mv-touch"></span></div>
             <div class="mi" role="menuitem" data-act="autoPaste"><span class="mic" data-ic="image"></span><span class="mt">Foto sofort einfügen</span><span class="mv mv-autopaste"></span></div>
+            <div class="mi" role="menuitem" data-act="sound" hidden><span class="mic" data-ic="volume"></span><span class="mt">Ton vom Rechner</span><span class="mv mv-sound"></span></div>
+            <div class="mi" role="menuitem" data-act="volume" hidden><span class="mic" data-ic="volume"></span><span class="mt">Lautstärke</span><span class="mv mv-volume"></span></div>
+            <div class="mi" role="menuitem" data-act="mic" hidden><span class="mic" data-ic="mic"></span><span class="mt">Mikrofon</span><span class="mv mv-mic"></span></div>
             <div class="mi" role="menuitem" data-act="password"><span class="mic" data-ic="key"></span><span class="mt">Passwort aus Passwortmanager</span></div>
             <div class="mi" role="menuitem" data-act="theme"><span class="mic" data-ic="palette"></span><span class="mt">Farben und Design</span></div>
             <div class="mi" role="menuitem" data-act="editKeys"><span class="mic" data-ic="edit"></span><span class="mt">Sondertasten bearbeiten</span></div>

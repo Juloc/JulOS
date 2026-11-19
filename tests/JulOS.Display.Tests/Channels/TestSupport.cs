@@ -63,6 +63,12 @@ internal sealed class Wire
         channel.Log = Log.Add;
     }
 
+    public Wire(DynamicChannel channel)
+    {
+        channel.Send = message => Sent.Add(message.ToArray());
+        channel.Log = Log.Add;
+    }
+
     // Everything sent since the last look.
     public byte[][] Take()
     {

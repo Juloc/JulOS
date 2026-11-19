@@ -50,6 +50,7 @@ public sealed class SoundChannel : StaticChannel
     private readonly List<Format> _formats = [];
     private volatile bool _enabled = true;
     private ushort _serverVersion;
+    private int _formatCount;
 
     // A WaveInfo PDU is under way: the next message is its Wave PDU, which has no header of its own.
     private bool _waveExpected;
@@ -69,6 +70,12 @@ public sealed class SoundChannel : StaticChannel
 
     // The server stopped sending (SNDC_CLOSE): what was played is complete, the next samples start anew.
     public event Action? Stopped;
+
+    // The server's list was answered and holds at least one format: sound will come (once Enabled).
+    public bool HasFormats => Volatile.Read(ref _formatCount) > 0;
+
+    // The list of formats was answered anew (or forgotten when the session ended).
+    public event Action? FormatsChanged;
 
     // When false, wave data is confirmed but not raised.
     public bool Enabled
@@ -145,8 +152,10 @@ public sealed class SoundChannel : StaticChannel
     public override void Closed()
     {
         _formats.Clear();
+        Volatile.Write(ref _formatCount, 0);
         _serverVersion = 0;
         _waveExpected = false;
+        Guarded.Raise(FormatsChanged, Log, "rdpsnd: the handler of FormatsChanged");
     }
 
     private void ServerFormats(ReadOnlySpan<byte> body)
@@ -203,6 +212,7 @@ public sealed class SoundChannel : StaticChannel
         _formats.AddRange(offered.Select(entry => entry.Format));
         _serverVersion = version;
         _waveExpected = false;
+        Volatile.Write(ref _formatCount, _formats.Count);
 
         var length = 20 + offered.Sum(entry => entry.Wire.Length);
         var answer = Message(TypeFormats, length)
@@ -230,6 +240,8 @@ public sealed class SoundChannel : StaticChannel
         {
             Report("the server offers no 16-bit PCM: there will be no sound");
         }
+
+        Guarded.Raise(FormatsChanged, Log, "rdpsnd: the handler of FormatsChanged");
     }
 
     // The server measures the connection: time stamp and size go back as they came.

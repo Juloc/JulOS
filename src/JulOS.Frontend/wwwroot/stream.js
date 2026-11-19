@@ -11,12 +11,16 @@
  *                      10 Senden Anfang (Bild als BMP oder Datei), 11 Stueck, 12 Ende, 13 Abbruch, 14 Datei der VM holen, 15 Holen Abbruch,
  *                      16 Pause (1 = die Ansicht ist nicht zu sehen: der Server kodiert nicht, 0 = weiter)
  *
+ * Ton (20 und 21 in beide Richtungen: Ton vom fernen Rechner, Zustand, "Ton an", Mikrofon): siehe stream-audio.js, erreichbar als client.audio.
+ *
  * Zwischenablage: Text wie bei Guacamole als Strom (onclipboard(stream, 'text/plain') mit onblob/onend, createClipboardStream() mit sendBlob/sendEnd),
  * damit Guacamole.StringReader und StringWriter in app.js unveraendert funktionieren. Bilder und Dateien haben eigene Rueckrufe
  * (onclipimage, onclipfiles) und Methoden (sendTransfer, fetchFile); das Format steht in docs/CLIPBOARD.md und ScreenProtocol.cs.
  * ===================================================================== */
 
-const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, image: 7, files: 8, fileChunk: 9, result: 10 };
+import { StreamAudio } from './stream-audio.js';
+
+const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, image: 7, files: 8, fileChunk: 9, result: 10, audio: 20, audioStatus: 21 };
 const OUT = { ack: 1, move: 2, button: 3, wheel: 4, key: 5, unicode: 6, resize: 7, keyframe: 8, clipboard: 9,
   sendBegin: 10, sendChunk: 11, sendEnd: 12, sendCancel: 13, fileRequest: 14, fileCancel: 15, pause: 16 };
 const CHUNK = 128 * 1024;                 // so gross sind die Stuecke beim Senden (der Server nimmt bis 256 kB)
@@ -136,6 +140,7 @@ export class StreamClient {
     this.layout = layout;
     this.stats = { pictures: 0, dropped: 0, bytes: 0 };
     this.failures = 0;
+    this.audio = new StreamAudio((bytes) => this.send(bytes));
     this.submitted = 0; this.output = 0; this.activityAt = 0;   // Folgenummern: dem Dekodierer gegeben, von ihm geliefert; Zeit des letzten Wechsels
     this.received = 0;                  // Folgenummer des zuletzt empfangenen Bildes (der Server zaehlt aufsteigend, ohne Luecken)
     this.paused = false;                // die Ansicht ist im Hintergrund: der Server kodiert dann keine Bilder
@@ -178,12 +183,13 @@ export class StreamClient {
     const s = this.socket; this.socket = null;
     if (s) { try { s.close(); } catch { /* egal */ } }
     this.closeDecoder();
+    this.audio.close();
     this.setState(5);
   }
 
   finish() {
     clearInterval(this.watch);
-    this.socket = null; this.closeDecoder();
+    this.socket = null; this.closeDecoder(); this.audio.close();
     for (const t of this.transfers.values()) t.result({ code: 4, text: 'Verbindung beendet.' });
     for (const f of this.fetches.values()) f.fail('Verbindung beendet.');
     this.fetches.clear();
@@ -227,6 +233,8 @@ export class StreamClient {
         this.setState(5);
         break;
       case IN.clipboard: this.incomingClipboard(new Uint8Array(buffer, 1)); break;
+      case IN.audio: this.audio.frame(buffer); break;
+      case IN.audioStatus: this.audio.status(buffer); break;
       case IN.image: if (this.onclipimage && buffer.byteLength > 2) this.onclipimage(v.getUint8(1), new Uint8Array(buffer, 2)); break;
       case IN.files: this.incomingFiles(v, buffer); break;
       case IN.fileChunk: this.incomingFileChunk(v, buffer); break;

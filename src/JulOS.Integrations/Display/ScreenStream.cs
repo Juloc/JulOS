@@ -18,6 +18,12 @@ public sealed record ScreenPicture(int Sequence, bool IsKey, byte[] Data) : Scre
 /// <summary>Der ferne Rechner hat Text kopiert.</summary>
 public sealed record ScreenClipboardText(string Text) : ScreenEvent;
 
+/// <summary>Es liegt Ton bereit: <see cref="ScreenStream.Audio"/> hat ihn (nur ein Zeichen, der Ton selbst wartet dort in einer begrenzten Warteschlange).</summary>
+public sealed record ScreenAudioReady : ScreenEvent;
+
+/// <summary>Der Ton der Sitzung hat sich geaendert (Ausgabe verfuegbar, Mikrofon angeboten oder verlangt).</summary>
+public sealed record ScreenAudioStatus(AudioStatus Status) : ScreenEvent;
+
 /// <summary>Der ferne Rechner hat ein Bild kopiert (Format 1 PNG, 2 BMP).</summary>
 public sealed record ScreenClipboardImage(byte Format, byte[] Data) : ScreenEvent;
 
@@ -64,6 +70,8 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
     private readonly ClipboardChannel _clipboardChannel = new();
     private readonly ClipboardBridge _clipboard;
+    private readonly SoundChannel _soundChannel = new();
+    private readonly AudioInputChannel _microphoneChannel = new();
     private RdpClient? _rdp;
     private DisplayControlChannel? _display;
     private H264Encoder? _encoder;
@@ -98,7 +106,13 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
             FileChunk = (batch, index, flags, data) => _events.Writer.TryWrite(new ScreenFileChunk(batch, index, flags, data)),
             Result = (id, code, message) => _events.Writer.TryWrite(new ScreenTransferResult(id, code, message)),
         });
+        Audio = new AudioBridge(_soundChannel, _microphoneChannel);
+        Audio.Ready += () => _events.Writer.TryWrite(new ScreenAudioReady());
+        Audio.StatusChanged += status => _events.Writer.TryWrite(new ScreenAudioStatus(status));
     }
+
+    /// <summary>Der Ton der Sitzung: pro Verbindung aus, bis der Browser ihn einschaltet.</summary>
+    public AudioBridge Audio { get; }
 
     /// <summary>Ob H.264 auf dieser Maschine kodiert werden kann (libopenh264 vorhanden).</summary>
     public static bool IsAvailable => H264Encoder.IsAvailable;
@@ -120,8 +134,12 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         var channels = new DynamicChannels();
         var display = new DisplayControlChannel();
         channels.Register(display);
+        channels.Register(_microphoneChannel);
         rdp.AddChannel(channels);
         rdp.AddChannel(_clipboardChannel);
+        rdp.AddChannel(_soundChannel);
+        // Windows spricht auf "rdpsnd" nur mit einem Client, der auch "rdpdr" meldet (ohne Geraete); fuer den Ton also noetig
+        rdp.AddChannel(new RdpdrChannel());
         _display = display;
         try
         {

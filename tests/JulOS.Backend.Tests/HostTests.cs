@@ -52,19 +52,8 @@ public sealed class HostTests
     [Fact]
     public async Task Old_data_moves_to_a_default_host_without_losing_connections_or_agents()
     {
-        // Stand vor dieser Migration: alle Skripte bis 006
-        await using var db = await TestDb.CreateAsync(migrate: false);
+        await using var db = await CreateBeforeHostsAsync();
         var asm = typeof(Migrator).Assembly;
-        await db.ExecAsync("create table schema_migrations (id text primary key, applied_at timestamptz not null default now())");
-        foreach (var name in asm.GetManifestResourceNames().Where(n => n.StartsWith("database/", StringComparison.Ordinal) && n.EndsWith(".sql", StringComparison.Ordinal)).Order(StringComparer.Ordinal))
-        {
-            var id = name["database/".Length..^4];
-            if (string.CompareOrdinal(id, "007") >= 0) continue;   // Stand vor den Migrationen ab 007
-            using var reader = new StreamReader(asm.GetManifestResourceStream(name)!);
-            await db.ExecAsync(await reader.ReadToEndAsync());
-            await db.ExecAsync("insert into schema_migrations (id) values ($1)", id);
-        }
-
         var anna = await Insert(db, "insert into users (name, password_hash, totp_secret) values ('anna', 'x', 'y') returning id");
         var ben = await Insert(db, "insert into users (name, password_hash, totp_secret) values ('ben', 'x', 'y') returning id");
         var cleo = await Insert(db, "insert into users (name, password_hash, totp_secret) values ('cleo', 'x', 'y') returning id");
@@ -111,6 +100,51 @@ public sealed class HostTests
 
         // und ein Host mit Verbindungen laesst sich nicht nebenbei loeschen? Die Datenbank nimmt die Verbindungen nicht mit (kein Cascade)
         await Assert.ThrowsAsync<PostgresException>(() => db.ExecAsync("delete from hosts where id = $1", annaHost));
+    }
+
+    /// <summary>Eine Datenbank im Stand vor den Hosts: alle Migrationen bis 007 (die Migration der Hosts ist die 008).</summary>
+    private static async Task<TestDb> CreateBeforeHostsAsync()
+    {
+        var db = await TestDb.CreateAsync(migrate: false);
+        var asm = typeof(Migrator).Assembly;
+        await db.ExecAsync("create table schema_migrations (id text primary key, applied_at timestamptz not null default now())");
+        foreach (var name in asm.GetManifestResourceNames().Where(n => n.StartsWith("database/", StringComparison.Ordinal) && n.EndsWith(".sql", StringComparison.Ordinal)).Order(StringComparer.Ordinal))
+        {
+            var id = name["database/".Length..^4];
+            if (string.CompareOrdinal(id, "008") >= 0) continue;
+            using var reader = new StreamReader(asm.GetManifestResourceStream(name)!);
+            await db.ExecAsync(await reader.ReadToEndAsync());
+            await db.ExecAsync("insert into schema_migrations (id) values ($1)", id);
+        }
+        return db;
+    }
+
+    [Fact]
+    public async Task A_backup_from_before_the_hosts_restores_with_default_hosts_and_every_agent()
+    {
+        await using var old = await CreateBeforeHostsAsync();
+        var anna = await Insert(old, "insert into users (name, password_hash, totp_secret) values ('anna', 'x', 'y') returning id");
+        var pc = await Insert(old, "insert into connections (user_id, name, kind, host, port) values ($1, 'Büro-PC', 'desktop', 'ziel', 3389) returning id", anna);
+        var vm = await Insert(old, "insert into connections (user_id, name, kind, host, port) values ($1, 'VM', 'desktop', 'ziel', 3389) returning id", anna);
+        await old.ExecAsync("insert into agents (connection_id, user_id, token_hash, last_seen) values ($1, $2, 'hash-pc', now() - interval '2 days')", pc, anna);
+        await old.ExecAsync("insert into agents (connection_id, user_id, token_hash, last_seen) values ($1, $2, 'hash-vm', now() - interval '1 hour')", vm, anna);
+        await old.ExecAsync("insert into agent_codes (code_hash, connection_id, user_id, expires_at) values ('c1', $1, $2, now() + interval '5 minutes')", pc, anna);
+        var dump = new StringWriter { NewLine = "\n" };
+        await DbDump.WriteAsync(old.Data, dump, DateTimeOffset.UtcNow, TestContext.Current.CancellationToken);
+        Assert.DoesNotContain("008_hosts", dump.ToString().Split('\n').First(l => l.StartsWith("-- migrations ", StringComparison.Ordinal)));
+
+        await using var fresh = await TestDb.CreateAsync();
+        await DbDump.RestoreAsync(fresh.Data, new StringReader(dump.ToString()), false, TestContext.Current.CancellationToken);
+        Assert.Equal(2L, await fresh.ScalarAsync<long>("select count(*) from connections"));
+        Assert.Equal(2L, await fresh.ScalarAsync<long>("select count(*) from hosts"));
+        Assert.Equal(2L, await fresh.ScalarAsync<long>("select count(*) from agents"));
+        Assert.Equal(0L, await fresh.ScalarAsync<long>("select count(*) from agent_codes"));
+        var vmHost = await fresh.ScalarAsync<Guid>("select host_id from connections where id = $1", vm);
+        Assert.Equal("Mein Rechner", await fresh.ScalarAsync<string>("select name from hosts where id = $1", vmHost));
+        Assert.Equal("hash-vm", await fresh.ScalarAsync<string>("select token_hash from agents where host_id = $1", vmHost));
+        var pcHost = await fresh.ScalarAsync<Guid>("select host_id from connections where id = $1", pc);
+        Assert.NotEqual(vmHost, pcHost);
+        Assert.Equal("hash-pc", await fresh.ScalarAsync<string>("select token_hash from agents where host_id = $1", pcHost));
     }
 
     // ---------------------------------------------------------------- Store

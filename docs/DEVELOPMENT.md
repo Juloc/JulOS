@@ -60,8 +60,8 @@ size in the browser's device mode). A fresh database starts at the setup screen;
 On a wide screen with a mouse (`min-width: 1000px` and `pointer: fine`) `shell.js` loads `desktop.js` and `desktop.css` and shows the desktop
 interface instead of the phone home: menu bar, dock, launcher, a Home window and one window per open session (each `RemoteSession` of `app.js` mounts its own view into its window; the Desktop menu tiles or cascades the session windows; the engines are untouched). The key bar and the window bar of the phone layout are not shown there (CSS only, nothing removed): while the session window is in front, the top bar shows its menus instead of the normal ones (`desktop-remote.js`): the connection name (reconnect, send text, end), **Tasten** (Esc, Tab, Windows key, Ctrl+Alt+Del, hold Ctrl/Alt/Shift/Win for the next key, F1 to F12), **Kombinationen** (the editable "Combos" row, same storage `pd.rows4` as the phone key bar, with add/edit/reset), **Ansicht** (zoom, fit to window, maximise, full screen) and, for desktops with an agent, **Fenster** (program mode, start program, the VM's window list). They only call hooks that `app.js` exports as `remoteApi`, so the actions are the key bar's own. **Keyboard:** in the desktop layout every key goes to the remote window while it is the active window, with no keyboard button or mode: `app.js` takes the focus for its hidden input field on the first key (also when a button, menu bar, dock or title bar had the focus) and handles that key itself, so it is not lost; Tab, Esc, arrows, F keys and Ctrl/Alt combinations go to the target (browser shortcuts that cannot be intercepted stay with the browser, Ctrl+Shift+V pastes the local clipboard). Keys are left alone when the focus is in a real text field (launcher search, a dialog field, a menu) or when a menu, the launcher or a dialog is open; with a shell window in front they go nowhere. `desktop.js` gives the focus back after clicks on the remote window, window changes, and when a menu, launcher or dialog closes (`syncKeys`), and mouse presses on buttons, bar, dock and title bars do not take it away. The title bar of the window shows a "Tastatur" tag and a frame while it has the keys; the chip in the top bar says "Tastatur → <name>" or "Tastatur → keins". To test in a browser pane that reports no fine pointer, add `&hwkb` to the address.
 The dock has three modes (`localStorage` `pd.dockMode`): `auto` (default: hidden, appears when the mouse rests 0.3 s in the bottom 6 px of the screen, hides 0.7 s after it leaves, windows use the full height), `always` and `toggle` (a small knob collapses it); chosen in Einstellungen or with a right click on the dock. The phone never loads these two files. `?desktop` forces the desktop view and `?phone` the phone view
-(useful in a browser whose pointer is not reported as "fine"). The Files window (`desktop-files.js`, read-only: browse, search by name, download; one root folder, see ARCHITECTURE.md) and the system overview (CPU, RAM, disk, network tiles on Start and the System view, `GET /api/system/overview`, see ARCHITECTURE.md for what it measures) is real. Docker, Caddy and DDNS have no backend yet and are only
-shown as "bald verfügbar" (design notes in `IDEAS.md`).
+(useful in a browser whose pointer is not reported as "fine"). The Files window (`desktop-files.js`, read-only: browse, search by name, download; one root folder, see ARCHITECTURE.md) and the system overview (CPU, RAM, disk, network tiles on Start and the System view, `GET /api/system/overview`, see ARCHITECTURE.md for what it measures) is real. Docker has no backend yet and is only
+shown as "bald verfügbar" (design notes in `IDEAS.md`). Caddy and DDNS are real but **off by default** and read only ([MODULES.md](MODULES.md)): `modules.js` (data and German texts, tested in `tests/frontend`), `desktop-modules.js` (the two windows, loaded on first open; dock, launcher and menu entries appear only when `GET /api/modules` says the module is on) and `mobile-modules.js` (cards on Dienste, details in a bottom sheet).
 On every other screen (phone, tablet, narrow window) `shell.js` loads `mobile.js`, `m3.css` and `mobile.css`: the phone shell in Material 3 style with a bottom
 navigation bar (Home, Dienste, Server, Monitoring, Profil), bottom sheets for add, edit and start (the existing dialogs, restyled and with segmented buttons for
 kind and engine) and a snackbar. `m3.css` holds the design tokens (colour roles computed from one seed colour with `oklch(from ...)` and `light-dark()`, shape,
@@ -71,8 +71,8 @@ the shell, leaving shows it again. Real data: user name, saved connections, devi
 answers (an adapter in `mobile.js` reads `cpuPercent`, `memoryUsed/Total`, `diskUsed/Total`, ...; a 404 hides the card for five minutes). Kept on the device only
 (localStorage `pd.m.*`): favourites, how often and when a connection was started (for "Meine Favoriten" and "Aktivitäten"), the default engine for new desktops.
 Server (without the API) and Monitoring are marked "bald verfügbar"; a switch in Profil hides them. Test it at 375x812 and 412x915, light and dark.
-(useful in a browser whose pointer is not reported as "fine"). Docker, Caddy, DDNS, Files and the system overview have no backend yet and are only
-shown as "bald verfügbar" (see `IDEAS.md`).
+(useful in a browser whose pointer is not reported as "fine"). Docker has no backend yet and is only
+shown as "bald verfügbar" (see `IDEAS.md`); Caddy and DDNS see the line above.
 On a wide screen with a mouse the remote picture is requested 1:1 in device pixels (zoom 1, shown at exactly 1 / `devicePixelRatio`); the phone keeps 0.8. A browser that does not report a fine pointer (some test panes) gets 0.8: set `localStorage` `pd.k` to `1` to see the PC rendering.
 The display tests run against your own compose project with `JULOS_DEV_NETWORK=my-ui_default deploy/dev/test-display.sh`.
 `deploy/dev/test-display.sh` runs the display tests (RDP client, H.264, the clipboard bridge against xrdp) in a container on the network of the test instance; with `JULOS_DEV_PROJECT=<project>` it uses another compose project's network.
@@ -88,6 +88,45 @@ To connect, add a Desktop connection to `rdp-target` (login `ubuntu` / `ubuntu`)
 ## Display tests against the test desktop
 
 `deploy/dev/test-display.sh` runs `tests/JulOS.Display.Tests` in an SDK container on the test network (`JULOS_DEV_NET` names another compose project's network, for example `julos-xyz_default`). The integration tests (`ScreenStreamTests`) are skipped without `JULOS_TEST_RDP_HOST`; the script sets it and also plays a tone and records the microphone in the desktop in the background, which the sound test (PCM blocks arrive, loud enough) and the microphone test (a 600 Hz tone sent as the browser would arrives in the recording) check. Close any browser tab connected to the same desktop first: a second client takes the xrdp session over.
+
+## Browser tests (real browser, Playwright in Docker)
+
+```bash
+deploy/dev/e2e.sh             # builds the stack from this working folder, runs six flows in Chromium, tears the stack down (about 1 minute)
+E2E_KEEP=1 deploy/dev/e2e.sh  # leave the stack running afterwards (the next run starts in about 40 s); stop it with: deploy/dev/e2e.sh down
+```
+
+Nothing is needed on the host except Docker. The script runs its **own stack** in the compose project `julos-e2e`: the services of `deploy/dev/compose.yaml`
+(PostgreSQL, guacd, the server built from your working folder, the SSH target, the RDP desktop) with `deploy/dev/e2e/compose.override.yaml` on top, which
+publishes no port. The test runner (Playwright with Chromium, image `deploy/dev/e2e/Dockerfile`, pinned version) joins the network of the server container,
+so for the browser the server is `localhost` (a secure context, like on the phone: WebCodecs and the clipboard work). It does not touch `julos-dev` or the stacks of other sessions.
+
+Why an own stack and not the test instance: the instance is shared (`smoke.sh` and other sessions reset its database, its image can be an older build of
+another branch), while the tests need a fresh database (first-time setup is one of the flows) and the code of the folder you are in. The price is a few
+hundred MB of memory while it runs; the images are cached, so the start is fast. Each run drops the database of its stack (targets and guacd stay up with `E2E_KEEP=1`).
+
+Credentials are throwaway and live outside the repository in `~/.cache/julos-e2e` (`JULOS_E2E_STATE` changes the folder): `env` with random passwords for the
+database and the SSH target (kept, because the database volume remembers its password), and the test account that each run creates itself. The RDP target
+uses its fixed test login `ubuntu` / `ubuntu`.
+
+What the six flows check (`deploy/dev/e2e/tests/e2e.spec.mjs`, in this order, each builds on the earlier ones: run the whole file; `-g` filters only work after flow 1 has run in the same run):
+
+1. **First-time setup and login:** setup code from the server log, account, authenticator code computed from the shown secret, new device, wrong password is refused, login with password and code.
+2. **Create connections:** a desktop (RDP, engine Stream) and a terminal (SSH) through the dialog; both are still there after a reload.
+3. **RDP stream shows a picture:** connect with the typed target password, wait until the canvas shows a real picture (not black, several colours) and that the stream engine ran (not the automatic fallback to guacd).
+4. **Keyboard and mouse reach the target:** Ctrl+Alt+T opens a terminal in the VM, typed text with special characters sets its window title, a click on its maximise button maximises it (all read back through the agent's window list, i.e. from the VM itself).
+5. **Native SSH terminal:** a shell prompt appears, `echo e2e-$((6*7))` prints `e2e-42`.
+6. **Layouts:** `/?phone` (390x844, touch) and `/?desktop` (1280x800) load, show the saved connection and log no console errors or page errors.
+
+Against flakiness: every wait is a condition with a timeout (picture, agent, window title, terminal text), never a fixed sleep; each flow uses its own browser context
+with the saved login; a failed flow is retried once (flow 1 is not: the account exists after the first try); the whole run has a hard limit of 150 s.
+Screenshots and traces of failed flows go to `~/.cache/julos-e2e/out/results` (`npx playwright show-trace <file>/trace.zip`, in any Node setup). The run prints the load first:
+the development VM has 6 cores, keep it below about 6 or the waits get slow.
+
+Not covered: the Guacamole engine (the default for older connections) in the browser, H.265 and the GPU encoder, sound and microphone, the clipboard and file transfer,
+the files window, several simultaneous sessions, a real touch keyboard, and any other browser than Chromium. `dotnet test` and `test-display.sh` cover the engine
+parts; the phone keeps its own checklist in [PHONE-TEST.md](PHONE-TEST.md). The click in flow 4 uses the position of the maximise button of a new terminal window of the test desktop
+(`deploy/dev/rdp-target`); if that image gets another window manager theme or size, the position in the test has to follow.
 
 ## Build and test without Docker
 
@@ -106,8 +145,11 @@ dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj    # 
 | `JULOS_AGENT_SOCKET` | Unix socket of the agent on the same machine, default `/uploads/.agent/agent.sock` (agents on other machines connect outbound, no setting needed; see AGENT_API.md) |
 | `JULOS_UPLOAD_DIR` | shared folder for photo uploads, default `/uploads`; its disk is the one the system overview shows |
 | `JULOS_FILES_ROOT` | the one folder the read-only file browser shows, default `JULOS_UPLOAD_DIR`; `off` disables the file browser |
+| `JULOS_CADDY`, `JULOS_DDNS` | `off` (default) or `read`: the read-only Caddy and DDNS modules; their other settings (`JULOS_CADDYFILE`, `JULOS_CADDY_ADMIN_URL`, `JULOS_DDNS_HOSTS`, `JULOS_DDNS_FRITZBOX_URL`, `JULOS_DDNS_IP_URL`, `JULOS_DDNS_CACHE_SECONDS`) are in [MODULES.md](MODULES.md) |
 | `JULOS_SETUP_CODE` | optional fixed setup code (otherwise a random one is logged while no account exists) |
 | `JULOS_MAX_SESSIONS_PER_USER` | most remote sessions (RDP, SSH, all engines together) one user may have open at once, default `8` |
+| `JULOS_DRIVE_ROOT` | the one folder that connections may hand to the desktop as a drive (stream engine only); empty or `off` (default) disables drive redirection; see DRIVES.md |
+| `JULOS_STREAM_KEEP_SECONDS` | how long a stream (RDP) session lives on without a browser after the connection dropped, default `300`, `0` = off, at most `3600`; see SESSIONS.md |
 | `JULOS_TRUSTED_PROXIES` | networks whose `X-Forwarded-*` headers are trusted (default: private networks) |
 
 ## Things learned from the test instance

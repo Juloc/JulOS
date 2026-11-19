@@ -1,6 +1,7 @@
 using System.Threading.Channels;
 using JulOS.Integrations.Display.Rdp;
 using JulOS.Integrations.Display.Rdp.Channels;
+using JulOS.Integrations.Display.Rdp.Drive;
 using JulOS.Integrations.Display.Refine;
 using JulOS.Integrations.Display.Video;
 using Microsoft.Extensions.Logging;
@@ -73,6 +74,18 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     private static readonly bool PacerAllowed = !string.Equals(Environment.GetEnvironmentVariable("JULOS_STREAM_PACER"), "off", StringComparison.OrdinalIgnoreCase);
     private static readonly bool RefineAllowed = !string.Equals(Environment.GetEnvironmentVariable("JULOS_STREAM_REFINE"), "off", StringComparison.OrdinalIgnoreCase);
 
+    // Die H.264-Bilder des RDP-Servers (RDPGFX) ohne neue Kodierung durchreichen: aus, solange JULOS_RDP_GFX nicht an ist (siehe docs/RDPGFX.md).
+    private static readonly bool GfxAllowed = GfxSettings.IsOn(Environment.GetEnvironmentVariable("JULOS_RDP_GFX"));
+
+    // Der Server hat vor dem ersten Bild nichts geschickt, was sich durchreichen laesst, oder das Bild bleibt aus: so lange wartet die Sitzung
+    // darauf, bevor sie ohne RDPGFX neu verbindet; und so lange darf der Browser mit der Bestaetigung eines Bildes ausbleiben.
+    private const int GfxKeyWaitMs = 4000;
+    private const int GfxAckStallMs = 5000;
+
+    // Bilder des Servers lassen sich nicht auslassen (jedes haengt am vorigen) und nicht stauen: kommt der Browser (oder die Leitung) so weit
+    // hinterher, ist der eigene Kodierer mit seinem Fenster und der Messung der Leitung (LinkPacer) besser.
+    internal const int MaxGfxPending = 45;
+
     // Kommt bei vollem Fenster unbestaetigter Bilder so lange keine Bestaetigung, gilt das Fenster als verloren (der Browser dekodiert
     // normalerweise in wenigen Millisekunden): zuruecksetzen und ein Schluesselbild senden, statt fuer immer zu warten.
     private const int AckStallMs = 2000;
@@ -124,10 +137,29 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     private long _lastAskedAt, _resizedAt;
 
     private readonly CertificateTrust? _trust;
+    private readonly SharedDrive? _drive;
 
-    public ScreenStream(RdpOptions options, int maxKilobitsPerSecond = 16_000, ILogger? log = null, EncoderSelector? encoders = null, VideoCodecs clientCodecs = VideoCodecs.H264, CertificateTrust? trust = null)
+    // RDPGFX (alles unter _gfxGate): der Kanal dieser Verbindung, ob die Bilder des Servers gerade durchgereicht werden (_passthrough), welche
+    // Bilder der Browser noch nicht bestaetigt hat (Folgenummer und Nummer des Bildes beim Server) und ob ein Schluesselbild fehlt.
+    private readonly bool _gfxWanted;
+    private readonly Lock _gfxGate = new();
+    private readonly Queue<(int Sequence, uint FrameId, long At)> _gfxPending = new();
+    private GfxChannel? _gfx;
+    private bool _passthrough;
+    private bool _gfxNeedKey = true;
+    private long _gfxFirstAt;
+    private (int Width, int Height) _gfxSize;
+    private string? _gfxFallback;
+    private bool _gfxFallbackRemember;
+    private CancellationTokenSource? _sessionStop;
+    private string? _gfxLeft;
+
+    /// <param name="graphicsPipeline">Ob die Bilder des Servers durchgereicht werden duerfen (RDPGFX); ohne Angabe entscheidet JULOS_RDP_GFX.</param>
+    public ScreenStream(RdpOptions options, int maxKilobitsPerSecond = 16_000, ILogger? log = null, EncoderSelector? encoders = null, VideoCodecs clientCodecs = VideoCodecs.H264, CertificateTrust? trust = null, bool? graphicsPipeline = null, SharedDrive? drive = null)
     {
         _trust = trust;
+        _drive = drive;
+        _gfxWanted = (graphicsPipeline ?? GfxAllowed) && !GfxSettings.IsAvoided(options.Host, options.Port);
         _options = options;
         _maxKilobitsPerSecond = maxKilobitsPerSecond;
         _kilobits = maxKilobitsPerSecond;
@@ -151,6 +183,18 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     /// <summary>Der Ton der Sitzung: pro Verbindung aus, bis der Browser ihn einschaltet.</summary>
     public AudioBridge Audio { get; }
 
+    /// <summary>Nur fuer Tests und Diagnose: ob die Bilder des Servers durchgereicht werden (true), und warum RDPGFX aufgegeben wurde (sonst null).</summary>
+    internal (bool Passthrough, string? Left) GfxState
+    {
+        get
+        {
+            lock (_gfxGate)
+            {
+                return (_passthrough, _gfxLeft);
+            }
+        }
+    }
+
     /// <summary>Die Auswahl, wenn der Aufrufer keine mitgibt: nur der Software-Kodierer (so verhalten sich Tests ohne GPU und ohne Umgebung).</summary>
     public static EncoderSelector DefaultSelector { get; } = new([new SoftwareBackend()], new EncoderSettings(EncoderMode.Software));
 
@@ -168,19 +212,45 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     /// <summary>Verbindet, meldet sich an und laeuft, bis die Sitzung endet oder abgebrochen wird. Wirft RdpException, wenn das Verbinden misslingt.</summary>
     public async Task RunAsync(CancellationToken cancellationToken)
     {
+        try
+        {
+            var useGfx = _gfxWanted;
+            while (await RunSessionAsync(useGfx, cancellationToken).ConfigureAwait(false))
+            {
+                // RDPGFX ging nicht (der Server liefert kein H.264, der Browser braucht ein Schluesselbild, das nur der eigene Kodierer macht ...):
+                // dieselbe Verbindung noch einmal, mit dem eigenen Kodierer. Die Sitzung auf dem Server laeuft weiter, nur das Bild kommt dann anders.
+                useGfx = false;
+            }
+        }
+        finally
+        {
+            _events.Writer.TryComplete();
+        }
+    }
+
+    // Eine Verbindung bis zum Ende. True, wenn sie wegen RDPGFX aufgegeben wurde und ohne neu aufgebaut werden soll.
+    private async Task<bool> RunSessionAsync(bool useGfx, CancellationToken cancellationToken)
+    {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stop.Token);
-        var rdp = new RdpClient(_options, this, message => _log?.LogDebug("RDP: {Message}", message));
+        var rdp = new RdpClient(_options, this, message => _log?.LogDebug("RDP: {Message}", message)) { AdvertiseGraphics = useGfx };
         _rdp = rdp;
         var channels = new DynamicChannels();
         var display = new DisplayControlChannel();
         channels.Register(display);
         channels.Register(_microphoneChannel);
+        if (useGfx)
+        {
+            StartGfx(channels, linked);
+        }
+
         rdp.AddChannel(channels);
         rdp.AddChannel(_clipboardChannel);
         rdp.AddChannel(_soundChannel);
-        // Windows spricht auf "rdpsnd" nur mit einem Client, der auch "rdpdr" meldet (ohne Geraete); fuer den Ton also noetig
-        rdp.AddChannel(new RdpdrChannel());
+        // Windows spricht auf "rdpsnd" nur mit einem Client, der auch "rdpdr" meldet (ohne Geraete); fuer den Ton also noetig.
+        // Mit einem Laufwerk meldet er genau eines: den Ordner des Servers (siehe SharedDrive, docs/DRIVES.md).
+        rdp.AddChannel(MakeDeviceChannel());
         _display = display;
+        var fallback = false;
         try
         {
             await rdp.ConnectAsync(linked.Token).ConfigureAwait(false);
@@ -196,20 +266,311 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
             var read = rdp.RunAsync(linked.Token);
             var encode = EncodeLoopAsync(linked.Token);
             var follow = FollowSizeAsync(rdp, linked.Token);
+            var watch = useGfx ? WatchGfxAsync(linked.Token) : Task.CompletedTask;
             var first = await Task.WhenAny(read, encode).ConfigureAwait(false);
             await linked.CancelAsync().ConfigureAwait(false);
-            foreach (var task in new[] { read, encode, follow })
+            foreach (var task in new[] { read, encode, follow, watch })
             {
                 try { await task.ConfigureAwait(false); }
                 catch (OperationCanceledException) { /* wir haben es selbst abgebrochen */ }
             }
 
-            await first.ConfigureAwait(false);
+            fallback = useGfx && TakeGfxFallback(cancellationToken);
+            if (!fallback)
+            {
+                await first.ConfigureAwait(false);
+            }
+        }
+        catch (Exception) when (useGfx && TakeGfxFallback(cancellationToken))
+        {
+            // Der Server hat auf den Kanal von RDPGFX hin etwas getan, womit diese Verbindung nicht weiterkam: ohne neu versuchen
+            fallback = true;
         }
         finally
         {
-            _events.Writer.TryComplete();
+            if (fallback)
+            {
+                rdp.Disconnect();
+                await rdp.DisposeAsync().ConfigureAwait(false);
+                ResetForReconnect();
+            }
         }
+
+        return fallback;
+    }
+
+    // ---- RDPGFX ----
+
+    private void StartGfx(DynamicChannels channels, CancellationTokenSource session)
+    {
+        var gfx = new GfxChannel();
+        AttachGfx(gfx, session);
+        channels.Register(gfx);
+    }
+
+    // Haengt den Kanal an diese Sitzung: seine Bilder gehen an den Browser, wenn er ein Schluesselbild hat, und wenn er nicht taugt, wird die
+    // Sitzung (session) abgebrochen und ohne RDPGFX neu aufgebaut. Intern, damit Tests den Kanal ohne Server fuettern koennen.
+    internal void AttachGfx(GfxChannel gfx, CancellationTokenSource session)
+    {
+        gfx.Log ??= message => _log?.LogDebug("RDPGFX: {Message}", message);
+        gfx.Frame += OnGfxFrame;
+        gfx.DesktopSize += OnGfxSize;
+        gfx.Unusable += reason => GfxFallbackRequested(reason, remember: true);
+        lock (_gfxGate)
+        {
+            _gfx = gfx;
+            _passthrough = false;
+            _gfxNeedKey = true;
+            _gfxFirstAt = 0;
+            _gfxPending.Clear();
+            _gfxFallback = null;
+            _sessionStop = session;
+        }
+    }
+
+    // Die Sitzung soll ohne RDPGFX neu aufgebaut werden. Remember: der Server liefert grundsaetzlich kein durchreichbares H.264 (nicht: der Browser
+    // hat nur ein Schluesselbild verlangt), dann wird er eine Weile gar nicht erst gefragt.
+    private void GfxFallbackRequested(string reason, bool remember)
+    {
+        CancellationTokenSource? session;
+        lock (_gfxGate)
+        {
+            if (_gfxFallback is not null)
+            {
+                return;
+            }
+
+            _gfxFallback = reason;
+            _gfxFallbackRemember = remember;
+            session = _sessionStop;
+        }
+
+        _gfxLeft = reason;
+        _log?.LogWarning("RDPGFX: {Reason}; die Sitzung verbindet neu und kodiert selbst.", reason);
+        try { session?.Cancel(); }
+        catch (ObjectDisposedException) { /* die Sitzung endet ohnehin */ }
+    }
+
+    private bool TakeGfxFallback(CancellationToken cancellationToken)
+    {
+        lock (_gfxGate)
+        {
+            if (_gfxFallback is null || cancellationToken.IsCancellationRequested)
+            {
+                return false;
+            }
+
+            if (_gfxFallbackRemember)
+            {
+                GfxSettings.Avoid(_options.Host, _options.Port);
+            }
+
+            return true;
+        }
+    }
+
+    private void ResetForReconnect()
+    {
+        lock (_gfxGate)
+        {
+            _gfx = null;
+            _passthrough = false;
+            _gfxPending.Clear();
+            _gfxFallback = null;
+            _sessionStop = null;
+        }
+
+        lock (_gate)
+        {
+            _pendingSize = null;
+            _askedWidth = _askedHeight = 0;
+            _forceKey = true;
+        }
+
+        // Ein Bild des eigenen Kodierers folgt: dessen Schluesselbild ersetzt, was der Browser vom Server hat
+        _window.Reset();
+        _display = null;
+    }
+
+    // Die Bilder eines Durchlaufs des Servers (auf der Leseschleife des RDP-Clients). Solange noch nichts durchgereicht wird, zaehlt erst ein
+    // Schluesselbild: davor kann der Browser nichts dekodieren. Mit dem ersten wird umgeschaltet; der eigene Kodierer schweigt dann.
+    private void OnGfxFrame(GfxFrame frame)
+    {
+        var gfx = _gfx;
+        if (gfx is null)
+        {
+            return;
+        }
+
+        bool overloaded;
+        lock (_gfxGate)
+        {
+            if (_gfxFallback is not null)
+            {
+                return;
+            }
+
+            if (_gfxFirstAt == 0)
+            {
+                _gfxFirstAt = Environment.TickCount64;
+            }
+
+            var last = 0;
+            foreach (var picture in frame.Pictures)
+            {
+                if (_gfxNeedKey && !picture.IsKey)
+                {
+                    continue;
+                }
+
+                if (!_passthrough)
+                {
+                    EnterPassthrough();
+                }
+
+                _gfxNeedKey = false;
+                last = Interlocked.Increment(ref _sequence);
+                _events.Writer.TryWrite(new ScreenPicture(last, picture.IsKey, picture.Data, VideoCodec.H264));
+            }
+
+            if (last == 0)
+            {
+                // Nichts davon geht an den Browser (noch kein Schluesselbild): der Server soll trotzdem weitersenden
+                gfx.Acknowledge(frame.FrameId);
+                return;
+            }
+
+            _gfxPending.Enqueue((last, frame.FrameId, Environment.TickCount64));
+            Volatile.Write(ref _lastSentAt, Environment.TickCount64);
+            overloaded = _gfxPending.Count > MaxGfxPending;
+        }
+
+        if (overloaded)
+        {
+            GfxFallbackRequested($"der Browser kommt mit {MaxGfxPending} Bildern des Servers nicht nach", remember: false);
+        }
+    }
+
+    // Unter _gfxGate. Ab hier kommen die Bilder vom Server; was der eigene Kodierer und die Nachbesserung noch auf dem Weg haben, ist alt.
+    private void EnterPassthrough()
+    {
+        _passthrough = true;
+        _refiner = null;
+        _events.Writer.TryWrite(new ScreenRefineClear([0, 0, 65535, 65535]));
+        if (_gfxSize.Width > 0)
+        {
+            _events.Writer.TryWrite(new ScreenSize(_gfxSize.Width, _gfxSize.Height));
+        }
+
+        _events.Writer.TryWrite(new ScreenEncoderInfo(VideoCodec.H264, false, "Server (RDPGFX)"));
+        _log?.LogInformation("RDPGFX: die H.264-Bilder des Servers werden durchgereicht ({Version}, {Width} x {Height})", _gfx?.Version, _gfxSize.Width, _gfxSize.Height);
+    }
+
+    private void OnGfxSize(int width, int height)
+    {
+        lock (_gfxGate)
+        {
+            if (_gfxSize == (width, height))
+            {
+                return;
+            }
+
+            _gfxSize = (width, height);
+            if (_passthrough)
+            {
+                // Neue Groesse: das Bild dazu beginnt mit einem Schluesselbild des Servers
+                _gfxNeedKey = true;
+                _events.Writer.TryWrite(new ScreenSize(width, height));
+            }
+        }
+    }
+
+    // Wachhund: kein Schluesselbild trotz Bildern, oder der Browser bestaetigt seit langem nichts.
+    private async Task WatchGfxAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+                string? reason = null;
+                lock (_gfxGate)
+                {
+                    var now = Environment.TickCount64;
+                    if (!_passthrough && _gfxFirstAt != 0 && now - _gfxFirstAt > GfxKeyWaitMs)
+                    {
+                        reason = "der Server sendet kein Schluesselbild";
+                    }
+                    else if (_passthrough && _gfxPending.TryPeek(out var oldest) && now - oldest.At > GfxAckStallMs
+                        && now - Volatile.Read(ref _lastAckAt) > GfxAckStallMs)
+                    {
+                        reason = "der Browser bestaetigt seit langem kein Bild";
+                    }
+                }
+
+                if (reason is not null)
+                {
+                    GfxFallbackRequested(reason, remember: false);
+                    return;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // die Sitzung endet
+        }
+    }
+
+    // Der Browser hat gezeichnet: das Bild beim Server ist abgeholt (so bestimmt der Browser das Tempo des Servers).
+    private void AcknowledgeGfx(int? sequence)
+    {
+        var gfx = _gfx;
+        List<uint>? frames = null;
+        lock (_gfxGate)
+        {
+            if (!_passthrough || gfx is null)
+            {
+                return;
+            }
+
+            while (_gfxPending.TryPeek(out var next) && (sequence is null || next.Sequence <= sequence))
+            {
+                _gfxPending.Dequeue();
+                (frames ??= []).Add(next.FrameId);
+                if (sequence is null)
+                {
+                    break;
+                }
+            }
+        }
+
+        if (frames is not null)
+        {
+            foreach (var frame in frames)
+            {
+                gfx.Acknowledge(frame);
+            }
+        }
+    }
+
+    private RdpdrChannel MakeDeviceChannel()
+    {
+        if (_drive is not null)
+        {
+            try
+            {
+                var channel = new RdpdrChannel(drive: _drive);
+                _log?.LogInformation("Laufwerk {Name} wird freigegeben ({Mode})", _drive.Name, _drive.Writable ? "Lesen und Schreiben" : "nur Lesen");
+                return channel;
+            }
+            catch (ArgumentException e)
+            {
+                // Eine Wurzel, die es nicht (mehr) gibt: die Sitzung laeuft ohne Laufwerk, statt gar nicht
+                _log?.LogWarning("Laufwerk nicht freigegeben: {Reason}", e.Message);
+            }
+        }
+
+        return new RdpdrChannel();
     }
 
     // ---- Eingabe vom Browser ----
@@ -246,6 +607,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     public void Acknowledge(int? sequence = null)
     {
         Volatile.Write(ref _lastAckAt, Environment.TickCount64);
+        AcknowledgeGfx(sequence);
         if (sequence is { } value)
         {
             _window.Acknowledge(value);
@@ -328,6 +690,13 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     /// <summary>Ein Schluesselbild als naechstes (der Browser hat den Faden verloren).</summary>
     public void RequestKeyFrame()
     {
+        // Ein Schluesselbild kann nur der eigene Kodierer machen, nicht der Server (RDPGFX kennt keine Anforderung): dann geht es ohne weiter.
+        if (Volatile.Read(ref _passthrough))
+        {
+            GfxFallbackRequested("der Browser verlangt ein Schluesselbild", remember: false);
+            return;
+        }
+
         lock (_gate)
         {
             _forceKey = true;
@@ -380,11 +749,76 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     }
 
     void IRdpHandler.Cursor(int hotX, int hotY, int width, int height, ReadOnlySpan<byte> rgba) =>
-        _events.Writer.TryWrite(new ScreenCursor(CursorKind.Shape, hotX, hotY, width, height, rgba.ToArray()));
+        PublishCursor(new ScreenCursor(CursorKind.Shape, hotX, hotY, width, height, rgba.ToArray()));
 
-    void IRdpHandler.CursorHidden() => _events.Writer.TryWrite(new ScreenCursor(CursorKind.Hidden, 0, 0, 0, 0, null));
+    void IRdpHandler.CursorHidden() => PublishCursor(new ScreenCursor(CursorKind.Hidden, 0, 0, 0, 0, null));
 
-    void IRdpHandler.CursorDefault() => _events.Writer.TryWrite(new ScreenCursor(CursorKind.Default, 0, 0, 0, 0, null));
+    void IRdpHandler.CursorDefault() => PublishCursor(new ScreenCursor(CursorKind.Default, 0, 0, 0, 0, null));
+
+    // Die letzte Form wird gemerkt: ein Browser, der sich wieder anhaengt (Resume), hat sie nicht gesehen.
+    private volatile ScreenCursor? _lastCursor;
+    private volatile ScreenEncoderInfo? _lastEncoderInfo;
+
+    private void PublishCursor(ScreenCursor cursor)
+    {
+        _lastCursor = cursor;
+        _events.Writer.TryWrite(cursor);
+    }
+
+    /// <summary>
+    /// Kein Browser mehr dran (die Verbindung riss ab, die Sitzung wird erhalten): nichts kodieren, den Ton aus. Der Desktop laeuft weiter,
+    /// die Aenderungen sammeln sich im Bild. <see cref="Resume"/> holt den neuen Browser auf den Stand.
+    /// </summary>
+    public void Park()
+    {
+        Volatile.Write(ref _paused, true);
+        Audio.OutputOn = false;
+    }
+
+    /// <summary>
+    /// Ein neuer Browser hat sich an die erhaltene Sitzung gehaengt (der Aufrufer liest die Ereignisse noch nicht): was noch unterwegs war, gilt
+    /// als verloren, der Browser bekommt Groesse, Zeigerform und Kodierer neu gemeldet und als naechstes ein Schluesselbild des ganzen Bildes.
+    /// </summary>
+    public void Resume()
+    {
+        // Was der alte Browser noch haette hoeren sollen, ist veraltet
+        while (_events.Reader.TryRead(out _))
+        {
+        }
+
+        lock (_pacerGate)
+        {
+            _window.Reset();
+            _pacer.Reset(Volatile.Read(ref _sequence));
+        }
+
+        var frame = _frame;
+        if (frame is not null)
+        {
+            _events.Writer.TryWrite(new ScreenSize(frame.Width, frame.Height));
+            if (_lastEncoderInfo is { } info)
+            {
+                _events.Writer.TryWrite(info);
+            }
+
+            if (_lastCursor is { } cursor)
+            {
+                _events.Writer.TryWrite(cursor);
+            }
+
+            // Die Ueberlagerung (verlustfreie Teile) des neuen Browsers ist leer: alles wieder nachbessern
+            _refiner?.Mark(0, 0, frame.Width, frame.Height, Environment.TickCount64);
+        }
+
+        Volatile.Write(ref _lastAckAt, Environment.TickCount64);
+        lock (_gate)
+        {
+            _forceKey = true;
+        }
+
+        Volatile.Write(ref _paused, false);
+        Wake();
+    }
 
     // ---- Kodierschleife ----
 
@@ -399,6 +833,16 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
         while (!cancellationToken.IsCancellationRequested)
         {
+            if (Volatile.Read(ref _passthrough))
+            {
+                // Das Bild kommt vom Server (RDPGFX); hier gibt es nichts zu kodieren. Groesse und Codec stehen dort im Strom.
+                TakePendingSize(out _);
+                TakeCodecChange();
+                try { await _wake.WaitAsync(IdleWaitMs, cancellationToken).ConfigureAwait(false); }
+                catch (OperationCanceledException) { break; }
+                continue;
+            }
+
             if (TakePendingSize(out var size))
             {
                 Rebuild(size.Width, size.Height);
@@ -596,7 +1040,7 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     {
         var refiner = _refiner;
         var rdp = _rdp;
-        if (refiner is null || rdp is null || refiner.DirtyTiles == 0)
+        if (refiner is null || rdp is null || refiner.DirtyTiles == 0 || Volatile.Read(ref _passthrough))
         {
             return int.MaxValue;
         }
@@ -649,7 +1093,14 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         if (png is not null)
         {
             _refineCredit -= png.Length;
-            _events.Writer.TryWrite(new ScreenRefine(rect.X, rect.Y, rect.Width, rect.Height, png));
+            lock (_gfxGate)
+            {
+                if (!_passthrough)
+                {
+                    _events.Writer.TryWrite(new ScreenRefine(rect.X, rect.Y, rect.Width, rect.Height, png));
+                }
+            }
+
             return;
         }
 
@@ -709,7 +1160,17 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         }
 
         Volatile.Write(ref _lastSentAt, tick);
-        _events.Writer.TryWrite(new ScreenPicture(sequence, isKey, data.ToArray(), encoder.Codec));
+        lock (_gfxGate)
+        {
+            // Die Bilder des Servers haben inzwischen uebernommen: ein spaetes Bild des eigenen Kodierers wuerde ihre Folge zerreissen
+            if (_passthrough)
+            {
+                return false;
+            }
+
+            _events.Writer.TryWrite(new ScreenPicture(sequence, isKey, data.ToArray(), encoder.Codec));
+        }
+
         return true;
     }
 
@@ -784,7 +1245,9 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
         _log?.LogInformation("Kodierer: {Name} ({Codec}, {Kind}), {Width} x {Height}", choice.Encoder.Name, choice.Encoder.Codec.Label(),
             choice.Encoder.IsHardware ? "GPU" : "CPU", width, height);
-        _events.Writer.TryWrite(new ScreenEncoderInfo(choice.Encoder.Codec, choice.Encoder.IsHardware, choice.Encoder.Name));
+        var info = new ScreenEncoderInfo(choice.Encoder.Codec, choice.Encoder.IsHardware, choice.Encoder.Name);
+        _lastEncoderInfo = info;
+        _events.Writer.TryWrite(info);
     }
 
     internal VideoCodecs ClientCodecs

@@ -20,6 +20,21 @@ update connections c set host_id = h.id from hosts h where h.user_id = c.user_id
 alter table connections alter column host_id set not null;
 create index connections_host_idx on connections (host_id);
 
+-- Jede Verbindung hat einen Host: ohne Angabe bekommt sie den ersten des Benutzers (gibt es keinen, wird "Mein Rechner" angelegt).
+-- Das gilt auch fuer Zeilen, die ohne host_id kommen, zum Beispiel aus dem Auszug einer aelteren Version (docs/BACKUP.md).
+create function connections_default_host() returns trigger as $$
+begin
+  if new.host_id is null then
+    select id into new.host_id from hosts where user_id = new.user_id order by sort, created_at, id limit 1;
+    if new.host_id is null then
+      insert into hosts (user_id, name) values (new.user_id, 'Mein Rechner') returning id into new.host_id;
+    end if;
+  end if;
+  return new;
+end;
+$$ language plpgsql;
+create trigger connections_default_host before insert on connections for each row execute function connections_default_host();
+
 -- Agenten: Schluessel ist jetzt der Host. hostname und os meldet der Agent selbst (reine Anzeigewerte).
 alter table agents add column host_id uuid references hosts (id) on delete cascade;
 alter table agents add column hostname text;

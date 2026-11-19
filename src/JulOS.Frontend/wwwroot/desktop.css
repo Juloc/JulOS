@@ -309,3 +309,22 @@ html.desktop .sv .sv-menu [data-only="phone"] { display: none; }
 .dk-gh .dk-sub { margin-left: 8px; font-weight: 400; color: #6b6f8f; font-size: 12px; }
 .dk-host .dk-hh { display: flex; align-items: center; gap: 8px; }
 .dk-host .dk-hm { margin: 4px 0 8px; font-size: 12.5px; }
+
+/* ---------- Module Caddy und DDNS (nur lesen) ---------- */
+.dk-dmods { display: contents; }
+.dk-dmods[hidden], .dk-di[hidden] { display: none; }
+.dk-mod { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
+.dk-mtool { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dk-mtool .dk-mnote { flex: 1; min-width: 160px; }
+.dk-mnote { color: #6b6f8f; font-size: 12.5px; margin: 0; }
+.dk-mlist { display: flex; flex-direction: column; gap: 6px; }
+.dk-mrow .dk-tt i { white-space: normal; overflow-wrap: anywhere; }
+.dk-mfoot { color: #7a7ea0; font-size: 12px; margin: 4px 0 0; }
+.dk-mstate { flex: none; font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 99px; background: rgba(90, 80, 150, .1); color: #5c607f; white-space: nowrap; }
+.dk-mstate.ok { background: rgba(47, 184, 114, .16); color: #17794a; }
+.dk-mstate.bad { background: rgba(229, 72, 77, .15); color: #b3262b; }
+.dk-mstate.big { font-size: 14px; padding: 5px 14px; }
+.dk-mhead p { margin: 6px 0 0; color: #3a3d63; }
+.dk-mhead p.dk-mnote { color: #6b6f8f; }
+.dk-mtop { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.dk-mod > .dk-btn { align-self: flex-start; }

@@ -165,7 +165,7 @@ export function setShown(on) {
     clearTimeout(overviewTimer);
   }
 }
-export function reset() { overview = null; overviewOk = null; user = ''; current = 'home'; view.q = ''; view.kind = 'all'; setShown(false); if (root) { root.hidden = true; root.removeAttribute('style'); } }
+export function reset() { mods = { caddy: false, ddns: false }; modsLoaded = false; overview = null; overviewOk = null; user = ''; current = 'home'; view.q = ''; view.kind = 'all'; setShown(false); if (root) { root.hidden = true; root.removeAttribute('style'); } }
 
 export function userChanged(name, message) {
   user = name;
@@ -349,6 +349,7 @@ function buildServicesPage() {
     <div class="chips" role="group" aria-label="Filter" id="mChips"></div>
     <div class="chips" role="group" aria-label="Host wählen" id="mHostChips" hidden></div>
     <div id="mGrid"></div>
+    <div id="mMods"></div>
     <div class="m3-sec">${icon('bolt')}<span>Schnellaktionen</span></div>
     <div class="quick" id="mQuick"></div>`;
   $('#mSearch').addEventListener('input', (e) => { view.q = e.target.value; renderGrid(); });
@@ -369,12 +370,19 @@ function renderServices() {
   const hc = $('#mHostChips');
   hc.hidden = hosts().length < 2;
   hc.innerHTML = hc.hidden ? '' : [{ id: '', name: 'Alle Hosts' }, ...hosts()].map((h) => `<button type="button" class="mb m3-chip m3-state" data-host="${esc(h.id)}" aria-pressed="${view.host === h.id}">${view.host === h.id ? icon('check') : h.id ? `<span class="m3-dot hdot ${hostDot(h.online)}"></span>` : icon('dns')}${esc(h.name)}</button>`).join('');
-  renderGrid();
+  renderGrid(); renderModules();
   const last = lastConnection();
   $('#mQuick').innerHTML = `
     <button type="button" class="mb m3-btn filled m3-state" data-act="add">${icon('add')}Neue Verbindung</button>
     <button type="button" class="mb m3-btn tonal m3-state" data-act="last" ${last ? '' : 'disabled'} ${last ? `aria-label="Zuletzt geöffnet: ${esc(last.name)}"` : ''}>${icon('history')}${last ? 'Zuletzt: ' + esc(last.name.length > 14 ? last.name.slice(0, 13) + '…' : last.name) : 'Zuletzt geöffnet'}</button>
     <button type="button" class="mb m3-btn tonal m3-state" data-act="ssh">${icon('terminal')}SSH öffnen</button>`;
+}
+/* Module Caddy und DDNS (nur lesen): Karten nur, wenn der Server sie eingeschaltet hat (GET /api/modules); Details im Sheet, siehe mobile-modules.js */
+let mods = { caddy: false, ddns: false }, modsLoaded = false;
+async function renderModules() {
+  const box = $('#mMods'); if (!box) return;
+  if (!modsLoaded) { modsLoaded = true; mods = await import('./modules.js').then((m) => m.loadModules(ctx.api)); }
+  if (mods.caddy || mods.ddns) (await import('./mobile-modules.js')).renderCards(box, mods, { icon, esc, api: ctx.api }); else box.replaceChildren();
 }
 function renderGrid() {
   const list = filtered(), pinned = new Set(ls.get('fav', []));
@@ -460,6 +468,8 @@ function renderProfile() {
   $('#mOut').addEventListener('click', () => ctx.signOut());
   if (current === 'profile') { loadSessions(); loadAbout(); }
 }
+const backupText = (b) => !b ? '' : b.state === 'ok' ? `${new Date(b.lastAt).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' })}, ${b.bytes < 1048576 ? Math.max(1, Math.round(b.bytes / 1024)) + ' KB' : (b.bytes / 1048576).toFixed(1) + ' MB'}`
+  : b.state === 'off' ? 'Aus' : b.state === 'pending' ? `Noch keins (geplant ${b.time})` : b.state === 'failed' ? `Fehlgeschlagen: ${b.message || ''}` : `Nicht eingerichtet: ${b.message || ''}`;
 async function loadAbout() {
   const box = $('#mAbout'); if (!box || !ctx) return;
   try {
@@ -468,6 +478,7 @@ async function loadAbout() {
     const row = (k, v, extra = '') => `<div class="setrow line"><div class="lab">${k}<small>${esc(v)}</small></div>${extra}</div>`;
     box.innerHTML = row('Version', `JulOS ${a.version}`) + (a.commit || built ? row('Build', [a.commit, built].filter(Boolean).join(' · ')) : '')
       + row('Bildübertragung', a.engines.stream ? `Stream (${a.engines.encoder || 'H.264'}) und Guacamole` : 'Guacamole (Stream nicht verfügbar)')
+      + row('Letztes Backup', backupText(a.backup))
       + `<div style="padding:4px 12px 10px;display:flex;gap:8px"><a class="mb m3-btn tonal block m3-state" href="/licenses.txt" target="_blank" rel="noopener">Lizenzen</a><a class="mb m3-btn tonal block m3-state" href="${esc(a.repository)}" target="_blank" rel="noopener">Quelltext</a></div>`;
   } catch (e) { box.innerHTML = `<p class="empty-hint">${esc(e.message)}</p>`; }
 }
@@ -497,6 +508,7 @@ function onClick(e) {
   else if (act === 'add') ctx.add();
   else if (act === 'addhost') ctx.addHost();
   else if (act === 'hostedit' || act === 'hostagent') { const h = hosts().find((x) => x.id === a.dataset.host); if (h) ctx.editHost(h); }
+  else if (act === 'mod') import('./mobile-modules.js').then((m) => m.openSheet(a.dataset.mod, { icon, esc, api: ctx.api, wireSheet, app: $('#app') }));
   else if (act === 'allacts') { view.allActs = !view.allActs; renderHome(); }
   else if (act === 'last') { const c = lastConnection(); if (c) ctx.connect(c); }
   else if (act === 'ssh') {

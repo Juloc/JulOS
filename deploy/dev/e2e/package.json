@@ -1,0 +1,9 @@
+{
+  "name": "julos-e2e",
+  "private": true,
+  "description": "Browser-Tests fuer JulOS (deploy/dev/e2e.sh); laeuft nur im Container",
+  "type": "module",
+  "devDependencies": {
+    "@playwright/test": "1.65.1"
+  }
+}

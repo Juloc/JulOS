@@ -1,5 +1,6 @@
 import Guacamole from '/lib/guacamole-common.min.js';
 import { StreamClient } from './stream.js';
+import { Resume } from './resume.js';
 import { StreamAudio } from './stream-audio.js';
 import { SizeGate, LayoutLog } from './layoutlog.js';
 import { Session, Sessions } from './sessions.js';
@@ -434,6 +435,7 @@ export class RemoteSession extends Session {
     this.client = null; this.tunnel = null; this.display = null; this.mouse = null;
     this.connected = false; this.everConnected = false; this.intentional = false; this.fatal = false; this.disposed = false;
     this.firstLogin = true; this.forceGuac = false; this.streamWorked = false; this.engine = 'guac';
+    this.resume = new Resume();                    // Sitzungserhalt des Streams: Token, Zeitfenster, Versuche (siehe resume.js)
     this.gen = 0;                                  // zaehlt jeden Verbindungsversuch: spaete Antworten eines alten Versuchs werden verworfen
     this.k = clamp(store.get('k.' + conn.id, store.get('k', pcDefaultK())), 0.35, 1.8);   // Remote-Pixel pro Handy-Pixel (kleiner = Inhalt groesser), je Verbindung gemerkt
     this.lastSent = { w: 0, h: 0 }; this.gate = new SizeGate();
@@ -627,17 +629,18 @@ export class RemoteSession extends Session {
   /** Vertrag: startet die Verbindung (ein neues Passwort ersetzt das alte). Fehler zeigt die Sitzung selbst, hier gibt es keine Ausnahme. */
   async connect(password) {
     if (password) this.password = password;
-    this.retry = 0; this.everConnected = false; this.firstLogin = true; this.forceGuac = false; this.streamWorked = false;
+    this.retry = 0; this.everConnected = false; this.firstLogin = true; this.forceGuac = false; this.streamWorked = false; this.resume.reset();
     return this.start();
   }
 
-  teardown() {
+  /** keep: der Server soll die Sitzung behalten (nur die Leitung kappen), weil gleich eine neue Verbindung sie wieder aufnimmt (siehe start). */
+  teardown(keep = false) {
     // Erst den alten Client abkoppeln, dann trennen: sein "getrennt"-Ereignis kommt sofort und wuerde sonst (this.client waere noch er selbst)
     // einen neuen Wiederholungs-Timer setzen, der die frische Verbindung nach 1,5/3/4,5 s wieder abschiesst.
     this.gen++;
     const old = this.client;
     this.client = null; this.tunnel = null; this.display = null; this.mouse = null; this.connected = false;
-    try { old && old.disconnect(); } catch { /* egal */ }
+    try { old && old.disconnect(keep); } catch { /* egal */ }
     clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); clearTimeout(this.resizeTimer);
     this.stopWindowBar(); this.el.topbar.hidden = true;
     this.el.display.replaceChildren();
@@ -662,11 +665,14 @@ export class RemoteSession extends Session {
 
   async start() {
     this.intentional = false; this.fatal = false; this.connectStarted = Date.now();
-    this.teardown();
+    if (this.client && this.client.drawn) this.resume.confirm();      // ein Bild kam schon (zum Beispiel Seite wieder sichtbar, bevor der tote Socket gemeldet wurde): das Token darf die Sitzung aufnehmen
+    this.teardown(true);                   // der Server haelt eine Stream-Sitzung weiter, die nehmen wir gleich wieder auf (sonst endet sie dort nach Ablauf)
     const gen = this.gen;
     const stale = () => gen !== this.gen || this.disposed;
-    this.setState(this.everConnected ? 'reconnecting' : 'connecting', this.everConnected ? 'Verbinde neu …' : 'Verbinde …');
-    this.showBusy(this.everConnected ? 'Verbinde neu …' : 'Verbinde …');
+    const resuming = this.everConnected && this.engine === 'stream' && this.resume.usable();
+    const busyText = resuming ? 'Verbindung wird wiederhergestellt …' : this.everConnected ? 'Verbinde neu …' : 'Verbinde …';
+    this.setState(this.everConnected ? 'reconnecting' : 'connecting', busyText);
+    this.showBusy(busyText);
     // Hatte der letzte Desktop dieser Verbindung eine Fensterleiste, den Platz dafuer schon jetzt freihalten: sonst schrumpft die Stage kurz nach dem Verbinden
     // und die VM bekommt gleich nach dem Start eine zweite Groesse.
     this.el.topbar.hidden = !(this.conn.kind === 'desktop' && store.get('winbar.' + this.conn.id, store.get('winbar', false)));
@@ -683,8 +689,11 @@ export class RemoteSession extends Session {
     const choice = this.forceGuac ? 'guac' : store.get('engine', null) || this.conn.engine || 'guac';
     const wantStream = this.conn.kind === 'desktop' && choice === 'stream' && await StreamClient.supported();
     if (stale()) return;
-    let ticket, engine = 'guac';
-    try {
+    let ticket, engine = 'guac', driveMode = null;
+    // Eine erhaltene Sitzung des Servers wieder aufnehmen: kein Ticket, kein Passwort, kein neuer Login am Ziel (der Server nimmt das Token, siehe resume.js)
+    const resumeToken = wantStream && this.everConnected && this.resume.usable() ? this.resume.token : null;
+    if (resumeToken) engine = 'stream';
+    else try {
       const acceptCert = this.acceptCert; this.acceptCert = null;      // gilt nur fuer diesen einen Versuch (siehe certDialog)
       const resp = await fetch('/api/remote/ticket', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, signal: AbortSignal.timeout(10000),
         body: JSON.stringify({ connection: this.conn.id, sid: this.id, password: this.password || undefined, width: w, height: h, dpi: 96, engine: wantStream ? 'stream' : 'guac', acceptCert: wantStream ? acceptCert || undefined : undefined }) });
@@ -692,7 +701,7 @@ export class RemoteSession extends Session {
       if (stale()) return;
       if (resp.status === 401) return this.requestClose('Die Sitzung ist abgelaufen. Bitte neu anmelden.', 'auth');
       if (!resp.ok) throw new Error(data.error || 'Fehler ' + resp.status);
-      ticket = data.ticket; engine = data.engine || 'guac';
+      ticket = data.ticket; engine = data.engine || 'guac'; driveMode = data.drive || null;
     } catch (e) {
       if (stale()) return;
       const msg = e.name === 'TimeoutError' || e.name === 'TypeError' ? 'Keine Verbindung zum Server. Netz prüfen.' : e.message;
@@ -706,7 +715,19 @@ export class RemoteSession extends Session {
     const tunnel = isStream ? null : new Guacamole.WebSocketTunnel(wsBase + '/api/remote/ws');
     const client = isStream ? new StreamClient(wsBase + '/api/remote/screen') : new Guacamole.Client(tunnel);
     this.engine = engine;
-    if (isStream) this.wireAudio(client);
+    if (isStream) {
+      this.wireAudio(client);
+      client.onsession = (o) => { if (this.client === client) this.resume.offered(o.token, o.keep); };
+      // Der Server kennt das Token nicht mehr (abgelaufen, Neustart, Sitzung dort beendet): ganz normal neu aufbauen, mit Ticket und neuem Login
+      client.onresumefailed = () => {
+        if (this.client !== client) return;
+        this.dbg('resume-failed', {});
+        this.resume.refused();
+        this.teardown();
+        if (this.hasSibling()) return this.takenBySibling();      // eine andere Sitzung hat den Desktop uebernommen: nicht zurueckholen
+        setTimeout(() => { if (!this.disposed && !this.intentional) this.start(); }, 0);
+      };
+    }
     const display = client.getDisplay();
     this.tunnel = tunnel; this.client = client; this.display = display; this.lastSent = { w, h }; this.gate = new SizeGate();
     this.lay.note('conn', { engine });
@@ -724,8 +745,9 @@ export class RemoteSession extends Session {
       if (this.client !== client) return;
       if (st === 3) { // verbunden
         clearTimeout(this.connectTimer);
-        this.connected = true; this.everConnected = true; this.connectedAt = Date.now(); this.frameSeen = false;
+        this.connected = true; this.everConnected = true; this.connectedAt = Date.now(); this.frameSeen = false; this.resume.connected();
         this.setState('connected', 'Verbunden');
+        if (driveMode && !this.driveNoted) { this.driveNoted = true; this.toast(driveMode === 'rw' ? 'Laufwerk vom Server ist freigegeben (Lesen und Schreiben)' : 'Laufwerk vom Server ist freigegeben (nur Lesen)', 4000); }
         if (this.hasSibling()) this.toast('Hinweis: Eine andere Sitzung läuft zum selben Ziel und Benutzer. Ein RDP-Ziel gibt je Benutzer nur einen Desktop her, die Sitzungen übernehmen ihn gegenseitig.', 6000);
         this.startWindowBar(); this.fitDisplay(); this.pushSize(); this.waitForFrame(client); this.applyPause();
         if (cur() === this) focusKbForHardware();
@@ -735,12 +757,13 @@ export class RemoteSession extends Session {
         setTimeout(() => { if (this.client === client && this.connected) { this.firstLogin = false; this.retry = 0; } }, 12000);
       } else if (st === 5) { // getrennt
         this.connected = false;
+        if (client.drawn) this.resume.confirm();      // die Sitzung am Ziel gibt es wirklich: ein Token darf sie wieder aufnehmen
         if (!client.closing && this.fallBackFromStream(client)) return;   // ohne Fehlermeldung getrennt, bevor ein Bild kam
         if (this.intentional || this.fatal) return;
         if (!this.everConnected) return; // Fehler wird von onerror gemeldet
-        if (this.hasSibling()) return this.takenBySibling();
-        // sofort nach dem Anmelden getrennt = xrdp hat das Passwort abgelehnt: nicht wiederholen
-        if (this.firstLogin && Date.now() - this.connectedAt < 12000) return this.requestClose('Anmeldung fehlgeschlagen. Bitte Passwort prüfen.');
+        if (this.hasSibling() && !this.resume.usable()) return this.takenBySibling();
+        // sofort nach dem Anmelden getrennt = xrdp hat das Passwort abgelehnt: nicht wiederholen (aber nicht, wenn schon ein Bild da war und der Server die Sitzung erhaelt)
+        if (!this.resume.usable() && this.firstLogin && Date.now() - this.connectedAt < 12000) return this.requestClose('Anmeldung fehlgeschlagen. Bitte Passwort prüfen.');
         this.scheduleReconnect();
       }
     };
@@ -748,6 +771,7 @@ export class RemoteSession extends Session {
       if (this.client !== client) return;
       // guacd meldet meist nur "Aborted. See logs."; der Statuscode sagt mehr
       if (this.fallBackFromStream(client, err)) return;
+      if (err && err.code === 520 && this.everConnected && this.resume.usable()) return;   // Leitung weg (Netzwechsel): das Schliessen des Sockets plant den naechsten Versuch (scheduleReconnect)
       if (err && err.code === 800) { this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); return this.certDialog(err); }   // Zertifikat des Ziels geaendert: der Benutzer entscheidet
       const code = err && err.code;
       const known = ERROR_TEXT[code];
@@ -790,16 +814,17 @@ export class RemoteSession extends Session {
     }
 
     this.setupMouse(client, display);
-    client.connect('ticket=' + encodeURIComponent(ticket));
-    // kommt innerhalb von 20 s keine Verbindung zustande: nicht ewig "Verbinde ..." zeigen
+    client.connect(resumeToken ? 'resume=' + encodeURIComponent(resumeToken) : 'ticket=' + encodeURIComponent(ticket));
+    // kommt innerhalb von 20 s keine Verbindung zustande: nicht ewig "Verbinde ..." zeigen (beim Wiederaufnehmen schon nach 8 s ein neuer Versuch)
     clearTimeout(this.connectTimer);
     this.connectTimer = setTimeout(() => {
       if (this.client !== client || this.connected) return;
+      if (resumeToken && this.resume.usable()) { try { client.disconnect(true); } catch { /* egal */ } this.client = null; this.scheduleReconnect(); return; }
       if (this.fallBackFromStream(client)) return;
       this.fatal = true; try { client.disconnect(); } catch { /* egal */ }
       this.setState('error', 'Keine Verbindung');
       this.showOverlay('Die Verbindung kommt nicht zustande. Netz prüfen und „Neu verbinden“ tippen.');
-    }, 20000);
+    }, resumeToken ? 8000 : 20000);
   }
 
   /* Nach dem Verbinden bleibt die Ladeanzeige stehen, bis wirklich ein Bild da ist (sonst ist alles schwarz).
@@ -854,6 +879,17 @@ export class RemoteSession extends Session {
   }
 
   scheduleReconnect() {
+    // Der Server haelt die Sitzung (JULOS_STREAM_KEEP_SECONDS): so lange wiederholen, wie sie wartet, ohne die drei Versuche zu verbrauchen.
+    // Netzwechsel am Handy dauern oft laenger; nichts geht verloren, das Fenster und alles darin bleiben.
+    this.resume.lost();
+    if (this.engine === 'stream' && this.resume.usable()) {
+      const wait = this.resume.nextDelay();
+      this.setState('reconnecting', 'Verbindung wird wiederhergestellt …');
+      this.showBusy('Verbindung wird wiederhergestellt …');
+      clearTimeout(this.retryTimer);
+      this.retryTimer = setTimeout(() => { if (!this.intentional && !this.disposed) this.start(); }, wait);
+      return;
+    }
     if (this.retry >= 3) { this.setState('disconnected', 'Getrennt'); this.showOverlay('Verbindung getrennt. Läuft die Sitzung noch in einem anderen Fenster oder auf einem anderen Gerät?'); return; }
     this.retry += 1;
     const wait = 1500 * this.retry;
@@ -1935,6 +1971,8 @@ document.addEventListener('visibilitychange', () => {
   hiddenAt = 0;
   for (const s of remotes()) s.onPageVisible(away);
 });
+// Das Netz ist wieder da (Handy wechselt von WLAN auf Mobilfunk): wartende Sitzungen nehmen sofort die erhaltene Sitzung wieder auf, statt den naechsten Versuch abzuwarten
+window.addEventListener('online', () => { for (const s of remotes()) if (!s.connected && s.resume.usable()) s.onPageVisible(0); });
 
 (async function init() {
   renderIcons(); applyTheme(); applyKbMode();

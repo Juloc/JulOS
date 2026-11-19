@@ -24,7 +24,7 @@ public sealed class RemoteHttpTests
     private const string SetupCode = "TEST-CODE-0000";
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
 
-    private sealed class Server(TestDb db, string guacd, string? allowed = null, Action<IServiceCollection>? configure = null, string? secretKey = null) : WebApplicationFactory<Program>
+    private sealed class Server(TestDb db, string guacd, string? allowed = null, Action<IServiceCollection>? configure = null, string? secretKey = null, string? driveRoot = null) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -33,6 +33,7 @@ public sealed class RemoteHttpTests
             builder.UseSetting("JULOS_GUACD", guacd);
             if (allowed is not null) builder.UseSetting("JULOS_ALLOWED_HOSTS", allowed);
             if (secretKey is not null) builder.UseSetting("JULOS_SECRET_KEY", secretKey);
+            if (driveRoot is not null) builder.UseSetting("JULOS_DRIVE_ROOT", driveRoot);
             builder.ConfigureServices(s => s.AddTransient<IStartupFilter, LoopbackFilter>());
             if (configure is not null) builder.ConfigureTestServices(configure);
         }
@@ -856,4 +857,114 @@ public sealed class RemoteHttpTests
         for (var i = 0; i < 50; i++) Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "n" + i, kind = "terminal", host = "ziel" }, cookie))).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "zu viel", kind = "terminal", host = "ziel" }, cookie))).StatusCode);
     }
+
+    // ---- Laufwerksumleitung: Schalter je Verbindung, beide standardmaessig aus; die Wurzel nur aus der Server-Einstellung ----
+
+    [Fact]
+    public async Task Drive_switches_are_off_by_default_and_the_server_without_a_root_refuses_to_turn_them_on()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db, "127.0.0.1:1");
+        var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (cookie, _) = await SignedInAsync(app, c, db);
+
+        var created = await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "PC", kind = "desktop", host = "ziel", username = "jul", engine = "stream" }, cookie)));
+        Assert.False(created.GetProperty("driveShare").GetBoolean());
+        Assert.False(created.GetProperty("driveWrite").GetBoolean());
+        var list = await Json(await c.SendAsync(GetWith("/api/connections", cookie)));
+        Assert.False(list.GetProperty("driveAvailable").GetBoolean());
+
+        var refused = await c.SendAsync(Send(HttpMethod.Post, "/api/connections", new { name = "PC2", kind = "desktop", host = "ziel", username = "jul", engine = "stream", driveShare = true }, cookie));
+        Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+        Assert.Contains("JULOS_DRIVE_ROOT", await refused.Content.ReadAsStringAsync());
+        var id = created.GetProperty("id").GetGuid();
+        var update = await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{id}", new { name = "PC", kind = "desktop", host = "ziel", username = "jul", engine = "stream", driveShare = true }, cookie));
+        Assert.Equal(HttpStatusCode.BadRequest, update.StatusCode);
+    }
+
+    [Fact]
+    public async Task Drive_switches_only_apply_to_the_stream_and_writing_needs_the_share()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "julos-driveroot-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(root);
+        try
+        {
+            await using var db = await TestDb.CreateAsync();
+            await using var app = new Server(db, "127.0.0.1:1", driveRoot: root);
+            var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+            var (cookie, _) = await SignedInAsync(app, c, db);
+            Assert.True((await Json(await c.SendAsync(GetWith("/api/connections", cookie)))).GetProperty("driveAvailable").GetBoolean());
+
+            async Task<JsonElement> Create(object body) => await Json(await c.SendAsync(Send(HttpMethod.Post, "/api/connections", body, cookie)));
+
+            var rw = await Create(new { name = "RW", kind = "desktop", host = "ziel", engine = "stream", driveShare = true, driveWrite = true });
+            Assert.True(rw.GetProperty("driveShare").GetBoolean());
+            Assert.True(rw.GetProperty("driveWrite").GetBoolean());
+            var ro = await Create(new { name = "RO", kind = "desktop", host = "ziel", engine = "stream", driveShare = true });
+            Assert.True(ro.GetProperty("driveShare").GetBoolean());
+            Assert.False(ro.GetProperty("driveWrite").GetBoolean());
+            var writeOnly = await Create(new { name = "W", kind = "desktop", host = "ziel", engine = "stream", driveWrite = true });
+            Assert.False(writeOnly.GetProperty("driveShare").GetBoolean());
+            Assert.False(writeOnly.GetProperty("driveWrite").GetBoolean());                       // writing without the drive does not exist
+            var guac = await Create(new { name = "G", kind = "desktop", host = "ziel", engine = "guac", driveShare = true, driveWrite = true });
+            Assert.False(guac.GetProperty("driveShare").GetBoolean());                            // only the own stream carries the drive
+            var terminal = await Create(new { name = "T", kind = "terminal", host = "ziel", driveShare = true });
+            Assert.False(terminal.GetProperty("driveShare").GetBoolean());
+
+            // switching the read-only drive off keeps nothing; changing only the name keeps the switches as they were
+            var id = rw.GetProperty("id").GetGuid();
+            var renamed = await Json(await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{id}", new { name = "RW2", kind = "desktop", host = "ziel", engine = "stream" }, cookie)));
+            Assert.True(renamed.GetProperty("driveShare").GetBoolean());
+            Assert.True(renamed.GetProperty("driveWrite").GetBoolean());
+            var off = await Json(await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{id}", new { name = "RW2", kind = "desktop", host = "ziel", engine = "stream", driveShare = false }, cookie)));
+            Assert.False(off.GetProperty("driveShare").GetBoolean());
+            Assert.False(off.GetProperty("driveWrite").GetBoolean());
+            var toGuac = await Json(await c.SendAsync(Send(HttpMethod.Put, $"/api/connections/{ro.GetProperty("id").GetGuid()}", new { name = "RO", kind = "desktop", host = "ziel", engine = "guac" }, cookie)));
+            Assert.False(toGuac.GetProperty("driveShare").GetBoolean());
+
+            // the root never reaches the browser, in no response
+            var text = await (await c.SendAsync(GetWith("/api/connections", cookie))).Content.ReadAsStringAsync();
+            Assert.DoesNotContain(root, text);
+            Assert.DoesNotContain("julos-driveroot", text);
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public async Task A_stream_ticket_carries_the_drive_only_when_the_connection_asks_for_it()
+    {
+        Assert.SkipUnless(JulOS.Integrations.Display.ScreenStream.IsAvailable, "libopenh264 fehlt: der Server nimmt dann Guacamole");
+        var root = Path.Combine(Path.GetTempPath(), "julos-driveroot-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(root);
+        try
+        {
+            await using var db = await TestDb.CreateAsync();
+            await using var app = new Server(db, "127.0.0.1:1", driveRoot: root);
+            var c = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+            var (cookie, userId) = await SignedInAsync(app, c, db);
+            var store = new ConnectionStore(db.Data);
+
+            async Task<JsonElement> Ticket(Guid connection) =>
+                await Json(await c.SendAsync(Post("/api/remote/ticket", new { connection, password = "x", width = 800, height = 600 }, cookie)));
+
+            var plain = await store.CreateAsync(userId, "plain", "desktop", "ziel", 3389, "u", "stream");
+            Assert.Equal(JsonValueKind.Null, (await Ticket(plain.Id)).GetProperty("drive").ValueKind);
+            var ro = await store.CreateAsync(userId, "ro", "desktop", "ziel", 3389, "u", "stream", driveShare: true);
+            Assert.Equal("ro", (await Ticket(ro.Id)).GetProperty("drive").GetString());
+            var rw = await store.CreateAsync(userId, "rw", "desktop", "ziel", 3389, "u", "stream", driveShare: true, driveWrite: true);
+            Assert.Equal("rw", (await Ticket(rw.Id)).GetProperty("drive").GetString());
+
+            // a request cannot ask for more than the connection has: the body has no drive field at all
+            var sneaky = await c.SendAsync(Post("/api/remote/ticket", new { connection = plain.Id, password = "x", drive = "rw", driveShare = true, driveWrite = true, driveRoot = "/" }, cookie));
+            Assert.Equal(JsonValueKind.Null, (await Json(sneaky)).GetProperty("drive").ValueKind);
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
 }

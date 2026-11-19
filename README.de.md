@@ -50,10 +50,12 @@ tools/install-linux-agent.sh    # in der grafischen Sitzung des Zielrechners
 ```
 
 `http://<BIND_IP>:8080` oeffnen (auf `localhost` oder ueber HTTPS; das Sitzungs-Cookie braucht einen sicheren Kontext), Setup-Code eingeben, Benutzername und Passwort waehlen und den
-Authenticator-Code bestaetigen. Danach eine Verbindung anlegen (Desktop = RDP, Terminal = SSH) und antippen. Das Passwort des Ziels tippst du bei jeder Verbindung ein, oder es wird auf Wunsch verschluesselt gespeichert (braucht `JULOS_SECRET_KEY` in `.env`: `openssl rand -base64 32`, sichern wie ein Passwort).
+Authenticator-Code bestaetigen. Danach eine Verbindung anlegen (Desktop = RDP, Terminal = SSH) und antippen. Das Passwort des Ziels tippst du bei jeder Verbindung ein, oder es wird auf Wunsch verschluesselt gespeichert (braucht `JULOS_SECRET_KEY` in `.env`: `openssl rand -base64 32`, sichern wie ein Passwort). Datenbank und Schlüssel sichert der Server täglich nach `~/julos-backup` (Einrichtung und Wiederherstellung: [docs/BACKUP.md](docs/BACKUP.md), englisch); den Ordner zusätzlich vom Rechner wegkopieren).
 Eine Desktop-Verbindung kann auch die experimentelle Stream-Engine nutzen (eigener RDP-Client, H.264 im Browser; im Dialog der Verbindung unter "Bildübertragung" "Stream" wählen). Standard bleibt Guacamole, und die App weicht darauf aus, wenn Browser oder Server kein H.264 können. Die Stream-Engine spielt auch den Ton des Desktops ab und kann das Mikrofon des Browsers an den Desktop senden (aus, bis du es im Menü einschaltest). Siehe [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 Mit einer Grafikkarte im Container kodiert die Stream-Engine darauf (VAAPI, wahlweise H.265), siehe [docs/ENCODERS.md](docs/ENCODERS.md).
+Wahlweise (`JULOS_RDP_GFX=on`, standardmäßig aus) reicht die Stream-Engine das H.264 weiter, das ein RDP-Server durch seine Grafik-Pipeline schickt, statt neu zu kodieren, und fällt auf den eigenen Kodierer zurück, wenn der Server das nicht kann; das gängige xrdp von Debian kann es nicht, siehe [docs/RDPGFX.md](docs/RDPGFX.md).
 Eine Desktop-Verbindung kann auch die experimentelle Stream-Engine nutzen (eigener RDP-Client, H.264 im Browser; im Dialog der Verbindung unter "Bildübertragung" "Stream" wählen). Standard bleibt Guacamole, und die App weicht darauf aus, wenn Browser oder Server kein H.264 können. Siehe [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Reißt bei der Stream-Engine nur die Verbindung zum Browser ab (Handy wechselt das Netz, Tab im Hintergrund), bleibt die RDP-Sitzung `JULOS_STREAM_KEEP_SECONDS` Sekunden auf dem Server (Standard 300, 0 = aus) und der Browser hängt sich ohne neuen Login wieder an ([docs/SESSIONS.md](docs/SESSIONS.md)). Sie kann auch einen Ordner des Servers als Laufwerk in den Desktop reichen, nur Lesen, solange kein zweiter Schalter Schreiben erlaubt; standardmäßig aus, in der Server-Einstellung (`JULOS_DRIVE_ROOT`) und je Verbindung ([docs/DRIVES.md](docs/DRIVES.md)).
 Bei der Stream-Engine werden ruhende Bildteile verlustfrei nachgeliefert (Text und Farben pixelgenau), die Bitrate folgt auf langsamer Leitung der Verbindung, und das RDP-Zertifikat wird bei der ersten Verbindung gemerkt (bei einer Änderung kommt eine Warnung, siehe [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)).
 Eine Terminal-Verbindung ist ein echtes Terminal im Browser (der Server haelt die SSH-Verbindung, xterm.js zeichnet den Text: Auswahl, Kopieren und Einfuegen, Scrollback). Die erste Verbindung merkt sich den SSH-Host-Schluessel des Ziels; aendert er sich, warnt die Seite und verbindet erst nach deiner Bestaetigung. Die Anmeldung geht vorerst per Passwort.
 Fuer den Rechner, auf dem der Server selbst laeuft, den Hostnamen `host.docker.internal` verwenden.
@@ -95,12 +97,12 @@ Guacamole kann Bild-Zwischenablagen nicht ueber RDP senden, deshalb dieser Weg.
 - `tests/` (`frontend/` laeuft mit node), `database/` (SQL-Migrationen), `deploy/dev/` die Test-Instanz mit Wegwerf-Zielen fuer SSH und RDP (siehe [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md); Test auf dem echten Handy: [docs/PHONE-TEST.md](docs/PHONE-TEST.md))
 - `tools/julos-agent.py` Linux-Agent (Fenster, Programme, Programm-Modus, ausgehende Verbindung zum Server), `tools/julos-clip.py` Foto-Helfer
 - `tools/install-linux-agent.sh`, `tools/julos-user.sh`, `tools/make-client-cert.sh`
-- `docs/AGENT_API.md` Agent-API, `docs/ARCHITECTURE.md` Stack und Sicherheitskonzept, `caddy/Caddyfile.example`
+- `docs/AGENT_API.md` Agent-API, `docs/ARCHITECTURE.md` Stack und Sicherheitskonzept, `docs/MODULES.md` die optionalen Module Caddy und DDNS (nur lesen, standardmaessig aus), `caddy/Caddyfile.example`
 - `.github/workflows/docker.yml` baut das Image fuer `ghcr.io/<owner>/<repo>` (amd64 + arm64)
 
 ## Ausblick
 
-Jetzt: das Remote-Modul (siehe [docs/SCOPE.md](docs/SCOPE.md)). Danach: ein Modul-Kern, dann Docker-, Caddy- und DDNS-Module, Dateien, Windows-Agent, mehrere Hosts. Ziel ist eine Oberflaeche fuer alles, was du betreibst.
+Jetzt: das Remote-Modul (siehe [docs/SCOPE.md](docs/SCOPE.md)). Danach: ein Modul-Kern, dann das Docker-Modul und Schreibzugriff fuer Caddy und DDNS (die lesende erste Stufe gibt es schon, standardmaessig aus), Dateien, Windows-Agent, mehrere Hosts. Ziel ist eine Oberflaeche fuer alles, was du betreibst.
 
 ## Lizenz
 

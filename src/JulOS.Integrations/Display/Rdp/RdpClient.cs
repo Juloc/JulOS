@@ -55,6 +55,11 @@ public sealed partial class RdpClient : IAsyncDisposable
     // The colour depth the server settled on.
     public int ColorDepth { get; private set; }
 
+    // Before ConnectAsync: tell the server this client can take the graphics pipeline (MS-RDPEGFX) over the dynamic channel
+    // "drdynvc". It only announces it - the pictures come in once a GfxChannel is registered there and the server opens it;
+    // a server that does not still sends bitmaps and orders as before.
+    public bool AdvertiseGraphics { get; set; }
+
     // False while connecting and while the server takes the desktop apart to bring it back in another size.
     public bool IsActive => _active;
 

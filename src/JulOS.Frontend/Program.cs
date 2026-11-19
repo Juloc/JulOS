@@ -11,11 +11,13 @@ using JulOS.Frontend.Cli;
 using JulOS.Frontend.Connections;
 using JulOS.Frontend.Files;
 using JulOS.Frontend.Hosts;
+using JulOS.Frontend.Modules;
 using JulOS.Frontend.Remote;
 using JulOS.Frontend.SystemInfo;
 using JulOS.Integrations;
 using JulOS.Integrations.Agent;
 using JulOS.Integrations.Display;
+using JulOS.Integrations.Display.Rdp.Drive;
 using JulOS.Integrations.Display.Video;
 using JulOS.Integrations.Guacamole;
 using JulOS.Integrations.Reachability;
@@ -26,6 +28,8 @@ using Npgsql;
 
 // Konsolenwerkzeug: dotnet JulOS.dll user ...
 if (args.Length > 0 && args[0] == "user") return await UserCli.RunAsync(args[1..]);
+// Sicherung auf der Konsole: dotnet JulOS.dll backup create | restore DATEI
+if (args.Length > 0 && args[0] == "backup") return await BackupCli.RunAsync(args[1..]);
 // Diagnose ohne Datenbank: dotnet JulOS.dll diag encoders
 if (args.Length > 0 && args[0] == "diag") return DiagCli.Run(args[1..]);
 
@@ -54,8 +58,15 @@ builder.Services.AddSingleton(new SetupCode(builder.Configuration["JULOS_SETUP_C
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<AuthService>();
 builder.Services.AddHostedService<SessionPurgeWorker>();
+// Taegliche Sicherung der Datenbank und des Schluessels in den Backup-Ordner, siehe docs/BACKUP.md
+builder.Services.AddSingleton(BackupOptions.Parse(builder.Configuration["JULOS_BACKUP"], builder.Configuration["JULOS_BACKUP_DIR"], builder.Configuration["JULOS_BACKUP_TIME"],
+    builder.Configuration["JULOS_BACKUP_KEEP_DAYS"], builder.Configuration["JULOS_BACKUP_KEY"], builder.Configuration["JULOS_DATA"]));
+builder.Services.AddSingleton<BackupService>();
+builder.Services.AddHostedService<BackupWorker>();
 builder.Services.AddSingleton<GuacTickets>();
 builder.Services.AddSingleton<ScreenTickets>();
+// Laufwerksumleitung (nur Stream-Engine): der eine Ordner, der je Verbindung als Laufwerk gereicht werden darf (leer oder "off": keine Freigabe), siehe docs/DRIVES.md
+builder.Services.AddSingleton(sp => DriveRoot.FromSetting(builder.Configuration["JULOS_DRIVE_ROOT"], sp.GetRequiredService<ILoggerFactory>().CreateLogger("JulOS.Drive")));
 builder.Services.AddSingleton<SshTickets>();
 builder.Services.AddHostedService<TicketSweepWorker>();
 // guacd (Container im selben Netz), erreichbar nur fuer den Server
@@ -71,7 +82,9 @@ builder.Services.AddSingleton(sp =>
     var settings = EncoderSettings.Parse(builder.Configuration["JULOS_ENCODER"], builder.Configuration["JULOS_CODEC"], message => encoderLog.LogWarning("{Message}", message));
     return EncoderSelector.CreateDefault(settings, encoderLog);
 });
-builder.Services.AddSingleton<ScreenRelay>();
+// Sitzungserhalt: so lange lebt eine RDP-Sitzung ohne Browser weiter (JULOS_STREAM_KEEP_SECONDS, Standard 300, 0 = aus), siehe docs/SESSIONS.md
+builder.Services.AddSingleton(sp => new ScreenRelay(sp.GetRequiredService<ILogger<ScreenRelay>>(), registry: sp.GetRequiredService<SessionRegistry>(),
+    encoders: sp.GetRequiredService<EncoderSelector>(), keep: ScreenRelay.ParseKeep(builder.Configuration["JULOS_STREAM_KEEP_SECONDS"])));
 builder.Services.AddSingleton<SshRelay>(sp => new SshRelay(sp.GetRequiredService<ILogger<SshRelay>>(), registry: sp.GetRequiredService<SessionRegistry>()));
 // Agent in der Sitzung der Ziel-Maschine (Unix-Socket) und der gemeinsame Ordner fuer Foto-Uploads, beide vom Host eingebunden
 builder.Services.AddSingleton(new AgentOptions(builder.Configuration["JULOS_AGENT_SOCKET"] ?? "/uploads/.agent/agent.sock"));
@@ -90,6 +103,8 @@ builder.Services.AddSingleton(new HostMonitor(HostSource.Linux(builder.Configura
 builder.Services.AddHostedService<HostSamplerWorker>();
 // Dateien (nur lesen): genau ein Ordner, Standard der Upload-Ordner; "off" schaltet ab
 builder.Services.AddSingleton(new FileBrowser(builder.Configuration["JULOS_FILES_ROOT"] ?? builder.Configuration["JULOS_UPLOAD_DIR"] ?? "/uploads"));
+// Module Caddy und DDNS (nur lesen, standardmaessig aus): JULOS_CADDY, JULOS_DDNS, siehe docs/MODULES.md
+builder.Services.AddModules(builder.Configuration);
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJson.Default));
 
 // Hinter einem Proxy im eigenen Netz (zum Beispiel Caddy) kommen Client-Adresse, Protokoll und Host aus den X-Forwarded-Kopfzeilen
@@ -127,7 +142,7 @@ app.Use(async (ctx, next) =>
     h["Referrer-Policy"] = "no-referrer";
     h["X-Frame-Options"] = "DENY";
     h["Content-Security-Policy"] = Csp;
-    h["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=(), usb=()";
+    h["Permissions-Policy"] = "camera=(), microphone=(self), geolocation=(), payment=(), usb=()";
     h["Cross-Origin-Opener-Policy"] = "same-origin";
     h["Cross-Origin-Resource-Policy"] = "same-origin";
     if (ctx.Request.IsHttps) h["Strict-Transport-Security"] = "max-age=31536000";
@@ -164,6 +179,7 @@ app.MapAgent();
 app.MapAgentLink(info);
 app.MapSystem();
 app.MapFiles();
+app.MapModules();
 
 app.Run();
 return 0;

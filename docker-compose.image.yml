@@ -44,12 +44,29 @@ services:
       JULOS_ALLOWED_HOSTS: "${JULOS_ALLOWED_HOSTS:-}"
       # optional: Proxys, deren X-Forwarded-* geglaubt wird (Standard: alle privaten Netze)
       JULOS_TRUSTED_PROXIES: "${JULOS_TRUSTED_PROXIES:-}"
+      # Taegliche Sicherung (Datenbank + Schluessel) nach /backup, siehe docs/BACKUP.md. Leer = an, sobald /backup eingebunden ist; off schaltet ab.
+      JULOS_BACKUP: "${JULOS_BACKUP:-}"
+      JULOS_BACKUP_TIME: "${JULOS_BACKUP_TIME:-}"
+      JULOS_BACKUP_KEEP_DAYS: "${JULOS_BACKUP_KEEP_DAYS:-}"
+      JULOS_BACKUP_KEY: "${JULOS_BACKUP_KEY:-}"
+      # optional, nur lesen, standardmaessig aus (docs/MODULES.md): Caddy (Domains und Ziele) und DDNS (Adresse und Namen)
+      JULOS_CADDY: "${JULOS_CADDY:-off}"
+      JULOS_CADDYFILE: "${JULOS_CADDYFILE:-}"
+      JULOS_CADDY_ADMIN_URL: "${JULOS_CADDY_ADMIN_URL:-}"
+      JULOS_DDNS: "${JULOS_DDNS:-off}"
+      JULOS_DDNS_HOSTS: "${JULOS_DDNS_HOSTS:-}"
+      JULOS_DDNS_FRITZBOX_URL: "${JULOS_DDNS_FRITZBOX_URL:-}"
+      JULOS_DDNS_IP_URL: "${JULOS_DDNS_IP_URL:-}"
     # Der Server muss als derselbe Benutzer laufen wie die grafische Sitzung der Ziel-Maschine (Agent-Socket, Foto-Ordner)
     user: "${JULOS_UID:-1000}:${JULOS_GID:-1000}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ${HOME}/julos-uploads:/uploads
+      # Backup-Ordner: vorher anlegen (mkdir -m 700 ~/julos-backup), er gehoert dem Benutzer des Servers; Ablageort ausserhalb dieses Rechners mitnehmen
+      - ${JULOS_BACKUP_PATH:-${HOME}/julos-backup}:/backup
+      # Caddy-Modul ueber das Caddyfile: die Datei nur lesend einbinden und JULOS_CADDYFILE=/etc/julos/Caddyfile setzen
+      # - /pfad/zum/Caddyfile:/etc/julos/Caddyfile:ro
     # BIND_IP = LAN-Adresse des Docker-Hosts (nur Heimnetz); Standard ist nur lokal (127.0.0.1)
     ports:
       - "${BIND_IP:-127.0.0.1}:${BIND_PORT:-8080}:8080"

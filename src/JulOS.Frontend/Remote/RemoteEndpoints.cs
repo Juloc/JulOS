@@ -8,6 +8,7 @@ using JulOS.Frontend.Auth;
 using JulOS.Integrations;
 using JulOS.Integrations.Display;
 using JulOS.Integrations.Display.Rdp;
+using JulOS.Integrations.Display.Rdp.Drive;
 using JulOS.Integrations.Guacamole;
 using JulOS.Integrations.Ssh;
 
@@ -25,7 +26,7 @@ internal static class RemoteEndpoints
     public static void MapRemote(this IEndpointRouteBuilder app)
     {
         // Schritt 1: Verbindung waehlen und das Passwort tippen -> Einmal-Ticket (30 s, nur im Speicher)
-        app.MapPost("/api/remote/ticket", async (TicketRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, GuacTickets tickets, ScreenTickets screenTickets, SshTickets sshTickets, SecretBox box) =>
+        app.MapPost("/api/remote/ticket", async (TicketRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, GuacTickets tickets, ScreenTickets screenTickets, SshTickets sshTickets, SecretBox box, DriveRoot drives) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (body.Connection is not { } connectionId) return Error(400, "Verbindung fehlt.");
@@ -71,10 +72,12 @@ internal static class RemoteEndpoints
                 var options = new RdpOptions
                 {
                     Host = c.Host, Port = c.Port, UserName = c.Username, Password = password, Width = w & ~1, Height = h & ~1,
-                    KeyboardLayout = 0x407, CertificateCheck = trust.Check,
+                    KeyboardLayout = 0x407, CertificateCheck = trust.Check, Sound = true,
                 };
-                var screenTicket = screenTickets.Create(id.UserId, new ScreenTarget(options, SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid), Trust: trust));
-                return screenTicket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(screenTicket, c.Kind, w & ~1, h & ~1, "stream"), AppJson.Default.TicketResponse);
+                // Laufwerk: nur, wenn die Verbindung es verlangt (beide Schalter standardmaessig aus) und der Server eine Wurzel hat; die Wurzel kommt nur aus der Server-Einstellung
+                var drive = c.DriveShare ? drives.For(c.DriveWrite) : null;
+                var screenTicket = screenTickets.Create(id.UserId, new ScreenTarget(options, SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid), Trust: trust, Drive: drive));
+                return screenTicket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(screenTicket, c.Kind, w & ~1, h & ~1, "stream", drive is null ? null : drive.Writable ? "rw" : "ro"), AppJson.Default.TicketResponse);
             }
 
             GuacSpec? spec = c.Kind switch
@@ -110,11 +113,19 @@ internal static class RemoteEndpoints
             if (!ctx.WebSockets.IsWebSocketRequest) return Error(400, "WebSocket erwartet.");
             if (!ApiGuard.SameOrigin(ctx.Request)) return Error(403, "Anfrage abgelehnt.");
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
-            var target = tickets.Take(ctx.Request.Query["ticket"].ToString(), id.UserId);
-            if (target is null) return Error(403, "Ticket ungültig oder abgelaufen.");
+            // Entweder ein Ticket (neue Sitzung) oder das Token einer erhaltenen Sitzung (Wiederaufnahme nach einem Abriss, kein Passwort noetig:
+            // das Token gehoert genau diesem Benutzer, gilt nur solange die Sitzung wartet und ist nicht erratbar)
+            var resume = ctx.Request.Query["resume"].ToString();
+            ScreenTarget? target = null;
+            if (resume.Length is 0 or > 64)
+            {
+                resume = "";
+                target = tickets.Take(ctx.Request.Query["ticket"].ToString(), id.UserId);
+                if (target is null) return Error(403, "Ticket ungültig oder abgelaufen.");
+            }
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
             await relay.RunAsync(ws, target, ct => auth.IsSessionAliveAsync(id.Id, ct), ctx.RequestAborted, owner: id.UserId,
-                clientCodecs: ScreenProtocol.ParseCodecs(ctx.Request.Query["codecs"]));
+                clientCodecs: ScreenProtocol.ParseCodecs(ctx.Request.Query["codecs"]), resume: resume);
             return Results.Empty;
         });
         // Terminal: dasselbe Ticket-Verfahren, binaeres Protokoll (siehe SshProtocol)

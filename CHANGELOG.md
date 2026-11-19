@@ -4,7 +4,7 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
-## [Unveröffentlicht]
+## [0.6.1] - 2026-11-19
 
 ### Neu
 - Einstellungen auf dem Server statt nur im Gerät: die Tastenleiste (Auswahl, Reihenfolge, neu: je Taste „Gilt für“ Desktop, Terminal oder beide) und die Themenfarbe werden je Benutzer gespeichert (Tabelle `user_settings`, Migration 010, Schlüssel `keybar` und `theme`, vom Server geprüft und neu geschrieben) und gelten auf jedem Gerät. Die lokale Kopie bleibt als Zwischenspeicher und Rückfall (ohne Server gilt sie, offene Änderungen gehen beim nächsten Start hinaus); beim ersten Aufruf geht, was das Gerät schon hat, zum Server. Siehe [docs/FOLDERS.md](docs/FOLDERS.md).

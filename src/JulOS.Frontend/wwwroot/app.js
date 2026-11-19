@@ -1849,6 +1849,8 @@ function applyTheme() {
     set('--md-error', '#ba1a1a'); set('--md-error-container', '#ffdad6');
   }
   st.colorScheme = dark ? 'dark' : 'light';
+  document.documentElement.dataset.scheme = dark ? 'dark' : 'light';      // die Desktop-Oberflaeche (desktop.css) haengt ihren dunklen Farbsatz daran
+  document.dispatchEvent(new CustomEvent('julos:scheme', { detail: { scheme: S.scheme, dark } }));
   const meta = document.querySelector('meta[name=theme-color]');
   if (meta) meta.setAttribute('content', getComputedStyle(document.documentElement).getPropertyValue('--md-surface').trim());
   dbg('theme', { seed: S.seed === 'system' ? 'system' : S.seed, sys: sys || 'none', dark });
@@ -1900,7 +1902,9 @@ el.imgSeedInput.addEventListener('change', async () => {
 });
 el.seedInput.addEventListener('input', () => { S.seed = el.seedInput.value; saveTheme(); applyTheme(); });
 el.schemeSel.addEventListener('change', () => { S.scheme = el.schemeSel.value; saveTheme(); applyTheme(); });
-/** Fuer die Handy-Oberflaeche (mobile.js): Farbe und Hell/Dunkel setzen, speichern und anwenden. */
+/** Die gewaehlte Helligkeit: 'auto' (wie das System), 'light' oder 'dark'. Handy und Desktop teilen sie (Server-Einstellung "theme"). */
+export const getScheme = () => S.scheme;
+/** Fuer die Handy- und die Desktop-Oberflaeche: Farbe und Hell/Dunkel setzen, speichern und anwenden. */
 export function setTheme({ seed, scheme }) { if (seed) S.seed = seed; if (scheme) S.scheme = scheme; saveTheme(); applyTheme(); }
 /** Was der Server fuer diesen Benutzer hat (prefs.sync): Tastenleiste und Theme uebernehmen, lokale Kopie auffrischen, neu zeichnen. */
 export function applyServerPrefs({ keybar, theme } = {}) {

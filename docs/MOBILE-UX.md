@@ -37,6 +37,21 @@ seen on each page, a proposal, and open questions. Nothing is built yet; the ord
 7. **Empty states** explain the next step in one line with a button; no placeholder pages in the main navigation.
 8. **Test on a real phone** (see [PHONE-TEST.md](PHONE-TEST.md)); screenshots before and after for each step.
 
-## Open questions for the user
+## The user's answer (2026-11-19)
 
-Which two things hurt most (finding a connection, the terminal keys, the Home page, the Server page, the wording, something else)? Which phone and browser (Android Chrome, iPhone Safari)?
+Main complaint: the interface as a whole feels random (no consistent look and rhythm between pages), and the settings are not clearly structured or well formatted.
+Devices: Android Chrome and a Windows PC with Brave (so the desktop layout counts as much as the phone shell).
+
+Consequences for the plan, to be placed before step 2 above:
+
+- **A. One design pass instead of page-by-page fixes:** a short component sheet (headings, section cards, list rows, tiles, buttons, chips, switches, empty states, messages) with fixed
+  spacing, type sizes, radii and colours taken from the theme variables (the dark and light sets of `THEME.md`), then every page uses only those parts. Review by screenshots of every
+  page before and after, on Android Chrome size and on the desktop layout.
+- **B. Settings rebuilt as a structured page:** groups with a title and one line of help ("Account", "Appearance", "Connections", "Terminal and programs", "Clipboard and sound",
+  "Backup and security", "About"); every row has a label, a short explanation and one control (switch, choice, button); technical values (build, encoder, host keys) move to
+  an "About and diagnostics" group; destructive actions are last and separated; the same structure in the desktop settings window.
+- **C. Hide what has no content:** pages without data (Monitoring) are not shown until they have something to show.
+
+## Open questions
+
+Which pages should be done first after the design pass (Home, Connections, Settings, Terminal)? A real Android screenshot of the worst page would help to calibrate.

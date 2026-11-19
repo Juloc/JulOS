@@ -43,7 +43,7 @@ internal static class HostEndpoints
 
         // Alle Hosts mit Zustand. Ein Benutzer hat immer mindestens einen (ohne einen wird der Standard-Host angelegt).
         // Die Liste loest Verbindungsversuche zu den gespeicherten Zielen aus (kurz gemerkt, TcpProbe), daher die Grenze je Benutzer.
-        app.MapGet("/api/hosts", async (HttpContext ctx, HostStore hosts, ConnectionStore connections, AgentStore agents, AgentLinks links, AgentRelease release, TcpProbe probe, HostPolicy policy, HitCounter hits) =>
+        app.MapGet("/api/hosts", async (HttpContext ctx, HostStore hosts, ConnectionStore connections, AgentStore agents, AgentLinks links, AgentRelease release, TcpProbe probe, HostPolicy policy, HitCounter hits, HostActionService actions) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (!hits.Allow("hosts:" + id.UserId, 30, Minute)) return Error(429, "Zu viele Anfragen, bitte kurz warten.");
@@ -53,7 +53,7 @@ internal static class HostEndpoints
             var byHost = (await connections.ListAsync(id.UserId, ct)).ToLookup(c => c.HostId);
             var agentOf = (await agents.ListAsync(id.UserId, ct)).ToDictionary(a => a.HostId);
             var described = await Task.WhenAll(list.Select(h => Describe(h, agentOf.GetValueOrDefault(h.Id), [.. byHost[h.Id]], id.UserId, links, release, probe, policy, ct)));
-            return Results.Json(new HostsResponse(described), AppJson.Default.HostsResponse);
+            return Results.Json(new HostsResponse(described, await actions.IsPausedAsync(id.UserId, ct)), AppJson.Default.HostsResponse);
         });
 
         app.MapPost("/api/hosts", async (HostRequest body, HttpContext ctx, HostStore hosts) =>

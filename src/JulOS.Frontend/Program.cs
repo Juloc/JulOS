@@ -102,6 +102,10 @@ builder.Services.AddSingleton<AgentRelease>();
 builder.Services.AddSingleton<AgentUpdater>();
 builder.Services.AddSingleton<AgentRouter>();
 builder.Services.AddSingleton<HostInfoService>();
+// Aktionen auf Hosts (Stufe 3): Bestaetigung, Verlauf, Pausenschalter (JULOS_HOST_ACTIONS=off), siehe docs/HOST-AGENT.md
+builder.Services.AddSingleton<HostAuditStore>();
+builder.Services.AddSingleton(HostActionOptions.Default);
+builder.Services.AddSingleton<HostActionService>();
 builder.Services.AddSingleton(new UploadOptions(builder.Configuration["JULOS_UPLOAD_DIR"] ?? "/uploads"));
 builder.Services.AddSingleton<ClipboardUploader>();
 builder.Services.AddSingleton<ClipboardFileUploader>();
@@ -184,6 +188,7 @@ app.MapAbout(info);
 app.MapRemote();
 app.MapHosts();
 app.MapHostInfo();
+app.MapHostActions();
 app.MapConnections();
 app.MapFolders();
 app.MapSettings();

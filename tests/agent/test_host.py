@@ -525,13 +525,14 @@ class PermissionTests(unittest.TestCase):
         with mock.patch.object(agent, "read_permissions", lambda *a, **k: {"reboot"}):
             self.assertEqual(agent.permissions(argparse.Namespace(allow_updates=True, allow_reboot=False)), {"updates", "reboot"})
 
-    def test_write_actions_are_refused_without_permission_and_not_built_with_it(self):
+    def test_write_actions_are_refused_without_permission_and_need_a_job_with_it(self):
+        # die ausfuehrlichen Tests der Aktionen stehen in test_actions.py
         with mock.patch.object(agent, "permissions", lambda args=None: set()):
             self.assertEqual(agent.host_api("POST", "/v1/host/updates/install", {}), (403, {"error": "not_permitted", "need": "updates"}))
             self.assertEqual(agent.host_api("POST", "/v1/host/reboot", {}), (403, {"error": "not_permitted", "need": "reboot"}))
         with mock.patch.object(agent, "permissions", lambda args=None: {"updates"}):
-            self.assertEqual(agent.host_api("POST", "/v1/host/updates/install", {}), (501, {"error": "not_implemented"}))
-            self.assertEqual(agent.host_api("POST", "/v1/host/reboot", {})[0], 403)           # nur das erlaubte Recht gilt
+            self.assertEqual(agent.host_api("POST", "/v1/host/updates/install", {})[0], 400)       # ohne Auftragsnummer geschieht nichts
+            self.assertEqual(agent.host_api("POST", "/v1/host/reboot", {})[0], 403)                # nur das erlaubte Recht gilt
 
 
 class HostApiTests(unittest.TestCase):

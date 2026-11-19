@@ -3,7 +3,7 @@
 The server never talks to the desktop directly for window management. A small **agent** runs inside the graphical session
 of the remote machine and answers a tiny API (windows, apps, mode, photo/file/clipboard transfer). The server proxies it to the browser
 (`/api/agent/*`, `/api/upload*`, `/api/clipboard/pull`, only for a valid session, see below). The Linux agent (`tools/julos-agent.py`) is the
-reference implementation; since 0.5.0 it also has a **host mode** for machines without a desktop (system values, updates, disk health, services, Docker; read only), see [HOST-AGENT.md](HOST-AGENT.md). A Windows agent is planned and has to offer the same requests (see [Windows agent](#windows-agent-design-notes)).
+reference implementation; since 0.5.0 it also has a **host mode** for machines without a desktop (system values, updates, disk health, services, Docker; since 0.6.0 also confirmed actions), see [HOST-AGENT.md](HOST-AGENT.md). A Windows agent is planned and has to offer the same requests (see [Windows agent](#windows-agent-design-notes)).
 
 ## Transports
 
@@ -68,7 +68,7 @@ Text frames from the agent are limited to 1 MB; larger frames close the link. Re
 | server → agent | `{"t":"update","id":10,"path":"/agent-files/julos-agent.py","sha256":"<64 hex>","version":"0.4.0"}` | replace yourself with the file the server ships, see [Updating the agent](#updating-the-agent) (agents from 0.4.0) |
 | agent → server | `{"t":"res","id":10,"status":200,"body":{"ok":true,"version":"0.4.0","restarting":true}}` / `4xx`/`502` `{"error":"…"}` | answered **before** the restart (`restarting:false`: that version or a newer one already runs); an error leaves the old file untouched |
 
-Host-mode requests (`GET /v1/host/sysinfo|updates|services|docker`, fixed paths, sent only to an agent that announced the capability) and their answers are described in [HOST-AGENT.md](HOST-AGENT.md); a host agent answers `404` to the desktop requests and to `put`/`pull`. Write requests (stage 3) use `POST /v1/host/...` and are answered `403 not_permitted` or `501 not_implemented` for now.
+Host-mode requests (`GET /v1/host/sysinfo|updates|services|docker`, fixed paths, sent only to an agent that announced the capability) and their answers are described in [HOST-AGENT.md](HOST-AGENT.md); a host agent answers `404` to the desktop requests and to `put`/`pull`. Write requests (stage 3, agent 0.6.0) use `POST /v1/host/...` with a job id, are answered `403 not_permitted` without the local permission word, and report progress with `{"t":"progress","id":N,...}` messages; see [Actions](HOST-AGENT.md#actions-stage-3).
 
 Limits and behaviour: at most 32 open requests per link and **one transfer at a time** (the second waits up to 10 s, then `502`). Transfers are chunked, so a
 big file never sits in one message; the sender waits for each frame to be written (TCP back pressure) and gives up after 15 s per frame and 3 minutes in total.

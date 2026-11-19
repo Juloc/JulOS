@@ -28,6 +28,12 @@ internal sealed partial class HostInfoService(AgentLinks links, HostStore hosts,
 
     [GeneratedRegex("^[a-z_]{1,32}$")] private static partial Regex ErrorCode();
 
+    /// <summary>Vergisst, was der Server zu diesem Host im Speicher hat (nach einer Aktion stimmt es nicht mehr): die naechste Abfrage liest neu.</summary>
+    public void Forget(Guid hostId)
+    {
+        foreach (var key in _cache.Keys) if (key.Host == hostId) _cache.TryRemove(key, out _);
+    }
+
     /// <summary>Null, wenn der Host nicht dem Benutzer gehoert (404).</summary>
     public async Task<HostInfoResult<T>?> GetAsync<T>(Guid userId, Guid hostId, HostQuery<T> query, bool fresh, CancellationToken ct) where T : class
     {

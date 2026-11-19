@@ -163,7 +163,7 @@ export function stateNote(resp) {
  */
 export const isKit = () => typeof document !== 'undefined' && document.documentElement.classList.contains('m3');
 const multi = (v, esc) => String(v).split('\n').map(esc).join('<br>');
-const dl = (rows, esc, kit = isKit()) => {
+export const dl = (rows, esc, kit = isKit()) => {
   const shown = rows.filter((r) => r[1] !== '' && r[1] != null);
   if (kit) return `<div class="m3-card m3-rows">${shown.map(([k, v, cls]) => `<div class="m3-row${/\bwarn\b/.test(cls || '') ? ' bad' : ''}"><div class="rt">${esc(k)}</div><div class="rc"><span class="rv">${multi(v, esc)}</span></div></div>`).join('')}</div>`;
   return `<dl class="hi-dl">${shown.map(([k, v, cls]) => `<dt>${esc(k)}</dt><dd${cls ? ` class="${cls}"` : ''}>${esc(v)}</dd>`).join('')}</dl>`;
@@ -173,19 +173,19 @@ export const noteP = (text, esc, warn = false, kit = isKit()) => (kit
   ? (warn ? `<div class="m3-msg warn"><div class="msg-t"><span>${esc(text)}</span></div></div>` : `<p class="hint">${esc(text)}</p>`)
   : `<p class="hi-note${warn ? ' warn' : ''}">${esc(text)}</p>`);
 /** Die Kernaussage eines Abschnitts ("Updates: 3 verfuegbar") */
-const sumP = (text, esc, warn = false, kit = isKit()) => (kit
+export const sumP = (text, esc, warn = false, kit = isKit()) => (kit
   ? `<div class="m3-msg${warn ? ' warn' : ' ok'}"><div class="msg-t"><b>${esc(text)}</b></div></div>`
   : `<p class="hi-sum${warn ? ' warn' : ''}">${esc(text)}</p>`);
-const subH = (text, esc, kit = isKit()) => (kit ? `<div class="m3-sec"><span>${esc(text)}</span></div>` : `<h4 class="hi-sub">${esc(text)}</h4>`);
-/** Eine Liste aus { name, detail, badge? (Text), off? } */
-const listBlock = (items, esc, kit = isKit()) => (kit
-  ? `<div class="m3-card m3-list">${items.map((i) => `<div class="m3-li static"><span class="txt"><span class="hl">${esc(i.name)}</span><span class="sl">${esc(i.detail)}</span></span>${i.badge ? `<span class="tr"><span class="m3-chip status"><span class="m3-dot bad"></span>${esc(i.badge)}</span></span>` : ''}</div>`).join('')}</div>`
-  : `<ul class="hi-list">${items.map((i) => `<li${i.badge ? ' class="sec"' : i.off ? ' class="off"' : ''}><b>${esc(i.name)}</b> <span>${esc(i.detail)}</span>${i.badge ? `<em class="hi-badge">${esc(i.badge)}</em>` : ''}</li>`).join('')}</ul>`);
+export const subH = (text, esc, kit = isKit()) => (kit ? `<div class="m3-sec"><span>${esc(text)}</span></div>` : `<h4 class="hi-sub">${esc(text)}</h4>`);
+/** Eine Liste aus { name, detail, badge? (Text), off?, actions? (fertiges HTML der Aktionstasten, siehe hostactions.js; nie Text des Agenten) } */
+export const listBlock = (items, esc, kit = isKit()) => (kit
+  ? `<div class="m3-card m3-list">${items.map((i) => `<div class="m3-li static"><span class="txt"><span class="hl">${esc(i.name)}</span><span class="sl">${esc(i.detail)}</span>${i.actions || ''}</span>${i.badge ? `<span class="tr"><span class="m3-chip status"><span class="m3-dot bad"></span>${esc(i.badge)}</span></span>` : ''}</div>`).join('')}</div>`
+  : `<ul class="hi-list">${items.map((i) => `<li${i.badge ? ' class="sec"' : i.off ? ' class="off"' : ''}><b>${esc(i.name)}</b> <span>${esc(i.detail)}</span>${i.badge ? `<em class="hi-badge">${esc(i.badge)}</em>` : ''}${i.actions || ''}</li>`).join('')}</ul>`);
 /** Ueberschrift eines Abschnitts im Dialog (siehe hostinfo-dialog.js) */
 export const sectionHead = (text, esc, kit = isKit()) => (kit ? `<div class="m3-sec"><span>${esc(text)}</span></div>` : `<h3>${esc(text)}</h3>`);
 const note = (resp, esc) => { const n = stateNote(resp); return n ? noteP(n, esc) : ''; };
 
-export function systemHtml(resp, esc) {
+export function systemHtml(resp, esc, act) {
   const i = resp && resp.info;
   if (!i) return note(resp, esc);
   const mem = i.memory || {};
@@ -209,7 +209,7 @@ export function systemHtml(resp, esc) {
     [t('hostinfo.netTotals'), net, 'hi-lines'],
     [t('hostinfo.uptimeLabel'), fmtUptime(i.uptimeSeconds)],
     [t('hostinfo.reboot'), i.rebootRequired ? t('hostinfo.rebootYes') + (i.rebootPackages && i.rebootPackages.length ? ' (' + i.rebootPackages.join(', ') + ')' : '') : t('hostinfo.rebootNo'), i.rebootRequired ? 'warn' : ''],
-  ], esc) + healthHtml(i.health, esc);
+  ], esc) + healthHtml(i.health, esc) + (act && act.can('reboot') ? act.bar(act.btn('power.reboot', '', t('hostact.a.reboot')) + act.btn('power.poweroff', '', t('hostact.a.poweroff'))) : '');
 }
 
 /** Platten-Gesundheit: SMART je Platte (oder warum nicht lesbar), RAID aus /proc/mdstat, ZFS; alles nur lesend */
@@ -227,11 +227,11 @@ export function healthHtml(h, esc) {
 }
 const PROXMOX = { ve: tk('hostinfo.pxVe'), pbs: tk('hostinfo.pxPbs'), pmg: tk('hostinfo.pxPmg') };
 
-export function updatesHtml(resp, esc) {
+export function updatesHtml(resp, esc, act) {
   const u = resp && resp.updates;
   if (!u) return note(resp, esc);
   const head = sumP(updatesLine(resp), esc, u.security > 0);
-  const items = (u.packages || []).map((p) => ({ name: p.name, detail: p.from ? `${p.from} → ${p.to}` : t('hostinfo.newPackage', { v: p.to }), badge: p.security ? t('hostinfo.security') : '' }));
+  const items = (u.packages || []).map((p) => ({ name: p.name, detail: p.from ? `${p.from} → ${p.to}` : t('hostinfo.newPackage', { v: p.to }), badge: p.security ? t('hostinfo.security') : '', actions: act ? act.bar(act.btn('updates.install', p.name, t('hostact.bInstall'))) : '' }));
   const extra = [];
   if (u.keptBack && u.keptBack.length) extra.push(noteP(t('hostinfo.keptBack', { list: u.keptBack.join(', ') }), esc));
   if (u.held && u.held.length) extra.push(noteP(t('hostinfo.held', { list: u.held.join(', ') }), esc));
@@ -239,22 +239,31 @@ export function updatesHtml(resp, esc) {
   if (u.truncated) extra.push(noteP(t('hostinfo.truncated', { n: (u.packages || []).length }), esc));
   // Die Paketlisten aktualisiert nur root; der Agent zeigt, wie alt sie sind, damit "keine Updates" nicht truegt
   const age = u.listsAgeSeconds != null ? noteP(`${t('hostinfo.listsAge', { age: fmtAge(u.listsAgeSeconds) })} ${t('hostinfo.listsHint')}`, esc, u.listsAgeSeconds > 7 * 86400) : '';
-  return note(resp, esc) + head + (items.length ? listBlock(items, esc) : '') + extra.join('') + age;
+  const bar = act && act.can('updates') ? act.bar(act.btn('updates.refresh', '', t('hostact.a.updatesRefresh')) + (u.count > 0 ? act.btn('updates.install', 'all', t('hostact.bInstallAll')) : '')) : '';
+  return note(resp, esc) + head + bar + (items.length ? listBlock(items, esc) : '') + extra.join('') + age;
 }
 
-export function servicesHtml(resp, esc) {
+export function servicesHtml(resp, esc, act) {
   const s = resp && resp.services;
   if (!s) return note(resp, esc);
-  const items = (s.failed || []).map((f) => ({ name: f.unit, detail: f.description || '' }));
-  return note(resp, esc) + (s.count > 0 ? sumP(tp('hostinfo.failedUnits', s.count), esc, true) + listBlock(items, esc) : sumP(t('hostinfo.noFailedUnits'), esc));
+  const items = (s.failed || []).map((f) => ({ name: f.unit, detail: f.description || '', actions: act && act.can('services') ? act.bar(act.btn('service.restart', f.unit, t('hostact.bRestart')) + act.btn('logs.unit', f.unit, t('hostact.bLogs'))) : '' }));
+  const all = act && act.can('services') ? act.bar(`<button type="button" class="${isKit() ? 'm3-btn sm tonal' : 'ghost hi-act'}" data-hact-open="units">${esc(t('hostact.manageUnits'))}</button>`) + '<div class="hi-units"></div>' : '';
+  return note(resp, esc) + (s.count > 0 ? sumP(tp('hostinfo.failedUnits', s.count), esc, true) + listBlock(items, esc) : sumP(t('hostinfo.noFailedUnits'), esc)) + all;
+}
+
+/** Aktionstasten eines Containers: laufend (Neustart, Stopp), sonst Start; dazu Logs und das Image neu holen */
+function containerActions(c, act) {
+  const run = c.state === 'running' || c.state === 'restarting';
+  return act.bar((run ? act.btn('docker.restart', c.id, t('hostact.bRestart')) + act.btn('docker.stop', c.id, t('hostact.bStop')) : act.btn('docker.start', c.id, t('hostact.bStart')))
+    + act.btn('logs.container', c.id, t('hostact.bLogs')) + act.btn('docker.pull', c.id, t('hostact.bPull')));
 }
 
 const DOCKER_REASON = { no_socket: tk('hostinfo.dockerNoSocket'), no_access: tk('hostinfo.dockerNoAccess'), error: tk('hostinfo.dockerError') };
-export function dockerHtml(resp, esc) {
+export function dockerHtml(resp, esc, act) {
   const d = resp && resp.docker;
   if (!d) return note(resp, esc);
   if (!d.available) return note(resp, esc) + noteP(t(DOCKER_REASON[d.reason] || DOCKER_REASON.error), esc);
-  const items = (d.containers || []).map((c) => ({ name: c.name, detail: `${c.image} · ${c.status || c.state}`, off: c.state !== 'running' }));
+  const items = (d.containers || []).map((c) => ({ name: c.name, detail: `${c.image} · ${c.status || c.state}`, off: c.state !== 'running', actions: act && act.can('docker') ? containerActions(c, act) : '' }));
   return note(resp, esc) + sumP(t('hostinfo.dockerSum', { running: d.running, total: d.total }), esc)
     + (d.restarting > 0 ? sumP(tp('hostinfo.dockerRestarting', d.restarting), esc, true) : '') + (items.length ? listBlock(items, esc) : '')
     + (d.truncated ? noteP(t('hostinfo.truncated', { n: d.containers.length }), esc) : '');

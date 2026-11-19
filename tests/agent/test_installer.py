@@ -43,10 +43,40 @@ class DryRunTests(unittest.TestCase):
     def test_options_show_up(self):
         rc, out, _ = run("--dry-run", "--server", SERVER, "--code", CODE, "--allow-updates", "--docker-group", "--user", "jagent")
         self.assertEqual(rc, 0)
-        self.assertIn('with the line "updates"', out)
+        self.assertIn("add the words: updates", out)
         self.assertIn("jagent", out)
         if "julos-agent.service:" in out:
             self.assertIn("SupplementaryGroups=docker", out)
+
+    def test_no_action_word_is_ever_a_default(self):
+        rc, out, err = run("--dry-run", "--server", SERVER, "--code", CODE)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("with no word: the agent can only read", out)
+        self.assertIn("No action words", out)
+        self.assertNotIn("add the words", out)
+        self.assertNotIn("julos-agent-helper", out)              # ohne Wort kein root-Helfer
+
+    def test_allowed_words_install_the_root_helper_only_when_something_needs_root(self):
+        rc, out, err = run("--dry-run", "--server", SERVER, "--code", CODE, "--allow", "updates,logs", "--allow", "logs")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("add the words: updates logs", out)         # jedes Wort einmal
+        if "julos-agent.service:" in out:                         # nur mit systemd
+            self.assertIn(SERVER + "/agent-files/julos-agent-helper.py", out)
+            for line in ("ListenStream=/run/julos-agent-helper.sock", "SocketUser=root", "SocketGroup=julos-agent", "SocketMode=0660", "Accept=yes", "StandardInput=socket", "root-owned"):
+                self.assertIn(line, out)
+            self.assertNotIn("SocketMode=0666", out)
+        rc, out, err = run("--dry-run", "--server", SERVER, "--code", CODE, "--allow", "docker")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("add the words: docker", out)
+        self.assertNotIn("julos-agent-helper", out)               # Docker geht ueber den Socket, nicht ueber root
+        self.assertIn("no access to the Docker socket", err)      # und der Installer sagt, was noch fehlt
+
+    def test_unknown_words_are_refused_before_anything_happens(self):
+        for bad in ("shell", "updates,root", "updates;id", "UPDATES", "--user"):
+            rc, out, err = run("--dry-run", "--server", SERVER, "--code", CODE, "--allow", bad)
+            self.assertNotEqual(rc, 0, bad)
+            self.assertNotIn("[would]", out)
+        self.assertNotEqual(run("--dry-run", "--server", SERVER, "--allow")[0], 0)
 
     def test_uninstall_dry_run_changes_nothing_and_reminds_to_remove_the_agent_in_the_app(self):
         rc, out, _ = run("--dry-run", "--uninstall")

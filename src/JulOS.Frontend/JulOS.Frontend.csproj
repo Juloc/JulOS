@@ -8,9 +8,14 @@
   <ItemGroup>
     <!-- Die Dateien fuer die Ziel-Maschine (App: "Agent einrichten"): der Server liefert sie selbst aus, passend zu seiner Version -->
     <Content Include="..\..\tools\julos-agent.py" Link="agent-files\julos-agent.py" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\tools\julos-agent-helper.py" Link="agent-files\julos-agent-helper.py" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\..\tools\julos-clip.py" Link="agent-files\julos-clip.py" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\..\tools\install-linux-agent.sh" Link="agent-files\install-linux-agent.sh" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\..\tools\install-host-agent.sh" Link="agent-files\install-host-agent.sh" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Die Tests der Aktionen (Bestaetigung, Antwort-Parser) pruefen die internen Typen des Servers direkt -->
+    <InternalsVisibleTo Include="JulOS.Backend.Tests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\JulOS.Backend\JulOS.Backend.csproj" />

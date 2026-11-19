@@ -312,6 +312,17 @@
       </div>
     </dialog>
 
+    <!-- Bestaetigung einer Aktion auf einem Host (Stufe 3): erst sagt der Server, was geschaehe, dann folgt die Ausfuehrung -->
+    <dialog id="hostActDlg">
+      <h2 id="hostActTitle">Host</h2>
+      <div id="hostActBody"></div>
+      <p id="hostActMsg" class="msg" role="alert"></p>
+      <div class="row">
+        <button id="hostActConfirm" type="button" class="primary" hidden data-i18n="hostact.confirm">Ausführen</button>
+        <button id="hostActClose" class="ghost close" data-act="close" type="button" data-i18n="common.cancel">Abbrechen</button>
+      </div>
+    </dialog>
+
     <!-- Passwort fuer die Verbindung -->
     <dialog id="startDlg">
       <form id="startForm" method="dialog" autocomplete="on">

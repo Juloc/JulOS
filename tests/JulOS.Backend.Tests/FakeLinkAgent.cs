@@ -33,6 +33,8 @@ internal sealed class FakeLinkAgent : IAsyncDisposable
     public string? HealthBody { get; set; }
     /// <summary>Antworten auf /v1/host/* (Pfad, Status und Body); fehlt ein Pfad, antwortet der Agent 404 wie ein Agent ohne diese Faehigkeit. Gezaehlt in <see cref="Requests"/>.</summary>
     public Dictionary<string, (int Status, string Body)> HostReplies { get; } = [];
+    /// <summary>Schreibaktionen (Stufe 3): beantwortet eine POST-Anfrage an /v1/host/* selbst (Lesen kommt weiter aus <see cref="HostReplies"/>), mit Fortschrittsmeldungen (Text, erledigt, gesamt); Status -1 heisst: Verbindung kappen. Laeuft im Hintergrund, der Agent bleibt ansprechbar.</summary>
+    public Func<string, string, string, Func<string, int?, int?, Task>, Task<(int Status, string Body)>>? OnHost { get; set; }
     /// <summary>Verzoegert jede Antwort auf /v1/host/* (fuer Tests mit gleichzeitigen Anfragen).</summary>
     public TimeSpan HostDelay { get; set; }
     /// <summary>Nach dem ersten Stueck einer Uebertragung die Verbindung kappen.</summary>
@@ -115,6 +117,21 @@ internal sealed class FakeLinkAgent : IAsyncDisposable
                 lock (Requests) Requests.Add((method, path, root.TryGetProperty("body", out var b) ? b.GetRawText() : ""));
                 if (path.StartsWith("/v1/host/", StringComparison.Ordinal))
                 {
+                    if (OnHost is { } handler && method == "POST")
+                    {
+                        var bodyText = root.TryGetProperty("body", out var hb0) ? hb0.GetRawText() : "";
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                var (st, bd) = await handler(method, path, bodyText, (text, done, total) => Reply(JsonSerializer.Serialize(new { t = "progress", id, text, done, total })));
+                                if (st < 0) { _ws.Abort(); Closed = true; return; }
+                                await Reply($$"""{"t":"res","id":{{id}},"status":{{st}},"body":{{bd}}}""");
+                            }
+                            catch (Exception e) when (e is WebSocketException or ObjectDisposedException or OperationCanceledException or InvalidOperationException) { Closed = true; }
+                        });
+                        break;
+                    }
                     if (HostDelay > TimeSpan.Zero) await Task.Delay(HostDelay);
                     var (hs, hb) = HostReplies.TryGetValue(path, out var r) ? r : (404, """{"error":"unsupported"}""");
                     await Reply($$"""{"t":"res","id":{{id}},"status":{{hs}},"body":{{hb}}}""");

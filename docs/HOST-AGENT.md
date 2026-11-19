@@ -14,8 +14,8 @@ What you get per host, at a glance (host card on the desktop and on the phone, p
 | Services and containers | failed systemd units, Docker containers (running, total, restarting) |
 | Identity | host name, operating system, kernel, addresses, virtualised or not, Proxmox host detected |
 
-Everything is **read only** in this version. Installing updates, restarting and controlling services or containers is planned (see [Roadmap](#roadmap)); the message form, the
-permission file and the check on the server already exist so that those steps can be added without redoing the security design.
+Reading is the default and needs nothing. **Actions** (install updates, reboot, control services and containers, read logs, pull images) exist since agent 0.6.0, but they are **off until you switch them on per host**
+and every single one is **confirmed by you in the app, every time**: see [Actions](#actions-stage-3). Nothing is ever started by a schedule or by the agent itself.
 
 ## Modes
 
@@ -50,12 +50,14 @@ The installer (`tools/install-host-agent.sh`, POSIX `sh`, `shellcheck`-clean, id
 
 1. creates the system user `julos-agent` (no login shell, home `/var/lib/julos-agent`),
 2. downloads `julos-agent.py` **from your own JulOS server only** (`/agent-files/`, no redirects, at most 2 MB), checks it against `/agent-files/SHA256SUMS` and as valid Python, installs it in `/opt/julos-agent`,
-3. creates `/etc/julos-agent/permissions` (owned by root, see [Security](#security)),
+3. creates `/etc/julos-agent/permissions` (owned by root, see [Security](#security)); it is **empty of words** unless you named some with `--allow`,
 4. enrols the agent with the code (as `julos-agent`; the token lands in `/var/lib/julos-agent/.config/julos/agent.json`, mode 0600),
-5. installs and starts the systemd service `julos-agent` (`Restart=on-failure`, `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=read-only`, `PrivateTmp`, no capabilities, only `/var/lib/julos-agent` and `/opt/julos-agent` writable).
+5. installs and starts the systemd service `julos-agent` (`Restart=on-failure`, `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=read-only`, `PrivateTmp`, no capabilities, only `/var/lib/julos-agent` and `/opt/julos-agent` writable),
+6. **only if you allowed something that needs root** (`updates`, `reboot`, `services`, `logs`): downloads `julos-agent-helper.py` the same way (own server, checksum), installs it as root in `/usr/local/libexec/julos-agent/` and sets up
+   the socket-activated services `julos-agent-helper.socket` and `julos-agent-helper@.service` (see [The root helper](#the-root-helper)). Re-running the installer updates the helper; the agent's self-update never touches it.
 
-Options: `--dry-run` (shows every step and the unit file, changes and downloads nothing, needs no root), `--user NAME`, `--allow-updates` (writes the line `updates` to the permission file; has no effect before step 3 of the roadmap),
-`--docker-group` (see below), `--allow-http` (test instance only), `--no-start`, `--uninstall`. Without systemd the files are installed and the command to start the agent by hand is printed.
+Options: `--dry-run` (shows every step and the unit files, changes and downloads nothing, needs no root), `--user NAME`, `--allow WORDS` (comma separated from `updates reboot services docker logs`, written to the
+permission file; **never a default**, see [Actions](#actions-stage-3); `--allow-updates` is the same as `--allow updates`), `--docker-group` (see below), `--allow-http` (test instance only), `--no-start`, `--uninstall`. Without systemd the files are installed and the command to start the agent by hand is printed.
 The checksum protects against a damaged or truncated download; it does **not** protect against a hostile server (both come from the same server). That is the same trust as the existing desktop agent update.
 
 Requirements on the host: `python3` (3.8 or newer), `curl` or `wget`, `sudo`/root. Nothing else is installed.
@@ -72,7 +74,7 @@ Re-running the installer does the same by hand.
 sudo sh install-host-agent.sh --uninstall           # or: --dry-run --uninstall first
 ```
 
-It stops and removes the service, `/opt/julos-agent`, `/etc/julos-agent`, `/var/lib/julos-agent` (log and token) and the user (only if the installer created it). Then use **Agent entfernen** in the
+It stops and removes the service, the root helper and its two units, `/opt/julos-agent`, `/etc/julos-agent`, `/var/lib/julos-agent` (log, token, results of actions) and the user (only if the installer created it). Then use **Agent entfernen** in the
 host dialog so the token is also dead on the server. The agent file on the host is the only thing JulOS ever installs.
 
 ## What the agent reads
@@ -84,7 +86,9 @@ Only fixed requests, answered with JSON, never a file or a log. Each capability 
 | `sysinfo` | `GET /v1/host/sysinfo` | `/proc/meminfo`, `/proc/uptime`, `/proc/loadavg`, `/proc/mounts` + `statvfs`, `/proc/net/dev`, `/etc/os-release`, `ip -o addr`, `/var/run/reboot-required`, `systemd-detect-virt`, Proxmox markers (`pveversion`), health (below) |
 | `updates` | `GET /v1/host/updates` | `apt-get -s dist-upgrade` (a simulation, no root), `apt-mark showhold`, age of `/var/lib/apt/lists`; `dnf -C check-update`, `apk list -u`, `checkupdates` in the simplest form (no security flag there) |
 | `services` | `GET /v1/host/services` | `systemctl --failed`, `systemctl is-system-running` |
-| `docker` | `GET /v1/host/docker` | one request on the local Docker socket: `GET /containers/json?all=1` |
+| `docker` | `GET /v1/host/docker` | one request on the local Docker socket: `GET /containers/json?all=1` (also the Compose project label of each container, so the app can warn about JulOS' own group) |
+| `services` + right `services` | `GET /v1/host/units` | `systemctl list-units --type=service --all`: the list of loaded services, the only source of service names for actions; needs the local word `services` (`403 not_permitted` without it) |
+| (always) | `GET /v1/host/jobs` | the last 20 actions with state, progress and result, so the server can fetch a result after a lost connection (see [Progress and the way back](#progress-and-the-way-back)) |
 
 **Updates.** Security updates are the ones whose origin carries `security` (Debian `Debian-Security`, Ubuntu `-security` and ESM). The agent never refreshes the package lists: that needs
 root. It shows their **age** instead ("package lists were updated 3 days ago: `sudo apt update` on the host"), so "no updates" is never a silent lie. Most systems refresh them by a timer (`apt-daily`).
@@ -94,9 +98,10 @@ root. It shows their **age** instead ("package lists were updated 3 days ago: `s
 ZFS from `zpool status -x`. Disk fill level is part of the disks list; a disk at 90 % or more is marked. The first read of the SMART data runs in the background (it can take seconds); later reads use a
 ten-minute memory. Btrfs and LVM are not read yet (see the roadmap).
 
-**Docker.** The agent only ever sends `GET /containers/json?all=1` (a read), but **access to the Docker socket is access to root on that machine**: the `docker` group is root-equivalent. So the
-default is "no access", and the card says so. Two ways: run a read-only socket proxy and give the agent its socket (`--docker-socket` or `JULOS_AGENT_DOCKER_SOCKET`; recommended, see
-[INTEGRATIONS.md](INTEGRATIONS.md) 2.1), or accept the risk for this host with `install-host-agent.sh --docker-group` (adds the supplementary group `docker` to the unit). Containers that keep restarting are counted
+**Docker.** For reading the agent only sends `GET /containers/json?all=1`, but **access to the Docker socket is access to root on that machine**: the `docker` group is root-equivalent. So the
+default is "no access", and the card says so. Two ways: run a socket proxy and give the agent its socket (`--docker-socket` or `JULOS_AGENT_DOCKER_SOCKET`; recommended, see
+[INTEGRATIONS.md](INTEGRATIONS.md) 2.1), or accept the risk for this host with `install-host-agent.sh --docker-group` (adds the supplementary group `docker` to the unit). A **read-only** proxy blocks the container actions: for them
+the proxy must allow `POST /containers/<id>/start|stop|restart`, `GET /containers/<id>/json|logs` and the image pull (`POST /images/create`, `GET /images/<name>/json`); the agent answers `docker_denied` otherwise. Containers that keep restarting are counted
 (`restarting`); the per-container restart counter is not in the list answer and is a roadmap item.
 
 ## Server side
@@ -107,7 +112,14 @@ default is "no access", and the card says so. Two ways: run a read-only socket p
 | GET | `/api/hosts/{id}/updates` | list, counts, age of the package lists |
 | GET | `/api/hosts/{id}/services` | failed units |
 | GET | `/api/hosts/{id}/docker` | containers |
-| GET | `/agent-files/install-host-agent.sh`, `/agent-files/SHA256SUMS` | public like the other agent files; `SHA256SUMS` is `sha256sum` format over exactly the served bytes |
+| GET | `/api/hosts/{id}/units` | loaded systemd services (targets of actions); only when the server level of the host allows `services`, else `403 control_off` |
+| POST | `/api/hosts/{id}/actions/prepare` | step 1 of an action: checks everything and returns the one-time confirmation (below) |
+| POST | `/api/hosts/{id}/actions/run` | step 2: runs the confirmed action, answers `202` with the job id at once |
+| GET | `/api/hosts/{id}/actions/{job}` | state, progress and result of a job (also fetches a lost result from the agent) |
+| GET | `/api/hosts/{id}/audit?limit=` | the history (audit) of this host, newest first, at most 200 |
+| PUT | `/api/hosts/{id}/agent/control` | `{level}`: `read` (default, no actions), `updates` (updates and logs) or `full` |
+| PUT | `/api/host-actions/pause` | `{paused}`: the pause switch (below) |
+| GET | `/agent-files/install-host-agent.sh`, `/agent-files/julos-agent-helper.py`, `/agent-files/SHA256SUMS` | public like the other agent files; `SHA256SUMS` is `sha256sum` format over exactly the served bytes |
 
 Answer shape: `{"state", "at", "stale", "error"?, "info"|"updates"|"services"|"docker"?}`. `state` is `ok`, `offline` (agent enrolled, not connected), `no_agent`, `unsupported` (the agent lacks the capability: the agent is not even asked) or `error`
 (`error` is a short code such as `timeout`, `apt_failed`, `invalid_answer`; free text of the agent is never passed on). On `offline` and `error` the last good data is still returned with `stale: true`.
@@ -118,8 +130,8 @@ Answer shape: `{"state", "at", "stale", "error"?, "info"|"updates"|"services"|"d
 - **Limits.** Answers are at most 600 kB (link limit), packages 500, containers 100, other lists 64 entries. Every field is read one by one: texts are cut and stripped of control characters, numbers clamped, wrong types dropped,
   IP addresses must parse. Hostile or broken answers cannot reach the page as markup (the front end also escapes everything).
 - **Rights.** Every route needs the session cookie (ApiGuard) and shows only your own hosts; 90 requests per minute and user.
-- **`GET /api/hosts`** gains, inside `agent`: `kind` (`host` or `desktop`), `caps`, `allow` (what the agent allows locally for write actions), `control` (the server-side level). Old fields are unchanged.
-- **Migration 017** adds `agents.control` (`read`, `updates`, `full`; default `read`). Nothing sets it yet.
+- **`GET /api/hosts`** gains, inside `agent`: `kind` (`host` or `desktop`), `caps`, `allow` (what the agent allows locally for actions), `control` (the server-side level); at the top `actionsPaused`. Old fields are unchanged.
+- **Migration 017** adds `agents.control` (`read`, `updates`, `full`; default `read`); **migration 018** adds the table `host_audit` (016 is an intentional gap).
 
 ## Security
 
@@ -127,13 +139,86 @@ The design follows [INTEGRATIONS.md](INTEGRATIONS.md) section 3. For this agent 
 
 - **Outbound only.** The agent connects to the server over `wss://` (system certificate store, no "insecure" switch); a plain `http://` server is refused except `localhost` or `--allow-http` for tests. Nothing listens on the machine.
 - **Own user, no shell, locked down.** `julos-agent` has no login shell and no password; the unit has `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=read-only`, `PrivateTmp`, an empty capability set, and writes only to its own two folders.
-- **Read only by construction.** Commands are fixed argument lists without a shell; the only `apt-get` call is `-s` (simulate); there is no code path that installs, restarts or writes outside the agent's own state.
-- **The agent can't give itself rights.** `/etc/julos-agent/permissions` counts only when **root owns it and it is not writable by group or others** (otherwise it is ignored and a warning is logged). Alternatively `--allow-updates` / `--allow-reboot` on the command line (set in the unit, which root owns).
-  The words in the file are `updates` and `reboot`. Today they unlock nothing: a write request answers `403 not_permitted` without the right and `501 not_implemented` with it.
-- **Two keys.** A write action will need the server (`agents.control`, checked by `AgentControl.Permitted`) **and** the agent (the local file) to agree. The agent reports its local rights in `hello` (`allow`) so the app can show why an action is greyed out.
+- **No shell, no free command.** Programs are fixed argument lists (`subprocess` with a list, never a shell string); names are checked against patterns **and** against the lists the agent itself reported; the agent never gets `sudo` and keeps `NoNewPrivileges`.
+  Reading uses only `apt-get -s` (simulate); everything that writes is in the [Actions](#actions-stage-3) section below and behind the keys described there.
+- **The agent can't give itself rights.** `/etc/julos-agent/permissions` counts only when **root owns it and it is not writable by group or others** (otherwise it is ignored and a warning is logged). The words are `updates`, `reboot`, `services`, `docker`, `logs`; the file is empty of words after the installation.
+  (The command-line flags `--allow-updates` / `--allow-reboot` still add to the **agent's** answer, but the root helper reads only the file.)
+- **Two keys, plus your confirmation.** An action needs the server (`agents.control`, session, rate limit, pause switch) **and** the agent (the local file) to agree, **and** a one-time confirmation from you. The agent reports its local words in `hello` (`allow`) so the app can show why an action is not offered.
 - **The agent is not the server.** Its answers are untrusted input (see "Limits" above). It cannot ask the server for anything: the server only sends fixed requests.
 - **Token.** 256 bits, stored on the server as SHA-256 only, on the host in a 0600 file of the service user; removing the agent in the app kills it at once.
 - **The agent file belongs to the service user** (so it can replace itself on update). Someone who already is that user could change the agent; that user has no rights beyond what is listed here, which is why it must stay unprivileged (no `docker` group by default, no `sudo` rules).
+  That is also why the root helper is a **separate file owned by root**: a root process never runs code the service user can write. What that user can still do with the helper is exactly what the permission file allows (see [The root helper](#the-root-helper)).
+
+## Actions (stage 3)
+
+Actions are the first thing in JulOS that changes a machine, so they are built to be hard to trigger by accident, by a stolen browser tab, or by a hostile agent.
+
+| Action (id) | Right | What the agent does | Target |
+| --- | --- | --- | --- |
+| `updates.refresh` | `updates` | `apt-get update` (root helper) | none |
+| `updates.install` | `updates` | one package: `apt-get install --only-upgrade --no-remove`; all: `apt-get upgrade` (never removes or adds packages; kept-back packages stay for manual work) | `all` or one package **of the update list** |
+| `power.reboot`, `power.poweroff` | `reboot` | answers "accepted" first, then `systemctl reboot` / `poweroff` after a short delay (root helper) | none |
+| `service.start`, `service.stop`, `service.restart` | `services` | `systemctl <verb> -- <unit>` (root helper); never the agent or its helper | a service **of the reported list** (`GET /v1/host/units`) |
+| `docker.start`, `docker.stop`, `docker.restart` | `docker` | one `POST /containers/<id>/<verb>` on the Docker socket the read functions already use | a container **of the container list** |
+| `docker.pull` | `docker` | fetches the image of that container again (`POST /images/create`) and says whether it changed; the container keeps running the old image until it is recreated | a container of the list; not for images that are only an id or a pinned digest |
+| `logs.unit`, `logs.container` | `logs` | last 10 to 200 lines (default 100, each at most 400 characters) of `journalctl --unit=<unit>` (root helper) or of the Docker logs | a service or container of the lists |
+
+Paths are fixed: `POST /v1/host/updates/refresh|install`, `/reboot`, `/poweroff`, `/service/start|stop|restart`, `/docker/start|stop|restart|pull`, `/logs/unit|container`. Body: `{"job": "<32 hex>", ...target}`. Answers: `200 {ok, job, action, ...}`, `400 invalid_request`,
+`403 not_permitted`, `404 unknown_target`, `409 busy|duplicate_job|protected_unit|no_registry_image`, `500 <short code>` (`apt_locked`, `apt_failed`, `systemctl_failed`, `docker_failed`, ...), `501 not_implemented`, `503 helper_unavailable|docker_unavailable`.
+
+### The confirmation (two steps, on the server)
+
+1. `POST .../actions/prepare {action, target}` checks everything (below) and answers with a confirmation: a random token of 256 bits (the server keeps **only its SHA-256, in memory**, for **60 seconds**) and the exact content: host, action, target (with the container's name),
+   warnings, and `typeToConfirm` for **reboot, power off and "all updates"**: the machine name (the name the agent reports) that you must type. Nothing has happened yet.
+2. `POST .../actions/run {token, action, target, typed}` runs it. The confirmation is **single use** (it is removed on first sight, also when something does not match), bound to **your session, this host, this action and this target**, and expires. A wrong typed name does not burn it
+   (the server checks the name too, not only the page). Before running, **every check is repeated**: between the steps the pause switch, the level or the connection may have changed.
+
+The page shows a dialog with host, action and target (and the typing field where required); after "Ausführen" it shows progress and result. Closing the dialog does not cancel a running action.
+
+### Who must agree (the keys)
+
+Server: the **pause switch** (`JULOS_HOST_ACTIONS=off` in the environment, or "Alle Aktionen pausieren" in the dialog; the environment wins), the **level** per host (`agents.control`, default `read` = no action; `updates` = updates and logs; `full` = everything), your **session**,
+the **rate limit** (30 requests per minute and user, at most 20 open confirmations), an **agent of version 0.6.0 or later that is connected and announced the capability**, and the agent's **`allow`** from its hello. Agent: the **local word** in `/etc/julos-agent/permissions`
+(`updates`, `reboot`, `services`, `docker`, `logs`), checked again for every request (`403 not_permitted`). The root helper checks the file **a third time**. Missing any one: refused, and the refusal is written to the history.
+
+### One action at a time
+
+Per host only one writing action runs (`409 busy`), on the server **and** in the agent. A job id (`job`) is used once: the same request twice does nothing (`409 duplicate_job`). After a reboot or power off the agent stays "busy" for two minutes.
+
+### Progress and the way back
+
+Long actions send `{"t":"progress","id":N,"text":"...","done":k,"total":n}` messages over the link (rate limited to about two per second; for updates `done` counts "Setting up" lines against the number of packages). The page polls `GET .../actions/{job}` every 1.5 s.
+A lost link **does not abort the action**: the agent keeps working and stores the result (last 20 jobs in `~/.local/state/julos/jobs.json`, mode 0600, never the content of logs). The server marks the job `lost`, and as soon as the agent is back (or when the page asks) fetches `GET /v1/host/jobs`
+and completes the job and the history entry. A job that was still running when the agent process died is reported as `interrupted`, never as success. Reboot and power off report **"accepted"** to the server first and run after a delay of five seconds, so the answer still arrives.
+After updates the result says `rebootRequired` when `reboot-required` is set, and the page shows a hint.
+
+### The history (audit)
+
+Table `host_audit` (migration 018): time, user, host (id and name of that time), action, target (the container as `name (id)`), `event` and a short `detail` code. Events: `prepared` (a confirmation was requested), `denied` (with the reason: `control_off`, `paused`,
+`agent_not_permitted`, `confirmation_invalid|expired|mismatch`, `typed_mismatch`, `unknown_target`, ...), `started`, `ok`, `failed` (error code), `accepted`, `lost`, and `control.set` when you change the level. **No secret and no content**: no token, no log lines, no command output.
+The entry `started` is written **before** the action is sent; if it cannot be written, the action is not run (`audit_failed`). The last 500 entries per host are kept; the history survives deleting the host. It is shown in the dialog Host-Details under "Verlauf" (`GET .../audit`).
+
+### The root helper
+
+`tools/julos-agent-helper.py` is a small program (standard library only, about 200 lines) that runs **as root, one request per connection**, started by systemd's socket activation (`julos-agent-helper.socket`, `/run/julos-agent-helper.sock`, mode 0660, group = the agent's user; `Accept=yes`).
+It exists because the agent is deliberately an unprivileged user with `NoNewPrivileges` and a read-only file system: it cannot run `apt-get` itself, and `sudo` would not work under that sandbox (and would be a much bigger door). The helper:
+
+- reads **one JSON line**, accepts only five verbs (`apt.refresh`, `apt.upgrade`, `power`, `service`, `journal`), checks the matching word in `/etc/julos-agent/permissions` (root-owned, not writable by others), validates every value (package pattern **without a trailing `-`**,
+  which would mean "remove" to apt; unit pattern; never `julos-agent*`) and runs **exactly one fixed program as an argument list**: no shell, no `sudo`, no environment from the caller (`DEBIAN_FRONTEND=noninteractive`, `needrestart` only reports);
+- streams the program's output lines back as progress and ends with a short result code; when the agent hangs up, the action **runs to the end** (a half-finished `apt` is worse than an unread result);
+- is **not replaced by the agent's self-update**: it is installed and updated only by re-running `install-host-agent.sh` as root. The installer installs it only when you allow `updates`, `reboot`, `services` or `logs`. Without systemd it is not installed and those actions answer `helper_unavailable`.
+
+Honest limit: the permission file is the access control for the helper, and anyone who can write to the agent's user (or to the helper's socket group) can ask for **exactly the actions the file allows, with values the helper validates**, without your confirmation in the app. That is why the user stays
+unprivileged, the words are never a default, and `reboot`/`services` should be allowed only on machines where this is acceptable.
+
+### Limits
+
+- Installing updates and refreshing lists: **apt only**. `dpkg` may stop with a question the helper cannot answer (it keeps the existing configuration files, `--force-confold`); a held package or a broken state shows up as `apt_failed` with the output tail.
+- `apt-get upgrade` does what `upgrade` does: packages that need new dependencies or removals stay "kept back" and need a manual `dist-upgrade`.
+- Stopping a service that your SSH or network depends on is possible (and only a confirmation away); the agent's own units are protected.
+- The JulOS server's own containers (Compose project `julos` or an image with `julos` in its name) show a **warning** in the confirmation when you stop or restart them; they are not blocked.
+- The server keeps confirmations and job states **in memory**: a restart of the server forgets open confirmations (harmless) and job states (the history entry `started` then has no result entry; the agent still has it).
+- Real systemd, real `apt` and real Docker are not exercised by the automated tests (they use a recorder and fakes); see the CHANGELOG for what was verified by hand.
 
 ## Proxmox
 
@@ -156,11 +241,12 @@ The plan is, in this order of preference:
 
 ## What is deliberately missing
 
-- **Everything that writes**: install updates, reboot or power off, start/stop/restart services or containers, read logs, update images. See the roadmap.
+- **Actions for dnf, apk, pacman** (installing updates and refreshing lists is apt only: `501 not_implemented`), **recreating containers** after an image pull (the pull only fetches the image; recreate with Compose yourself), **registry logins** for private images, **stopping the agent or its helper through itself** (`protected_unit`), **unit files** that are not loaded (only `systemctl list-units` shows what can be controlled), an **"undo"** for any action.
+- **Anything unattended**: no schedule, no automatic update, no action started by the agent. That is stage 5 and needs its own opt-in.
 - **Windows** agent (planned, see [AGENT_API.md](AGENT_API.md)), macOS, BSD. The host mode needs Linux.
-- **Refreshing package lists** (`apt-get update`): needs root, and an agent that does it silently is the first step toward an agent that can do anything. It will be an explicit action of stage 3.
+- **Refreshing package lists silently**: `apt-get update` needs root; it is the explicit, confirmed action "Paketlisten aktualisieren" of stage 3 and never runs by itself.
 - **Both agents on one host.** One host has one agent; a machine that needs both modes becomes two hosts (for example "workstation" and "workstation (server)").
-- **Btrfs and LVM health**, per-container restart counters, Docker stats (CPU/memory per container), logs.
+- **Btrfs and LVM health**, per-container restart counters, Docker stats (CPU/memory per container), log search or streaming (logs are bounded, on request).
 - **A history.** Values are a snapshot; there are no graphs and no alerts yet (see "Later").
 - **dnf/apk/pacman details**: no security flag, no list age, and `dnf` only from its cache.
 
@@ -172,20 +258,11 @@ The user's decisions for the host agent (answers collected before the build) are
 
 Done in this version: the host mode, the four read capabilities, disk health, the endpoints with cache, the cards and the dialog, the SSH install, the permission file and the `control` level (unused).
 
-### Stage 3: actions (write), every one confirmed, never silent
+### Stage 3: actions (write), every one confirmed, never silent: built, see [Actions](#actions-stage-3)
 
-Planned actions: install updates (single package or all, with progress and a reboot hint), reboot and power off, list/start/stop/restart **systemd services**, start/stop/restart **Docker containers**, read **logs** (bounded, on demand), update **images**.
-
-Binding rules:
-
-1. **Always confirmed.** A two-step confirmation on the server: the browser asks, the server answers with a short-lived, single-use confirmation naming exactly what will happen (host, action, target), the user confirms in a second request. No action runs without it, no action is ever started by a schedule or by the agent.
-2. **Two keys.** The server checks `agents.control` (and the user's session, rate limit, a pause switch); the agent checks its **local permission per machine and per kind of action** (`/etc/julos-agent/permissions`, owned by root; words `updates`, `reboot`, later `services`, `docker`, `logs`). Either one missing means refused.
-3. **Audit.** Every request, refusal and result writes an audit entry (who, which host, which action, which target, outcome); no secret in it.
-4. **Narrow requests.** New fixed paths (`/v1/host/...`) with checked values: package names from the update list only, unit names from the list the agent itself reported, container ids from the container list. No free command, no shell.
-5. **Progress and the way back.** Long actions (updates) report progress over the link (`progress` messages with the request id) and a final result; a lost link does not abort the action, the result is read back when it returns. A reboot hint appears when `reboot-required` is set afterwards.
-6. **Message form** (already fixed): the server sends `{"t":"req","id":N,"method":"POST","path":"/v1/host/<action>","body":{...}}`; the agent answers `403 not_permitted` (right missing), `501 not_implemented` (not built) or the result. The agent reports `allow` in `hello`.
-
-Effort: updates and reboot M, services S to M, containers M (depends on the socket decision above), logs S, images M. Tests: fakes for every verb, a request recorder that proves nothing else is sent, a refusal test per missing key.
+The binding rules of the user's decisions (kept here because later stages must keep them): always confirmed in two steps on the server and never by a schedule or the agent; two keys (server level and local permission per machine and kind of action);
+an audit entry for every request, refusal and result; narrow fixed requests with checked values; progress and a way back after a lost link; the fixed message form `{"t":"req","id":N,"method":"POST","path":"/v1/host/<action>","body":{...}}` answered `403 not_permitted`, `501 not_implemented`
+or the result, with `allow` in the `hello`. What was built, how, and its limits are in the [Actions](#actions-stage-3) section.
 
 ### Stage 4: Docker and Proxmox depth
 
@@ -205,6 +282,11 @@ Effort: as listed there (M to L).
 
 - `tests/agent/test_host.py`: parsers with fixtures (apt with security, new and kept-back packages, empty list, Ubuntu origins; dnf, apk, pacman; mdstat, zpool, smartctl; failed units; Docker over a real Unix socket), `sysinfo` from fake `/proc` files, permissions (owner and mode rules), the request table, the mode decision, a real `Link` against a small WebSocket server.
 - `tests/agent/test_installer.py`: the installer in dry-run (no root, no network) and its argument checks.
+- `tests/agent/test_actions.py`: every action against a **request recorder** (it proves that exactly the expected requests reach the helper and the Docker socket, and that any real program aborts the test), one refusal test per missing right, injection tests (package names like `x; rm -rf /`, trailing `-`, `=`, newlines; unit names; container ids; job ids), busy and duplicate jobs, progress, results that survive a restart,
+  the helper's verbs with an injectable runner, and the agent talking to the real helper code over a real Unix socket.
+- `tests/JulOS.Backend.Tests/HostActionTests.cs`: the two-step confirmation (expired, reused, wrong session, wrong host, changed action or target, typed name), the keys (level, local permission, version, offline, pause switch from the setting and from the environment), rate limit, history entries and ownership, target checks, one action per host, progress, failure codes,
+  lost connection and fetching the result, failing closed when the history cannot be written.
+- `tests/frontend/hostactions.test.mjs`: when buttons appear, the confirmation text, typing the machine name, progress and result, error texts, the history, HTML escaping, and that the browser knows no other way than prepare then run.
 - `tests/JulOS.Backend.Tests/HostInfoTests.cs`: endpoints with a fake agent: all four reads, cache and refresh limits, simultaneous requests, offline and stale, no agent, unsupported, error codes, hostile data, session and ownership, migration 017 and the control check.
 - `tests/frontend/hostinfo.test.mjs`, `hosts.test.mjs`: formatters, card lines, HTML escaping, the store, the install command, the choice of the terminal connection.
 - By hand: the installer in a throw-away `debian:trixie` container without desktop against a test instance; the agent connects, status and updates show up (see the CHANGELOG entry for what was verified).

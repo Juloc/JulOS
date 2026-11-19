@@ -319,3 +319,12 @@ label.check input { width: auto; }
 .hi-list li.off b, .hi-list li.off span { opacity: .65; }
 .hi-badge { font-style: normal; font-size: .72rem; font-weight: 600; margin-left: 6px; padding: 1px 7px; border-radius: 99px; background: rgba(198,40,40,.16); color: light-dark(#c62828, #ffb4ab); }
 .hi-sec .warn, .hi-dl dd.warn, .hi-note.warn, .hi-sum.warn { color: light-dark(#c62828, #ffb4ab); }
+/* Aktionen auf Hosts (hostactions.js, docs/HOST-AGENT.md): Bestaetigungsdialog, Tasten an den Eintraegen, Ausgabe und Logs */
+#hostActDlg { width: min(94vw, 560px); }
+.hi-acts { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
+.hi-act { font-size: .8rem; padding: 3px 10px; }
+.hi-pre { max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: .76rem/1.35 ui-monospace, Menlo, Consolas, monospace; background: rgba(127,127,127,.12); border-radius: 8px; padding: 8px; margin: 6px 0; }
+.hact-typed { display: grid; gap: 4px; margin: 10px 0; font-size: .9rem; }
+.hact-typed input { width: 100%; }
+.hact-pause { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+#hostActBody progress { width: 100%; margin: 6px 0; }

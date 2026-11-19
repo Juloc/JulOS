@@ -12,7 +12,7 @@ import { serviceState, connectionState, dotClass, stateText, groupConnections, h
 
 const $ = (s, r = document) => r.querySelector(s);
 const BAR_H = 34;
-let ctx = null;            // von shell.js: { state, esc, api, connect, edit, add, editHost, addHost, devices, signOut }
+let ctx = null;            // von shell.js: { state, esc, api, connect, edit, add, editHost, addHost, devices, account, signOut }
 let root = null;
 const wins = new Map();    // id -> Fenster
 let zTop = 10;
@@ -360,6 +360,7 @@ const MENUS = () => ({
     ...APPS.filter((a) => a.soon).map((a) => ({ label: a.name, icon: a.ic, hint: 'bald verfügbar', disabled: true })),
   ],
   System: [
+    { label: 'Passwort und Authenticator …', icon: 'key', run: () => ctx.account() },
     { label: 'Geräte und Sitzungen …', icon: 'shield', run: () => ctx.devices() },
     { label: 'Einstellungen', icon: 'sliders', run: () => openHome('einstellungen') },
     { label: 'System-Übersicht', icon: 'activity', run: () => openHome('system') },
@@ -387,6 +388,7 @@ function buildBar() {
   const user = btn('dk-ic', '<span class="dk-avatar"></span>', 'Konto'); user.id = 'dkUser';
   user.addEventListener('click', () => showMenu(user, [
     { cap: ctx.state.user || '' },
+    { label: 'Passwort und Authenticator …', icon: 'key', run: () => ctx.account() },
     { label: 'Geräte und Sitzungen …', icon: 'shield', run: () => ctx.devices() },
     { label: 'Einstellungen', icon: 'sliders', run: () => openHome('einstellungen') },
     { sep: true },
@@ -857,7 +859,7 @@ function renderAppsView(m) {
 function renderSettings(m) {
   m.innerHTML = `<h3 style="margin-top:14px">Einstellungen</h3>
     <div class="dk-card"><h4>Konto</h4><p>Angemeldet als <b>${ctx.esc(ctx.state.user || '')}</b>.</p>
-      <div class="dk-btns"><button type="button" class="dk-b dk-btn" data-act="devices">${ic('shield')}Geräte und Sitzungen</button><button type="button" class="dk-b dk-btn" data-act="signout">${ic('power')}Abmelden</button></div></div>
+      <div class="dk-btns"><button type="button" class="dk-b dk-btn" data-act="account">${ic('key')}Passwort und Authenticator</button><button type="button" class="dk-b dk-btn" data-act="devices">${ic('shield')}Geräte und Sitzungen</button><button type="button" class="dk-b dk-btn" data-act="signout">${ic('power')}Abmelden</button></div></div>
     <div class="dk-card"><h4>Fernsteuerung</h4><p>Solange ein Sitzungsfenster vorn ist, zeigt die obere Leiste seine Menüs: Tasten, Kombinationen (frei belegbar), Ansicht (Zoom, Vollbild) und Fenster (Programme der Ziel-Maschine). Der Name der Verbindung öffnet Neu verbinden, Text senden und Beenden.</p></div>
     <div class="dk-card"><h4>Dock</h4><p>Wann der Dock unten zu sehen ist. Du erreichst die Wahl auch mit Rechtsklick auf den Dock.</p>
       <div class="dk-btns">${DOCK_MODES.map(([id, label]) => `<button type="button" class="dk-b dk-btn${id === dockMode ? ' pri' : ''}" data-dockmode="${id}" aria-pressed="${id === dockMode}">${label}</button>`).join('')}</div></div>
@@ -878,6 +880,7 @@ function onMainClick(e) {
   else if (t.dataset.app) runApp(t.dataset.app, t);
   else if (t.dataset.act === 'add') ctx.add();
   else if (t.dataset.act === 'devices') ctx.devices();
+  else if (t.dataset.act === 'account') ctx.account();
   else if (t.dataset.act === 'signout') ctx.signOut();
   else if (t.dataset.act === 'settings') goto('einstellungen');
   else if (t.dataset.act === 'desktop' || t.dataset.act === 'terminal') pickConnection(t.dataset.act, t);

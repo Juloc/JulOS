@@ -1,6 +1,8 @@
 import { ico } from './app.js';
 import { Sessions } from './sessions.js';
 import { agentSummary, hostDetail } from './hosts.js';
+import { initAccount } from './account.js';
+import { qrSvg } from './qr.js';
 import './terminal-session.js';      // Sitzungsart 'terminal' (natives SSH-Terminal)
 
 /* =====================================================================
@@ -92,6 +94,7 @@ $('#setupForm').addEventListener('submit', async (e) => {
     setupInfo = { code, user };
     $('#setupSecret').textContent = r.secret;
     $('#setupOtpLink').href = r.uri;
+    try { $('#setupQr').innerHTML = qrSvg(r.uri, { label: 'QR-Code für den Authenticator' }); } catch { $('#setupQr').replaceChildren(); }
     $('#setupRecovery').textContent = r.recovery.join('\n');
     $('#setupPw').value = ''; $('#setupPw2').value = '';
     form.hidden = true; $('#setupSecretForm').hidden = false; setTimeout(() => $('#setupTotp').focus(), 50);
@@ -110,7 +113,7 @@ $('#setupSecretForm').addEventListener('submit', async (e) => {
   busy(form, true); setMsg(msg, '');
   try {
     const r = await api('/api/setup/finish', { method: 'POST', body: { code: setupInfo.code, user: setupInfo.user, totp: $('#setupTotp').value.replace(/\s+/g, '') } });
-    $('#setupSecret').textContent = ''; $('#setupRecovery').textContent = ''; $('#setupTotp').value = ''; setupInfo = null;
+    $('#setupSecret').textContent = ''; $('#setupRecovery').textContent = ''; $('#setupQr').replaceChildren(); $('#setupTotp').value = ''; setupInfo = null;
     showHome(r.user);
   } catch (err) { setMsg(msg, err.message); }
   finally { busy(form, false); }
@@ -196,6 +199,7 @@ $('#accountMenu').addEventListener('click', async (e) => {
   const act = e.target.closest('button')?.dataset.act;
   $('#accountMenu').hidden = true;
   if (act === 'devices') openDevices();
+  else if (act === 'account') openAccount();
   else if (act === 'signout') signOut();
 });
 
@@ -467,8 +471,9 @@ Sessions.addEventListener('closed', (e) => {
 Sessions.addEventListener('home', () => { if (!D) goHome(); });
 Sessions.addEventListener('switcher', () => { if (M) M.openSwitcher(); else goHome(); });
 
-if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), signOut, home: goHome });
-if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), devices: openDevices, signOut });
+const openAccount = initAccount({ api, setMsg });
+if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), signOut, home: goHome, account: openAccount });
+if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), devices: openDevices, account: openAccount, signOut });
 
 /* ---------- Geraete und Sitzungen ---------- */
 function describeAgent(ua) {

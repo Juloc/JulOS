@@ -45,7 +45,9 @@ docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/.env exec -it ju
 docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/.env exec -it julos dotnet JulOS.dll user passwd NAME
 ```
 
-`add`, `passwd`, `totp` (new authenticator and recovery codes), `logout` and `remove` are available too.
+`add`, `passwd`, `totp` (new authenticator and recovery codes), `logout` and `remove` are available too. While signed in, the password and the authenticator can also be changed in the app (phone: Profil, desktop: Einstellungen), see [ARCHITECTURE.md](ARCHITECTURE.md).
+
+The QR code of the authenticator secret comes from `wwwroot/qr.js` (byte mode, error correction M, versions 1 to 10). It is checked by `tests/frontend/qr.test.mjs` (Reed-Solomon vector, structure, format bits) and was additionally decoded with OpenCV's QR reader for every version 1 to 10 and for a screenshot of the real dialog (a throwaway venv, not part of the repo).
 To start over: `docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/.env down -v`.
 
 ## The browser client

@@ -221,6 +221,15 @@ input[type=search] { background: var(--md-surface-high); color: var(--text); bor
 .btn, button.primary { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; min-height: var(--btn); padding: 0 22px; border-radius: 999px; font-weight: 500; }
 a.btn.ghost { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
 button:disabled { opacity: .55; cursor: default; }
+/* QR-Code des Authenticator-Schluessels (qr.js): immer heller Grund mit Rand, auch im dunklen Design */
+.qr { width: min(240px, 100%); margin: 6px auto 10px; border-radius: 12px; overflow: hidden; }
+.qr:empty { display: none; }
+.qr svg { display: block; width: 100%; height: auto; }
+/* Tasten im Konto-Dialog (nicht .row: in den Sheets der Handy-Ansicht klebt jede .row unten und die Reihen verdecken sich) */
+.acct-btns { display: flex; gap: 8px; margin: 6px 0 8px; }
+.acct-btns button { flex: 1 1 0; }
+dialog.m3sheet .acct-btns button { height: 44px; min-height: 0; padding: 0 16px; border-radius: var(--m3-shape-full); font: var(--m3-label-l); color: var(--m3-primary); background: none; box-shadow: none; }
+dialog.m3sheet .acct-btns button.primary { background: var(--m3-primary); color: var(--m3-on-primary); order: 2; flex-grow: 1.4; }
 .mono { display: block; font: .95rem/1.5 ui-monospace, "Roboto Mono", monospace; background: var(--md-surface-high); border-radius: 12px; padding: 12px; word-break: break-all; white-space: pre-wrap; user-select: all; -webkit-user-select: all; margin: 0; }
 
 .homebar { display: flex; align-items: center; gap: 12px; padding: 14px 20px 6px; position: relative; }

@@ -13,6 +13,12 @@ internal static class AuthEndpoints
     private static IResult Error(int status, string message, int retryAfter = 0) =>
         Results.Text(JsonSerializer.Serialize(new ErrorBody(message, retryAfter > 0 ? retryAfter : null), AppJson.Default.ErrorBody), "application/json", Encoding.UTF8, status);
 
+    private static IResult Fail(HttpContext ctx, int status, string message, int retryAfter)
+    {
+        if (retryAfter > 0) ctx.Response.Headers.RetryAfter = retryAfter.ToString();
+        return Error(status, message, retryAfter);
+    }
+
     public static void MapAuth(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/setup/status", async (AuthService auth, CancellationToken ct) => new SetupStatus(await auth.SetupNeededAsync(ct)));
@@ -62,6 +68,25 @@ internal static class AuthEndpoints
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             return new EndedResponse(await auth.LogoutOthersAsync(id.UserId, id.Hash, ctx.RequestAborted));
+        });
+
+        // Konto: Passwort aendern und Authenticator neu einrichten. Hinter ApiGuard (Sitzung, Origin, 4 KiB); das aktuelle Passwort wird jedes Mal verlangt.
+        app.MapPost("/api/auth/password", async (PasswordChangeRequest body, HttpContext ctx, AuthService auth) =>
+        {
+            var r = await auth.ChangePasswordAsync((SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!, body.Current, body.Next, Ip(ctx), ctx.RequestAborted);
+            return r.Ok ? Results.NoContent() : Fail(ctx, r.Status, r.Error!, r.RetryAfter);
+        });
+
+        app.MapPost("/api/auth/totp/begin", async (TotpBeginRequest body, HttpContext ctx, AuthService auth) =>
+        {
+            var r = await auth.BeginTotpChangeAsync((SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!, body.Current, Ip(ctx), ctx.RequestAborted);
+            return r.Ok ? Results.Json(new TotpBeginResponse(r.Data!.Secret, r.Data.Uri), AppJson.Default.TotpBeginResponse) : Fail(ctx, r.Status, r.Error!, r.RetryAfter);
+        });
+
+        app.MapPost("/api/auth/totp/finish", async (TotpFinishRequest body, HttpContext ctx, AuthService auth) =>
+        {
+            var r = await auth.FinishTotpChangeAsync((SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!, body.Code, Ip(ctx), ctx.RequestAborted);
+            return r.Ok ? Results.Json(new TotpFinishResponse(r.Recovery!), AppJson.Default.TotpFinishResponse) : Fail(ctx, r.Status, r.Error!, r.RetryAfter);
         });
 
         app.MapGet("/api/auth/sessions", async (HttpContext ctx, AuthService auth) =>

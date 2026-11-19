@@ -44,7 +44,8 @@
       <!-- Schritt 2: Authenticator und Wiederherstellungscodes -->
       <form id="setupSecretForm" class="card" hidden autocomplete="off">
         <h1>Authenticator</h1>
-        <p class="sub">Füge diesen Schlüssel in deine Authenticator-App ein (zum Beispiel Bitwarden, Aegis oder Google Authenticator).</p>
+        <p class="sub">Scanne den QR-Code oder füge den Schlüssel in deine Authenticator-App ein (zum Beispiel Bitwarden, Aegis oder Google Authenticator).</p>
+        <div id="setupQr" class="qr"></div>
         <a id="setupOtpLink" class="btn ghost" href="#">In der Authenticator-App öffnen</a>
         <p class="hint">Oder den Schlüssel von Hand eintragen:</p>
         <code id="setupSecret" class="mono"></code>
@@ -85,6 +86,7 @@
         <h1>JulOS</h1>
         <button id="accountBtn" type="button" class="chip" aria-haspopup="menu"><span id="accountName"></span></button>
         <div id="accountMenu" class="sheet" hidden role="menu">
+          <button type="button" role="menuitem" data-act="account">Passwort und Authenticator</button>
           <button type="button" role="menuitem" data-act="devices">Geräte und Sitzungen</button>
           <button type="button" role="menuitem" data-act="signout">Abmelden</button>
         </div>
@@ -249,6 +251,48 @@
         <button id="logoutOthers" type="button" class="danger">Alle anderen abmelden</button>
         <button class="ghost close" data-act="close" type="button">Schließen</button>
       </div>
+    </dialog>
+
+    <!-- Konto: Passwort aendern, Authenticator neu einrichten (account.js) -->
+    <dialog id="accountDlg">
+      <h2>Konto</h2>
+      <div id="acctMain">
+        <h3>Passwort ändern</h3>
+        <form id="pwForm" autocomplete="on">
+          <label>Aktuelles Passwort <input id="pwCur" type="password" autocomplete="current-password" required></label>
+          <label>Neues Passwort (mindestens 12 Zeichen) <input id="pwNew" type="password" autocomplete="new-password" minlength="12" required></label>
+          <label>Neues Passwort wiederholen <input id="pwNew2" type="password" autocomplete="new-password" minlength="12" required></label>
+          <p class="hint">Alle anderen Geräte werden dabei abgemeldet.</p>
+          <div class="acct-btns"><button type="submit" class="primary">Passwort ändern</button></div>
+          <p id="pwMsg" class="msg" role="alert"></p>
+        </form>
+        <h3>Authenticator neu einrichten</h3>
+        <form id="totpBeginForm" autocomplete="off">
+          <p class="hint">Du bekommst einen neuen Schlüssel (als Text und QR-Code) und neue Wiederherstellungscodes. Der alte Authenticator und die alten Codes gelten erst nach der Bestätigung nicht mehr; alle anderen Geräte werden abgemeldet.</p>
+          <label>Aktuelles Passwort <input id="totpCur" type="password" autocomplete="current-password" required></label>
+          <div class="acct-btns"><button type="submit" class="primary">Neuen Schlüssel anfordern</button></div>
+          <p id="totpMsg" class="msg" role="alert"></p>
+        </form>
+      </div>
+      <form id="totpFinishForm" hidden autocomplete="off">
+        <h3>Neuer Authenticator</h3>
+        <p class="hint">Scanne den QR-Code oder trage den Schlüssel in deiner Authenticator-App ein (zum Beispiel Bitwarden, Aegis oder Google Authenticator), dann gib den ersten Code ein. Erst danach gilt der neue Schlüssel.</p>
+        <div id="acctQr" class="qr"></div>
+        <a id="acctOtpLink" class="btn ghost" href="#">In der Authenticator-App öffnen</a>
+        <p class="hint">Oder den Schlüssel von Hand eintragen:</p>
+        <code id="acctSecret" class="mono"></code>
+        <label>Code aus der App <input id="totpCode" type="text" inputmode="numeric" pattern="[0-9 ]*" autocomplete="one-time-code" required></label>
+        <div class="acct-btns"><button type="submit" class="primary">Bestätigen und ersetzen</button><button id="totpAbort" type="button" class="ghost">Abbrechen</button></div>
+        <p id="totpFinishMsg" class="msg" role="alert"></p>
+      </form>
+      <div id="totpDone" hidden>
+        <h3>Neue Wiederherstellungscodes</h3>
+        <p class="hint">Der neue Authenticator gilt. Jeder Code gilt einmal und ersetzt den Authenticator, falls das Handy weg ist; die alten Codes sind ungültig. Speichere diese jetzt, sie werden nicht noch einmal gezeigt.</p>
+        <pre id="acctRecovery" class="mono"></pre>
+        <div class="acct-btns"><button id="acctCopy" type="button" class="ghost">Codes kopieren</button></div>
+        <p id="totpDoneMsg" class="msg" role="alert"></p>
+      </div>
+      <div class="row"><button class="ghost close" data-act="close" type="button">Schließen</button></div>
     </dialog>
 
     <!-- Text senden / Zwischenablage -->

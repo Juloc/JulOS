@@ -252,6 +252,40 @@ public sealed class HttpTests
     }
 
     [Fact]
+    public async Task Account_changes_need_a_session_the_custom_header_and_the_current_password()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db);
+        var c = app.Client();
+        var (cookie, _, _) = await SetupAsync(c);
+        var body = new { current = Password, next = "ganz anderes passwort 42" };
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await c.SendAsync(Post("/api/auth/password", body))).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await c.SendAsync(Post("/api/auth/totp/begin", new { current = Password }))).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await c.SendAsync(Post("/api/auth/totp/finish", new { code = "123456" }))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await c.SendAsync(Post("/api/auth/password", body, header: false, cookie: cookie))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await c.SendAsync(Post("/api/auth/password", body, origin: "http://evil.test", cookie: cookie))).StatusCode);
+
+        var wrong = await c.SendAsync(Post("/api/auth/password", new { current = "falsches passwort 123", next = "ganz anderes passwort 42" }, cookie: cookie));
+        Assert.Equal(HttpStatusCode.Forbidden, wrong.StatusCode);
+        Assert.Contains("aktuelle Passwort", (await Json(wrong)).GetProperty("error").GetString());
+
+        var begin = await c.SendAsync(Post("/api/auth/totp/begin", new { current = Password }, cookie: cookie));
+        Assert.Equal(HttpStatusCode.OK, begin.StatusCode);
+        var fresh = await Json(begin);
+        var secret = fresh.GetProperty("secret").GetString()!;
+        Assert.StartsWith("otpauth://totp/", fresh.GetProperty("uri").GetString());
+        var code = Totp.Hotp(Base32.Decode(secret), DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 30);
+        var finish = await Json(await c.SendAsync(Post("/api/auth/totp/finish", new { code }, cookie: cookie)));
+        Assert.Equal(10, finish.GetProperty("recovery").GetArrayLength());
+
+        Assert.Equal(HttpStatusCode.NoContent, (await c.SendAsync(Post("/api/auth/password", body, cookie: cookie))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Get("/api/auth/sessions", cookie))).StatusCode);   // diese Sitzung bleibt
+        var tooBig = Post("/api/auth/password", new { current = Password, next = new string('x', 5000) }, cookie: cookie);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, (await c.SendAsync(tooBig)).StatusCode);
+    }
+
+    [Fact]
     public async Task Behind_an_https_proxy_the_cookie_is_secure_and_the_forwarded_host_and_address_count()
     {
         await using var db = await TestDb.CreateAsync();

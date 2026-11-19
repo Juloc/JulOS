@@ -74,7 +74,7 @@ Browser installieren PWAs und erlauben die Zwischenablage-API nur ueber **HTTPS*
 Eine Fernsteuerung darf nicht allein durch das Desktop-Passwort geschuetzt sein.
 
 - **Eigene Anmeldung:** Passwort (Argon2id) plus Authenticator-Code, zehn Wiederherstellungscodes, langlebige rotierende Sitzungen (in PostgreSQL nur als Hash), Sperre mit wachsender Wartezeit. Jede API und der WebSocket brauchen eine Sitzung, siehe [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-- **Erster Start:** das erste Konto legst du im Browser an, mit einem einmaligen Setup-Code aus dem Server-Log. Danach ist die Einrichtung geschlossen.
+- **Erster Start:** das erste Konto legst du im Browser an, mit einem einmaligen Setup-Code aus dem Server-Log. Danach ist die Einrichtung geschlossen. Das Authenticator-Geheimnis siehst du auch als QR-Code; Passwort und Authenticator aenderst du spaeter in der App (Handy: Profil, Desktop: Einstellungen), jeweils mit dem aktuellen Passwort.
 - **Verbindungen** laufen ueber Einmal-Tickets (30 s). Das Passwort des Ziels tippst du pro Verbindung (hoechstens 30 s im Speicher, nie geloggt) oder es wird auf Wunsch AES-256-GCM-verschluesselt gespeichert, mit einem Schluessel nur in den Server-Einstellungen; es geht nie zurueck zum Browser.
 - PostgreSQL hat keinen veroeffentlichten Port. Offene Verbindungen enden mit ihrer Sitzung.
 - **mTLS** im Proxy (optionale Zusatzschicht): nur dein Handy mit Client-Zertifikat erreicht die Anmeldeseite. Erzeugen mit

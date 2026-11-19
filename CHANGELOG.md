@@ -10,6 +10,9 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 - Compose: Gesundheitsprüfung für den Dienst `julos` (`dotnet JulOS.dll health` fragt `/api/health` und prüft auch die Datenbank), Datenordner `/data` als benanntes Volume mit einem einmaligen Starter, der es dem Server-Benutzer gibt (damit der Schlüssel für gespeicherte Passwörter wirklich entsteht), `no-new-privileges` und `cap_drop: ALL`; ein schreibgeschütztes Wurzeldateisystem steht als auskommentierte Möglichkeit bereit. Siehe [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 - CI: neuer Ablauf `tests.yml` mit Server-Tests gegen PostgreSQL, Anzeige-Engine-Tests, Browser-Logik-Tests und Agent-Syntaxprüfung sowie einer NuGet-Schwachstellenmeldung (nur melden).
 
+- Konto in der Oberfläche: Passwort ändern und Authenticator neu einrichten im Profil der Handy-Shell und in den Desktop-Einstellungen (auch im System-Menü). Beides verlangt jedes Mal das aktuelle Passwort; ein neuer Authenticator gilt erst, wenn sein erster Code eingegeben wurde, und bringt neue Wiederherstellungscodes (die alten entfallen). Andere Geräte werden abgemeldet, dieses bleibt angemeldet. Mit Ratenbegrenzung wie bei der Anmeldung und Einträgen im Server-Log.
+- Das Authenticator-Geheimnis wird auch als QR-Code gezeigt (bei der Ersteinrichtung und beim Neueinrichten), im Browser erzeugt, ohne externe Bibliothek.
+
 ### Geändert
 - Dockerfile: die SDK-Stufe läuft mit `--platform=$BUILDPLATFORM`, der arm64-Bau braucht dafür keine Emulation mehr.
 

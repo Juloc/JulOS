@@ -87,7 +87,13 @@ Production and the test instance differ only in ports, volumes and secrets.
 
 - **First start:** with no account the server prints a one-time **setup code** to its log. The browser shows a setup screen asking for that code, a user name and a password,
   then shows the authenticator secret (link and key) and ten recovery codes, and finishes only after a valid authenticator code was entered. Afterwards the setup screen is gone.
+  The secret is also drawn as a QR code (made in the browser by `wwwroot/qr.js`, own small encoder, nothing external).
   The console tool `tools/julos-user.sh` stays as the recovery path (reset password or authenticator).
+- **Account in the UI** (phone Profil, desktop Einstellungen and the System menu, dialog `#accountDlg`, `wwwroot/account.js`): change the password (`POST /api/auth/password`) and set up a new authenticator
+  (`POST /api/auth/totp/begin`, then `/api/auth/totp/finish`). Both need a session and the **current password** every time. A new authenticator key is held in memory for 10 minutes and only replaces the old one
+  when its first code is entered (so a mistyped QR scan cannot lock the account out); that step brings new recovery codes (shown once, the old ones are gone). Either change ends all *other* sessions, this one stays.
+  Wrong current passwords count per account and per address with the login lockout steps (HTTP 429 with `Retry-After`), the password check runs once at a time per account, bodies are limited to 4 KiB,
+  and every step is written to the server log at warning level (`Konto: ...`, with user and address; no secrets).
 - **Hosts:** connections belong to hosts (machines or servers), each with its own agent and a status dot from the agent link or a TCP probe; see [HOSTS.md](HOSTS.md).
 - **Connections:** a user keeps a list of connections: name, kind (**Desktop** = RDP, **Terminal** = SSH, **Screen** = VNC later), host, port, user name. The password is typed per connection (a password manager can fill it) or, on request, stored encrypted (see the security model). A connection for the machine the server runs next to is offered at setup. The target host is chosen by the signed-in
   user, so the server may reach anything the signed-in user names; an optional allow-list in the configuration restricts that.

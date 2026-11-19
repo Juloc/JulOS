@@ -7,6 +7,8 @@
  * Das Passwort bleibt im Speicher der Sitzung (wie das beim ersten Verbinden getippte), es wird nirgends gespeichert und nie geloggt.
  * ===================================================================== */
 
+import { t } from './i18n.js';
+
 export const LOGIN_REJECTED = 769, LOGIN_MISSING = 770;
 
 /** Wie oft nach dem ersten Fehlschlag neu eingegeben werden darf. */
@@ -21,18 +23,18 @@ export const isLoginError = (code) => code === LOGIN_REJECTED || code === LOGIN_
  */
 export function loginStep(code, tries) {
   const used = Math.max(0, Number(tries) || 0);
-  if (used >= MAX_LOGIN_TRIES) return { ask: false, text: `Anmeldung am Ziel abgelehnt (${MAX_LOGIN_TRIES} neue Versuche ohne Erfolg).` };
+  if (used >= MAX_LOGIN_TRIES) return { ask: false, text: t('login.giveUp', { n: MAX_LOGIN_TRIES }) };
   const attempt = used + 1;
   const text = code === LOGIN_MISSING
-    ? 'Das Ziel verlangt Benutzer und Passwort, bevor es etwas zeigt.'
-    : used === 0 ? 'Das Ziel hat die Anmeldung abgelehnt. Bitte Benutzer und Passwort prüfen.' : 'Auch das wurde abgelehnt.';
+    ? t('login.missing')
+    : used === 0 ? t('login.rejected') : t('login.rejectedAgain');
   return { ask: true, attempt, of: MAX_LOGIN_TRIES, text };
 }
 
 /** Der Benutzername aus der Zielbeschreibung der Sitzung ("host:port/benutzer"), leer wenn keiner da ist. */
 export function userOfTarget(target) {
-  const t = String(target || ''), at = t.indexOf('/');
-  return at < 0 ? '' : t.slice(at + 1);
+  const s = String(target || ''), at = s.indexOf('/');
+  return at < 0 ? '' : s.slice(at + 1);
 }
 
 /**
@@ -42,10 +44,10 @@ export function userOfTarget(target) {
  */
 export function readLogin({ user = '', password = '', domain = '' } = {}) {
   const u = String(user).trim(), d = String(domain).trim(), p = String(password);
-  if (!u) return { error: 'Bitte einen Benutzer eingeben.' };
-  if (!p) return { error: 'Bitte ein Passwort eingeben.' };
-  if (p.length > 256) return { error: 'Das Passwort ist zu lang.' };
+  if (!u) return { error: t('login.needUser') };
+  if (!p) return { error: t('login.needPassword') };
+  if (p.length > 256) return { error: t('login.passwordTooLong') };
   // eslint-disable-next-line no-control-regex
-  if (u.length > 256 || d.length > 256 || /[\u0000-\u001f\u007f]/.test(u + d)) return { error: 'Benutzer oder Domäne ist ungültig.' };
+  if (u.length > 256 || d.length > 256 || /[\u0000-\u001f\u007f]/.test(u + d)) return { error: t('login.userInvalid') };
   return { user: u, password: p, domain: d };
 }

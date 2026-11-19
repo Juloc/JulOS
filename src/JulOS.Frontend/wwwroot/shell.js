@@ -7,6 +7,8 @@ import { parseQuickTarget, quickConnection, DEFAULT_PORT as QUICK_PORT } from '.
 import { initAccount } from './account.js';
 import { initNetTools } from './nettools.js';
 import { qrSvg } from './qr.js';
+import { t, tp, tk, relativeTime, getPref, isPref } from './i18n.js';
+import { serverMsg } from './i18n-errors.js';
 import './terminal-session.js';      // Sitzungsart 'terminal' (natives SSH-Terminal)
 
 /* =====================================================================
@@ -54,12 +56,12 @@ async function api(path, { method = 'GET', body } = {}) {
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   let r;
   try { r = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }); }
-  catch { throw new ApiError(0, 'Der Server ist nicht erreichbar.'); }
+  catch { throw new ApiError(0, t('shell.serverUnreachable')); }
   let data = null;
   if (r.status !== 204) { try { data = await r.json(); } catch { /* kein JSON */ } }
   if (!r.ok) {
-    const wait = data && data.retryAfter ? ` Bitte ${data.retryAfter} s warten.` : '';
-    throw new ApiError(r.status, ((data && data.error) || 'Fehler ' + r.status) + (r.status === 429 ? wait : ''), data && data.retryAfter);
+    const wait = data && data.retryAfter ? ' ' + t('shell.waitSeconds', { n: data.retryAfter }) : '';
+    throw new ApiError(r.status, ((data && data.error ? serverMsg(data.error) : '') || t('shell.errorStatus', { status: r.status })) + (r.status === 429 ? wait : ''), data && data.retryAfter);
   }
   return data;
 }
@@ -91,14 +93,14 @@ $('#setupForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = e.currentTarget, msg = $('#setupMsg');
   const code = $('#setupCode').value.trim(), user = $('#setupUser').value.trim(), password = $('#setupPw').value;
-  if (password !== $('#setupPw2').value) return setMsg(msg, 'Die beiden Passwörter sind nicht gleich.');
+  if (password !== $('#setupPw2').value) return setMsg(msg, t('shell.setupPwMismatch'));
   busy(form, true); setMsg(msg, '');
   try {
     const r = await api('/api/setup/begin', { method: 'POST', body: { code, user, password } });
     setupInfo = { code, user };
     $('#setupSecret').textContent = r.secret;
     $('#setupOtpLink').href = r.uri;
-    try { $('#setupQr').innerHTML = qrSvg(r.uri, { label: 'QR-Code für den Authenticator' }); } catch { $('#setupQr').replaceChildren(); }
+    try { $('#setupQr').innerHTML = qrSvg(r.uri, { label: t('account.qrLabel') }); } catch { $('#setupQr').replaceChildren(); }
     $('#setupRecovery').textContent = r.recovery.join('\n');
     $('#setupPw').value = ''; $('#setupPw2').value = '';
     form.hidden = true; $('#setupSecretForm').hidden = false; setTimeout(() => $('#setupTotp').focus(), 50);
@@ -107,8 +109,8 @@ $('#setupForm').addEventListener('submit', async (e) => {
 });
 
 $('#setupCopy').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText($('#setupRecovery').textContent); setMsg($('#setupSecretMsg'), 'Codes kopiert.', true); }
-  catch { setMsg($('#setupSecretMsg'), 'Kopieren geht hier nicht. Markiere die Codes und kopiere sie von Hand.'); }
+  try { await navigator.clipboard.writeText($('#setupRecovery').textContent); setMsg($('#setupSecretMsg'), t('account.codesCopied'), true); }
+  catch { setMsg($('#setupSecretMsg'), t('account.copyFailed')); }
 });
 
 $('#setupSecretForm').addEventListener('submit', async (e) => {
@@ -140,7 +142,7 @@ $('#loginForm').addEventListener('submit', async (e) => {
   try {
     const r = await api('/api/auth/login', { method: 'POST', body: { user: $('#loginUser').value.trim(), password: $('#loginPw').value, code: $('#loginCode').value.trim() } });
     $('#loginPw').value = ''; $('#loginCode').value = '';
-    showHome(r.user, r.recoveryLeft <= 3 ? `Es sind nur noch ${r.recoveryLeft} Wiederherstellungscodes übrig.` : '');
+    showHome(r.user, r.recoveryLeft <= 3 ? tp('shell.recoveryLeft', r.recoveryLeft) : '');
   } catch (err) { setMsg(msg, err.message); $('#loginPw').value = ''; $('#loginCode').value = ''; }
   finally { busy(form, false); }
 });
@@ -153,27 +155,29 @@ async function showHome(user, message = '') {
   setMsg($('#homeMsg'), message);
   show('home');
   if (M) M.userChanged(user, message);
-  syncPrefs();
+  syncPrefs(true);
   await loadConnections();
   if (D) D.userChanged(user, message);
 }
 
 /** Tastenleiste und Themenfarbe vom Server holen (er hat Vorrang; hat er nichts, geht das Lokale hinaus). Ohne Server bleibt die lokale Kopie. */
 let prefsAt = 0;
-async function syncPrefs() {
+async function syncPrefs(afterSignIn = false) {
   prefsAt = Date.now();
   const got = await prefs.sync();
-  if (got.keybar || got.theme) { applyServerPrefs(got); if (M) M.applyShellTheme(); }
+  // Hat der Server eine andere Sprache als diese Seite: nach der Anmeldung (noch keine Sitzung offen) neu laden, sonst gilt sie ab dem naechsten Laden
+  if (afterSignIn && got.lang && isPref(got.lang.lang) && got.lang.lang !== getPref()) { applyServerPrefs({ lang: got.lang }); location.reload(); return; }
+  if (got.keybar || got.theme || got.lang) { applyServerPrefs(got); if (M) M.applyShellTheme(); }
 }
 // Ein anderes Geraet hat etwas geaendert: beim Zurueckkehren zur Seite (hoechstens einmal je Minute) neu abgleichen
 document.addEventListener('visibilitychange', () => { if (!document.hidden && state.user && Date.now() - prefsAt > 60000) syncPrefs(); });
 
 async function loadConnections() {
   try { const r = await api('/api/connections'); state.connections = r.connections; state.canStore = !!r.canStorePasswords; state.driveAvailable = !!r.driveAvailable; }
-  catch (e) { if (e.status === 401) return showLogin('Die Sitzung ist abgelaufen. Bitte neu anmelden.'); setMsg($('#homeMsg'), e.message); if (M) M.snack(e.message); return; }
+  catch (e) { if (e.status === 401) return showLogin(t('shell.sessionExpired')); setMsg($('#homeMsg'), e.message); if (M) M.snack(e.message); return; }
   // Ordner, Favoriten und zuletzt benutzt kommen vom Server (beim ersten Mal nimmt das Geraet seine lokalen Favoriten mit); ein Fehler laesst die Liste ohne sie stehen
   try { await takeOverLocal(localStorage, api); await loadOrganisation(api, state); }
-  catch (e) { if (e.status === 401) return showLogin('Die Sitzung ist abgelaufen. Bitte neu anmelden.'); mergePlacements(state.connections, []); }
+  catch (e) { if (e.status === 401) return showLogin(t('shell.sessionExpired')); mergePlacements(state.connections, []); }
   renderConnections();
   if (D) D.connectionsChanged();
   if (M) M.connectionsChanged();
@@ -183,7 +187,7 @@ async function loadConnections() {
 /** Die Hosts mit Zustand (online/offline, Agent, Dienste); fragt der Server nach, prueft er die Ports kurz (docs/HOSTS.md). Ein Fehler laesst die alte Liste stehen. */
 async function loadHosts() {
   try { state.hosts = (await api('/api/hosts')).hosts; }
-  catch (e) { if (e.status === 401) return showLogin('Die Sitzung ist abgelaufen. Bitte neu anmelden.'); return; }
+  catch (e) { if (e.status === 401) return showLogin(t('shell.sessionExpired')); return; }
   fillHostSelect();
   if (D) D.hostsChanged();
   if (M) M.hostsChanged();
@@ -192,7 +196,7 @@ async function loadHosts() {
 setInterval(() => { if (state.user && !document.hidden) loadHosts(); }, 30000);
 
 const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const KIND_LABEL = { desktop: 'Desktop', terminal: 'Terminal' };
+const KIND_LABEL = { desktop: tk('shell.kindDesktop'), terminal: tk('shell.kindTerminal') };
 
 function renderConnections() {
   const list = $('#connList');
@@ -202,8 +206,8 @@ function renderConnections() {
     const row = document.createElement('div');
     row.className = 'conn';
     row.innerHTML = `<button type="button" class="connmain"><span class="connic">${ico(c.kind === 'terminal' ? 'terminal' : 'desktop')}</span>
-        <span class="conntext"><span class="connname">${esc(c.name)}</span><span class="connsub">${esc(KIND_LABEL[c.kind] || c.kind)} · ${esc(c.username ? c.username + '@' : '')}${esc(c.host)}:${c.port}${folderName(state.folders, c) ? ' · ' + esc(folderName(state.folders, c)) : ''}${c.hasPassword ? `<span class="connkey" title="Passwort gespeichert">${ico('key')}</span>` : ''}</span></span></button>
-      <button type="button" class="connedit ghost" aria-label="Bearbeiten">${ico('edit')}</button>`;
+        <span class="conntext"><span class="connname">${esc(c.name)}</span><span class="connsub">${esc(KIND_LABEL[c.kind] ? t(KIND_LABEL[c.kind]) : c.kind)} · ${esc(c.username ? c.username + '@' : '')}${esc(c.host)}:${c.port}${folderName(state.folders, c) ? ' · ' + esc(folderName(state.folders, c)) : ''}${c.hasPassword ? `<span class="connkey" title="${esc(t('shell.passwordSaved'))}">${ico('key')}</span>` : ''}</span></span></button>
+      <button type="button" class="connedit ghost" aria-label="${esc(t('common.edit'))}">${ico('edit')}</button>`;
     row.querySelector('.connmain').addEventListener('click', () => startDialog(c));
     row.querySelector('.connedit').addEventListener('click', () => editDialog(c));
     list.appendChild(row);
@@ -252,7 +256,7 @@ function showDesktopFields() { const on = $('#connKind').value === 'desktop'; $(
 
 function editDialog(c, kind) {
   state.editing = c;
-  $('#connDlgTitle').textContent = c ? 'Verbindung ändern' : 'Neue Verbindung';
+  $('#connDlgTitle').textContent = c ? t('shell.editConnection') : t('shell.newConnection');
   $('#connName').value = c ? c.name : '';
   $('#connKind').value = c ? c.kind : kind || 'desktop';
   $('#connDrive').checked = !!(c && c.driveShare); $('#connDriveWrite').checked = !!(c && c.driveWrite); showDriveChoice();
@@ -265,14 +269,14 @@ function editDialog(c, kind) {
   fillHostSelect(c ? c.hostId : undefined);
   fillFolderSelect(c ? c.folderId : '');
   $('#connUp').hidden = $('#connDown').hidden = !c;
-  $('#connDelete').hidden = !c; $('#connDelete').textContent = 'Löschen';
+  $('#connDelete').hidden = !c; $('#connDelete').textContent = t('common.delete');
   $('#connPw').value = ''; $('#connPw').disabled = !state.canStore;
   $('#connForget').checked = false; $('#connForgetRow').hidden = !(c && c.hasPassword);
   $('#connPwHint').textContent = !state.canStore
-    ? 'Passwörter speichern ist am Server nicht eingerichtet (JULOS_SECRET_KEY). Du tippst das Passwort bei jeder Verbindung.'
+    ? t('shell.pwHintNoStore')
     : c && c.hasPassword
-      ? 'Ein Passwort ist verschlüsselt gespeichert und wird nie angezeigt. Ein neues hier überschreibt es. Ändert sich Adresse, Port, Art oder Benutzer, wird es gelöscht.'
-      : 'Auf Wunsch wird es verschlüsselt auf dem Server gespeichert, dann genügt ein Tipp zum Verbinden. Leer lassen: du tippst es jedes Mal.';
+      ? t('shell.pwHintStored')
+      : t('shell.pwHintNew');
   setMsg($('#connMsg'), '');
   $('#connDlg').showModal();
 }
@@ -283,7 +287,7 @@ const NEW_HOST = '__new';
 function fillHostSelect(selected) {
   const sel = $('#connHostSel');
   const keep = selected ?? (sel.value && sel.value !== NEW_HOST ? sel.value : '');
-  sel.replaceChildren(...state.hosts.map((h) => new Option(h.name, h.id)), new Option('Neuer Host …', NEW_HOST));
+  sel.replaceChildren(...state.hosts.map((h) => new Option(h.name, h.id)), new Option(t('shell.newHostOption'), NEW_HOST));
   if (keep && state.hosts.some((h) => h.id === keep)) sel.value = keep; else if (state.hosts.length) sel.value = state.hosts[0].id;
   sel.dataset.prev = sel.value;
   $('#connHostRow').hidden = state.hosts.length === 0;
@@ -298,7 +302,7 @@ $('#connHostSel').addEventListener('change', (e) => {
 /* ---------- Ordner: Auswahl in der Verbindung, Verwaltung im Dialog (docs/FOLDERS.md) ---------- */
 function fillFolderSelect(selected) {
   const sel = $('#connFolderSel');
-  sel.replaceChildren(new Option('Kein Ordner', ''), ...state.folders.map((f) => new Option(f.name, f.id)));
+  sel.replaceChildren(new Option(t('shell.noFolder'), ''), ...state.folders.map((f) => new Option(f.name, f.id)));
   sel.value = selected && state.folders.some((f) => f.id === selected) ? selected : '';
   $('#connFolderRow').hidden = state.folders.length === 0;
 }
@@ -306,7 +310,7 @@ const openFolders = initFolderDialog({ state, api, esc: (t) => esc(t), changed: 
 // Reihenfolge der Verbindung innerhalb ihres Ordners (der Dialog bleibt offen)
 for (const [id, delta] of [['#connUp', -1], ['#connDown', 1]]) {
   $(id).addEventListener('click', async () => {
-    try { await move(api, state.editing, delta); await loadConnections(); setMsg($('#connMsg'), 'Verschoben.', true); }
+    try { await move(api, state.editing, delta); await loadConnections(); setMsg($('#connMsg'), t('shell.moved'), true); }
     catch (err) { setMsg($('#connMsg'), err.message); }
   });
 }
@@ -325,13 +329,13 @@ function agentCommands(code) {
 /** Host anlegen (h = null) oder bearbeiten. onCreated bekommt den neuen Host (zum Beispiel fuer die Auswahl in der Verbindung). */
 function hostDialog(h, onCreated) {
   state.editingHost = h; state.hostCreated = onCreated || null;
-  $('#hostDlgTitle').textContent = h ? 'Host bearbeiten' : 'Neuer Host';
+  $('#hostDlgTitle').textContent = h ? t('shell.editHost') : t('shell.newHost');
   $('#hostName').value = h ? h.name : '';
   const nOf = h ? state.connections.filter((c) => c.hostId === h.id).length : 0;
-  $('#hostDelete').hidden = !h; $('#hostDelete').textContent = 'Löschen';
+  $('#hostDelete').hidden = !h; $('#hostDelete').textContent = t('common.delete');
   const info = $('#hostInfo');
   info.hidden = !h;
-  if (h) info.textContent = [hostDetail(h), nOf + (nOf === 1 ? ' Verbindung' : ' Verbindungen')].filter(Boolean).join(' · ');
+  if (h) info.textContent = [hostDetail(h), tp('shell.hostConns', nOf)].filter(Boolean).join(' · ');
   setMsg($('#hostMsg'), '');
   $('#hostAgent').hidden = !h;                       // ein Agent braucht einen gespeicherten Host
   $('#hostAgentCode').hidden = true; $('#hostAgentCmd').textContent = ''; $('#hostAgentCodeText').textContent = '';
@@ -343,7 +347,7 @@ function hostDialog(h, onCreated) {
 function showAgentState(h) {
   const a = h.agent;
   $('#hostAgentState').textContent = agentSummary(h);
-  $('#hostAgentSetup').textContent = a ? 'Neu einrichten' : 'Agent einrichten';
+  $('#hostAgentSetup').textContent = a ? t('shell.agentRenew') : t('shell.agentSetup');
   $('#hostAgentRemove').hidden = !a;
   $('#hostAgentUpdate').hidden = !a;
   $('#hostAgentAuto').checked = !!(a && a.autoUpdate);
@@ -351,7 +355,7 @@ function showAgentState(h) {
   $('#hostAgentUpdateBtn').hidden = !due;
   $('#hostAgentUpdateBtn').disabled = !(due && a.online && a.canUpdate);
   const hint = $('#hostAgentUpdateHint');
-  hint.textContent = !due ? '' : !a.canUpdate ? 'Dieser Agent kann sich noch nicht selbst aktualisieren: einmal neu einrichten (Agent einrichten).' : !a.online ? 'Der Agent ist gerade getrennt; aktualisieren geht, sobald er sich meldet.' : '';
+  hint.textContent = !due ? '' : !a.canUpdate ? t('shell.agentCannotUpdate') : !a.online ? t('shell.agentOfflineUpdate') : '';
   hint.hidden = !hint.textContent;
 }
 
@@ -364,7 +368,7 @@ $('#hostForm').addEventListener('submit', async (e) => {
     $('#hostDlg').close();
     await loadHosts();
     if (!h && state.hostCreated) state.hostCreated(saved);
-    if (M) M.snack(h ? 'Änderungen gespeichert' : 'Host hinzugefügt');
+    if (M) M.snack(h ? t('shell.changesSaved') : t('shell.hostAdded'));
   } catch (err) { setMsg(msg, err.message); }
   finally { busy(form, false); }
 });
@@ -372,9 +376,9 @@ $('#hostForm').addEventListener('submit', async (e) => {
 // Loeschen braucht ein zweites Tippen; der Server lehnt einen Host mit Verbindungen ab
 $('#hostDelete').addEventListener('click', async (e) => {
   const b = e.currentTarget;
-  if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = 'Wirklich löschen?'; setTimeout(() => { b.dataset.sure = ''; b.textContent = 'Löschen'; }, 3000); return; }
+  if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = t('shell.reallyDelete'); setTimeout(() => { b.dataset.sure = ''; b.textContent = t('common.delete'); }, 3000); return; }
   b.dataset.sure = '';
-  try { await api(`/api/hosts/${state.editingHost.id}`, { method: 'DELETE' }); $('#hostDlg').close(); await loadHosts(); if (M) M.snack('Host gelöscht'); }
+  try { await api(`/api/hosts/${state.editingHost.id}`, { method: 'DELETE' }); $('#hostDlg').close(); await loadHosts(); if (M) M.snack(t('shell.hostDeleted')); }
   catch (err) { setMsg($('#hostMsg'), err.message); }
 });
 
@@ -392,8 +396,8 @@ $('#hostAgentSetup').addEventListener('click', async (e) => {
 
 $('#hostAgentCopy').addEventListener('click', async () => {
   const text = $('#hostAgentCmd').textContent;
-  try { await navigator.clipboard.writeText(text); setMsg($('#hostMsg'), 'Befehle kopiert.', true); }
-  catch { const r = document.createRange(); r.selectNodeContents($('#hostAgentCmd')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); setMsg($('#hostMsg'), 'Bitte markiert kopieren (Kopieren nicht erlaubt).'); }
+  try { await navigator.clipboard.writeText(text); setMsg($('#hostMsg'), t('shell.commandsCopied'), true); }
+  catch { const r = document.createRange(); r.selectNodeContents($('#hostAgentCmd')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); setMsg($('#hostMsg'), t('shell.copySelected')); }
 });
 
 // Aktualisieren: der Server schickt dem Agenten die Anweisung, der Agent holt die Datei selbst, prueft sie und startet neu; danach melden wir uns kurz bei der Liste, bis die neue Version da ist
@@ -402,19 +406,19 @@ $('#hostAgentUpdateBtn').addEventListener('click', async (e) => {
   b.disabled = true; setMsg($('#hostMsg'), '');
   try {
     const r = await api(`/api/hosts/${h.id}/agent/update`, { method: 'POST', body: {} });
-    setMsg($('#hostMsg'), `Agent wird auf ${r.version} aktualisiert und startet neu …`, true);
+    setMsg($('#hostMsg'), t('shell.agentUpdating', { version: r.version }), true);
     for (let i = 0; i < 20; i++) {
       await new Promise((ok) => setTimeout(ok, 2000));
       await loadHosts();
       const now = state.hosts.find((x) => x.id === h.id);
       if (now && now.agent && now.agent.online && !now.agent.updateAvailable) {
         state.editingHost = now; showAgentState(now);
-        setMsg($('#hostMsg'), `Agent ist jetzt auf ${now.agent.version}.`, true);
-        if (M) M.snack('Agent aktualisiert');
+        setMsg($('#hostMsg'), t('shell.agentNowOn', { version: now.agent.version }), true);
+        if (M) M.snack(t('shell.agentUpdated'));
         return;
       }
     }
-    setMsg($('#hostMsg'), 'Der Agent hat sich noch nicht mit der neuen Version gemeldet. Bitte gleich die Liste prüfen.');
+    setMsg($('#hostMsg'), t('shell.agentNoReport'));
   } catch (err) { setMsg($('#hostMsg'), err.message); }
   finally { const now = state.hosts.find((x) => x.id === h.id); if (now) { state.editingHost = now; showAgentState(now); } }
 });
@@ -430,14 +434,14 @@ $('#hostAgentAuto').addEventListener('change', async (e) => {
 // Entfernen braucht ein zweites Tippen (das Token gilt danach nicht mehr, der Agent trennt sich sofort)
 $('#hostAgentRemove').addEventListener('click', async (e) => {
   const b = e.currentTarget, h = state.editingHost; if (!h) return;
-  if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = 'Wirklich entfernen?'; setTimeout(() => { b.dataset.sure = ''; b.textContent = 'Agent entfernen'; }, 3000); return; }
-  b.dataset.sure = ''; b.textContent = 'Agent entfernen';
+  if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = t('shell.reallyRemove'); setTimeout(() => { b.dataset.sure = ''; b.textContent = t('shell.agentRemove'); }, 3000); return; }
+  b.dataset.sure = ''; b.textContent = t('shell.agentRemove');
   try {
     await api(`/api/hosts/${h.id}/agent`, { method: 'DELETE' });
     await loadHosts();
     state.editingHost = state.hosts.find((x) => x.id === h.id) || h;
     showAgentState(state.editingHost); $('#hostAgentCode').hidden = true;
-    if (M) M.snack('Agent entfernt');
+    if (M) M.snack(t('shell.agentRemoved'));
   } catch (err) { setMsg($('#hostMsg'), err.message); }
 });
 
@@ -445,7 +449,7 @@ $('#connForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = e.currentTarget, msg = $('#connMsg');
   const portText = $('#connPort').value.trim();
-  if (portText && !/^\d{1,5}$/.test(portText)) return setMsg(msg, 'Der Port muss eine Zahl sein.');
+  if (portText && !/^\d{1,5}$/.test(portText)) return setMsg(msg, t('shell.portNumber'));
   const body = { name: $('#connName').value, kind: $('#connKind').value, host: $('#connHost').value, port: portText ? Number(portText) : null, username: $('#connUser').value, notes: $('#connNotes').value };
   if (body.kind === 'desktop') { body.domain = $('#connDomain').value; body.layout = $('#connLayout').value; }
   const hostId = $('#connHostSel').value; if (hostId && hostId !== NEW_HOST) body.hostId = hostId;
@@ -463,7 +467,7 @@ $('#connForm').addEventListener('submit', async (e) => {
     $('#connPw').value = '';
     $('#connDlg').close();
     await loadConnections();
-    if (M) M.snack(c ? 'Änderungen gespeichert' : 'Verbindung hinzugefügt');
+    if (M) M.snack(c ? t('shell.changesSaved') : t('shell.connectionAdded'));
   } catch (err) { setMsg(msg, err.message); }
   finally { busy(form, false); }
 });
@@ -471,9 +475,9 @@ $('#connForm').addEventListener('submit', async (e) => {
 // Loeschen braucht ein zweites Tippen (kein Browser-Dialog: die App laeuft oft im Vollbild)
 $('#connDelete').addEventListener('click', async (e) => {
   const b = e.currentTarget;
-  if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = 'Wirklich löschen?'; setTimeout(() => { b.dataset.sure = ''; b.textContent = 'Löschen'; }, 3000); return; }
+  if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = t('shell.reallyDelete'); setTimeout(() => { b.dataset.sure = ''; b.textContent = t('common.delete'); }, 3000); return; }
   b.dataset.sure = '';
-  try { await api(`/api/connections/${state.editing.id}`, { method: 'DELETE' }); $('#connDlg').close(); await loadConnections(); if (M) M.snack('Verbindung gelöscht'); }
+  try { await api(`/api/connections/${state.editing.id}`, { method: 'DELETE' }); $('#connDlg').close(); await loadConnections(); if (M) M.snack(t('shell.connectionDeleted')); }
   catch (err) { setMsg($('#connMsg'), err.message); }
 });
 
@@ -516,10 +520,10 @@ $('#startForm').addEventListener('submit', (e) => {
 /* ---------- Quick Connect: Sitzung ohne Speichern (nichts in der Datenbank, das Passwort gilt nur fuer diese Sitzung) ---------- */
 /** prefill: Eingabe aus der Suche (Adresse, benutzer@adresse:port oder rdp://, ssh://) */
 function quickDialog(prefill = '') {
-  const t = parseQuickTarget(prefill);
-  $('#quickKind').value = (t && t.kind) || 'desktop'; $('#quickKind').dispatchEvent(new Event('change'));
-  $('#quickHost').value = t ? (t.port ? `${t.host}:${t.port}` : t.host) : prefill.trim();
-  $('#quickUser').value = t ? t.username : '';
+  const q = parseQuickTarget(prefill);
+  $('#quickKind').value = (q && q.kind) || 'desktop'; $('#quickKind').dispatchEvent(new Event('change'));
+  $('#quickHost').value = q ? (q.port ? `${q.host}:${q.port}` : q.host) : prefill.trim();
+  $('#quickUser').value = q ? q.username : '';
   $('#quickPw').value = '';
   setMsg($('#quickMsg'), '');
   $('#quickDlg').showModal();
@@ -528,14 +532,14 @@ function quickDialog(prefill = '') {
 $('#quickForm').addEventListener('submit', (e) => {
   e.preventDefault();
   const kind = $('#quickKind').value, msg = $('#quickMsg');
-  const t = parseQuickTarget($('#quickHost').value);
-  if (!t) return setMsg(msg, 'Adresse ungültig (Name oder IP-Adresse, optional :Port).');
-  const user = $('#quickUser').value.trim() || t.username;
+  const q = parseQuickTarget($('#quickHost').value);
+  if (!q) return setMsg(msg, t('shell.quickAddressInvalid'));
+  const user = $('#quickUser').value.trim() || q.username;
   const password = $('#quickPw').value;
-  if (!password) return setMsg(msg, 'Das Passwort fehlt.');
+  if (!password) return setMsg(msg, t('shell.quickPasswordMissing'));
   $('#quickPw').value = '';
   $('#quickDlg').close();
-  Sessions.open(quickConnection({ kind, host: t.host, port: t.port || QUICK_PORT[kind], username: user }), { password });
+  Sessions.open(quickConnection({ kind, host: q.host, port: q.port || QUICK_PORT[kind], username: user }), { password });
 });
 
 /* ---------- Sitzungen: die Huelle zeigt, was der Verwalter meldet ---------- */
@@ -591,16 +595,16 @@ if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, a
 
 /* ---------- Geraete und Sitzungen ---------- */
 function describeAgent(ua) {
-  if (!ua) return 'Unbekanntes Gerät';
-  const browser = /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+  if (!ua) return t('shell.unknownDevice');
+  const browser = /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : t('shell.browser');
   const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Windows/.test(ua) ? 'Windows' : /Mac OS/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : '';
-  return os ? `${browser} auf ${os}` : browser;
+  return os ? t('shell.browserOn', { browser, os }) : browser;
 }
-const rtf = new Intl.RelativeTimeFormat('de', { numeric: 'auto' });
 function ago(iso) {
+  const rtf = relativeTime();
   const s = Math.round((new Date(iso).getTime() - Date.now()) / 1000);
   const abs = Math.abs(s);
-  if (abs < 90) return 'gerade eben';
+  if (abs < 90) return t('shell.justNow');
   if (abs < 5400) return rtf.format(Math.round(s / 60), 'minute');
   if (abs < 172800) return rtf.format(Math.round(s / 3600), 'hour');
   return rtf.format(Math.round(s / 86400), 'day');
@@ -620,7 +624,7 @@ async function renderDevices() {
     for (const s of sessions) {
       const row = document.createElement('div');
       row.className = 'dev' + (s.current ? ' current' : '');
-      row.innerHTML = `<strong>${esc(describeAgent(s.userAgent))}${s.current ? ' · dieses Gerät' : ''}</strong><span>${esc(s.ip || '')} · zuletzt ${esc(ago(s.lastSeen))}</span>`;
+      row.innerHTML = `<strong>${esc(describeAgent(s.userAgent))}${s.current ? ' · ' + esc(t('shell.thisDevice')) : ''}</strong><span>${esc(s.ip || '')} · ${esc(t('shell.lastSeen', { when: ago(s.lastSeen) }))}</span>`;
       list.appendChild(row);
     }
     $('#logoutOthers').hidden = sessions.length < 2;
@@ -628,7 +632,7 @@ async function renderDevices() {
 }
 
 $('#logoutOthers').addEventListener('click', async () => {
-  try { const r = await api('/api/auth/logout-others', { method: 'POST' }); setMsg($('#devicesMsg'), `${r.ended} Sitzung(en) abgemeldet.`, true); await renderDevices(); }
+  try { const r = await api('/api/auth/logout-others', { method: 'POST' }); setMsg($('#devicesMsg'), t('shell.sessionsEnded', { n: r.ended }), true); await renderDevices(); }
   catch (e) { setMsg($('#devicesMsg'), e.message); }
 });
 

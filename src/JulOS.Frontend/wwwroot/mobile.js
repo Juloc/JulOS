@@ -1,6 +1,7 @@
-import { ico, setTheme } from './app.js';
+import { ico, setTheme, setLanguage } from './app.js';
 import { Sessions } from './sessions.js';
 import { SCHEMES, normalizeScheme } from './scheme.js';
+import { t, tp, tk, fmtNumber, fmtDate, fmtTime, fmtDay, getPref, LANG_CHOICES } from './i18n.js';
 import { looksLikeAddress } from './quick.js';
 import { favouriteList, recentList, filterByFolder, groupByFolder, folderIconSvg, folderName, setFavorite } from './folders.js';
 import { connectionState, dotClass as hostDot, stateText, serviceState, hostDetail, agentSummary, servicesSummary } from './hosts.js';
@@ -58,13 +59,15 @@ const ART = `<svg class="art" viewBox="0 0 400 96" preserveAspectRatio="xMidYMax
   <path d="M0 96V88c60-8 120-6 200-2s140 0 200-6v16z" fill="var(--m3-tertiary-container)" opacity=".8"/></svg>`;
 
 const DEST = [
-  { id: 'home', label: 'Home', ic: 'home' },
-  { id: 'services', label: 'Dienste', ic: 'apps', title: 'Dienste' },
-  { id: 'server', label: 'Server', ic: 'dns', title: 'Server' },
-  { id: 'monitoring', label: 'Monitoring', ic: 'chart', title: 'Monitoring' },
-  { id: 'profile', label: 'Profil', ic: 'person', title: 'Profil' },
+  { id: 'home', label: tk('mobile.home'), ic: 'home' },
+  { id: 'services', label: tk('mobile.services'), ic: 'apps', title: tk('mobile.services') },
+  { id: 'server', label: tk('mobile.server'), ic: 'dns', title: tk('mobile.server') },
+  { id: 'monitoring', label: tk('mobile.monitoring'), ic: 'chart', title: tk('mobile.monitoring') },
+  { id: 'profile', label: tk('mobile.profile'), ic: 'person', title: tk('mobile.profile') },
 ];
-const SWATCHES = [['#9a67ea', 'Violett'], ['#4f86f7', 'Blau'], ['#00a67e', 'Grün'], ['#0aa5b8', 'Türkis'], ['#e5599a', 'Pink'], ['#e5484d', 'Rot'], ['#f5a524', 'Orange']];
+const SWATCHES = [['#9a67ea', tk('mobile.colorViolet')], ['#4f86f7', tk('mobile.colorBlue')], ['#00a67e', tk('mobile.colorGreen')], ['#0aa5b8', tk('mobile.colorTeal')], ['#e5599a', tk('mobile.colorPink')], ['#e5484d', tk('mobile.colorRed')], ['#f5a524', tk('mobile.colorOrange')]];
+const SCHEME_LABEL = { light: tk('mobile.schemeLight'), dark: tk('mobile.schemeDark'), auto: tk('mobile.schemeAuto') };
+const kindText = (k) => (k === 'terminal' ? t('shell.kindTerminal') : t('shell.kindDesktop'));
 const DEFAULT_SEED = '#9a67ea';
 
 let ctx = null, root = null, ready = null;
@@ -74,7 +77,7 @@ let overview = null, overviewOk = null, overviewAt = 0, overviewTimer = 0;   // 
 const view = { q: '', kind: 'all', host: '', folder: 'all', allActs: false };
 let snackTimer = 0;
 
-const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const conns = () => (ctx ? ctx.state.connections : []);
 const folders = () => (ctx ? ctx.state.folders || [] : []);
 const hosts = () => (ctx ? ctx.state.hosts : []);
@@ -101,18 +104,18 @@ function build() {
   root.innerHTML = `
     <header class="m3-bar" id="mBar">
       <div class="logo"><span class="m3-ic" style="width:30px;height:30px;display:block">${LOGO}</span><span class="bt" id="mBarName">JulOS</span><span class="bt sub" id="mBarTitle" aria-hidden="true"></span></div>
-      <button type="button" class="mb m3-iconbtn m3-state" id="mSearchBtn" aria-label="Dienste durchsuchen">${icon('search')}</button>
-      <button type="button" class="mb avatar m3-state" id="mAvatar" aria-label="Profil"></button>
+      <button type="button" class="mb m3-iconbtn m3-state" id="mSearchBtn" aria-label="${esc(t('mobile.searchServices'))}">${icon('search')}</button>
+      <button type="button" class="mb avatar m3-state" id="mAvatar" aria-label="${esc(t('mobile.profile'))}"></button>
     </header>
     <div class="m3-stage" id="mStage">
-      <section class="m3-page" id="pg-home" data-page="home" aria-label="Home"></section>
-      <section class="m3-page" id="pg-services" data-page="services" aria-label="Dienste" hidden></section>
-      <section class="m3-page" id="pg-server" data-page="server" aria-label="Server" hidden></section>
-      <section class="m3-page" id="pg-monitoring" data-page="monitoring" aria-label="Monitoring" hidden></section>
-      <section class="m3-page" id="pg-profile" data-page="profile" aria-label="Profil" hidden></section>
+      <section class="m3-page" id="pg-home" data-page="home" aria-label="${esc(t('mobile.home'))}"></section>
+      <section class="m3-page" id="pg-services" data-page="services" aria-label="${esc(t('mobile.services'))}" hidden></section>
+      <section class="m3-page" id="pg-server" data-page="server" aria-label="${esc(t('mobile.server'))}" hidden></section>
+      <section class="m3-page" id="pg-monitoring" data-page="monitoring" aria-label="${esc(t('mobile.monitoring'))}" hidden></section>
+      <section class="m3-page" id="pg-profile" data-page="profile" aria-label="${esc(t('mobile.profile'))}" hidden></section>
     </div>
-    <button type="button" class="mb m3-fab m3-state" id="mFab" aria-label="Verbindung hinzufügen">${icon('add')}<span class="fl">Hinzufügen</span></button>
-    <nav class="m3-nav" id="mNav" aria-label="Hauptnavigation"></nav>
+    <button type="button" class="mb m3-fab m3-state" id="mFab" aria-label="${esc(t('mobile.addConnection'))}">${icon('add')}<span class="fl">${esc(t('common.add'))}</span></button>
+    <nav class="m3-nav" id="mNav" aria-label="${esc(t('mobile.mainNav'))}"></nav>
     <div class="m3-snack" id="mSnack" role="status" aria-live="polite"><span class="st" id="mSnackText"></span><button type="button" class="mb m3-state" id="mSnackAct" hidden></button></div>`;
   root.hidden = true;
 
@@ -141,7 +144,7 @@ function build() {
   }
   // Delegation fuer alles, was in den Seiten gezeichnet wird
   root.addEventListener('click', onClick);
-  root.addEventListener('contextmenu', (e) => { const t = e.target.closest('[data-conn]'); if (t) { e.preventDefault(); actionSheet(byId(t.dataset.conn)); } });
+  root.addEventListener('contextmenu', (e) => { const card = e.target.closest('[data-conn]'); if (card) { e.preventDefault(); actionSheet(byId(card.dataset.conn)); } });
   window.addEventListener('popstate', (e) => { if (shown) go((e.state && e.state.m3) || 'home', { push: false }); });
   history.replaceState({ m3: 'home' }, '');
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => queueMicrotask(applyShellTheme));
@@ -150,7 +153,7 @@ function build() {
 
 function renderNav() {
   const items = DEST.filter((d) => showPlaceholders() || (d.id !== 'server' && d.id !== 'monitoring') || (d.id === 'server' && (overviewOk || hosts().length)));
-  $('#mNav').innerHTML = items.map((d) => `<button type="button" class="mb m3-state" data-go="${d.id}" ${d.id === current ? 'aria-current="page"' : ''}><span class="pill">${icon(d.ic)}</span><span>${d.label}</span></button>`).join('');
+  $('#mNav').innerHTML = items.map((d) => `<button type="button" class="mb m3-state" data-go="${d.id}" ${d.id === current ? 'aria-current="page"' : ''}><span class="pill">${icon(d.ic)}</span><span>${esc(t(d.label))}</span></button>`).join('');
 }
 
 /* ---------- Sichtbarkeit (von shell.js): Fernsteuerung an, Oberflaeche aus und umgekehrt ---------- */
@@ -212,7 +215,7 @@ export function go(id, { push = true, focusSearch = false } = {}) {
     $('#mFab').classList.remove('small');
     const d = DEST.find((x) => x.id === id);
     $('#mBar').classList.toggle('home', id === 'home');
-    $('#mBarName').hidden = id !== 'home'; $('#mBarTitle').textContent = d.title || ''; $('#mBarTitle').hidden = id === 'home';
+    $('#mBarName').hidden = id !== 'home'; $('#mBarTitle').textContent = d.title ? t(d.title) : ''; $('#mBarTitle').hidden = id === 'home';
     $('#mBar').classList.remove('titled', 'scrolled');
     if (id === 'server' || id === 'home') pollOverview();
     if (id === 'profile') loadSessions();
@@ -254,30 +257,29 @@ async function pollOverview() {
   if (shown) { renderNav(); if (current === 'home' || current === 'server') renderPage(current); }
   if (overviewOk) overviewTimer = setTimeout(pollOverview, 15000);
 }
-const fmtBytes = (b) => (b >= 1e12 ? (b / 1e12).toFixed(1) + ' TB' : b >= 1e9 ? (b / 1e9).toFixed(1) + ' GB' : b >= 1e6 ? Math.round(b / 1e6) + ' MB' : Math.round(b / 1e3) + ' kB');
+const fmtBytes = (b) => (b >= 1e12 ? fmtNumber(b / 1e12, 1) + ' TB' : b >= 1e9 ? fmtNumber(b / 1e9, 1) + ' GB' : b >= 1e6 ? fmtNumber(b / 1e6) + ' MB' : fmtNumber(b / 1e3) + ' kB');
 const pct = (v) => (v === null ? '–' : Math.round(v) + ' %');
 function metersHtml(o) {
   const m = (ic, label, v, extra = '') => `<div class="meter${v !== null && v >= 90 ? ' warn' : ''}"><div class="ml">${icon(ic)}${label}</div><div class="mv">${pct(v)}${extra}</div><div class="bar" role="progressbar" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${v === null ? '' : Math.round(v)}"><i style="width:${v === null ? 0 : Math.max(0, Math.min(100, v))}%"></i></div></div>`;
-  return `<div class="meters">${m('cpu', 'CPU', o.cpu)}${m('mem', 'RAM', o.ram)}${m('disk', 'Speicher', o.disk)}</div>`;
+  return `<div class="meters">${m('cpu', 'CPU', o.cpu)}${m('mem', 'RAM', o.ram)}${m('disk', t('mobile.storage'), o.disk)}</div>`;
 }
-const serverTitle = (o) => o.name || 'Server';
-const serverSub = (o) => [o.os, o.cores ? `${o.cores} Kerne` : '', o.memTotal ? fmtBytes(o.memTotal) + ' RAM' : ''].filter(Boolean).join(' · ') || 'Dieser Server';
+const serverTitle = (o) => o.name || t('mobile.server');
+const serverSub = (o) => [o.os, o.cores ? t('mobile.cores', { n: o.cores }) : '', o.memTotal ? fmtBytes(o.memTotal) + ' RAM' : ''].filter(Boolean).join(' · ') || t('mobile.thisServer');
 
 /* =====================================================================
  * Home
  * ===================================================================== */
-function greeting() { const h = new Date().getHours(); return h < 5 ? 'Gute Nacht' : h < 11 ? 'Guten Morgen' : h < 17 ? 'Guten Tag' : h < 22 ? 'Guten Abend' : 'Gute Nacht'; }
-const dayFmt = new Intl.DateTimeFormat('de', { hour: '2-digit', minute: '2-digit' });
-function whenLabel(t) {
-  const d = new Date(t), n = new Date();
+function greeting() { const h = new Date().getHours(); return h < 5 ? t('mobile.greetNight') : h < 11 ? t('mobile.greetMorning') : h < 17 ? t('mobile.greetDay') : h < 22 ? t('mobile.greetEvening') : t('mobile.greetNight'); }
+function whenLabel(ts) {
+  const d = new Date(ts), n = new Date();
   const day = Math.round((new Date(n.getFullYear(), n.getMonth(), n.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5);
-  const time = dayFmt.format(d);
-  return day === 0 ? `Heute, ${time}` : day === 1 ? `Gestern, ${time}` : `${d.toLocaleDateString('de', { day: '2-digit', month: '2-digit' })}., ${time}`;
+  const time = fmtTime(d);
+  return day === 0 ? t('mobile.today', { time }) : day === 1 ? t('mobile.yesterday', { time }) : t('mobile.dayTime', { date: fmtDay(d, { day: '2-digit', month: '2-digit' }), time });
 }
 const favourites = () => favouriteList(conns(), 6);
 const openCount = (c) => Sessions.find(c.id).length;
-const tileHtml = (c, pinned) => `<button type="button" class="mb tile m3-state ${c.kind}${openCount(c) ? ' live' : ''}" data-conn="${c.id}" data-act="start" aria-label="${esc(c.name)} (${esc(c.kind === 'terminal' ? 'Terminal' : 'Desktop')}, ${stateText(connectionState(hosts(), c))}), ${openCount(c) ? openCount(c) + ' Sitzung(en) offen, tippen zum Wechseln' : 'tippen zum Verbinden'}, gedrückt halten für mehr">
-  <span class="hdot ${hostDot(connectionState(hosts(), c))}" title="${stateText(connectionState(hosts(), c))}"></span>${openCount(c) ? `<span class="liveb" title="Sitzung offen">${openCount(c)}</span>` : ''}${pinned ? `<span class="fav" title="Favorit">${icon('star')}</span>` : ''}${c.hasPassword ? `<span class="badge" title="Passwort gespeichert">${icon('key')}</span>` : ''}
+const tileHtml = (c, pinned) => `<button type="button" class="mb tile m3-state ${c.kind}${openCount(c) ? ' live' : ''}" data-conn="${c.id}" data-act="start" aria-label="${esc(t('mobile.tileAria', { name: c.name, kind: kindText(c.kind), state: stateText(connectionState(hosts(), c)), action: openCount(c) ? t('mobile.tileOpen', { n: openCount(c) }) : t('mobile.tileTap') }))}">
+  <span class="hdot ${hostDot(connectionState(hosts(), c))}" title="${stateText(connectionState(hosts(), c))}"></span>${openCount(c) ? `<span class="liveb" title="${esc(t('mobile.sessionOpen'))}">${openCount(c)}</span>` : ''}${pinned ? `<span class="fav" title="${esc(t('mobile.favourite'))}">${icon('star')}</span>` : ''}${c.hasPassword ? `<span class="badge" title="${esc(t('shell.passwordSaved'))}">${icon('key')}</span>` : ''}
   <span class="ti">${kindIcon(c.kind)}</span><span class="tn">${esc(c.name)}</span></button>`;
 
 function activityRows(limit) {
@@ -285,19 +287,19 @@ function activityRows(limit) {
   return log.map((l) => {
     const c = byId(l.id);
     const lead = l.type === 'end' ? `<span class="lead warn">${icon('info')}</span>` : `<span class="lead ok">${icon('check_circle')}</span>`;
-    const sub = l.type === 'end' ? esc(l.msg) : `Verbindung gestartet · ${esc(l.kind === 'terminal' ? 'Terminal' : 'Desktop')}`;
-    return `<div class="m3-li static">${lead}<span class="txt"><span class="hl">${esc(c ? c.name : l.name || 'Verbindung')}</span><span class="sl">${sub}</span></span><span class="tr">${esc(whenLabel(l.t))}</span></div>`;
+    const sub = l.type === 'end' ? esc(l.msg) : esc(t('mobile.started', { kind: kindText(l.kind) }));
+    return `<div class="m3-li static">${lead}<span class="txt"><span class="hl">${esc(c ? c.name : l.name || t('mobile.connection'))}</span><span class="sl">${sub}</span></span><span class="tr">${esc(whenLabel(l.t))}</span></div>`;
   }).join('');
 }
 
 /* Offene Sitzungen: Karten mit Zustandspunkt, ein Tipp wechselt hin, das Kreuz schliesst */
 const dotClass = (st) => (st === 'connected' ? 'ok' : st === 'connecting' || st === 'reconnecting' ? 'busy' : 'bad');
-const sessionRows = () => Sessions.list().map((s) => `<div class="m3-li sess ${s === Sessions.active ? 'act' : ''}" data-act="sess" data-sid="${s.id}" role="button" tabindex="0" aria-label="${esc(s.title)}, ${esc(s.stateText)}, tippen zum Wechseln">
-    <span class="lead">${kindIcon(s.kind)}</span><span class="txt"><span class="hl">${esc(s.title)}</span><span class="sl"><span class="m3-dot sdot ${dotClass(s.state)}"></span>${esc(s.stateText)} · ${esc(s.conn.name === s.title ? (s.kind === 'terminal' ? 'Terminal' : 'Desktop') : s.conn.name)}</span></span>
-    <button type="button" class="mb sx m3-state" data-act="sessclose" data-sid="${s.id}" aria-label="Sitzung ${esc(s.title)} schließen">${icon('close')}</button></div>`).join('');
+const sessionRows = () => Sessions.list().map((s) => `<div class="m3-li sess ${s === Sessions.active ? 'act' : ''}" data-act="sess" data-sid="${s.id}" role="button" tabindex="0" aria-label="${esc(t('mobile.sessAria', { title: s.title, state: s.stateText }))}">
+    <span class="lead">${kindIcon(s.kind)}</span><span class="txt"><span class="hl">${esc(s.title)}</span><span class="sl"><span class="m3-dot sdot ${dotClass(s.state)}"></span>${esc(s.stateText)} · ${esc(s.conn.name === s.title ? kindText(s.kind) : s.conn.name)}</span></span>
+    <button type="button" class="mb sx m3-state" data-act="sessclose" data-sid="${s.id}" aria-label="${esc(t('mobile.sessClose', { title: s.title }))}">${icon('close')}</button></div>`).join('');
 function sessionsSection() {
   if (!Sessions.count) return '';
-  return `<div class="m3-sec">${icon('layers')}<span>Offene Sitzungen</span></div><div class="m3-card acts sesslist">${sessionRows()}</div>`;
+  return `<div class="m3-sec">${icon('layers')}<span>${esc(t('mobile.openSessions'))}</span></div><div class="m3-card acts sesslist">${sessionRows()}</div>`;
 }
 
 function renderHome() {
@@ -306,32 +308,32 @@ function renderHome() {
   let chip;
   if (overviewOk && overview) {
     const hot = (overview.cpu ?? 0) >= 90 || (overview.ram ?? 0) >= 90 || (overview.disk ?? 0) >= 95;
-    chip = `<button type="button" class="mb m3-chip status m3-state" data-go="server"><span class="m3-dot ${hot ? '' : 'ok'}" style="${hot ? 'background:var(--m3-error)' : ''}"></span><span>${hot ? 'Dein Server ist stark ausgelastet' : 'Dein Server läuft stabil'}</span>${icon('chevron_right')}</button>`;
+    chip = `<button type="button" class="mb m3-chip status m3-state" data-go="server"><span class="m3-dot ${hot ? '' : 'ok'}" style="${hot ? 'background:var(--m3-error)' : ''}"></span><span>${hot ? t('mobile.serverBusy') : t('mobile.serverStable')}</span>${icon('chevron_right')}</button>`;
   } else if (!list.length) {
-    chip = `<button type="button" class="mb m3-chip status m3-state" data-act="add"><span class="m3-dot"></span><span>Noch keine Verbindung: jetzt hinzufügen</span>${icon('chevron_right')}</button>`;
+    chip = `<button type="button" class="mb m3-chip status m3-state" data-act="add"><span class="m3-dot"></span><span>${t('mobile.noConnectionAdd')}</span>${icon('chevron_right')}</button>`;
   } else {
-    chip = `<button type="button" class="mb m3-chip status m3-state" data-go="services"><span class="m3-dot"></span><span>${list.length} ${list.length === 1 ? 'Verbindung' : 'Verbindungen'} gespeichert</span>${icon('chevron_right')}</button>`;
+    chip = `<button type="button" class="mb m3-chip status m3-state" data-go="services"><span class="m3-dot"></span><span>${tp('mobile.connsSaved', list.length)}</span>${icon('chevron_right')}</button>`;
   }
-  const server = overviewOk && overview ? `<button type="button" class="mb m3-card srv m3-state" data-go="server" aria-label="Server, Details öffnen">
+  const server = overviewOk && overview ? `<button type="button" class="mb m3-card srv m3-state" data-go="server" aria-label="${esc(t('mobile.serverDetails'))}">
       <div class="top"><span class="lead">${icon('dns')}</span><span class="t">${esc(serverTitle(overview))}<small>${esc(serverSub(overview))}</small></span>${icon('chevron_right')}</div>${metersHtml(overview)}</button>` : '';
   const favHtml = favs.length
     ? `<div class="grid3">${favs.map((c) => tileHtml(c, c.favorite)).join('')}</div>`
-    : `<div class="m3-card empty-card"><span class="lead">${icon('star_o')}</span><span>${list.length ? 'Halte eine Verbindung gedrückt, um sie hier anzuheften. Häufig genutzte erscheinen von selbst.' : 'Lege deine erste Verbindung an, dann erscheint sie hier.'}</span></div>`;
+    : `<div class="m3-card empty-card"><span class="lead">${icon('star_o')}</span><span>${list.length ? t('mobile.favHintSome') : t('mobile.favHintNone')}</span></div>`;
   const actsAll = ls.get('log', []).filter((l) => l.type !== 'start' || byId(l.id));
   const acts = actsAll.length
-    ? `<div class="m3-card acts">${activityRows(view.allActs ? 15 : 4)}</div><p class="note">Zuletzt gestartete und beendete Verbindungen, nur auf diesem Gerät gemerkt.</p>`
-    : '<div class="m3-card empty-card"><span class="lead">' + icon('history') + '</span><span>Noch nichts passiert. Gestartete Verbindungen erscheinen hier.</span></div>';
+    ? `<div class="m3-card acts">${activityRows(view.allActs ? 15 : 4)}</div><p class="note">${t('mobile.actsNote')}</p>`
+    : '<div class="m3-card empty-card"><span class="lead">' + icon('history') + '</span><span>' + t('mobile.actsEmpty') + '</span></div>';
   pg.innerHTML = `
     <div class="hero">${ART}
       <div class="greet" data-head>${greeting()}, ${esc(user)}</div>
-      <h1>Schön, dass du da bist.</h1>
+      <h1>${t('mobile.welcome')}</h1>
       ${chip}
     </div>
     ${sessionsSection()}
     ${server}
-    <div class="m3-sec">${icon('star_o')}<span>Meine Favoriten</span><span class="sp"></span><button type="button" class="mb m3-btn text m3-state" data-go="services">Alle Dienste${icon('chevron_right')}</button></div>
+    <div class="m3-sec">${icon('star_o')}<span>${t('mobile.myFavourites')}</span><span class="sp"></span><button type="button" class="mb m3-btn text m3-state" data-go="services">${t('mobile.allServices')}${icon('chevron_right')}</button></div>
     ${favHtml}
-    <div class="m3-sec">${icon('history')}<span>Aktivitäten</span><span class="sp"></span>${actsAll.length > 4 ? `<button type="button" class="mb m3-btn text m3-state" data-act="allacts">${view.allActs ? 'Weniger' : 'Alle anzeigen'}${icon('chevron_right')}</button>` : ''}</div>
+    <div class="m3-sec">${icon('history')}<span>${t('mobile.activities')}</span><span class="sp"></span>${actsAll.length > 4 ? `<button type="button" class="mb m3-btn text m3-state" data-act="allacts">${view.allActs ? t('mobile.showLess') : t('mobile.showAll')}${icon('chevron_right')}</button>` : ''}</div>
     ${acts}`;
   pg.scrollTop = top;
 }
@@ -341,14 +343,14 @@ function renderHome() {
  * ===================================================================== */
 function buildServicesPage() {
   $('#pg-services').innerHTML = `
-    <div class="m3-h" data-head><h1>Dienste</h1><p>Deine Desktops und Terminals</p></div>
-    <label class="m3-search"><span class="m3-ic" aria-hidden="true">${icon('search')}</span><input id="mSearch" type="search" placeholder="Dienste durchsuchen …" autocomplete="off" autocapitalize="none" spellcheck="false" enterkeyhint="search" aria-label="Dienste durchsuchen"></label>
-    <div class="chips" role="group" aria-label="Filter" id="mChips"></div>
-    <div class="chips" role="group" aria-label="Ordner" id="mFolderChips" hidden></div>
-    <div class="chips" role="group" aria-label="Host wählen" id="mHostChips" hidden></div>
+    <div class="m3-h" data-head><h1>${t('mobile.services')}</h1><p>${t('mobile.servicesSub')}</p></div>
+    <label class="m3-search"><span class="m3-ic" aria-hidden="true">${icon('search')}</span><input id="mSearch" type="search" placeholder="${esc(t('mobile.searchPlaceholder'))}" autocomplete="off" autocapitalize="none" spellcheck="false" enterkeyhint="search" aria-label="${esc(t('mobile.searchServices'))}"></label>
+    <div class="chips" role="group" aria-label="${esc(t('mobile.filter'))}" id="mChips"></div>
+    <div class="chips" role="group" aria-label="${esc(t('mobile.folders'))}" id="mFolderChips" hidden></div>
+    <div class="chips" role="group" aria-label="${esc(t('mobile.chooseHost'))}" id="mHostChips" hidden></div>
     <div id="mGrid"></div>
     <div id="mMods"></div>
-    <div class="m3-sec">${icon('bolt')}<span>Schnellaktionen</span></div>
+    <div class="m3-sec">${icon('bolt')}<span>${t('mobile.quickActions')}</span></div>
     <div class="quick" id="mQuick"></div>`;
   $('#mSearch').addEventListener('input', (e) => { view.q = e.target.value; renderGrid(); });
   $('#mChips').addEventListener('click', (e) => { const b = e.target.closest('[data-kind]'); if (b) { view.kind = b.dataset.kind; renderServices(); } });
@@ -363,29 +365,29 @@ function filtered() {
 function renderServices() {
   if (!$('#mChips')) return;
   const cnt = (k) => conns().filter((c) => k === 'all' || c.kind === k).length;
-  $('#mChips').innerHTML = [['all', 'Alle', 'apps'], ['desktop', 'Desktop', 'desktop'], ['terminal', 'Terminal', 'terminal']].map(([k, l, ic]) =>
-    `<button type="button" class="mb m3-chip m3-state" data-kind="${k}" aria-pressed="${view.kind === k}">${view.kind === k ? icon('check') : icon(ic)}${l} <span style="opacity:.7">${cnt(k)}</span></button>`).join('');
+  $('#mChips').innerHTML = [['all', tk('mobile.all'), 'apps'], ['desktop', tk('shell.kindDesktop'), 'desktop'], ['terminal', tk('shell.kindTerminal'), 'terminal']].map(([k, l, ic]) =>
+    `<button type="button" class="mb m3-chip m3-state" data-kind="${k}" aria-pressed="${view.kind === k}">${view.kind === k ? icon('check') : icon(ic)}${esc(t(l))} <span style="opacity:.7">${cnt(k)}</span></button>`).join('');
   // Ordner, Favoriten und zuletzt benutzt (vom Server): die Auswahl gibt es, sobald es einen Ordner, einen Favoriten oder eine Benutzung gibt
   const known = new Set(['all', 'fav', 'recent', 'none', ...folders().map((f) => f.id)]);
   if (!known.has(view.folder)) view.folder = 'all';
   const fc = $('#mFolderChips');
   fc.hidden = !(folders().length || conns().some((c) => c.favorite || c.lastUsedAt));
   const folderChip = (id, label, ic) => `<button type="button" class="mb m3-chip m3-state" data-folder="${esc(id)}" aria-pressed="${view.folder === id}">${view.folder === id ? icon('check') : ic}${esc(label)}</button>`;
-  fc.innerHTML = fc.hidden ? '' : [folderChip('all', 'Alle Ordner', icon('apps')), folderChip('fav', 'Favoriten', icon('star_o')), folderChip('recent', 'Zuletzt benutzt', icon('history')),
-    ...folders().map((f) => folderChip(f.id, f.name, folderIconSvg(f.icon))), ...(folders().length ? [folderChip('none', 'Ohne Ordner', icon('close'))] : [])].join('');
+  fc.innerHTML = fc.hidden ? '' : [folderChip('all', t('mobile.allFolders'), icon('apps')), folderChip('fav', t('mobile.favourites'), icon('star_o')), folderChip('recent', t('mobile.recentlyUsed'), icon('history')),
+    ...folders().map((f) => folderChip(f.id, f.name, folderIconSvg(f.icon))), ...(folders().length ? [folderChip('none', t('mobile.noFolder'), icon('close'))] : [])].join('');
   // Die Auswahl des Hosts gibt es erst, wenn es mehr als einen gibt
   if (view.host && !hosts().some((h) => h.id === view.host)) view.host = '';
   const hc = $('#mHostChips');
   hc.hidden = hosts().length < 2;
-  hc.innerHTML = hc.hidden ? '' : [{ id: '', name: 'Alle Hosts' }, ...hosts()].map((h) => `<button type="button" class="mb m3-chip m3-state" data-host="${esc(h.id)}" aria-pressed="${view.host === h.id}">${view.host === h.id ? icon('check') : h.id ? `<span class="m3-dot hdot ${hostDot(h.online)}"></span>` : icon('dns')}${esc(h.name)}</button>`).join('');
+  hc.innerHTML = hc.hidden ? '' : [{ id: '', name: t('mobile.allHosts') }, ...hosts()].map((h) => `<button type="button" class="mb m3-chip m3-state" data-host="${esc(h.id)}" aria-pressed="${view.host === h.id}">${view.host === h.id ? icon('check') : h.id ? `<span class="m3-dot hdot ${hostDot(h.online)}"></span>` : icon('dns')}${esc(h.name)}</button>`).join('');
   renderGrid(); renderModules();
   const last = lastConnection();
   $('#mQuick').innerHTML = `
-    <button type="button" class="mb m3-btn filled m3-state" data-act="add">${icon('add')}Neue Verbindung</button>
-    <button type="button" class="mb m3-btn tonal m3-state" data-act="last" ${last ? '' : 'disabled'} ${last ? `aria-label="Zuletzt geöffnet: ${esc(last.name)}"` : ''}>${icon('history')}${last ? 'Zuletzt: ' + esc(last.name.length > 14 ? last.name.slice(0, 13) + '…' : last.name) : 'Zuletzt geöffnet'}</button>
-    <button type="button" class="mb m3-btn tonal m3-state" data-act="ssh">${icon('terminal')}SSH öffnen</button>
-    <button type="button" class="mb m3-btn tonal m3-state" data-act="quick">${icon('bolt')}Quick Connect</button>
-    <button type="button" class="mb m3-btn tonal m3-state" data-act="folders">${folderIconSvg('folder')}Ordner</button>`;
+    <button type="button" class="mb m3-btn filled m3-state" data-act="add">${icon('add')}${t('shell.newConnection')}</button>
+    <button type="button" class="mb m3-btn tonal m3-state" data-act="last" ${last ? '' : 'disabled'} ${last ? `aria-label="${esc(t('mobile.lastOpenedName', { name: last.name }))}"` : ''}>${icon('history')}${last ? esc(t('mobile.lastName', { name: last.name.length > 14 ? last.name.slice(0, 13) + '…' : last.name })) : t('mobile.lastOpened')}</button>
+    <button type="button" class="mb m3-btn tonal m3-state" data-act="ssh">${icon('terminal')}${t('mobile.openSsh')}</button>
+    <button type="button" class="mb m3-btn tonal m3-state" data-act="quick">${icon('bolt')}${t('mobile.quickConnect')}</button>
+    <button type="button" class="mb m3-btn tonal m3-state" data-act="folders">${folderIconSvg('folder')}${t('mobile.folders')}</button>`;
 }
 /* Module Caddy und DDNS (nur lesen): Karten nur, wenn der Server sie eingeschaltet hat (GET /api/modules); Details im Sheet, siehe mobile-modules.js */
 let mods = { caddy: false, ddns: false }, modsLoaded = false;
@@ -398,12 +400,12 @@ function renderGrid() {
   const list = filtered();
   const grouped = view.folder === 'all' && !view.q.trim() && folders().length;     // mit Ordnern: unter ihren Ueberschriften
   $('#mGrid').innerHTML = grouped && list.length
-    ? groupByFolder(folders(), list).map((g) => `<div class="m3-sec">${g.folder ? folderIconSvg(g.folder.icon) : icon('apps')}<span>${esc(g.folder ? g.folder.name : 'Ohne Ordner')}</span></div><div class="grid4">${g.connections.map((c) => tileHtml(c, c.favorite)).join('')}</div>`).join('')
+    ? groupByFolder(folders(), list).map((g) => `<div class="m3-sec">${g.folder ? folderIconSvg(g.folder.icon) : icon('apps')}<span>${esc(g.folder ? g.folder.name : t('mobile.noFolder'))}</span></div><div class="grid4">${g.connections.map((c) => tileHtml(c, c.favorite)).join('')}</div>`).join('')
     : list.length
     ? `<div class="grid4">${list.map((c) => tileHtml(c, c.favorite)).join('')}</div>`
-    : `<p class="empty-hint">${conns().length ? 'Keine Verbindung passt zur Suche.' : 'Noch keine Verbindung. Lege den Computer an, den du steuern willst.'}</p>`;
+    : `<p class="empty-hint">${conns().length ? t('mobile.noMatch') : t('mobile.noConnectionYet')}</p>`;
   // Sieht die Suche nach einer Adresse aus: Quick Connect ohne Speichern anbieten
-  if (looksLikeAddress(view.q)) $('#mGrid').insertAdjacentHTML('beforeend', `<button type="button" class="mb m3-btn tonal block m3-state" data-act="quickq" style="margin-top:12px">${icon('bolt')}Quick Connect zu ${esc(view.q.trim())}</button>`);
+  if (looksLikeAddress(view.q)) $('#mGrid').insertAdjacentHTML('beforeend', `<button type="button" class="mb m3-btn tonal block m3-state" data-act="quickq" style="margin-top:12px">${icon('bolt')}${esc(t('mobile.quickTo', { addr: view.q.trim() }))}</button>`);
 }
 function lastConnection() {
   const r = recentList(conns(), 1)[0];                       // vom Server, auf jedem Geraet gleich
@@ -417,34 +419,34 @@ function lastConnection() {
  * ===================================================================== */
 function soonHtml(ic, title, text) {
   return `<div class="m3-h" data-head><h1>${title}</h1></div>
-    <div class="m3-card soon"><span class="big">${icon(ic)}</span><span class="m3-chip status"><span class="m3-dot"></span>bald verfügbar</span><p>${text}</p></div>`;
+    <div class="m3-card soon"><span class="big">${icon(ic)}</span><span class="m3-chip status"><span class="m3-dot"></span>${t('mobile.comingSoon')}</span><p>${text}</p></div>`;
 }
 /** Die Hosts mit Zustand, Agent und Diensten (docs/HOSTS.md); der Agent wird je Host eingerichtet */
 function hostsHtml() {
   const rows = hosts().map((h) => `<div class="m3-card host" data-host-card="${esc(h.id)}">
       <div class="m3-li static"><span class="lead">${icon('dns')}</span><span class="txt"><span class="hl"><span class="m3-dot hdot ${hostDot(h.online)}"></span>${esc(h.name)} <small>${stateText(h.online)}</small></span><span class="sl">${esc([hostDetail(h), agentSummary(h), servicesSummary(h)].filter(Boolean).join(' · '))}</span></span></div>
       <div class="svcs">${h.services.map((s) => { const c = byId(s.connection); return c ? `<button type="button" class="mb m3-chip m3-state" data-act="start" data-conn="${esc(c.id)}"><span class="m3-dot hdot ${hostDot(serviceState(h, c.id))}"></span>${esc(c.name)}</button>` : ''; }).join('')}</div>
-      <div class="acts-row"><button type="button" class="mb m3-btn tonal m3-state" data-act="hostagent" data-host="${esc(h.id)}">${icon('download')}${h.agent ? 'Agent verwalten' : 'Agent einrichten'}</button>
-        <button type="button" class="mb m3-btn text m3-state" data-act="hostedit" data-host="${esc(h.id)}">${icon('edit')}Bearbeiten</button></div></div>`).join('');
-  return `<div class="m3-sec">${icon('dns')}<span>Hosts</span><span class="sp"></span><button type="button" class="mb m3-btn text m3-state" data-act="addhost">${icon('add')}Host hinzufügen</button></div>${rows || '<p class="empty-hint">Noch kein Host. Er entsteht mit der ersten Verbindung.</p>'}`;
+      <div class="acts-row"><button type="button" class="mb m3-btn tonal m3-state" data-act="hostagent" data-host="${esc(h.id)}">${icon('download')}${h.agent ? t('mobile.agentManage') : t('shell.agentSetup')}</button>
+        <button type="button" class="mb m3-btn text m3-state" data-act="hostedit" data-host="${esc(h.id)}">${icon('edit')}${t('common.edit')}</button></div></div>`).join('');
+  return `<div class="m3-sec">${icon('dns')}<span>${t('mobile.hosts')}</span><span class="sp"></span><button type="button" class="mb m3-btn text m3-state" data-act="addhost">${icon('add')}${t('mobile.addHost')}</button></div>${rows || `<p class="empty-hint">${t('mobile.noHost')}</p>`}`;
 }
 function renderServer() {
   const pg = $('#pg-server');
   if (overviewOk && overview) {
     const o = overview;
-    const net = (o.rx !== null || o.tx !== null) ? `<div class="m3-card acts" style="margin-top:12px"><div class="m3-li static"><span class="lead">${icon('download')}</span><span class="txt"><span class="hl">Netzwerk</span><span class="sl">Empfangen ${o.rx !== null ? fmtBytes(o.rx) + '/s' : '–'} · Gesendet ${o.tx !== null ? fmtBytes(o.tx) + '/s' : '–'}</span></span></div></div>` : '';
-    pg.innerHTML = `<div class="m3-h" data-head><h1>Server</h1><p>${esc(serverSub(o))}</p></div>
-      <div class="m3-card srv" style="margin-top:0"><div class="top"><span class="lead">${icon('dns')}</span><span class="t">${esc(serverTitle(o))}<small>Auslastung, alle 15 Sekunden aktualisiert</small></span></div>${metersHtml(o)}</div>
+    const net = (o.rx !== null || o.tx !== null) ? `<div class="m3-card acts" style="margin-top:12px"><div class="m3-li static"><span class="lead">${icon('download')}</span><span class="txt"><span class="hl">${t('mobile.network')}</span><span class="sl">${esc(t('mobile.netRates', { rx: o.rx !== null ? fmtBytes(o.rx) + '/s' : '–', tx: o.tx !== null ? fmtBytes(o.tx) + '/s' : '–' }))}</span></span></div></div>` : '';
+    pg.innerHTML = `<div class="m3-h" data-head><h1>${t('mobile.server')}</h1><p>${esc(serverSub(o))}</p></div>
+      <div class="m3-card srv" style="margin-top:0"><div class="top"><span class="lead">${icon('dns')}</span><span class="t">${esc(serverTitle(o))}<small>${t('mobile.loadRefresh')}</small></span></div>${metersHtml(o)}</div>
       <div class="m3-card acts" style="margin-top:12px">
-        <div class="m3-li static"><span class="lead">${icon('mem')}</span><span class="txt"><span class="hl">Arbeitsspeicher</span><span class="sl">${o.memUsed !== null && o.memTotal !== null ? fmtBytes(o.memUsed) + ' von ' + fmtBytes(o.memTotal) : '–'}</span></span></div>
-        <div class="m3-li static"><span class="lead">${icon('disk')}</span><span class="txt"><span class="hl">Speicher</span><span class="sl">${o.diskUsed !== null && o.diskTotal !== null ? fmtBytes(o.diskUsed) + ' von ' + fmtBytes(o.diskTotal) : '–'}</span></span></div>
+        <div class="m3-li static"><span class="lead">${icon('mem')}</span><span class="txt"><span class="hl">${t('mobile.memory')}</span><span class="sl">${o.memUsed !== null && o.memTotal !== null ? esc(t('mobile.ofTotal', { used: fmtBytes(o.memUsed), total: fmtBytes(o.memTotal) })) : '–'}</span></span></div>
+        <div class="m3-li static"><span class="lead">${icon('disk')}</span><span class="txt"><span class="hl">${t('mobile.storage')}</span><span class="sl">${o.diskUsed !== null && o.diskTotal !== null ? esc(t('mobile.ofTotal', { used: fmtBytes(o.diskUsed), total: fmtBytes(o.diskTotal) })) : '–'}</span></span></div>
       </div>${net}${hostsHtml()}`;
   } else {
-    pg.innerHTML = soonHtml('dns', 'Server', overviewOk === false ? 'Hier erscheinen CPU, Arbeitsspeicher und Speicher deines Servers, sobald der Server diese Daten liefert. Dieser Server tut das noch nicht.' : 'Auslastung wird geprüft …') + hostsHtml();
+    pg.innerHTML = soonHtml('dns', t('mobile.server'), overviewOk === false ? t('mobile.serverSoon') : t('mobile.loadChecking')) + hostsHtml();
   }
 }
 function renderMonitoring() {
-  $('#pg-monitoring').innerHTML = soonHtml('chart', 'Monitoring', 'Verläufe, Warnungen und Dienste im Blick. Das kommt in einem späteren Schritt; heute gibt es dafür noch keine Daten.');
+  $('#pg-monitoring').innerHTML = soonHtml('chart', t('mobile.monitoring'), t('mobile.monitoringSoon'));
 }
 
 /* =====================================================================
@@ -456,25 +458,27 @@ function renderProfile() {
   const pg = $('#pg-profile'), top = pg.scrollTop, seed = curSeed(), scheme = normalizeScheme(readStore('scheme', 'auto'));
   const planned = showPlaceholders();
   pg.innerHTML = `
-    <div class="m3-h" data-head><h1>Profil</h1><p>Konto, Darstellung und Sicherheit</p></div>
-    <div class="m3-card me"><span class="avatar">${esc((user || '?').trim().slice(0, 1))}</span><span class="t">${esc(user)}<small>Passwort und Authenticator</small></span></div>
-    <button type="button" class="mb m3-btn tonal block m3-state" id="mAccount">${icon('lock')}Passwort und Authenticator ändern</button>
+    <div class="m3-h" data-head><h1>${t('mobile.profile')}</h1><p>${t('mobile.profileSub')}</p></div>
+    <div class="m3-card me"><span class="avatar">${esc((user || '?').trim().slice(0, 1))}</span><span class="t">${esc(user)}<small>${t('mobile.pwAuth')}</small></span></div>
+    <button type="button" class="mb m3-btn tonal block m3-state" id="mAccount">${icon('lock')}${t('mobile.pwAuthChange')}</button>
 
-    <div class="grp-t">Darstellung</div>
+    <div class="grp-t">${t('mobile.appearance')}</div>
     <div class="m3-card grp">
-      <div class="setrow"><div class="lab">Helligkeit</div>${seg('mScheme', SCHEMES, scheme)}</div>
-      <div class="setrow"><div class="lab">Farbe</div><div class="swatches2" role="radiogroup" aria-label="Farbe" id="mSwatches">${SWATCHES.map(([h, n]) => `<button type="button" class="mb sw" role="radio" aria-checked="${h === seed}" aria-label="${n}" data-seed="${h}" style="background:${h}">${icon('check')}</button>`).join('')}</div></div>
-      <div class="setrow line"><div class="lab">Server und Monitoring zeigen<small>Seiten, für die es noch keine Daten gibt</small></div><button type="button" class="mb m3-switch m3-state" role="switch" aria-checked="${planned}" id="mPlanned" aria-label="Server und Monitoring zeigen"></button></div>
+      <div class="setrow"><div class="lab">${t('mobile.brightness')}</div>${seg('mScheme', SCHEMES.map(([v]) => [v, t(SCHEME_LABEL[v])]), scheme)}</div>
+      <div class="setrow"><div class="lab">${t('lang.title')}</div>${seg('mLang', LANG_CHOICES.map(([v, l]) => [v, v === 'system' ? t('lang.system') : l]), getPref())}</div>
+      <div class="setrow"><div class="lab">${t('mobile.color')}</div><div class="swatches2" role="radiogroup" aria-label="${esc(t('mobile.color'))}" id="mSwatches">${SWATCHES.map(([h, n]) => `<button type="button" class="mb sw" role="radio" aria-checked="${h === seed}" aria-label="${esc(t(n))}" data-seed="${h}" style="background:${h}">${icon('check')}</button>`).join('')}</div></div>
+      <div class="setrow line"><div class="lab">${t('mobile.showPlanned')}<small>${t('mobile.showPlannedSub')}</small></div><button type="button" class="mb m3-switch m3-state" role="switch" aria-checked="${planned}" id="mPlanned" aria-label="${esc(t('mobile.showPlanned'))}"></button></div>
     </div>
 
-    <div class="grp-t">Werkzeuge</div>
-    <button type="button" class="mb m3-btn tonal block m3-state" id="mNet">${icon('dns')}Netzwerkwerkzeuge (Ping, DNS, Ports)</button>
+    <div class="grp-t">${t('mobile.tools')}</div>
+    <button type="button" class="mb m3-btn tonal block m3-state" id="mNet">${icon('dns')}${t('mobile.netTools')}</button>
 
-    <div class="grp-t">Über JulOS</div>
-    <div class="m3-card grp" id="mAbout"><div class="setrow"><div class="lab">Version<small>Wird geladen …</small></div></div></div>
-    <button type="button" class="mb m3-btn danger block big logout m3-state" id="mOut">${icon('logout')}Abmelden</button>`;
+    <div class="grp-t">${t('mobile.aboutJulos')}</div>
+    <div class="m3-card grp" id="mAbout"><div class="setrow"><div class="lab">${t('mobile.version')}<small>${t('mobile.loading')}</small></div></div></div>
+    <button type="button" class="mb m3-btn danger block big logout m3-state" id="mOut">${icon('logout')}${t('mobile.signOut')}</button>`;
   pg.scrollTop = top;
   $('#mScheme').addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (!b) return; setTheme({ scheme: b.dataset.v }); applyShellTheme(); renderProfile(); });
+  $('#mLang').addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (b && b.dataset.v !== getPref()) setLanguage(b.dataset.v); });
   $('#mSwatches').addEventListener('click', (e) => { const b = e.target.closest('[data-seed]'); if (!b) return; setTheme({ seed: b.dataset.seed }); applyShellTheme(); renderProfile(); });
   $('#mPlanned').addEventListener('click', (e) => { const on = e.currentTarget.getAttribute('aria-checked') !== 'true'; ls.set('planned', on); e.currentTarget.setAttribute('aria-checked', on); renderNav(); });
   $('#mAccount').addEventListener('click', () => ctx.account());
@@ -482,29 +486,29 @@ function renderProfile() {
   $('#mOut').addEventListener('click', () => ctx.signOut());
   if (current === 'profile') { loadSessions(); loadAbout(); }
 }
-const backupText = (b) => !b ? '' : b.state === 'ok' ? `${new Date(b.lastAt).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' })}, ${b.bytes < 1048576 ? Math.max(1, Math.round(b.bytes / 1024)) + ' KB' : (b.bytes / 1048576).toFixed(1) + ' MB'}`
-  : b.state === 'off' ? 'Aus' : b.state === 'pending' ? `Noch keins (geplant ${b.time})` : b.state === 'failed' ? `Fehlgeschlagen: ${b.message || ''}` : `Nicht eingerichtet: ${b.message || ''}`;
+const backupText = (b) => !b ? '' : b.state === 'ok' ? `${fmtDate(b.lastAt)}, ${b.bytes < 1048576 ? Math.max(1, Math.round(b.bytes / 1024)) + ' KB' : fmtNumber(b.bytes / 1048576, 1) + ' MB'}`
+  : b.state === 'off' ? t('mobile.backupOff') : b.state === 'pending' ? t('mobile.backupPending', { time: b.time }) : b.state === 'failed' ? t('mobile.backupFailed', { message: b.message || '' }) : t('mobile.backupNotSetUp', { message: b.message || '' });
 async function loadAbout() {
   const box = $('#mAbout'); if (!box || !ctx) return;
   try {
     const a = await ctx.api('/api/about');
-    const built = a.built ? new Date(a.built).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+    const built = a.built ? fmtDate(a.built) : '';
     const row = (k, v, extra = '') => `<div class="setrow line"><div class="lab">${k}<small>${esc(v)}</small></div>${extra}</div>`;
-    box.innerHTML = row('Version', `JulOS ${a.version}`) + (a.commit || built ? row('Build', [a.commit, built].filter(Boolean).join(' · ')) : '')
-      + row('Bildübertragung', a.engines.stream ? `Stream (${a.engines.encoder || 'H.264'})` : 'Nicht verfügbar')
-      + row('Letztes Backup', backupText(a.backup))
-      + `<div style="padding:4px 12px 10px;display:flex;gap:8px"><a class="mb m3-btn tonal block m3-state" href="/licenses.txt" target="_blank" rel="noopener">Lizenzen</a><a class="mb m3-btn tonal block m3-state" href="${esc(a.repository)}" target="_blank" rel="noopener">Quelltext</a></div>`;
+    box.innerHTML = row(t('mobile.version'), `JulOS ${a.version}`) + (a.commit || built ? row(t('mobile.build'), [a.commit, built].filter(Boolean).join(' · ')) : '')
+      + row(t('mobile.imageTransfer'), a.engines.stream ? t('mobile.streamEngine', { encoder: a.engines.encoder || 'H.264' }) : t('mobile.notAvailable'))
+      + row(t('mobile.lastBackup'), backupText(a.backup))
+      + `<div style="padding:4px 12px 10px;display:flex;gap:8px"><a class="mb m3-btn tonal block m3-state" href="/licenses.txt" target="_blank" rel="noopener">${t('mobile.licenses')}</a><a class="mb m3-btn tonal block m3-state" href="${esc(a.repository)}" target="_blank" rel="noopener">${t('mobile.sourceCode')}</a></div>`;
   } catch (e) { box.innerHTML = `<p class="empty-hint">${esc(e.message)}</p>`; }
 }
 async function loadSessions() {
   const box = $('#mSessions'); if (!box || !ctx) return;
   try {
     const { sessions } = await ctx.api('/api/auth/sessions');
-    box.innerHTML = sessions.map((s) => `<div class="m3-li static"><span class="lead ${s.current ? 'cur' : ''}">${icon('phone')}</span><span class="txt"><span class="hl">${esc(ctx.describeAgent(s.userAgent))}${s.current ? ' · dieses Gerät' : ''}</span><span class="sl">${esc(s.ip || '')} · zuletzt ${esc(ctx.ago(s.lastSeen))}</span></span></div>`).join('')
-      + (sessions.length > 1 ? `<div style="padding:4px 12px 10px"><button type="button" class="mb m3-btn tonal block m3-state" id="mOthers">Alle anderen abmelden</button></div>` : '');
+    box.innerHTML = sessions.map((s) => `<div class="m3-li static"><span class="lead ${s.current ? 'cur' : ''}">${icon('phone')}</span><span class="txt"><span class="hl">${esc(ctx.describeAgent(s.userAgent))}${s.current ? ' · ' + esc(t('shell.thisDevice')) : ''}</span><span class="sl">${esc(s.ip || '')} · ${esc(t('shell.lastSeen', { when: ctx.ago(s.lastSeen) }))}</span></span></div>`).join('')
+      + (sessions.length > 1 ? `<div style="padding:4px 12px 10px"><button type="button" class="mb m3-btn tonal block m3-state" id="mOthers">${t('mobile.signOutOthers')}</button></div>` : '');
     const o = $('#mOthers');
     if (o) o.addEventListener('click', async () => {
-      try { const r = await ctx.api('/api/auth/logout-others', { method: 'POST' }); snack(`${r.ended} Sitzung(en) abgemeldet.`); loadSessions(); } catch (e) { snack(e.message); }
+      try { const r = await ctx.api('/api/auth/logout-others', { method: 'POST' }); snack(t('shell.sessionsEnded', { n: r.ended })); loadSessions(); } catch (e) { snack(e.message); }
     });
   } catch (e) { box.innerHTML = `<p class="empty-hint">${esc(e.message)}</p>`; }
 }
@@ -529,9 +533,9 @@ function onClick(e) {
   else if (act === 'allacts') { view.allActs = !view.allActs; renderHome(); }
   else if (act === 'last') { const c = lastConnection(); if (c) ctx.connect(c); }
   else if (act === 'ssh') {
-    const t = conns().filter((c) => c.kind === 'terminal');
-    if (t.length === 1) ctx.connect(t[0]);
-    else if (t.length > 1) { view.kind = 'terminal'; renderServices(); snack('Wähle ein Terminal.'); $('#mGrid').scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+    const terms = conns().filter((c) => c.kind === 'terminal');
+    if (terms.length === 1) ctx.connect(terms[0]);
+    else if (terms.length > 1) { view.kind = 'terminal'; renderServices(); snack(t('mobile.pickTerminal')); $('#mGrid').scrollIntoView({ block: 'center', behavior: 'smooth' }); }
     else ctx.add('terminal');
   }
 }
@@ -542,12 +546,12 @@ function actionSheet(c) {
   let dlg = $('#mActDlg');
   if (!dlg) { dlg = document.createElement('dialog'); dlg.id = 'mActDlg'; dlg.className = 'm3sheet'; $('#app').appendChild(dlg); wireSheet(dlg); }
   const fav = !!c.favorite;
-  dlg.innerHTML = `<h2>${esc(c.name)}</h2><p class="hint">${esc(c.kind === 'terminal' ? 'Terminal' : 'Desktop')} · ${esc(c.username ? c.username + '@' : '')}${esc(c.host)}:${c.port}</p>
+  dlg.innerHTML = `<h2>${esc(c.name)}</h2><p class="hint">${esc(kindText(c.kind))} · ${esc(c.username ? c.username + '@' : '')}${esc(c.host)}:${c.port}</p>
     <div class="m3-list" style="margin:0 -18px">
-      <button type="button" class="mb m3-li m3-state" data-a="start"><span class="lead">${icon('play')}</span><span class="txt"><span class="hl">${openCount(c) ? 'Zur Sitzung wechseln' : 'Verbinden'}</span>${openCount(c) ? `<span class="sl">${openCount(c)} offen</span>` : ''}</span></button>
-      ${openCount(c) ? `<button type="button" class="mb m3-li m3-state" data-a="extra"><span class="lead">${icon('add')}</span><span class="txt"><span class="hl">Weitere Sitzung</span><span class="sl">Noch eine zum selben Ziel</span></span></button>` : ''}
-      <button type="button" class="mb m3-li m3-state" data-a="fav"><span class="lead">${icon(fav ? 'star' : 'star_o')}</span><span class="txt"><span class="hl">${fav ? 'Aus den Favoriten nehmen' : 'Als Favorit anheften'}</span><span class="sl">Gilt auf allen Geräten</span></span></button>
-      <button type="button" class="mb m3-li m3-state" data-a="edit"><span class="lead">${icon('edit')}</span><span class="txt"><span class="hl">Bearbeiten</span></span></button>
+      <button type="button" class="mb m3-li m3-state" data-a="start"><span class="lead">${icon('play')}</span><span class="txt"><span class="hl">${openCount(c) ? t('mobile.switchSession') : t('mobile.connect')}</span>${openCount(c) ? `<span class="sl">${esc(t('mobile.openCount', { n: openCount(c) }))}</span>` : ''}</span></button>
+      ${openCount(c) ? `<button type="button" class="mb m3-li m3-state" data-a="extra"><span class="lead">${icon('add')}</span><span class="txt"><span class="hl">${t('mobile.anotherSession')}</span><span class="sl">${t('mobile.anotherSessionSub')}</span></span></button>` : ''}
+      <button type="button" class="mb m3-li m3-state" data-a="fav"><span class="lead">${icon(fav ? 'star' : 'star_o')}</span><span class="txt"><span class="hl">${fav ? t('mobile.unpin') : t('mobile.pin')}</span><span class="sl">${t('mobile.allDevices')}</span></span></button>
+      <button type="button" class="mb m3-li m3-state" data-a="edit"><span class="lead">${icon('edit')}</span><span class="txt"><span class="hl">${t('common.edit')}</span></span></button>
     </div>`;
   dlg.onclick = (e) => {
     const b = e.target.closest('[data-a]'); if (!b) return;
@@ -555,7 +559,7 @@ function actionSheet(c) {
     if (b.dataset.a === 'start') ctx.connect(c);
     else if (b.dataset.a === 'extra') ctx.connect(c, { extra: true });
     else if (b.dataset.a === 'edit') ctx.edit(c);
-    else setFavorite(ctx.api, c, !fav).then(() => { renderAll(); snack(fav ? 'Aus den Favoriten genommen' : 'Als Favorit angeheftet'); }, (err) => snack(err.message));
+    else setFavorite(ctx.api, c, !fav).then(() => { renderAll(); snack(fav ? t('mobile.unpinned') : t('mobile.pinned')); }, (err) => snack(err.message));
   };
   dlg.showModal();
 }
@@ -621,7 +625,7 @@ let strip = null;
 function buildStrip() {
   const remote = $('#remote');
   if (!remote || strip) return;
-  strip = document.createElement('div'); strip.className = 'm3-sstrip'; strip.hidden = true; strip.setAttribute('role', 'tablist'); strip.setAttribute('aria-label', 'Offene Sitzungen');
+  strip = document.createElement('div'); strip.className = 'm3-sstrip'; strip.hidden = true; strip.setAttribute('role', 'tablist'); strip.setAttribute('aria-label', t('mobile.openSessions'));
   remote.prepend(strip);
   strip.addEventListener('click', (e) => {
     const b = e.target.closest('[data-s]'); if (!b) return;
@@ -636,17 +640,17 @@ export function sessionsChanged() {
   buildStrip();
   const list = Sessions.list();
   strip.hidden = list.length < 2;
-  strip.innerHTML = `<button type="button" class="mb m3-state sb-home" data-s="home" aria-label="Zur Startseite (die Sitzungen bleiben offen)">${icon('home')}</button>
+  strip.innerHTML = `<button type="button" class="mb m3-state sb-home" data-s="home" aria-label="${esc(t('mobile.toHome'))}">${icon('home')}</button>
     <div class="sb-chips">${list.map((s) => `<button type="button" role="tab" aria-selected="${s === Sessions.active}" class="mb sb-chip m3-state${s === Sessions.active ? ' on' : ''}" data-s="${s.id}" title="${esc(s.stateText)}"><span class="m3-dot sdot ${dotClass(s.state)}"></span><span class="n">${esc(s.title)}</span></button>`).join('')}</div>
-    <button type="button" class="mb m3-state sb-all" data-s="all" aria-label="Alle Sitzungen anzeigen">${icon('layers')}<span class="cnt">${list.length}</span></button>`;
+    <button type="button" class="mb m3-state sb-all" data-s="all" aria-label="${esc(t('mobile.showAllSessions'))}">${icon('layers')}<span class="cnt">${list.length}</span></button>`;
   const on = strip.querySelector('.sb-chip.on'); if (on) on.scrollIntoView({ inline: 'center', block: 'nearest' });
   if (shown) renderAll();
   const dlg = $('#mSessDlg'); if (dlg && dlg.open) fillSwitcher(dlg);
 }
 function fillSwitcher(dlg) {
-  dlg.innerHTML = `<h2>Sitzungen</h2><p class="hint">${Sessions.count ? 'Tippe eine Sitzung an, um zu ihr zu wechseln. Alle laufen im Hintergrund weiter.' : 'Keine Sitzung offen.'}</p>
+  dlg.innerHTML = `<h2>${t('mobile.sessions')}</h2><p class="hint">${Sessions.count ? t('mobile.switcherHint') : t('mobile.noSession')}</p>
     <div class="m3-card acts sesslist" style="margin:0">${sessionRows()}</div>
-    <div class="row" style="margin-top:14px"><button type="button" class="mb m3-btn tonal m3-state" data-a="home">${icon('home')}Startseite</button><button type="button" class="mb m3-btn filled m3-state" data-a="new">${icon('add')}Neue Sitzung</button></div>`;
+    <div class="row" style="margin-top:14px"><button type="button" class="mb m3-btn tonal m3-state" data-a="home">${icon('home')}${t('mobile.startPage')}</button><button type="button" class="mb m3-btn filled m3-state" data-a="new">${icon('add')}${t('mobile.newSession')}</button></div>`;
 }
 export function openSwitcher() {
   let dlg = $('#mSessDlg');

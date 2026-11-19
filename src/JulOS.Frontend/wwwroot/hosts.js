@@ -3,6 +3,8 @@
  * Ein Host ist, was GET /api/hosts liefert: { id, name, online, hostname?, os?, agent?: { online, lastSeen?, version?, platform?, outdated, latest?, updateAvailable, canUpdate, autoUpdate }, services: [{ connection, kind, online? }] }
  * ===================================================================== */
 
+import { t, fmtDate, tp } from './i18n.js';
+
 /** 'up' (erreichbar), 'down' oder 'unknown' (nicht geprueft: Erlaubnisliste oder noch keine Antwort) */
 export function serviceState(host, connectionId) {
   const s = host && host.services && host.services.find((x) => x.connection === connectionId);
@@ -16,7 +18,7 @@ export const connectionState = (hosts, c) => serviceState(hostById(hosts, c.host
 
 /** Der Statuspunkt: gruen (ok) oder grau (off); unbekannt zaehlt als grau */
 export const dotClass = (state) => (state === 'up' || state === true ? 'ok' : 'off');
-export const stateText = (state) => (state === 'up' || state === true ? 'online' : state === 'unknown' ? 'unbekannt' : 'offline');
+export const stateText = (state) => (state === 'up' || state === true ? t('hosts.online') : state === 'unknown' ? t('hosts.unknown') : t('hosts.offline'));
 
 /** Die Verbindungen je Host in der Reihenfolge der Hosts; Hosts ohne Verbindung bleiben als leere Gruppe, Verbindungen ohne bekannten Host kommen in eine Gruppe ohne Host ans Ende */
 export function groupConnections(hosts, connections) {
@@ -29,21 +31,21 @@ export function groupConnections(hosts, connections) {
 /** Rechnername und Betriebssystem, soweit der Agent sie gemeldet hat */
 export const hostDetail = (h) => [h.hostname, h.os].filter(Boolean).join(' · ');
 
-const when = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); };
+const when = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : fmtDate(d, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); };
 
 /** Ein Satz zum Agenten eines Hosts */
 export function agentSummary(h) {
   const a = h.agent;
-  if (!a) return 'Kein Agent';
-  const what = [a.version && 'Agent ' + a.version, a.platform].filter(Boolean).join(', ');
-  const base = a.online ? 'Agent verbunden' : 'Agent getrennt' + (a.lastSeen && when(a.lastSeen) ? ' (zuletzt ' + when(a.lastSeen) + ')' : '');
-  return base + (what ? ' – ' + what : '') + (a.outdated ? ' – zu alt, bitte neu einrichten' : a.updateAvailable ? ' – Update verfügbar' + (a.latest ? ' (' + a.latest + ')' : '') : '');
+  if (!a) return t('hosts.noAgent');
+  const what = [a.version && t('hosts.agentVersion', { v: a.version }), a.platform].filter(Boolean).join(', ');
+  const base = a.online ? t('hosts.agentOnline') : t('hosts.agentOffline') + (a.lastSeen && when(a.lastSeen) ? ' ' + t('hosts.lastSeen', { when: when(a.lastSeen) }) : '');
+  return base + (what ? ' – ' + what : '') + (a.outdated ? ' – ' + t('hosts.outdated') : a.updateAvailable ? ' – ' + t('hosts.updateAvailable') + (a.latest ? ' (' + a.latest + ')' : '') : '');
 }
 
 /** Wie viele Dienste eines Hosts antworten, als Text ("2 von 3 Diensten erreichbar") */
 export function servicesSummary(h) {
   const n = h.services.length;
-  if (!n) return 'Keine Verbindungen';
+  if (!n) return t('hosts.noConnections');
   const up = h.services.filter((s) => s.online === true).length;
-  return `${up} von ${n} ${n === 1 ? 'Dienst' : 'Diensten'} erreichbar`;
+  return tp('hosts.servicesUp', n, { up });
 }

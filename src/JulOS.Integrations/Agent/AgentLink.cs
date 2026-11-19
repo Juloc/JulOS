@@ -45,6 +45,10 @@ public sealed class AgentLink
     public string? Platform { get; private set; }
     public string? Hostname { get; private set; }
     public string? Os { get; private set; }
+    /// <summary>Was der Agent kann (nur bekannte Namen, siehe <see cref="AgentLabels.Caps"/>): leer fuer Desktop-Agenten, bei einem Host-Agenten zum Beispiel sysinfo, updates.</summary>
+    public IReadOnlyList<string> Caps { get; private set; } = [];
+    /// <summary>Schreibrechte, die der Agent lokal erlaubt (hello "allow", nur updates und reboot); Stufe 3.</summary>
+    public IReadOnlyList<string> Allow { get; private set; } = [];
     public DateTimeOffset Since { get; } = DateTimeOffset.UtcNow;
 
     public AgentLink(WebSocket ws, Guid hostId, Guid userId, ILogger log)
@@ -70,6 +74,7 @@ public sealed class AgentLink
         var msg = await ReceiveAsync(timeout.Token).ConfigureAwait(false);
         if (msg is not { Text: { } bytes }) { await CloseAsync(WebSocketCloseStatus.ProtocolError, "Begrüßung erwartet").ConfigureAwait(false); return null; }
         string? version, platform, hostname, os;
+        IReadOnlyList<string> caps, allow;
         try
         {
             using var doc = JsonDocument.Parse(bytes);
@@ -79,21 +84,23 @@ public sealed class AgentLink
             platform = root.TryGetProperty("platform", out var p) && p.ValueKind == JsonValueKind.String ? AgentLabels.Clean(p.GetString()) : null;
             hostname = root.TryGetProperty("hostname", out var hn) && hn.ValueKind == JsonValueKind.String ? AgentLabels.CleanText(hn.GetString()) : null;
             os = root.TryGetProperty("os", out var o) && o.ValueKind == JsonValueKind.String ? AgentLabels.CleanText(o.GetString()) : null;
+            caps = AgentLabels.Words(root, "caps", AgentLabels.Caps);
+            allow = AgentLabels.Words(root, "allow", AgentLabels.Rights);
         }
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
         {
             await CloseAsync(WebSocketCloseStatus.ProtocolError, "Begrüßung ungültig").ConfigureAwait(false);
             return null;
         }
-        Version = version; Platform = platform; Hostname = hostname; Os = os;
+        Version = version; Platform = platform; Hostname = hostname; Os = os; Caps = caps; Allow = allow;
         if (!versionOk(version))
         {
             await TrySendAsync(w => w.WriteString("t", "bye"), w => w.WriteString("reason", "agent_outdated"), ct).ConfigureAwait(false);
             await CloseAsync(WebSocketCloseStatus.PolicyViolation, "Agent zu alt").ConfigureAwait(false);
-            return new AgentHello(new AgentInfo(version, platform, hostname, os), false);
+            return new AgentHello(new AgentInfo(version, platform, hostname, os, caps), false);
         }
         await SendJsonAsync(w => { w.WriteString("t", "welcome"); w.WriteString("server", serverVersion); }, ct).ConfigureAwait(false);
-        return new AgentHello(new AgentInfo(version, platform, hostname, os), true);
+        return new AgentHello(new AgentInfo(version, platform, hostname, os, caps), true);
     }
 
     internal async Task LoopAsync(CancellationToken ct)
@@ -360,7 +367,7 @@ public sealed class AgentLink
 }
 
 /// <summary>Was ein Agent von sich meldet (reine Anzeigewerte, jeder darf fehlen).</summary>
-public sealed record AgentInfo(string? Version, string? Platform, string? Hostname = null, string? Os = null);
+public sealed record AgentInfo(string? Version, string? Platform, string? Hostname = null, string? Os = null, IReadOnlyList<string>? Caps = null);
 
 internal sealed record AgentHello(AgentInfo Info, bool Accepted)
 {
@@ -369,6 +376,29 @@ internal sealed record AgentHello(AgentInfo Info, bool Accepted)
 
 public static class AgentLabels
 {
+    /// <summary>Die Faehigkeiten, die ein Host-Agent melden darf (docs/HOST-AGENT.md). Andere Woerter im hello werden verworfen.</summary>
+    public static readonly string[] Caps = ["sysinfo", "updates", "services", "docker"];
+
+    /// <summary>Die lokalen Schreibrechte, die ein Agent melden darf (dieselben Woerter wie AgentControl.Rights).</summary>
+    public static readonly string[] Rights = ["updates", "reboot"];
+
+    /// <summary>Eine Liste von Woertern aus dem hello: nur aus <paramref name="allowed"/>, ohne Doppelte, in der Reihenfolge der Erlaubnisliste. Alles Falsche gibt eine leere Liste.</summary>
+    internal static IReadOnlyList<string> Words(JsonElement root, string name, string[] allowed)
+    {
+        if (!root.TryGetProperty(name, out var list) || list.ValueKind != JsonValueKind.Array) return [];
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var n = 0;
+        foreach (var item in list.EnumerateArray())
+        {
+            if (++n > 32) break;
+            if (item.ValueKind == JsonValueKind.String && item.GetString() is { } w && allowed.Contains(w)) seen.Add(w);
+        }
+        return [.. allowed.Where(seen.Contains)];
+    }
+
+    /// <summary>'host' fuer einen Agenten ohne Desktop (Plattform "linux-host"), sonst 'desktop'.</summary>
+    public static string KindOf(string? platform) => platform is not null && platform.EndsWith("-host", StringComparison.Ordinal) ? "host" : "desktop";
+
     /// <summary>Anzeigewerte, die der Agent meldet: kurz, nur harmlose Zeichen, sonst null.</summary>
     public static string? Clean(string? s, int max = 32)
     {

@@ -4,6 +4,15 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Neu
+- **Host-Agent für Rechner ohne Desktop** (Docker-VM, Proxmox-Host, Debian/Ubuntu-Server): `tools/julos-agent.py` hat einen Host-Modus (`--host`, oder automatisch ohne GTK/Wnck), nur mit der Python-Standardbibliothek, als eigener Systembenutzer `julos-agent` ohne Anmeldung. Er hält dieselbe ausgehende Verbindung, meldet seine Fähigkeiten (`sysinfo`, `updates`, `services`, `docker`) und beantwortet **nur lesende** Anfragen: Last, Arbeitsspeicher, Datenträger mit Füllstand, Laufzeit, Netzwerk, „Neustart nötig“, Virtualisierung und Proxmox-Erkennung; Updates (apt: Anzahl, Liste, Sicherheitsupdates, zurückgehaltene Pakete, Alter der Paketlisten; dnf, apk, pacman in der einfachsten Form); **Gesundheit der Platten** (SMART über `smartctl`, wenn lesbar, RAID aus `/proc/mdstat`, ZFS über `zpool status -x`); fehlgeschlagene systemd-Einheiten; Docker-Container (nur lesend über den Socket, ohne Zugriff „nicht verfügbar“). Der Desktop-Modus bleibt unverändert. Agent 0.5.0.
+- Server: `GET /api/hosts/{id}/status`, `/updates`, `/services`, `/docker` (Sitzung nötig, nur eigene Hosts), Speicher im Arbeitsspeicher (höchstens alle 60 s je Host, nie von selbst, „Neu lesen“ höchstens alle 15 s), feste Pfade nur bei gemeldeter Fähigkeit, alle Antworten des Agenten werden Feld für Feld geprüft und gekürzt; `GET /api/hosts` nennt je Agent `kind`, `caps`, `allow`, `control`. Migration 017: Stufe `control` je Agent (`read`, Standard) und die Prüfung `AgentControl` für Schreibaktionen (noch keine gebaut).
+- **Installation per SSH aus JulOS**: im Host-Dialog „Agent per SSH installieren“ öffnet die SSH-Verbindung des Hosts im Terminal und legt den fertigen Einzeiler mit frischem Einrichtungscode in die Eingabeleiste (nicht abgeschickt; das sudo-Passwort tippst du selbst im Terminal, JulOS sieht es nie), dazu „Befehl kopieren“. `tools/install-host-agent.sh` (POSIX sh, idempotent, `--dry-run`, `--uninstall`, `--allow-updates`, `--user`) holt Agent und Prüfsummen (`/agent-files/SHA256SUMS`) nur vom eigenen Server und richtet den systemd-Dienst ein (`NoNewPrivileges`, `ProtectSystem=strict`, nur nötige Schreibpfade).
+- Oberfläche: Host-Karte (Desktop und Handy) mit Modus, Fähigkeiten, Systemwerten, „Updates: n verfügbar (m Sicherheit)“, Gesundheit der Platten und Netzwerkrate; Dialog „Host-Details“ mit Systemwerten, Updates-Liste, Diensten und Containern. Texte auf Deutsch und Englisch, `sw.js` pd-v55.
+- Doku: [docs/HOST-AGENT.md](docs/HOST-AGENT.md) (Modi, Fähigkeiten, Sicherheit, Installation, Proxmox, Home Assistant OS, was bewusst fehlt, Fahrplan der Stufen 3 bis 5).
+
 ## [0.11.0] - 2026-11-19
 
 ### Geändert

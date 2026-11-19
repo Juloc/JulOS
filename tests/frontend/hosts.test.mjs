@@ -56,3 +56,8 @@ test('the service summary counts reachable services', () => {
   assert.equal(servicesSummary(host('a', { services: [{ online: true }] })), '1 von 1 Dienst erreichbar');
   assert.equal(servicesSummary(host('a', { services: [{ online: true }, { online: false }, {}] })), '1 von 3 Diensten erreichbar');
 });
+
+test('ein Host-Agent: der Satz zum Agenten bleibt gleich, Modus und Faehigkeiten stehen in hostinfo.js', () => {
+  const h = host('a', { agent: { online: true, version: '0.5.0', platform: 'linux-host', outdated: false, kind: 'host', caps: ['sysinfo', 'updates'], control: 'read' } });
+  assert.equal(agentSummary(h), 'Agent verbunden – Agent 0.5.0, linux-host');
+});

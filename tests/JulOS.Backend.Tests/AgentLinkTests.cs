@@ -391,7 +391,7 @@ public sealed partial class AgentLinkTests
     }
 
     [Fact]
-    public async Task The_server_hands_out_only_the_three_agent_files()
+    public async Task The_server_hands_out_only_the_agent_files_and_their_checksums()
     {
         await using var db = await TestDb.CreateAsync();
         await using var app = new Server(db);
@@ -400,7 +400,16 @@ public sealed partial class AgentLinkTests
         Assert.Equal(HttpStatusCode.OK, agent.StatusCode);
         Assert.Contains("AGENT_VERSION", await agent.Content.ReadAsStringAsync());
         Assert.Equal(HttpStatusCode.OK, (await c.GetAsync("/agent-files/install-linux-agent.sh")).StatusCode);
-        foreach (var name in new[] { "julos-user.sh", "..%2Fappsettings.json", "%2e%2e/JulOS.dll", "agent.json", "" })
+        var installer = await c.GetAsync("/agent-files/install-host-agent.sh");
+        Assert.Equal(HttpStatusCode.OK, installer.StatusCode);
+        Assert.StartsWith("#!/bin/sh", await installer.Content.ReadAsStringAsync());
+        // SHA256SUMS: eine Zeile je Datei im Format von sha256sum, und die Summe stimmt mit dem ueberein, was ausgeliefert wird
+        var sums = (await c.GetStringAsync("/agent-files/SHA256SUMS")).Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.Split("  ")).ToDictionary(p => p[1], p => p[0]);
+        Assert.Contains("julos-agent.py", sums.Keys);
+        Assert.Contains("install-host-agent.sh", sums.Keys);
+        foreach (var (file, hash) in sums) Assert.Equal(hash, Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(await c.GetByteArrayAsync("/agent-files/" + file))));
+        Assert.Equal(sums["julos-agent.py"], Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(await c.GetByteArrayAsync("/agent-files/julos-agent.py"))));
+        Assert.All(sums.Keys, k => Assert.Contains(k, JulOS.Frontend.Agent.AgentRelease.Files));        foreach (var name in new[] { "julos-user.sh", "..%2Fappsettings.json", "%2e%2e/JulOS.dll", "agent.json", "" })
             Assert.NotEqual(HttpStatusCode.OK, (await c.GetAsync("/agent-files/" + name)).StatusCode);
     }
 

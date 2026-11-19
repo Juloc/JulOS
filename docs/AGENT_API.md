@@ -3,7 +3,7 @@
 The server never talks to the desktop directly for window management. A small **agent** runs inside the graphical session
 of the remote machine and answers a tiny API (windows, apps, mode, photo/file/clipboard transfer). The server proxies it to the browser
 (`/api/agent/*`, `/api/upload*`, `/api/clipboard/pull`, only for a valid session, see below). The Linux agent (`tools/julos-agent.py`) is the
-reference implementation; a Windows agent is planned and has to offer the same requests (see [Windows agent](#windows-agent-design-notes)).
+reference implementation; since 0.5.0 it also has a **host mode** for machines without a desktop (system values, updates, disk health, services, Docker; read only), see [HOST-AGENT.md](HOST-AGENT.md). A Windows agent is planned and has to offer the same requests (see [Windows agent](#windows-agent-design-notes)).
 
 ## Transports
 
@@ -26,7 +26,7 @@ The Unix socket is machine-wide (it does not know the host); with several hosts 
 ## Enrolment and token
 
 In the app, **Agent einrichten** on a host (host dialog, Hosts view) creates a one-time code and shows the commands for the remote machine (the three agent files
-come from the server itself, `GET /agent-files/<name>`, so they match its version):
+come from the server itself, `GET /agent-files/<name>`, so they match its version; the same folder also serves `install-host-agent.sh` and `SHA256SUMS` for the host agent):
 
 ```bash
 mkdir -p ~/julos && cd ~/julos
@@ -55,7 +55,7 @@ Text frames from the agent are limited to 1 MB; larger frames close the link. Re
 
 | Direction | Message | Meaning |
 | --- | --- | --- |
-| agent → server | `{"t":"hello","agent":"0.4.0","platform":"linux-x11","api":1,"hostname":"…","os":"…"}` | first message, within 10 s; `hostname` and `os` are optional display values (up to 64 characters of letters, digits, space and `. - _ + / ( ) ,`, else ignored) |
+| agent → server | `{"t":"hello","agent":"0.5.0","platform":"linux-x11","api":1,"hostname":"…","os":"…"}` | first message, within 10 s; `hostname` and `os` are optional display values (up to 64 characters of letters, digits, space and `. - _ + / ( ) ,`, else ignored). A host-mode agent sends `"platform":"linux-host"` plus `"caps":["sysinfo","updates","services","docker"]` (only these words are kept) and `"allow":["updates","reboot"]` (write rights it allows locally; only these words) |
 | server → agent | `{"t":"welcome","server":"0.5.0"}` or `{"t":"bye","reason":"agent_outdated"}` + close | agents older than `AgentLinks.MinAgentVersion` are refused |
 | both | `{"t":"hb"}` | the agent sends one every 20 s; the server closes a link that is silent for 75 s; the server also pings every 30 s |
 | server → agent | `{"t":"req","id":7,"method":"GET","path":"/v1/windows","body":{…}}` | one of the v1 requests below, **fixed paths only** |
@@ -67,6 +67,8 @@ Text frames from the agent are limited to 1 MB; larger frames close the link. Re
 | server → agent | `{"t":"cancel","id":8}` | the browser went away: drop what you have |
 | server → agent | `{"t":"update","id":10,"path":"/agent-files/julos-agent.py","sha256":"<64 hex>","version":"0.4.0"}` | replace yourself with the file the server ships, see [Updating the agent](#updating-the-agent) (agents from 0.4.0) |
 | agent → server | `{"t":"res","id":10,"status":200,"body":{"ok":true,"version":"0.4.0","restarting":true}}` / `4xx`/`502` `{"error":"…"}` | answered **before** the restart (`restarting:false`: that version or a newer one already runs); an error leaves the old file untouched |
+
+Host-mode requests (`GET /v1/host/sysinfo|updates|services|docker`, fixed paths, sent only to an agent that announced the capability) and their answers are described in [HOST-AGENT.md](HOST-AGENT.md); a host agent answers `404` to the desktop requests and to `put`/`pull`. Write requests (stage 3) use `POST /v1/host/...` and are answered `403 not_permitted` or `501 not_implemented` for now.
 
 Limits and behaviour: at most 32 open requests per link and **one transfer at a time** (the second waits up to 10 s, then `502`). Transfers are chunked, so a
 big file never sits in one message; the sender waits for each frame to be written (TCP back pressure) and gives up after 15 s per frame and 3 minutes in total.

@@ -31,7 +31,8 @@ internal static class HostEndpoints
         var services = await Task.WhenAll(connections.Select(async c => new HostServiceDto(c.Id, c.Kind, policy.Allows(c.Host) ? await probe.IsUpAsync(c.Host, c.Port, ct) : null)));
         var latest = release.Latest();
         var agentDto = agent is null ? null : new HostAgentDto(live is not null, live is not null ? DateTimeOffset.UtcNow : agent.LastSeen, version, live?.Platform ?? agent.Platform, version is not null && !AgentLinks.VersionOk(version),
-            latest?.Version, AgentLinks.IsNewer(latest?.Version, version), AgentLinks.CanUpdate(version), agent.AutoUpdate);
+            latest?.Version, AgentLinks.IsNewer(latest?.Version, version), AgentLinks.CanUpdate(version), agent.AutoUpdate,
+            AgentLabels.KindOf(live?.Platform ?? agent.Platform), [.. live?.Caps ?? []], [.. live?.Allow ?? []], agent.Control);
         var online = live is not null || services.Any(s => s.Online == true);
         return new HostDto(host.Id, host.Name, online, live?.Hostname ?? agent?.Hostname, live?.Os ?? agent?.Os, agentDto, services);
     }

@@ -67,6 +67,10 @@ All need the session, the `X-JulOS` header for changes, and only ever show the s
   there is more than one host, and every tile has its status dot.
 - **Connection dialog:** a **Host** field (with "Neuer Host …"); the **host dialog** holds the name, delete and **Agent einrichten / entfernen** for that host.
 
+## Host agent
+
+A host without a desktop (Docker VM, Proxmox, servers) gets the **host-mode agent**: `GET /api/hosts/{id}/status`, `/updates`, `/services`, `/docker` (read only, session needed, 60 s memory, never polled by the server) show load, memory, disks, disk health, updates and containers on the host card and in the dialog **Host-Details**. `agent` in `GET /api/hosts` gains `kind`, `caps`, `allow` and `control`. Install it from the host dialog with **Agent per SSH installieren**. All of it: [HOST-AGENT.md](HOST-AGENT.md).
+
 ## Not part of this step
 
 A Windows agent, groups or tenants, roles, and sharing a host between users. The agent's Unix-socket mode still serves the machine the

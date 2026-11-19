@@ -4,7 +4,7 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
-## [Unveröffentlicht]
+## [0.11.0] - 2026-11-19
 
 ### Geändert
 - Handy-Oberfläche und Einstellungen neu gegliedert (Plan und Stand: [docs/MOBILE-UX.md](docs/MOBILE-UX.md)): ein Komponentenblatt als lebende Seite (`docs/ui-kit.html`) mit festen Abständen, Radien, Schriftstufen und Farben aus den Theme-Variablen; alle Seiten benutzen nur diese Bausteine.

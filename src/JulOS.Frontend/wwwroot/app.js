@@ -665,6 +665,7 @@ export class RemoteSession extends Session {
 
   async start() {
     this.intentional = false; this.fatal = false; this.connectStarted = Date.now();
+    if (this.client && this.client.drawn) this.resume.confirm();      // ein Bild kam schon (zum Beispiel Seite wieder sichtbar, bevor der tote Socket gemeldet wurde): das Token darf die Sitzung aufnehmen
     this.teardown(true);                   // der Server haelt eine Stream-Sitzung weiter, die nehmen wir gleich wieder auf (sonst endet sie dort nach Ablauf)
     const gen = this.gen;
     const stale = () => gen !== this.gen || this.disposed;

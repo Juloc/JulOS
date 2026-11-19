@@ -4,7 +4,7 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
-## [Unveröffentlicht]
+## [0.12.0] - 2026-11-19
 
 ### Neu
 - **Host-Agent für Rechner ohne Desktop** (Docker-VM, Proxmox-Host, Debian/Ubuntu-Server): `tools/julos-agent.py` hat einen Host-Modus (`--host`, oder automatisch ohne GTK/Wnck), nur mit der Python-Standardbibliothek, als eigener Systembenutzer `julos-agent` ohne Anmeldung. Er hält dieselbe ausgehende Verbindung, meldet seine Fähigkeiten (`sysinfo`, `updates`, `services`, `docker`) und beantwortet **nur lesende** Anfragen: Last, Arbeitsspeicher, Datenträger mit Füllstand, Laufzeit, Netzwerk, „Neustart nötig“, Virtualisierung und Proxmox-Erkennung; Updates (apt: Anzahl, Liste, Sicherheitsupdates, zurückgehaltene Pakete, Alter der Paketlisten; dnf, apk, pacman in der einfachsten Form); **Gesundheit der Platten** (SMART über `smartctl`, wenn lesbar, RAID aus `/proc/mdstat`, ZFS über `zpool status -x`); fehlgeschlagene systemd-Einheiten; Docker-Container (nur lesend über den Socket, ohne Zugriff „nicht verfügbar“). Der Desktop-Modus bleibt unverändert. Agent 0.5.0.

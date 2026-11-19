@@ -181,6 +181,12 @@ input[type=search] { background: var(--md-surface-high); color: var(--text); bor
 .sv-zoom { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(.9); z-index: 21; pointer-events: none; opacity: 0; transition: opacity .18s, transform .18s;
   background: color-mix(in srgb, var(--md-surface) 82%, transparent); color: var(--md-on-surface); padding: 12px 22px; border-radius: 999px; font-size: 1.4rem; font-weight: 500; box-shadow: 0 2px 12px rgba(0,0,0,.4); }
 .sv-zoom.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+/* Statusleiste (statusbar.js): auf dem Handy ein kleines Overlay oben links im Bild, im Desktop eine Fusszeile (desktop.css) */
+.sv-perf { position: absolute; left: 8px; top: 8px; max-width: calc(100% - 16px); z-index: 19; display: flex; flex-wrap: wrap; gap: 2px 12px; padding: 4px 9px; border-radius: 9px;
+  background: rgba(0, 0, 0, .66); color: #fff; font: 500 11px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; pointer-events: none; }
+.sv-perf[hidden] { display: none; }
+.sv-perfc i { font-style: normal; opacity: .62; margin-right: 4px; }
+.sv-perfc b { font-weight: 600; }
 .row.bar { padding-top: 6px; padding-bottom: 6px; }
 .row.bar .rk { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; align-items: center; }
 .row.bar .rk::-webkit-scrollbar { display: none; }

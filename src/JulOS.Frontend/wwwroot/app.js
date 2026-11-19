@@ -1,6 +1,8 @@
 import { StreamClient } from './stream.js';
 import { MouseInput, mouseState } from './mouse.js';
 import { Resume } from './resume.js';
+import { StatusBar } from './statusbar.js';
+import { QUALITIES, normalizeQuality, qualityOf, nextQuality } from './perf.js';
 import { StreamAudio } from './stream-audio.js';
 import { SizeGate, LayoutLog } from './layoutlog.js';
 import { KB_SETTLE_MS, StageBase, effectiveStage, panOffset, panDrag, normalizeKbMode, nextKbMode, kbModeLabel } from './kbpan.js';
@@ -60,6 +62,7 @@ const ICONS = {
   bolt: 'M11 21h-1l1-7H7.5c-.58 0-.57-.32-.38-.66.19-.34.05-.08.07-.12C8.48 10.94 10.42 7.54 13 3h1l-1 7h3.5c.49 0 .56.33.47.51l-.07.15C12.96 17.55 11 21 11 21z',
   layers: 'M11.99 18.54l-7.37-5.73L3 14.07l9 7 9-7-1.63-1.27-7.38 5.74zM12 16l7.36-5.73L21 9l-9-7-9 7 1.63 1.27L12 16z',
   home: 'M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z',
+  speed: 'M20.38 8.57l-1.23 1.85a8 8 0 0 1-.22 7.58H5.07A8 8 0 0 1 15.58 6.85l1.85-1.23A10 10 0 0 0 3.35 19a2 2 0 0 0 1.72 1h13.85a2 2 0 0 0 1.74-1 10 10 0 0 0-.27-10.44zm-9.79 6.84a2 2 0 0 0 2.83 0l5.66-8.49-8.49 5.66a2 2 0 0 0 0 2.83z',
   backspace: 'M22 3H7c-.69 0-1.23.35-1.59.88L0 12l5.41 8.11c.36.53.9.89 1.59.89h15c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-3 12.59L17.59 17 14 13.41 10.41 17 9 15.59 12.59 12 9 8.41 10.41 7 14 10.59 17.59 7 19 8.41 15.41 12 19 15.59z',
 };
 export const ico = (name) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${ICONS[name] || ''}"/></svg>`;
@@ -86,6 +89,7 @@ const S = {
   expanded: store.get('expanded', false), group: store.get('group', 'keys'), editing: false,
   autoKb: store.get('autoKb', true),   // Tastatur oeffnet sich beim Tippen auf ein Textfeld (Erkennung am Mauszeiger)
   debug: store.get('debug', true),     // sendet nur Messwerte (Groessen, Ereignisarten), nie getippten Text
+  perf: store.get('perf', false),             // Statusleiste (Leistungsanzeige) bei allen Stream-Sitzungen
   autoPaste: store.get('autoPaste', true),   // Foto nach dem Hochladen sofort mit Strg+V einfuegen
   seed: store.get('seed', '#9a67ea'),         // Grundfarbe fuer das Material-You-Design ('system' oder #rrggbb), Standard Violett wie die Handy-Oberflaeche
   scheme: store.get('scheme', 'auto'),       // 'auto' | 'light' | 'dark'
@@ -96,6 +100,12 @@ function pcDefaultK() {
   try { return matchMedia('(pointer: fine)').matches && matchMedia('(min-width: 1000px)').matches ? 1 : 0.8; } catch { return 0.8; }
 }
 let lastStageSize = { w: window.innerWidth, h: window.innerHeight };   // zuletzt gemessene sichtbare Bildflaeche (fuer Sitzungen im Hintergrund)
+
+/** Statusleiste (Leistungsanzeige) ein- oder ausblenden: gilt fuer alle Stream-Sitzungen und wird gemerkt. */
+function setPerf(on) {
+  S.perf = !!on; store.set('perf', S.perf);
+  for (const s of remotes()) { s.statusBar.show(S.perf); s.updateMenuLabels(); }
+}
 
 /** Alle Fernsteuer-Sitzungen und die aktive (andere Sitzungsarten, etwa das native Terminal, gehoeren nicht hierher). */
 const remotes = () => Sessions.list().filter((s) => s instanceof RemoteSession);
@@ -442,6 +452,7 @@ export class RemoteSession extends Session {
     this.gen = 0;                                  // zaehlt jeden Verbindungsversuch: spaete Antworten eines alten Versuchs werden verworfen
     this.k = clamp(store.get('k.' + conn.id, store.get('k', pcDefaultK())), 0.35, 1.8);   // Remote-Pixel pro Handy-Pixel (kleiner = Inhalt groesser), je Verbindung gemerkt
     this.lastSent = { w: 0, h: 0 }; this.gate = new SizeGate({ settleMs: KB_SETTLE_MS });
+    this.quality = normalizeQuality(store.get('q.' + conn.id, 'auto'));   // Bildrate dieser Sitzung (Nachricht 31), je Verbindung gemerkt
     this.retry = 0; this.retryTimer = null; this.resizeTimer = null; this.connectTimer = null; this.toastTimer = null; this.zoomTimer = null;
     this.connectedAt = 0; this.connectStarted = 0; this.frameSeen = false;
     this.cursor = { ibeam: false };
@@ -476,6 +487,8 @@ export class RemoteSession extends Session {
       rowsTop: q('sv-rowsTop'), rowsBottom: q('sv-rowsBottom'), xfer: q('sv-xfer'), xferText: q('sv-xferText'), xferCancel: q('sv-xferCancel'),
     };
     renderIcons(root);
+    this.perfEl = document.createElement('div'); this.perfEl.className = 'sv-perf'; this.el.stage.appendChild(this.perfEl);
+    this.statusBar = new StatusBar(this.perfEl); this.statusBar.setQuality(this.quality); this.statusBar.show(S.perf);
     this.lay = new LayoutLog({ emit: (evt, d) => this.dbg(evt, d), parts: { app: $('#app'), stage: this.el.stage, topbar: this.el.topbar, dock: this.el.dock }, state: () => ({ kbOpen }), visible: LAYDEBUG });
     this.ro = new ResizeObserver(() => this.onStageResize());
     this.ro.observe(this.el.stage);
@@ -526,7 +539,7 @@ export class RemoteSession extends Session {
   /** Im Hintergrund (nicht sichtbar): Ansicht aus, keine Groessenmeldungen, Fensterleiste ruht, der Stream pausiert (Server kodiert nicht, Browser dekodiert nicht). */
   setVisible(on) {
     on = !!on;
-    this.visible = on; this.element.hidden = !on;
+    this.visible = on; this.element.hidden = !on; this.statusBar.setActive(on);
     this.applyPause(); this.applyAudio();
     if (on) {
       this.fitDisplay(); this.scheduleSize(80); if (this.W.available) this.pollWindows(); this.refreshAll();
@@ -581,13 +594,21 @@ export class RemoteSession extends Session {
     } catch (e) { this.toast(e.message, 4800); }
     this.updateAudioMenu();
   }
+  /** Bildrate dieser Sitzung waehlen ('auto' | '60' | '30' | 'eco'): merken, an den Server schicken, anzeigen. */
+  setQualityMode(id) {
+    id = normalizeQuality(id);
+    this.quality = id; store.set('q.' + this.conn.id, id);
+    if (this.client instanceof StreamClient) this.client.setQuality(id);
+    this.statusBar.setQuality(id); this.updateMenuLabels();
+    this.toast('Bildrate: ' + qualityOf(id).label, 1800);
+  }
   applyPause() { if (this.client instanceof StreamClient) this.client.setPaused(!this.visible || document.hidden); }
   refreshAll() { this.updateMenuLabels(); this.renderRows(); }
   dispose() {
     this.disposed = true; this.intentional = true;
     this.teardown();
     this.ro.disconnect(); this.lay.dispose();
-    clearTimeout(this.toastTimer); clearTimeout(this.zoomTimer);
+    clearTimeout(this.toastTimer); clearTimeout(this.zoomTimer); this.statusBar.dispose();
     this.password = null;
     this.unmount();
   }
@@ -721,6 +742,7 @@ export class RemoteSession extends Session {
       setTimeout(() => { if (!this.disposed && !this.intentional) this.start(); }, 0);
     };
     const display = client.getDisplay();
+    client.quality = this.quality; this.statusBar.attach(client);
     this.client = client; this.display = display; this.lastSent = { w, h }; this.gate = new SizeGate({ settleMs: KB_SETTLE_MS });
     this.lay.note('conn', { engine: 'stream' });
     this.el.display.appendChild(display.getElement());
@@ -1198,6 +1220,8 @@ export class RemoteSession extends Session {
     set('.mv-autokb', S.autoKb ? 'an' : 'aus');
     set('.mv-autopaste', S.autoPaste ? 'an' : 'aus');
     set('.mv-count', String(Sessions.count));
+    set('.mv-perf', S.perf ? 'an' : 'aus');
+    set('.mv-quality', qualityOf(this.quality).label);
     this.updateAudioMenu();
   }
   openMenu() { applyKbMode(); this.updateMenuLabels(); this.el.menu.hidden = false; this.el.scrim.hidden = false; this.setActOn('menu', true); }
@@ -1213,6 +1237,8 @@ export class RemoteSession extends Session {
       toast(S.kbResize === 'pan' ? 'Bild wird verschoben, die Auflösung bleibt' : 'Auflösung folgt der Tastatur', 2200);
       return;
     }
+    if (act === 'perf') { setPerf(!S.perf); return; }
+    if (act === 'quality') { this.setQualityMode(nextQuality(this.quality)); return; }
     if (['kbMode', 'autoKb', 'touchMode', 'autoPaste'].includes(act)) {
       if (act === 'kbMode') S.kbMode = S.kbMode === 'rich' ? 'normal' : S.kbMode === 'normal' ? 'direct' : 'rich';
       if (act === 'autoKb') S.autoKb = !S.autoKb;
@@ -1976,6 +2002,9 @@ export const remoteApi = {
   activateWindow: (id) => { const s = cur(); return s && s.activateWindow(id, s.W.mode === 'apps'); },
   toggleMode: () => cur() && cur().toggleMode(),
   openApps: () => cur() && openApps(cur()),
+  /** Statusleiste und Bildrate */
+  perfShown: () => S.perf, setPerf: (on) => setPerf(on),
+  quality: () => (cur() ? cur().quality : 'auto'), setQuality: (id) => cur() && cur().setQualityMode(id), qualities: QUALITIES,
   /** Sonstiges */
   reconnect: () => { const s = cur(); if (s) { s.retry = 0; if (s.hasCredentials()) s.start(); } },
   action: (name) => ACTIONS[name] && ACTIONS[name](cur()),

@@ -68,6 +68,10 @@ function viewMenu(deps) {
     { sep: true },
     { label: 'An Fenstergröße anpassen', icon: 'blank', run: () => R.fit() },
     { sep: true },
+    { label: 'Statusleiste', icon: R.perfShown() ? 'check' : 'blank', hint: R.perfShown() ? 'an' : 'aus', run: () => R.setPerf(!R.perfShown()) },
+    { label: 'Bildrate', icon: 'blank', hint: (R.qualities.find((q) => q.id === R.quality()) || R.qualities[0]).label,
+      sub: R.qualities.map((q) => ({ label: q.label, icon: R.quality() === q.id ? 'check' : 'blank', hint: q.id === 'auto' ? 'Standard' : '', run: () => R.setQuality(q.id) })) },
+    { sep: true },
     { label: w && w.maximized ? 'Fenster wiederherstellen' : 'Fenster maximieren', icon: 'blank', run: () => deps.toggleMax() },
     { label: document.fullscreenElement ? 'Vollbild beenden' : 'Vollbild', icon: 'blank', run: () => deps.fullscreen() },
   ];

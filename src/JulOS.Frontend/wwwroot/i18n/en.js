@@ -1256,7 +1256,7 @@ export default {
   "term.hostKeyAccepted": "New host key confirmed and saved ({fingerprint}).",
   "term.hostKeyNew": "New host key saved ({fingerprint}). It will be checked on every connection from now on.",
   "term.inputLabel": "Input to the terminal",
-  "term.inputPlaceholder": "Type text (Enter sends, Shift+Enter new line)",
+  "term.inputPlaceholder": "Type here (Enter sends)",
   "term.kbFollow": "Resolution follows",
   "term.kbPan": "Pan image",
   "term.keyAt": "At sign",

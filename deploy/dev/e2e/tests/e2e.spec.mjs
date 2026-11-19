@@ -334,9 +334,16 @@ test('9 VNC: verbinden (Passwort im Dialog der Sitzung), Bild, Klick und Taste e
 const PROG_CLAUDE = { name: 'E2E Claude', kind: 'terminal', host: SSH.host, port: Number(SSH.port), username: SSH.user, program: 'claude', workDir: '/tmp' };
 const PROG_CODEX = { name: 'E2E Codex', kind: 'terminal', host: SSH.host, port: Number(SSH.port), username: SSH.user, program: 'codex' };
 
+/** Räumt Verbindungen früherer Versuche weg (ein Wiederholungsversuch legt sie sonst doppelt an, und "Claude" fände zwei Kacheln). */
+async function dropProgramConnections(page) {
+  const list = (await (await page.request.get('/api/connections')).json()).connections;
+  for (const c of list.filter((x) => /^E2E (Claude|Codex)/.test(x.name))) await page.request.delete(`/api/connections/${c.id}`, { headers: API });
+}
+
 test('10 Programm-Sitzungen: Claude startet im Arbeitsverzeichnis, die Eingabeleiste sendet, Codex zeigt den Hinweis (nicht installiert)', async ({ browser }) => {
   const { context, page, errors } = await signedIn(browser);
   await context.addInitScript(() => localStorage.setItem('pd.termGl', 'false'));   // Text im DOM statt auf der WebGL-Fläche
+  await dropProgramConnections(page);
   for (const c of [PROG_CLAUDE, PROG_CODEX]) {
     const made = await page.request.post('/api/connections', { headers: API, data: c });
     expect(made.status(), c.name).toBe(200);
@@ -412,6 +419,7 @@ test('11 Programm-Kacheln am Handy: Symbol und Schnellstart "Claude" in den Dien
 test('12 Programm-Sitzung mit tmux: ohne tmux auf dem Ziel läuft eine normale Sitzung mit sichtbarem Hinweis', async ({ browser }) => {
   const { context, page, errors } = await signedIn(browser);
   await context.addInitScript(() => localStorage.setItem('pd.termGl', 'false'));
+  await dropProgramConnections(page);
   const made = await page.request.post('/api/connections', { headers: API, data: { ...PROG_CLAUDE, name: 'E2E Claude tmux', keepAlive: true } });
   expect(made.status()).toBe(200);
   expect((await made.json()).keepAlive).toBe(true);

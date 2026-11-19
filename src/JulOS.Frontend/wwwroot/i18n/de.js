@@ -1256,7 +1256,7 @@ export default {
   "term.hostKeyAccepted": "Neuer Host-Schlüssel bestätigt und gespeichert ({fingerprint}).",
   "term.hostKeyNew": "Neuer Host-Schlüssel gemerkt ({fingerprint}). Ab jetzt wird er bei jeder Verbindung geprüft.",
   "term.inputLabel": "Eingabe an das Terminal",
-  "term.inputPlaceholder": "Text eingeben (Enter sendet, Umschalt+Enter neue Zeile)",
+  "term.inputPlaceholder": "Eingabe (Enter sendet)",
   "term.kbFollow": "Auflösung folgt",
   "term.kbPan": "Bild verschieben",
   "term.keyAt": "At-Zeichen",

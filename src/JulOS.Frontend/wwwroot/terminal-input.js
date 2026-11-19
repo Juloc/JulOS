@@ -100,10 +100,12 @@ export class TerminalBar {
     this.smaller = this.button('term-tool txt', 'A−', t('term.fontSmaller'), true);
     this.larger = this.button('term-tool txt', 'A+', t('term.fontLarger'), true);
     this.hide = this.button('term-tool', ICON.down, t('term.barHide'));
-    tools.append(this.copyBtn, this.pasteBtn, this.smaller, this.larger, this.hide);
+    tools.append(this.copyBtn, this.pasteBtn, this.smaller, this.larger);
 
+    this.tools = tools;
+    this.keys.appendChild(tools);
     this.top = el('div', 'term-top');
-    this.top.append(this.keys, tools);
+    this.top.append(this.hide, this.keys);
     this.root.append(this.top, row);
 
     // Eingeklappt: nur ein kleiner Griff
@@ -151,6 +153,7 @@ export class TerminalBar {
       b.addEventListener('click', () => this.pressKey(spec));
       this.keys.appendChild(b);
     }
+    if (this.tools) this.keys.appendChild(this.tools);      // Kopieren, Einfuegen und Schrift stehen am Ende desselben Streifens (am Handy bleibt so die ganze Breite fuer Tasten)
   }
 
   /** Programm geaendert (der Server hat zum Beispiel auf die Shell zurueckgegriffen): andere Schnelltasten. */

@@ -39,7 +39,7 @@ export class TerminalSession extends RemoteSession {
       externalKeyboard: !HW_KB,
       onState: (state, info) => this.onViewState(view, state, info),
       onKeyUsed: () => this.consumeOnce(),
-      onTap: () => { if (!HW_KB && softKeyboard.auto() && !softKeyboard.isOpen()) softKeyboard.open(); else if (HW_KB) view.focusInput(); },
+      onTap: () => { if (!HW_KB && softKeyboard.auto() && !softKeyboard.isOpen()) softKeyboard.open(); else if (HW_KB) view.focusInput({ force: true }); },
       onAuthExpired: () => this.requestClose(t('term.authExpired'), 'auth'),
     });
     this.view = view;
@@ -117,7 +117,7 @@ export class TerminalSession extends RemoteSession {
   setK(k) { this.view?.zoom(k < this.k ? 1 : -1); }
   rememberProfile() {}
   setVisible(on) { super.setVisible(on); this.view?.setActive(!!on); }
-  focus() { if (HW_KB && !this.bar?.field.matches(':focus')) this.view?.focusInput(); }
+  focus() { if (HW_KB) this.view?.focusInput(); }
   blur() { this.view?.blur(); super.blur(); }
 
   /* ---------- Einfuegen: Text geht als Einfuegen ins Terminal (mit Klammer-Modus, wenn die Shell ihn kann) ---------- */

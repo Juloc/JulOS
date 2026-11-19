@@ -399,7 +399,11 @@ export class TerminalView {
   /** Tastatur an das Terminal (mit externer Bildschirmtastatur: nichts, die Seite verwaltet ihr Eingabefeld). */
   focus() { if (!this.opts.externalKeyboard) this.focusInput(); }
   /** Das Eingabefeld von xterm bekommt den Fokus (echte Tastatur, Einfuegen). */
-  focusInput() { try { this.term?.focus(); } catch { /* egal */ } }
+  focusInput({ force = false } = {}) {
+    // Der Fokus im Textfeld der Eingabeleiste wird nicht von Aktivierungen (Fenster nach vorn, Verbinden) weggenommen; ein Tippen ins Terminal (force) holt ihn
+    if (!force && this.host.parentElement?.querySelector('.term-bar textarea:focus')) return;
+    try { this.term?.focus(); } catch { /* egal */ }
+  }
   blur() { try { this.term?.blur(); } catch { /* egal */ } }
   get keyboardFocused() { return !!this.term && this.host.contains(document.activeElement); }
 
@@ -535,7 +539,7 @@ export class TerminalView {
       const c = this._cellAt(x, y), col = c.col + 1, row = c.row - t.buffer.active.viewportY + 1;
       this._sendText(this.sgrMouse ? `\x1b[<0;${col};${row}M\x1b[<0;${col};${row}m` : `\x1b[M${String.fromCharCode(32, 32 + col, 32 + row)}\x1b[M${String.fromCharCode(35, 32 + col, 32 + row)}`);
     }
-    if (this.opts.onTap) this.opts.onTap(); else this.focusInput();
+    if (this.opts.onTap) this.opts.onTap(); else this.focusInput({ force: true });
   }
 
   _menu(x, y, { all = true } = {}) {

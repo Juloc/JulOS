@@ -4,7 +4,7 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
-## [Unveröffentlicht]
+## [0.13.2] - 2026-11-20
 
 ### Sicherheit
 - **Sicherheits-Audit** (Stand 0.13.1, [docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md) neu geschrieben): 23 Funde (keiner kritisch oder hoch), Lieferketten-Tabelle (Hash, NuGet, Basisimage, vendored JavaScript), Empfehlungen für das Internet-Ziel mit Aufwand, Ablauf bei gestohlener Sitzung, verlorenem Handy und gekapertem Host.

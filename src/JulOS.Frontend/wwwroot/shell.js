@@ -4,6 +4,7 @@ import { hostDetail } from './hosts.js';
 import { createHostInfoStore } from './hostinfo.js';
 import { initHostPage } from './hostpage.js';
 import { initHostActionDialog } from './hostactions-dialog.js';
+import { createTaskStore } from './hosttasks.js';
 import { loadOrganisation, takeOverLocal, mergePlacements, setFolder, touch, move, folderName } from './folders.js';
 import { initFolderDialog } from './folder-dialog.js';
 import { parseQuickTarget, quickConnection, DEFAULT_PORT as QUICK_PORT } from './quick.js';
@@ -133,6 +134,7 @@ $('#setupSecretForm').addEventListener('submit', async (e) => {
 function showLogin(message = '') {
   closeAllSessions();
   hostInfo.clear();
+  tasks.clear();
   if (D) D.reset();
   if (M) M.reset();
   show('login'); setMsg($('#loginMsg'), message);
@@ -187,6 +189,7 @@ async function loadConnections() {
   if (D) D.connectionsChanged();
   if (M) M.connectionsChanged();
   await loadHosts();
+  tasks.load();                  // laufende und eben beendete Aktionen auf Hosts (auch nach einem Neuladen der Seite)
 }
 
 /** Die Hosts mit Zustand (online/offline, Agent, Dienste); fragt der Server nach, prueft er die Ports kurz (docs/HOSTS.md). Ein Fehler laesst die alte Liste stehen. */
@@ -564,7 +567,10 @@ Sessions.addEventListener('home', () => { if (!D) goHome(); });
 Sessions.addEventListener('switcher', () => { if (M) M.openSwitcher(); else goHome(); });
 
 const hostInfo = createHostInfoStore({ api, onChange: () => { if (D && D.hostInfoChanged) D.hostInfoChanged(); if (M && M.hostInfoChanged) M.hostInfoChanged(); } });
-const openHostAction = initHostActionDialog({ api, esc });
+// Hintergrund-Aufgaben auf Hosts (hosttasks.js): eine bestaetigte Aktion laeuft hier weiter, ohne etwas zu sperren; Leiste und Panel zeichnen Desktop und Handy
+const ui = () => (D || M);
+const tasks = createTaskStore({ api, onChange: () => ui() && ui().tasksChanged && ui().tasksChanged(), onFinish: (task) => ui() && ui().taskFinished && ui().taskFinished(task) });
+const openHostAction = initHostActionDialog({ api, esc, tasks, onStarted: (task) => ui() && ui().taskStarted && ui().taskStarted(task) });
 const hostPage = initHostPage({ state, api, esc, store: hostInfo, openAction: openHostAction, reloadHosts: loadHosts, origin: () => location.origin,
   snack: (text) => { if (M) M.snack(text); },
   installOverSsh: (conn, cmd) => { startDialog(conn, { prefill: cmd }); notice(t('shell.sshPrefilled', { name: conn.name })); } });
@@ -572,8 +578,8 @@ const hostPage = initHostPage({ state, api, esc, store: hostInfo, openAction: op
 const openHostInfo = (h, panel) => (D ? D.openHost(h, panel) : M && M.openHost(h, panel));
 const openAccount = initAccount({ api, setMsg });
 const openNetTools = initNetTools({ api, setMsg, connections: () => state.connections });
-if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), hostInfo: openHostInfo, hostPage, hostAction: openHostAction, info: hostInfo, signOut, home: goHome, account: openAccount, devices: openDevices, nettools: openNetTools });
-if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), hostInfo: openHostInfo, hostPage, hostAction: openHostAction, info: hostInfo, devices: openDevices, account: openAccount, nettools: openNetTools, signOut });
+if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), hostInfo: openHostInfo, hostPage, hostAction: openHostAction, info: hostInfo, tasks, signOut, home: goHome, account: openAccount, devices: openDevices, nettools: openNetTools });
+if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), hostInfo: openHostInfo, hostPage, hostAction: openHostAction, info: hostInfo, tasks, devices: openDevices, account: openAccount, nettools: openNetTools, signOut });
 
 /* ---------- Geraete und Sitzungen ---------- */
 function describeAgent(ua) {

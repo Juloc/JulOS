@@ -8,6 +8,9 @@ import { tileKind, KIND_KEY, withProgram } from './terminal-programs.js';
 import { favouriteList, recentList, filterByFolder, groupByFolder, folderIconSvg, folderName, setFavorite } from './folders.js';
 import { hostCardHtml, menuOpen } from './hostview.js';
 import { connectionState, dotClass as hostDot, stateText } from './hosts.js';
+import { barText, barPercent, barTone, chipText, panelHtml, finishNotice } from './hosttasks.js';
+import { jobFinal } from './hostactions.js';
+import { icon as huIcon, button as huButton } from './hostui.js';
 import { connLabels } from './conn-names.js';
 
 /* =====================================================================
@@ -111,6 +114,7 @@ function build() {
       <button type="button" class="mb m3-iconbtn m3-state" id="mSearchBtn" aria-label="${esc(t('mobile.searchServices'))}">${icon('search')}</button>
       <button type="button" class="mb avatar m3-state" id="mAvatar" aria-label="${esc(t('mobile.profile'))}"></button>
     </header>
+    <button type="button" class="m3-tasks m3-state" id="mTasks" hidden><span class="tt"></span><span class="tbar"><i></i></span></button>
     <div class="m3-stage" id="mStage">
       <section class="m3-page" id="pg-home" data-page="home" aria-label="${esc(t('mobile.home'))}"></section>
       <section class="m3-page" id="pg-services" data-page="services" aria-label="${esc(t('mobile.services'))}" hidden></section>
@@ -120,6 +124,10 @@ function build() {
       <section class="m3-page" id="pg-profile" data-page="profile" aria-label="${esc(t('mobile.profile'))}" hidden></section>
     </div>
     <nav class="m3-nav" id="mNav" aria-label="${esc(t('mobile.mainNav'))}"></nav>
+    <section class="m3-taskpage" id="mTaskPage" role="region" aria-label="${esc(t('hosttask.menuTitle'))}" hidden>
+      <header><button type="button" class="mb m3-iconbtn m3-state" id="mTaskBack" aria-label="${esc(t('common.back'))}">${huIcon('back')}</button><h2 id="mTaskTitle"></h2></header>
+      <div class="tpb" id="mTaskBody"></div>
+    </section>
     <div class="m3-snack" id="mSnack" role="status" aria-live="polite"><span class="st" id="mSnackText"></span><button type="button" class="mb m3-state" id="mSnackAct" hidden></button></div>`;
   root.hidden = true;
 
@@ -133,6 +141,7 @@ function build() {
     bs[(i + (e.key === 'ArrowRight' ? 1 : bs.length - 1)) % bs.length].focus(); e.preventDefault();
   });
   $('#mSearchBtn').addEventListener('click', () => go('services', { focusSearch: true }));
+  wireTasks();
   $('#mAvatar').addEventListener('click', () => go('profile'));
   for (const pg of $$('.m3-page')) {
     pg.addEventListener('scroll', () => {
@@ -173,7 +182,7 @@ export function setShown(on) {
     clearTimeout(overviewTimer);
   }
 }
-export function reset() { if (filesApp) { filesApp.destroy(); filesApp = null; } mods = { caddy: false, ddns: false, services: false }; modsPromise = null; srvActs = []; srvActsAt = 0; import('./heimnetz.js').then((h) => h.resetHeimnetz()); overview = null; overviewOk = null; user = ''; current = 'home'; view.q = ''; view.kind = 'all'; setShown(false); if (root) { root.hidden = true; root.removeAttribute('style'); } }
+export function reset() { closeTaskPage(); renderTasks(); if (filesApp) { filesApp.destroy(); filesApp = null; } mods = { caddy: false, ddns: false, services: false }; modsPromise = null; srvActs = []; srvActsAt = 0; import('./heimnetz.js').then((h) => h.resetHeimnetz()); overview = null; overviewOk = null; user = ''; current = 'home'; view.q = ''; view.kind = 'all'; setShown(false); if (root) { root.hidden = true; root.removeAttribute('style'); } }
 
 export function userChanged(name, message) {
   user = name;
@@ -183,6 +192,63 @@ export function userChanged(name, message) {
   renderAll();
 }
 export function connectionsChanged() { if (root) { renderAll(); if (filesApp) filesApp.refreshPlaces(); } }
+/* ---------- Hintergrund-Aufgaben (hosttasks.js) ----------
+ * Eine laufende Aktion sperrt nichts: die Leiste unter der Kopfzeile zeigt Text und Balken, die Seite (eine Ebene mit Zurueck-Pfeil, kein Dialog) zeigt Live-Ausgabe, Fehlerzusammenfassung
+ * und Protokoll. Sie zu verlassen bricht die Aktion nicht ab. Mehrere Aufgaben stehen als Liste. */
+let taskJob = null, taskPageOpen = false, taskSig = '';
+const taskList = () => (ctx && ctx.tasks ? ctx.tasks.list() : []);
+function renderTasks() {
+  const b = $('#mTasks'); if (!b) return;
+  const list = taskList();
+  b.hidden = !list.length;
+  if (list.length) {
+    const pct = barPercent(list), running = list.some((x) => !jobFinal(x));
+    b.dataset.tone = barTone(list); b.querySelector('.tt').textContent = barText(list);
+    const bar = b.querySelector('.tbar'); bar.hidden = !running; bar.classList.toggle('ind', pct === null); bar.firstElementChild.style.width = pct === null ? '' : pct + '%';
+  }
+  if (taskPageOpen) renderTaskPage();
+}
+function renderTaskPage() {
+  const page = $('#mTaskPage'), body = $('#mTaskBody');
+  const list = taskList(), task = taskJob && ctx.tasks.get(taskJob);
+  if (taskJob && !task) taskJob = null;
+  const sig = task ? [task.state, task.progress, task.done, task.total, task.tail.length, task.tail[task.tail.length - 1] || '', task.error, task.result ? 1 : 0].join('|') : 'list:' + list.map((x) => x.job + x.state + x.done).join(',');
+  if (sig === taskSig && !page.hidden) return;
+  taskSig = sig;
+  const open = [...body.querySelectorAll('details')].map((d) => d.open), top = body.scrollTop;
+  const live = body.querySelector('[data-live]'), atEnd = !live || live.scrollTop + live.clientHeight >= live.scrollHeight - 8;
+  $('#mTaskTitle').textContent = task ? chipText(task) : t('hosttask.menuTitle');
+  body.innerHTML = task ? panelHtml(task, esc, hosts().find((h) => h.id === task.host.id) || null)
+    : `<ul class="hu-list">${list.map((x) => `<li><div class="hu-lt"><span class="hu-ln">${esc(chipText(x))}</span></div>${huButton(t('hosttask.show'), esc, { tone: 'tonal', sm: true, data: { 'task-open': x.job } })}</li>`).join('')}</ul>`
+      + (list.some(jobFinal) ? `<div class="hu-acts">${huButton(t('hosttask.clearDone'), esc, { tone: 'text', sm: true, data: { 'task-clear': '1' } })}</div>` : '');
+  body.querySelectorAll('details').forEach((d, i) => { d.open = !!open[i]; });
+  body.scrollTop = top;
+  const nl = body.querySelector('[data-live]'); if (nl && atEnd) nl.scrollTop = nl.scrollHeight;
+  page.hidden = false;
+}
+function openTaskPage(job) { taskJob = job || null; taskPageOpen = true; taskSig = ''; renderTaskPage(); if (job) ctx.tasks.markSeen(job); $('#mTaskBack').focus(); }
+function closeTaskPage() { taskPageOpen = false; taskJob = null; const p = $('#mTaskPage'); if (p) p.hidden = true; }
+function wireTasks() {
+  $('#mTasks').addEventListener('click', () => { const l = taskList(); openTaskPage(l.length === 1 ? l[0].job : null); });
+  $('#mTaskBack').addEventListener('click', () => { if (taskJob && taskList().length > 1) { taskJob = null; taskSig = ''; renderTaskPage(); } else closeTaskPage(); });
+  $('#mTaskBody').addEventListener('click', (e) => {
+    const open = e.target.closest('[data-task-open]'), clr = e.target.closest('[data-task-clear]'), act = e.target.closest('[data-task-act]');
+    if (open) openTaskPage(open.dataset.taskOpen);
+    else if (clr) { ctx.tasks.dismissFinished(); if (!taskList().length) closeTaskPage(); }
+    else if (act && act.dataset.taskAct === 'repair' && taskJob) {
+      const task = ctx.tasks.get(taskJob), h = task && hosts().find((x) => x.id === task.host.id);
+      if (h) ctx.hostAction(h, 'updates.repair', null, { onDone: () => ctx.info.load(h, { fresh: true }) });
+    }
+  });
+  window.addEventListener('popstate', () => closeTaskPage());
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && taskPageOpen) closeTaskPage(); });
+}
+/** Zustand der Aufgaben hat sich geaendert (shell.js) */
+export function tasksChanged() { if (root) renderTasks(); }
+/** Eine Aufgabe ist fertig: Hinweis mit Ergebnis und Weg zur Seite */
+export function taskFinished(task) { if (!root) return; const n = finishNotice(task); snack(n.detail ? `${n.text} – ${n.detail}` : n.text, { label: t('hosttask.show'), run: () => openTaskPage(task.job) }); }
+export function taskStarted(task) { if (root) snack(t('hosttask.started', { action: chipText(task) }), { label: t('hosttask.show'), run: () => openTaskPage(task.job) }); }
+
 /** Die Seite eines Hosts (hostpage.js) mit Zurueck-Pfeil; der Pfeil geht einen Schritt zurueck (zur Liste der Hosts) */
 function renderHostPage() {
   const h = hosts().find((x) => x.id === hostPageId);

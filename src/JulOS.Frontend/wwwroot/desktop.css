@@ -343,6 +343,26 @@ html.desktop .sv .sv-overlay .box { border-radius: 20px; background: var(--dk-ov
 .dk-toast { position: absolute; left: 50%; bottom: 100px; transform: translateX(-50%); z-index: 7000; max-width: min(560px, 80vw); padding: 10px 18px; border-radius: 14px; background: var(--dk-tip-bg); color: var(--dk-tip-fg);
   box-shadow: 0 10px 30px rgba(var(--dk-shw), .35); animation: dkpop .18s ease-out; }
 
+/* ---------- Hintergrund-Aufgaben (hosttasks.js): Eintrag in der Leiste, Panel als Fenster, Hinweis mit Taste ---------- */
+.dk-bar .dk-tasks { position: relative; gap: 8px; height: 26px; max-width: 380px; padding: 0 12px; border-radius: 99px; overflow: hidden; background: var(--dk-soft); color: var(--dk-accent-text); font-size: 12.5px; font-weight: 600; }
+.dk-bar .dk-tasks[hidden] { display: none; }
+.dk-bar .dk-tasks[data-tone="ok"] { background: var(--dk-ok-bg); color: var(--dk-ok-text); }
+.dk-bar .dk-tasks[data-tone="bad"] { background: var(--dk-bad-bg); color: var(--dk-bad-text); }
+.dk-tasks .dk-tt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-tasks .dk-tbar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--dk-line2); }
+.dk-tasks .dk-tbar[hidden] { display: none; }
+.dk-tasks .dk-tbar i { display: block; height: 100%; width: 0; background: currentColor; transition: width .4s ease; }
+.dk-tasks .dk-tbar.ind i { width: 35%; animation: dktask 1.4s ease-in-out infinite; }
+@keyframes dktask { from { margin-left: -35%; } to { margin-left: 100%; } }
+.dk-taskwin .dk-wb { background: var(--dk-glass-strong); }
+.dk-tpb { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+.dk-tpb .hu-live { max-height: 240px; }
+.dk-tpb .tp-hint { margin: 0; }
+.dk-toast.act { display: flex; align-items: center; gap: 14px; }
+.dk-toast .dk-toast-act { height: 30px; padding: 0 14px; border-radius: 99px; border: 1px solid currentColor; background: transparent; color: inherit; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.dk-toast .dk-toast-act:hover { background: color-mix(in oklab, currentColor 14%, transparent); }
+@media (prefers-reduced-motion: reduce) { .dk-tasks .dk-tbar.ind i { animation: none; width: 100%; opacity: .45; } }
+
 @media (max-width: 1180px) { .dk-sys { grid-template-columns: repeat(2, 1fr); } }
 @media (prefers-reduced-motion: reduce) { .dk-win, .dk-menu, .dk-launch, .dk-toast { animation: none; } }
 

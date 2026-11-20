@@ -189,3 +189,51 @@ test('Host-Details (Seite): Tasten oeffnen nur den Bestaetigungsdialog; Stufe un
   await new Promise((r) => setTimeout(r, 30));
   assert.ok(!els.get('#hostInfoBody [data-panel="updates"]').innerHTML.includes('data-hact="'));
 });
+
+test('Aktionsdialog mit Hintergrund-Aufgaben: nach "Ausfuehren" schliesst er sich, die Aktion wird zur Aufgabe, nichts wird im Dialog abgefragt; full geht nur mit dem Haken mit', async () => {
+  const els = setupDom();
+  const { initHostActionDialog } = await import('../../src/JulOS.Frontend/wwwroot/hostactions-dialog.js?t=tasks1');
+  const calls = [], added = [], started = [];
+  const api = async (path, o = {}) => {
+    calls.push([o.method || 'GET', path, o.body]);
+    if (path.endsWith('/prepare')) return { token: 'T', expiresIn: 60, action: 'updates.install', target: 'all', targetName: 'all', host: 'Server', typeToConfirm: 'srv-01', warnings: ['kept_back'], readOnly: false,
+      options: { proxmox: false, fullChoice: true, full: false, keptBack: ['linux-image-amd64'], removals: 0 } };
+    if (path.endsWith('/run')) return { job: 'J1', state: 'running' };
+    throw new Error('der Dialog darf den Auftrag nicht selbst abfragen: ' + path);
+  };
+  const tasks = { add: (h, s, c, o) => { added.push([h.id, s.job, c.action, typeof o.onDone]); return { job: s.job }; } };
+  const open = initHostActionDialog({ api, esc, tasks, onStarted: (t) => started.push(t.job) });
+  const closed = open(host, 'updates.install', 'all', { onDone: () => {} });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.match(els.get('#hostActBody').innerHTML, /full-upgrade/);
+  els.get('#hostActTyped').value = 'srv-01'; els.get('#hostActTyped').fire('input');
+  const full = els.get('#hostActFull');
+  assert.ok(full || els.get('#hostActBody').innerHTML.includes('hostActFull'));
+  await els.get('#hostActConfirm').onclick();
+  assert.deepEqual(calls[1], ['POST', '/api/hosts/h1/actions/run', { token: 'T', action: 'updates.install', target: 'all', typed: 'srv-01' }]);   // ohne Haken kein full
+  assert.deepEqual(added, [['h1', 'J1', 'updates.install', 'function']]);
+  assert.deepEqual(started, ['J1']);
+  assert.equal(els.get('#hostActDlg').open, false);                                      // das Blatt ist zu: nichts bleibt gesperrt
+  await closed;
+  assert.equal(calls.length, 2);                                                         // nur prepare und run
+});
+
+test('Aktionsdialog: Logs (nur lesen) zeigen ihr Ergebnis weiter im Dialog, auch wenn es Hintergrund-Aufgaben gibt', async () => {
+  const els = setupDom();
+  const { initHostActionDialog } = await import('../../src/JulOS.Frontend/wwwroot/hostactions-dialog.js?t=tasks2');
+  const added = [];
+  const api = async (path) => {
+    if (path.endsWith('/prepare')) return { token: 'T', expiresIn: 60, action: 'logs.unit', target: 'nginx.service', host: 'Server', warnings: [], readOnly: true };
+    if (path.endsWith('/run')) return { job: 'L1' };
+    return { job: 'L1', action: 'logs.unit', state: 'ok', result: { ok: true, lines: ['zeile eins'] } };
+  };
+  const open = initHostActionDialog({ api, esc, tasks: { add: () => added.push(1) } });
+  const closed = open(host, 'logs.unit', 'nginx.service');
+  await new Promise((r) => setTimeout(r, 20));
+  await els.get('#hostActConfirm').onclick();
+  for (let i = 0; i < 30 && !/zeile eins/.test(els.get('#hostActBody').innerHTML); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.match(els.get('#hostActBody').innerHTML, /zeile eins/);
+  assert.deepEqual(added, []);
+  els.get('#hostActDlg').close();
+  await closed;
+});

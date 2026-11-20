@@ -734,5 +734,5 @@ test('18 Zweiter Faktor: bei "immer fragen" öffnet eine Aktion das Sheet, ein f
   } finally {
     await context.close();                                                // der Stack ist wegwerf: "immer fragen" bleibt bis zum naechsten frischen Lauf
   }
-  expect(errors.filter((e) => !/403/.test(e))).toEqual([]);
+  expect(errors.filter((e) => !/401|403/.test(e))).toEqual([]);          // der falsche Code (401) und die Aufforderung (403) stehen als Konsolenmeldung des Browsers
 });

@@ -26,7 +26,7 @@ public sealed partial class AgentRelease(string? directory = null)
     private static partial Regex VersionLine();
 
     /// <summary>Die Dateien, die der Server fuer die Ziel-Maschine ausliefert (GET /agent-files/&lt;Name&gt;); nichts anderes aus dem Ordner.</summary>
-    public static readonly string[] Files = ["julos-agent.py", "julos-agent-helper.py", "julos-clip.py", "install-linux-agent.sh", "install-host-agent.sh"];
+    public static readonly string[] Files = ["julos-agent.py", "julos-agent-helper.py", "julos-clip.py", "install-agent.sh", "install-linux-agent.sh", "install-host-agent.sh"];
 
     /// <summary>Der Name der Pruefsummen-Datei (<c>sha256sum</c>-Format), die der Host-Installer gegen seinen Download prueft.</summary>
     public const string SumsName = "SHA256SUMS";

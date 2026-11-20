@@ -3,7 +3,7 @@
 The server never talks to the desktop directly for window management. A small **agent** runs inside the graphical session
 of the remote machine and answers a tiny API (windows, apps, mode, photo/file/clipboard transfer). The server proxies it to the browser
 (`/api/agent/*`, `/api/upload*`, `/api/clipboard/pull`, only for a valid session, see below). The Linux agent (`tools/julos-agent.py`) is the
-reference implementation; since 0.5.0 it also has a **host mode** for machines without a desktop (system values, updates, disk health, services, Docker; since 0.6.0 also confirmed actions), see [HOST-AGENT.md](HOST-AGENT.md). A Windows agent is planned and has to offer the same requests (see [Windows agent](#windows-agent-design-notes)).
+reference implementation; since 0.5.0 it also has a **host mode** for machines without a desktop (system values, updates, disk health, services, Docker; since 0.6.0 also confirmed actions), and since 0.7.0 the **desktop agent answers the host requests too** (one agent per machine), see [HOST-AGENT.md](HOST-AGENT.md). A Windows agent is planned and has to offer the same requests (see [Windows agent](#windows-agent-design-notes)).
 
 ## Transports
 
@@ -41,7 +41,7 @@ bash install-linux-agent.sh --server https://SERVER --code ABCDE-FGHIJ
   server stores only its SHA-256, together with the host id. A new enrolment replaces the token of that host.
 - **Agent entfernen** (`DELETE /api/hosts/{id}/agent`) deletes the row: the token is dead at once and a running link is closed. Deleting the host does the same (a host with connections cannot be deleted); deleting a connection leaves the agent alone.
   On the machine, `julos-agent.py --forget` deletes the stored token.
-- `GET /api/hosts` (session) lists the user's hosts; each carries its agent as `{online, lastSeen, version, platform, outdated, latest?, updateAvailable, canUpdate, autoUpdate}` (absent when none is enrolled) plus `hostname` and `os` as the agent reported them. `latest` is the version this server ships, see [Updating the agent](#updating-the-agent).
+- `GET /api/hosts` (session) lists the user's hosts; each carries its agent as `{online, lastSeen, version, platform, outdated, latest?, updateAvailable, canUpdate, autoUpdate, kind, caps, allow, control, hostSupport}` (absent when none is enrolled; the last five are described in [HOST-AGENT.md](HOST-AGENT.md)) plus `hostname` and `os` as the agent reported them. `latest` is the version this server ships, see [Updating the agent](#updating-the-agent).
 - The agent refuses plain `http://` servers (the token would travel in the clear) except `localhost`; `--allow-http` is only for the test instance.
 
 ## The link (WebSocket `/api/agent-link`)
@@ -55,7 +55,7 @@ Text frames from the agent are limited to 1 MB; larger frames close the link. Re
 
 | Direction | Message | Meaning |
 | --- | --- | --- |
-| agent → server | `{"t":"hello","agent":"0.5.0","platform":"linux-x11","api":1,"hostname":"…","os":"…"}` | first message, within 10 s; `hostname` and `os` are optional display values (up to 64 characters of letters, digits, space and `. - _ + / ( ) ,`, else ignored). A host-mode agent sends `"platform":"linux-host"` plus `"caps":["sysinfo","updates","services","docker"]` (only these words are kept) and `"allow":["updates","reboot"]` (write rights it allows locally; only these words) |
+| agent → server | `{"t":"hello","agent":"0.5.0","platform":"linux-x11","api":1,"hostname":"…","os":"…"}` | first message, within 10 s; `hostname` and `os` are optional display values (up to 64 characters of letters, digits, space and `. - _ + / ( ) ,`, else ignored). `caps` (agents from 0.5.0, the desktop agent from 0.7.0) names what the agent can: `desktop`, `host` and the host abilities `sysinfo`, `updates`, `services`, `docker` (only these words are kept, each once); `allow` lists the write rights it allows locally (only `updates`, `reboot`, `services`, `docker`, `logs`). A **host-mode agent** sends `"platform":"linux-host"` and `"caps":["host","sysinfo",...]`; a **desktop agent 0.7.0** keeps `"platform":"linux-x11"` and sends `"caps":["desktop","host","sysinfo","updates",...]` and `"allow"`, and answers the `/v1/host/*` requests ([HOST-AGENT.md](HOST-AGENT.md)). Older agents send fewer words (an old desktop agent none): the server adds `desktop` (platform not `-host`) and `host` (any host ability), and shows `hostSupport: update` for a desktop agent before 0.7.0. The server asks and shows by these words, never by the platform name |
 | server → agent | `{"t":"welcome","server":"0.5.0"}` or `{"t":"bye","reason":"agent_outdated"}` + close | agents older than `AgentLinks.MinAgentVersion` are refused |
 | both | `{"t":"hb"}` | the agent sends one every 20 s; the server closes a link that is silent for 75 s; the server also pings every 30 s |
 | server → agent | `{"t":"req","id":7,"method":"GET","path":"/v1/windows","body":{…}}` | one of the v1 requests below, **fixed paths only** |

@@ -523,6 +523,39 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(helper.read_permissions(p, trusted_uids=(me,)), set())
         self.assertEqual(helper.PERMISSIONS_FILE, "/etc/julos-agent/permissions")
 
+    def test_a_silent_or_dripping_client_does_not_hold_the_helper(self):
+        """Die Socket-Einheit erlaubt nur wenige gleichzeitige Verbindungen: wer nichts oder nur ein Byte je Sekunde sendet, darf sie nicht ewig belegen."""
+        import time
+        for drip in (False, True):
+            a, b = socket.socketpair()
+            stop = threading.Event()
+
+            def dripper(conn=b):
+                while not stop.is_set():
+                    try:
+                        conn.send(b" ")
+                    except OSError:
+                        return
+                    stop.wait(0.05)
+            t = threading.Thread(target=dripper, daemon=True)
+            if drip:
+                t.start()
+            out = io.BytesIO()
+            started = time.monotonic()
+            helper.serve(a.makefile("rb"), out, self.make(), read_timeout=0.4)
+            stop.set()
+            self.assertLess(time.monotonic() - started, 2.0)
+            self.assertEqual(json.loads(out.getvalue())["r"]["code"], "invalid_request")
+            self.assertEqual(self.calls, [])                        # nichts wurde ausgefuehrt
+            a.close(); b.close()
+        # eine vollstaendige Zeile geht weiter normal durch (auch wenn sie in Stuecken kommt)
+        a, b = socket.socketpair()
+        b.send(b'{"verb":"apt.re'); threading.Timer(0.1, lambda: b.send(b'fresh"}\n')).start()
+        out = io.BytesIO()
+        helper.serve(a.makefile("rb"), out, self.make(), read_timeout=3)
+        self.assertTrue(json.loads(out.getvalue().splitlines()[-1])["r"]["ok"])
+        a.close(); b.close()
+
     def test_serve_reads_one_line_answers_in_lines_and_survives_a_closed_reader(self):
         h = self.make()
         out = io.BytesIO()

@@ -79,7 +79,23 @@ export function updatesLine(resp) {
 
 const CAP_LABEL = { sysinfo: tk('hostinfo.capSysinfo'), updates: tk('hostinfo.capUpdates'), services: tk('hostinfo.capServices'), docker: tk('hostinfo.capDocker') };
 /** "Host-Agent" oder "Desktop-Agent"; '' ohne Agent */
-export const agentModeText = (h) => (!h || !h.agent ? '' : h.agent.kind === 'host' ? t('hostinfo.modeHost') : t('hostinfo.modeDesktop'));
+/**
+ * Kann der Agent die Host-Funktionen (Systemwerte, Updates, Aktionen)? 'yes' | 'update' (alter Desktop-Agent vor 0.7.0: liefert noch keine Systemwerte, das Selbst-Update bringt sie) | 'none' (verbunden, aber nichts davon, zum Beispiel
+ * kein Linux) | 'unknown' (nicht verbunden). Massgeblich ist das Feld hostSupport des Servers, sonst das Wort "host" in caps; der Name der Plattform zaehlt nicht (nur ein Host-Agent ohne Woerter gilt als 'yes').
+ */
+export function hostSupport(a) {
+  if (!a) return 'unknown';
+  if (typeof a.hostSupport === 'string') return a.hostSupport;
+  if (Array.isArray(a.caps) && (a.caps.includes('host') || a.caps.some((c) => CAP_LABEL[c]))) return 'yes';       // der Server ergaenzt "host", sobald eine Lese-Faehigkeit da ist
+  return a.kind === 'host' ? 'yes' : (a.online ? 'update' : 'unknown');
+}
+/** Art des Agenten nach seinen Woertern: Desktop und Host zugleich (Agent 0.7.0 und neuer), nur Host oder nur Desktop */
+export function agentModeText(h) {
+  const a = h && h.agent; if (!a) return '';
+  const caps = Array.isArray(a.caps) ? a.caps : [];
+  const host = hostSupport(a) === 'yes', desktop = caps.includes('desktop') || (a.kind !== 'host' && !host);
+  return host && desktop ? t('hostinfo.modeBoth') : host ? t('hostinfo.modeHost') : t('hostinfo.modeDesktop');
+}
 /** Faehigkeiten, soweit gemeldet ("Systemwerte, Updates, Dienste, Docker"); der Server nennt sie nur fuer verbundene Agenten */
 export const capsText = (h) => ((h && h.agent && Array.isArray(h.agent.caps) ? h.agent.caps : []).filter((c) => CAP_LABEL[c]).map((c) => t(CAP_LABEL[c])).join(', '));
 /** Eine Zeile zum Agenten: Modus und Faehigkeiten (der Satz zu Verbindung und Version steht in hosts.js agentSummary) */
@@ -89,7 +105,7 @@ export function agentDetail(h) {
 }
 
 /** Hat der Server fuer diesen Host etwas zu lesen? Nur ein verbundener Agent mit gemeldeten Faehigkeiten. */
-export const wantsInfo = (h) => !!(h && h.agent && h.agent.online && Array.isArray(h.agent.caps) && h.agent.caps.length);
+export const wantsInfo = (h) => !!(h && h.agent && h.agent.online && hostSupport(h.agent) === 'yes' && Array.isArray(h.agent.caps) && h.agent.caps.some((c) => CAP_LABEL[c]));
 
 /* ---------- Fehler und Zustaende ---------- */
 const ERR = {

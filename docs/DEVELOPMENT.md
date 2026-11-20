@@ -24,7 +24,7 @@ The default test instance shares a folder between server and desktop, so it uses
 
 1. start it, set up a throwaway account, add a desktop connection to `rdp-target` (it lands on your default host), connect once (this starts the agent in socket mode);
 2. in the host dialog (Hosts view, edit the host) choose **Agent einrichten**; in the desktop container, as the desktop user and with `DISPLAY=:10`, download the files from `http://<server>:8080/agent-files/` and run
-   `bash install-linux-agent.sh --server http://<server>:8080 --code CODE --allow-http` (`--allow-http` is only for this plain-HTTP test network);
+   `bash install-linux-agent.sh --server http://<server>:8080 --code CODE --allow-http` (it forwards to `install-agent.sh --desktop`; as the desktop user, no root needed without `--allow`) (`--allow-http` is only for this plain-HTTP test network);
 3. reconnect in the browser: the window bar, the launcher, the photo button and "Bild aus der VM holen" now work over the link; the host dialog shows **Agent verbunden**.
 
 `AgentLinkTests` (enrolment, tokens, routing, transfers with a fake agent in memory) run with `deploy/dev/test.sh`.
@@ -201,7 +201,10 @@ dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj    # 
 | `JULOS_ALLOWED_HOSTS` | optional comma-separated list of hosts the signed-in user may connect to; empty means any host the server can reach |
 | `JULOS_AGENT_SOCKET` | Unix socket of the agent on the same machine, default `/uploads/.agent/agent.sock` (agents on other machines connect outbound, no setting needed; see AGENT_API.md) |
 | `JULOS_UPLOAD_DIR` | shared folder for photo uploads, default `/uploads`; its disk is the one the system overview shows |
-| `JULOS_FILES_ROOT` | the one folder the read-only file browser shows, default `JULOS_UPLOAD_DIR`; `off` disables the file browser |
+| `JULOS_FILES_ROOT` | the one folder the read-only shared-folder place of the Files app shows, default `JULOS_UPLOAD_DIR`; `off` disables that place |
+| `JULOS_FILES_WRITE` | `on` allows writing on hosts over SFTP (upload, rename, move, copy, delete, new folder); default and anything else `off` (reading stays on), see [FILES.md](FILES.md) |
+| `JULOS_FILES_MAX_MB` | largest file and largest operation of the Files app, default 2048 (1 to 65536) |
+| `JULOS_FILES_MAX_SESSIONS` | open SFTP connections per user, default 4 (1 to 16); an unused one closes after 60 s |
 | `JULOS_SERVICES`, `JULOS_CADDY`, `JULOS_DDNS` | `off` (default), `read` or `control` (Caddy has no `control` yet): the optional modules; their other settings (`JULOS_SERVICES_HOSTS`, `JULOS_CADDYFILE`, `JULOS_CADDY_ADMIN_URL`, `JULOS_CADDY_ADMIN_AUTH_FILE`, `JULOS_CADDY_TLS_CONNECT`, `JULOS_CADDY_LOG_FILE`, `JULOS_DDNS_*`) are in [MODULES.md](MODULES.md) |
 | `JULOS_NETTOOLS` | `off` switches the network tools (ping, DNS, port test) off; default on, see [ARCHITECTURE.md](ARCHITECTURE.md) |
 | `JULOS_SETUP_CODE` | optional fixed setup code (otherwise a random one is logged while no account exists) |

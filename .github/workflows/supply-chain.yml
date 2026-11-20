@@ -1,0 +1,32 @@
+name: supply-chain
+
+# Woechentlich, auch ohne Code-Aenderung: neue Schwachstellen in NuGet-Paketen (direkt und indirekt) kommen erst Wochen nach dem Release ans Licht.
+# Schlaegt fehl, sobald ein Paket eine bekannte Schwachstelle hat (die Liste steht in der Zusammenfassung). Veraltete Pakete werden nur gemeldet.
+on:
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  nuget:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          global-json-file: global.json
+      - name: Schwachstellen und veraltete Pakete
+        run: |
+          dotnet restore JulOS.slnx
+          dotnet list JulOS.slnx package --vulnerable --include-transitive 2>&1 | tee vulnerable.txt
+          dotnet list JulOS.slnx package --outdated 2>&1 | tee outdated.txt
+          {
+            echo '### NuGet-Schwachstellen'; echo '```'; cat vulnerable.txt; echo '```'
+            echo '### Veraltete direkte Pakete'; echo '```'; cat outdated.txt; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if grep -q 'has the following vulnerable packages' vulnerable.txt; then
+            echo "::error::Pakete mit bekannten Schwachstellen (siehe Zusammenfassung)"; exit 1
+          fi

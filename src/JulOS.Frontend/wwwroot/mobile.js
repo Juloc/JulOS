@@ -33,6 +33,7 @@ const readStore = (k, d) => { try { const v = localStorage.getItem('pd.' + k); r
 /* ---------- Symbole: die vorhandenen aus app.js, dazu die wenigen neuen (Material, 24 px, gefuellt) ---------- */
 const X = {
   home: 'M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z',
+  folder: 'M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z',
   dns: 'M20 13H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 19c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM20 3H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1V4c0-.55-.45-1-1-1zM7 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z',
   person: 'M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z',
   search: 'M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z',
@@ -62,6 +63,7 @@ const LOGO = `<svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient 
 const DEST = [
   { id: 'home', label: tk('mobile.home'), ic: 'home' },
   { id: 'services', label: tk('mobile.services'), ic: 'apps', title: tk('mobile.services') },
+  { id: 'files', label: tk('mobile.files'), ic: 'folder', title: tk('mobile.files') },
   { id: 'server', label: tk('mobile.hosts'), ic: 'dns', title: tk('mobile.hosts') },
   { id: 'profile', label: tk('mobile.profile'), ic: 'person', title: tk('mobile.profile') },
   { id: 'host', hidden: true, title: tk('mobile.hosts') },        // die Seite eines Hosts: gehoert zu Hosts, steht nicht in der Leiste
@@ -112,6 +114,7 @@ function build() {
     <div class="m3-stage" id="mStage">
       <section class="m3-page" id="pg-home" data-page="home" aria-label="${esc(t('mobile.home'))}"></section>
       <section class="m3-page" id="pg-services" data-page="services" aria-label="${esc(t('mobile.services'))}" hidden></section>
+      <section class="m3-page" id="pg-files" data-page="files" aria-label="${esc(t('mobile.files'))}" hidden></section>
       <section class="m3-page" id="pg-server" data-page="server" aria-label="${esc(t('mobile.server'))}" hidden></section>
       <section class="m3-page" id="pg-host" data-page="host" aria-label="${esc(t('mobile.hosts'))}" hidden></section>
       <section class="m3-page" id="pg-profile" data-page="profile" aria-label="${esc(t('mobile.profile'))}" hidden></section>
@@ -170,7 +173,7 @@ export function setShown(on) {
     clearTimeout(overviewTimer);
   }
 }
-export function reset() { mods = { caddy: false, ddns: false, services: false }; modsPromise = null; srvActs = []; srvActsAt = 0; import('./heimnetz.js').then((h) => h.resetHeimnetz()); overview = null; overviewOk = null; user = ''; current = 'home'; view.q = ''; view.kind = 'all'; setShown(false); if (root) { root.hidden = true; root.removeAttribute('style'); } }
+export function reset() { if (filesApp) { filesApp.destroy(); filesApp = null; } mods = { caddy: false, ddns: false, services: false }; modsPromise = null; srvActs = []; srvActsAt = 0; import('./heimnetz.js').then((h) => h.resetHeimnetz()); overview = null; overviewOk = null; user = ''; current = 'home'; view.q = ''; view.kind = 'all'; setShown(false); if (root) { root.hidden = true; root.removeAttribute('style'); } }
 
 export function userChanged(name, message) {
   user = name;
@@ -179,7 +182,7 @@ export function userChanged(name, message) {
   if (message) snack(message);
   renderAll();
 }
-export function connectionsChanged() { if (root) renderAll(); }
+export function connectionsChanged() { if (root) { renderAll(); if (filesApp) filesApp.refreshPlaces(); } }
 /** Die Seite eines Hosts (hostpage.js) mit Zurueck-Pfeil; der Pfeil geht einen Schritt zurueck (zur Liste der Hosts) */
 function renderHostPage() {
   const h = hosts().find((x) => x.id === hostPageId);
@@ -235,10 +238,24 @@ export function go(id, { push = true, focusSearch = false } = {}) {
 
 function renderAll() { if (!root) return; renderNav(); if (current !== 'host') renderPage(current); }       // die Seite eines Hosts zeichnet sich nicht von selbst neu (Reiter und Stand blieben nicht)
 function renderPage(id) {
-  if (id === 'home') renderHome(); else if (id === 'services') renderServices(); else if (id === 'server') renderServer();
+  if (id === 'home') renderHome(); else if (id === 'services') renderServices(); else if (id === 'server') renderServer(); else if (id === 'files') renderFiles();
   else if (id === 'profile') renderProfile(); else if (id === 'host') renderHostPage();
   // Seitentitel in der Leiste: auf Home bleibt "JulOS", sonst der Titel der Seite
   $('#mBar').classList.toggle('home', current === 'home');
+}
+
+/* =====================================================================
+ * Dateien (files-app.js, docs/FILES.md): der gemeinsame Ordner des Servers und jeder Host mit SSH-Zugang. Die Seite wird beim ersten Besuch geladen und bleibt danach bestehen
+ * (der Ort, der Pfad und die Auswahl gehen beim Wechseln der Seite nicht verloren); die Orte folgen den Verbindungen und Hosts.
+ * ===================================================================== */
+let filesApp = null, filesLoading = false;
+function renderFiles() {
+  if (filesApp) { filesApp.refreshPlaces(); return; }
+  if (filesLoading) return;
+  filesLoading = true;
+  import('./files-app.js').then((m) => {
+    filesApp = m.mountFiles($('#pg-files'), { api: ctx.api, kit: true, getState: () => ({ connections: conns(), hosts: hosts() }), notify: (text) => snack(text) });
+  }).catch(() => { $('#pg-files').textContent = t('desktop.filesLoadFailed'); }).finally(() => { filesLoading = false; });
 }
 
 /* =====================================================================

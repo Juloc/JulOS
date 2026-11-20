@@ -20,8 +20,8 @@ internal sealed class ApiGuard(RequestDelegate next, AuthService auth)
 
     public const long MaxSmallBody = 64 * 1024;
 
-    /// <summary>Die Wege, die grosse Koerper annehmen (Foto und Datei fuer die Zwischenablage); jeder prueft seine Grenze selbst.</summary>
-    private static readonly HashSet<string> LargeBodyPaths = new(StringComparer.Ordinal) { "/api/upload", "/api/upload-file" };
+    /// <summary>Die Wege, die grosse Koerper annehmen (Foto und Datei fuer die Zwischenablage, Upload der Dateien-App); jeder prueft seine Grenze selbst.</summary>
+    private static readonly HashSet<string> LargeBodyPaths = new(StringComparer.Ordinal) { "/api/upload", "/api/upload-file", "/api/files/remote/upload" };
 
     public async Task InvokeAsync(HttpContext ctx)
     {

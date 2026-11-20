@@ -526,6 +526,7 @@ const ERROR_TEXT = {
 
 /** Anfrage an den Agenten der Verbindung `connId` (die Verbindung ist bei jedem Aufruf dabei: ein Agent gehoert zu genau einer Verbindung, docs/AGENT_API.md). */
 async function agent(connId, path, method = 'GET', body = null) {
+  if (!/^\/[A-Za-z0-9_\/-]*$/.test(path)) throw new Error('Agent path');      // nie ein Pfad mit ../ oder ?: er kaeme sonst aus Agentendaten
   const r = await fetch('/api/agent' + path + '?c=' + encodeURIComponent(connId), { method, headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, body: body ? JSON.stringify(body) : undefined });
   if (!r.ok) throw new Error('Agent ' + r.status);
   return r.json();
@@ -1200,7 +1201,7 @@ export class RemoteSession extends Session {
     try {
       const d = await agent(this.conn.id, '/windows');
       if (gen !== this.gen) return;
-      W.list = d.windows || []; W.mode = d.mode || 'desktop';
+      W.list = (d.windows || []).filter((w) => w && Number.isSafeInteger(w.id) && w.id >= 0); W.mode = d.mode || 'desktop';
       this.renderWindows(); this.applyProfile();
     } catch { /* naechster Versuch */ }
   }

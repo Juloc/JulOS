@@ -8,7 +8,7 @@
  *         POST /api/hosts/{id}/actions/run {token, action, target, typed} -> 202 { job } ; GET /api/hosts/{id}/actions/{job} -> { state, progress, done, total, result?, error? }
  * ===================================================================== */
 import { t, tk } from './i18n.js';
-import { when } from './hostinfo.js';
+import { when, hostSupport } from './hostinfo.js';
 import { dl, noteP, callout, listBlock, card } from './hostui.js';
 
 export const RIGHTS = ['updates', 'reboot', 'services', 'docker', 'logs'];
@@ -35,8 +35,8 @@ const versionOk = (v) => {
   return true;
 };
 
-/** Meldet der Agent Faehigkeiten (caps im hello)? Danach richtet sich die Anzeige, nicht nach dem Namen der Plattform: ein Agent, der caps nennt, kann gelesen und (mit Erlaubnis) geschaltet werden. */
-const capable = (a) => (Array.isArray(a.caps) ? a.caps.length > 0 : false) || a.kind === 'host';
+/** Kann der Agent die Host-Anfragen beantworten? Danach richtet sich die Anzeige (hostSupport des Servers, sonst das Wort "host" in caps), nicht nach dem Namen der Plattform: ein Agent, zwei Faehigkeitsgruppen (Desktop und Host). */
+const capable = (a) => hostSupport(a) === 'yes';
 
 /**
  * Warum wird diese Aktionsart gerade nicht angeboten? null = sie ist erlaubt. Sonst { why, link? }: why benennt den Grund (Text: whyText), link 'actions' heisst, dass der Abschnitt
@@ -46,7 +46,7 @@ export function blockReason(host, right, paused = false) {
   const a = host && host.agent;
   if (!a) return { why: 'noAgent' };
   if (!a.online) return { why: 'offline' };
-  if (!capable(a)) return { why: 'noCaps' };
+  if (!capable(a)) return { why: hostSupport(a) === 'none' ? 'noSupport' : 'noCaps' };
   if (!versionOk(a.version)) return { why: 'outdated' };
   if (paused) return { why: 'paused', link: 'actions' };
   if (!(LEVEL_RIGHTS[a.control] || []).includes(right)) return { why: !a.control || a.control === 'read' ? 'levelOff' : 'level', link: 'actions' };
@@ -55,7 +55,7 @@ export function blockReason(host, right, paused = false) {
 }
 const WHY = {
   noAgent: tk('hostact.why.noAgent'), offline: tk('hostact.why.offline'), noCaps: tk('hostact.why.noCaps'), outdated: tk('hostact.why.outdated'), paused: tk('hostact.why.paused'),
-  levelOff: tk('hostact.why.levelOff'), level: tk('hostact.why.level'), word: tk('hostact.why.word'),
+  noSupport: tk('hostact.why.noSupport'), levelOff: tk('hostact.why.levelOff'), level: tk('hostact.why.level'), word: tk('hostact.why.word'),
 };
 /** Der Satz zum Grund einer gesperrten Aktion, mit dem Weg zum Freischalten */
 export const whyText = (r) => t(WHY[r.why] || WHY.noCaps, { word: r.word || '' });

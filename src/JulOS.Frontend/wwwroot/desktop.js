@@ -1018,11 +1018,11 @@ function onMainClick(e) {
 
 
 /* =====================================================================
- *  Dateien-Fenster (nur lesen; der Inhalt steckt in desktop-files.js)
+ *  Dateien-Fenster (gemeinsamer Ordner und Hosts per SFTP; der Inhalt steckt in desktop-files.js und files-app.js)
  * ===================================================================== */
 async function openFiles(path, focusSearch) {
   const old = wins.get('files');
-  if (old) { old.minimized ? restoreWin(old) : focusWin(old); if (path !== undefined && old.files) old.files.go(path); if (focusSearch) $('.dk-fsearch input', old.el)?.focus(); return old; }
+  if (old) { old.minimized ? restoreWin(old) : focusWin(old); if (path !== undefined && old.files) old.files.go(path); if (focusSearch) $('.f-search input', old.el)?.focus(); return old; }
   const a = appById('files');
   const w = createWindow({ id: 'files', title: t('desktop.files'), icon: `<span class="dk-ti" style="--g1:${a.g[0]};--g2:${a.g[1]};width:22px;height:22px;border-radius:7px">${ic(a.ic)}</span>`,
     rect: defaultRect('files', 860, 540, 40, 24), minW: 560, minH: 340, cls: 'dk-files' });
@@ -1030,8 +1030,8 @@ async function openFiles(path, focusSearch) {
   try {
     const m = await import('./desktop-files.js');
     if (!wins.has('files')) return w;   // schon wieder geschlossen
-    w.files = m.mount(w.body, { el, btn, ic, api: ctx.api });
-    if (focusSearch) $('.dk-fsearch input', w.el)?.focus();
+    w.files = m.mount(w.body, { api: ctx.api, getState: () => ({ connections: ctx.state.connections, hosts: ctx.state.hosts }), notify });
+    if (focusSearch) $('.f-search input', w.el)?.focus();
   } catch { w.body.innerHTML = `<div class="dk-fempty">${t('desktop.filesLoadFailed')}</div>`; }
   return w;
 }
@@ -1192,7 +1192,7 @@ export function userChanged(user, message) {
   if (dockMode === 'auto' && !dockHinted) { dockHinted = true; showDock(); hideTimer = setTimeout(hideDock, 3500); }
   notify(message);
 }
-export function connectionsChanged() { if (root) renderHome_ifOpen(); }
+export function connectionsChanged() { if (root) { renderHome_ifOpen(); wins.get('files')?.files?.refreshPlaces(); } }
 /** Neue Zustaende der Hosts (kommen alle 30 s): die Ansichten, die sie zeigen, neu zeichnen, ohne dass das Fenster nach oben springt */
 export function hostsChanged() {
   if (!root || menuOpen()) return;       // ein offenes Menue einer Host-Karte wuerde beim Neuzeichnen zuklappen

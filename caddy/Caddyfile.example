@@ -3,6 +3,8 @@
 #  1) Der JulOS-Server laeuft und du hast dein Konto angelegt (eigene Anmeldung schuetzt die Seite)
 #  2) Optional als Zusatzschicht: tools/make-client-cert.sh ausgefuehrt, pki/ca.crt auf den Caddy-Rechner kopiert (den tls-Block unten sonst weglassen)
 #  3) Router/UniFi: Port 443 auf den Caddy-Rechner weiterleiten, DNS der Domain auf deine IP
+# ACHTUNG: "require_and_verify" gilt fuer ALLE Clients, auch fuer Agenten auf anderen Rechnern (sie haben kein Zertifikat und kommen so nicht durch).
+# Mit Agenten von aussen: caddy/Caddyfile.internet.example benutzen.
 desktop.example.com {
 	# Optionaler Zusatzschutz fuer den Internetzugang: nur Geraete mit deinem Client-Zertifikat kommen durch (mTLS)
 	tls {

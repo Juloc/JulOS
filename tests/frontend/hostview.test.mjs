@@ -287,3 +287,29 @@ test('Dateien: Seite und Karte sind im Service Worker, hostui.css wird geladen, 
   assert.deepEqual([...new Set(small)], [12]);                                                  // nur die Zaehler der Navigation (12 px, fett)
   assert.ok(!/#[0-9a-fA-F]{3,8}\b/.test(css.replace(/light-dark\([^)]*\)/g, '')), 'keine festen Farben ausser in light-dark()');
 });
+
+test('hostSupport des Servers: alter Desktop-Agent (update) erklaert sich mit Aktualisieren, "none" ohne Weg, neuer Agent mit Woertern wird gelesen', async () => {
+  const { hostSupport, wantsInfo, agentModeText } = await import('../../src/JulOS.Frontend/wwwroot/hostinfo.js');
+  const old = host({}, { kind: 'desktop', version: '0.6.0', caps: ['desktop'], allow: [], hostSupport: 'update', updateAvailable: true });
+  assert.equal(hostSupport(old.agent), 'update'); assert.equal(wantsInfo(old), false);                 // "desktop" allein ist keine Lese-Faehigkeit
+  assert.match(hostCardHtml(old, null, O), /liefert noch keine Systemwerte/);
+  assert.match(hostCardHtml(old, null, O), /Agent aktualisieren \/ einrichten/);
+  for (const p of PANELS) if (p.id !== 'agent') assert.match(unavailable(old, p, esc), /Agent aktualisieren \/ einrichten/, p.id);
+  assert.match(hostCardHtml(old, null, { ...O }), /Dieser Agent kann das noch nicht/);                   // Menue: gesperrt mit Grund
+  // none: neu genug, aber nichts davon (kein Linux): Erklaerung ohne Aktualisieren
+  const none = host({}, { kind: 'desktop', version: '0.7.0', caps: ['desktop'], hostSupport: 'none', allow: [] });
+  assert.equal(wantsInfo(none), false);
+  assert.match(hostCardHtml(none, null, O), /nur unter Linux/);
+  assert.doesNotMatch(unavailable(none, PANELS[1], esc), /Agent aktualisieren \/ einrichten/);
+  assert.match(hostCardHtml(none, null, O), /Auf diesem System nicht möglich/);
+  // neuer Agent (0.7.0) mit Desktop und Host: gelesen, Art "Agent mit Desktop und Host", Aktionen nach den Woertern
+  const both = host({}, { kind: 'desktop', version: '0.7.0', caps: ['desktop', 'host', 'sysinfo', 'updates'], hostSupport: 'yes', allow: ['updates'], control: 'full' });
+  assert.equal(wantsInfo(both), true); assert.equal(agentModeText(both), 'Agent mit Desktop und Host');
+  assert.match(hostCardHtml(both, { updates: { updates: { count: 2 } } }, O), /data-hcact="updates.refresh"/);
+  assert.equal(agentModeText(host()), 'Host-Agent'); assert.equal(agentModeText(old), 'Desktop-Agent');
+  // nicht verbunden: unknown, nichts behaupten
+  assert.equal(hostSupport(host({}, { online: false, hostSupport: 'unknown' }).agent), 'unknown');
+  // ohne Feld vom Server (aeltere Antwort): aus den Woertern
+  assert.equal(hostSupport({ online: true, kind: 'desktop', caps: ['host', 'desktop'] }), 'yes');
+  assert.equal(hostSupport({ online: true, kind: 'desktop', caps: [] }), 'update');
+});

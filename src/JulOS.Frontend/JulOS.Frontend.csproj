@@ -10,6 +10,7 @@
     <Content Include="..\..\tools\julos-agent.py" Link="agent-files\julos-agent.py" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\..\tools\julos-agent-helper.py" Link="agent-files\julos-agent-helper.py" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\..\tools\julos-clip.py" Link="agent-files\julos-clip.py" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\tools\install-agent.sh" Link="agent-files\install-agent.sh" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\..\tools\install-linux-agent.sh" Link="agent-files\install-linux-agent.sh" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\..\tools\install-host-agent.sh" Link="agent-files\install-host-agent.sh" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>

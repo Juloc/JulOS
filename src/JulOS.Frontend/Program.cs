@@ -116,6 +116,15 @@ builder.Services.AddSingleton(new HostMonitor(HostSource.Linux(builder.Configura
 builder.Services.AddHostedService<HostSamplerWorker>();
 // Dateien (nur lesen): genau ein Ordner, Standard der Upload-Ordner; "off" schaltet ab
 builder.Services.AddSingleton(new FileBrowser(builder.Configuration["JULOS_FILES_ROOT"] ?? builder.Configuration["JULOS_UPLOAD_DIR"] ?? "/uploads"));
+// Dateien auf Hosts per SFTP (docs/FILES.md): die gespeicherten SSH-Zugaenge, kurzlebige Sitzungen im Pool, Auftraege (kopieren, verschieben, loeschen), Verlauf.
+// Schreiben ist standardmaessig aus: JULOS_FILES_WRITE=on schaltet es ein; JULOS_FILES_MAX_MB und JULOS_FILES_MAX_SESSIONS begrenzen.
+builder.Services.AddSingleton(sp => FilesOptions.Parse(builder.Configuration["JULOS_FILES_WRITE"], builder.Configuration["JULOS_FILES_MAX_MB"], builder.Configuration["JULOS_FILES_MAX_SESSIONS"],
+    m => sp.GetRequiredService<ILoggerFactory>().CreateLogger("JulOS.Files").LogWarning("{Message}", m)));
+builder.Services.AddSingleton(FileSessionFactory.Default);
+builder.Services.AddSingleton(sp => new SftpPool(sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<FilesOptions>().MaxSessionsPerUser, sp.GetRequiredService<FilesOptions>().Idle));
+builder.Services.AddSingleton(sp => new FileJobs(sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<FilesOptions>().MaxJobsPerUser));
+builder.Services.AddSingleton<FileAuditStore>();
+builder.Services.AddHostedService<SftpPoolSweeper>();
 // Module Caddy und DDNS (nur lesen, standardmaessig aus): JULOS_CADDY, JULOS_DDNS, siehe docs/MODULES.md
 builder.Services.AddModules(builder.Configuration);
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJson.Default));
@@ -137,6 +146,10 @@ app.UseForwardedHeaders();
 
 await MigrateWithRetryAsync(app.Services.GetRequiredService<Migrator>(), log);
 
+// Ohne JULOS_TRUSTED_PROXIES glaubt der Server X-Forwarded-* von jedem privaten Netz: ein Geraet im eigenen LAN, das den Port direkt erreicht, kann die Client-Adresse
+// (Sperre pro Adresse, Sitzungsliste) und das Protokoll faelschen (docs/SECURITY-REVIEW.md, F-06). Deshalb eine laute Warnung, solange es nicht eingeschraenkt ist.
+if (string.IsNullOrWhiteSpace(builder.Configuration["JULOS_TRUSTED_PROXIES"]))
+    log.LogWarning("JULOS_TRUSTED_PROXIES ist nicht gesetzt: X-Forwarded-For/-Proto/-Host werden von jedem privaten Netz geglaubt. Hinter einem Proxy auf dessen Adresse einschränken (zum Beispiel 192.0.2.10/32) und den Port 8080 nur für den Proxy erreichbar machen.");
 if (!app.Services.GetRequiredService<SecretBox>().Enabled)
     log.LogWarning("Passwörter speichern ist aus: kein Schlüssel. JULOS_SECRET_KEY setzen oder dafür sorgen, dass der Server in JULOS_DATA schreiben darf (dort legt er secret.key an).");
 // Was der Bildkodierer kann, einmal ins Log (Einzelheiten: dotnet JulOS.dll diag encoders)
@@ -196,6 +209,7 @@ app.MapAgent();
 app.MapAgentLink(info);
 app.MapSystem();
 app.MapFiles();
+app.MapRemoteFiles();
 app.MapModules();
 app.MapNetTools();
 

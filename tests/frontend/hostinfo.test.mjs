@@ -180,7 +180,7 @@ test('die neue Datei steht im Service Worker und die Version ist erhoeht', () =>
   const sw = fs.readFileSync(new URL('../../src/JulOS.Frontend/wwwroot/sw.js', import.meta.url), 'utf8');
   assert.ok(Number(/VERSION = 'pd-v(\d+)'/.exec(sw)[1]) >= 55);
   for (const f of ['/hostinfo.js', '/hostpage.js', '/hostui.js', '/hostview.js', '/hostagent.js', '/hostui.css']) assert.ok(sw.includes(`'${f}'`), f);
-  assert.ok(Number(/VERSION = 'pd-v(\d+)'/.exec(sw)[1]) >= 60);
+  assert.ok(Number(/VERSION = 'pd-v(\d+)'/.exec(sw)[1]) >= 61);
 });
 
 // ---- Gesundheit der Platten und Netzwerk

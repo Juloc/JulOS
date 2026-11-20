@@ -6,7 +6,7 @@
  * Jeder Wert vom Agenten (Namen, Pakete, Adressen, Ausgaben) geht durch esc; Markup entsteht nur hier.
  * ===================================================================== */
 import { t, tp, tk, fmtNumber } from './i18n.js';
-import { fmtBytes, fmtUptime, fmtAge, fmtPercent, loadText, when, ramPercent, mainDisk, healthIssues, MD_STATE, SMART_STATE, SMART_WHY, rateText, wantsInfo, stateNote, agentModeText } from './hostinfo.js';
+import { hostSupport, fmtBytes, fmtUptime, fmtAge, fmtPercent, loadText, when, ramPercent, mainDisk, healthIssues, MD_STATE, SMART_STATE, SMART_WHY, rateText, wantsInfo, stateNote, agentModeText } from './hostinfo.js';
 import { stateText, dotClass, hostDetail, serviceState } from './hosts.js';
 import { agentPanel } from './hostagent.js';
 import { icon, dl, noteP, callout, subH, chip, bar, meter, card, listBlock, empty, button } from './hostui.js';
@@ -84,7 +84,7 @@ export function hostCardHtml(h, entry, o) {
   const nothing = m.kind === 'none'
     ? empty(t('hostview.noAgentTitle'), t('hostview.noAgentText'), esc, agentBtn(t('shell.agentSetup'), 'filled'), 'server')
     : !m.agentOnline ? noteP(t('hostview.agentOfflineText'), esc)
-      : !hasInfo ? `<div class="hu-nodata">${noteP(t('hostview.noValuesText'), esc)}${agentBtn(t('hostview.agentUpdateSetup'))}</div>` : '';
+      : !hasInfo ? (hostSupport(h.agent) === 'none' ? noteP(t('hostview.noSupportText'), esc) : `<div class="hu-nodata">${noteP(t('hostview.noValuesText'), esc)}${agentBtn(t('hostview.agentUpdateSetup'))}</div>`) : '';
   const stat = m.meters.length ? `<div class="hu-meters">${m.meters.map((x) => meter({ ...x, label: x.short }, esc)).join('')}</div>` : (hasInfo && !m.loaded ? noteP(t('hostinfo.stLoading'), esc) : '');
   const flag = (f) => {
     const inner = `${icon(f.icon)}<span>${esc(f.text)}${f.detail ? ' · ' + esc(f.detail) : ''}</span>`;
@@ -389,6 +389,10 @@ export function unavailable(host, p, esc) {
   const setup = button(t('hostview.agentUpdateSetup'), esc, { tone: 'filled', icon: 'download', data: { hgoto: 'agent' } });
   if (!a) return empty(t('hostview.noAgentTitle'), t('hostview.noAgentText'), esc, button(t('shell.agentSetup'), esc, { tone: 'filled', icon: 'download', data: { hgoto: 'agent' } }), 'server');
   if (!a.online) return empty(t('hostview.agentOfflineTitle'), t('hostview.agentOfflineText'), esc, button(t('hostview.manageAgent'), esc, { tone: 'tonal', icon: 'download', data: { hgoto: 'agent' } }), 'server');
-  const has = p.cap ? (a.caps || []).includes(p.cap) : p.needs === 'actions' ? hasActionAgent(host) : true;
-  return has ? '' : empty(t('hostview.noValuesTitle'), t('hostview.noValuesText'), esc, setup, 'server');
+  const support = hostSupport(a);
+  const has = support === 'yes' && (p.cap ? (a.caps || []).includes(p.cap) : p.needs === 'actions' ? hasActionAgent(host) : true);
+  if (has) return '';
+  // none: der Agent ist neu genug, meldet aber nichts davon (kein Linux): kein Weg ueber eine Aktualisierung
+  if (support === 'none') return empty(t('hostview.noValuesTitle'), t('hostview.noSupportText'), esc, '', 'server');
+  return empty(t('hostview.noValuesTitle'), t('hostview.noValuesText'), esc, setup, 'server');
 }

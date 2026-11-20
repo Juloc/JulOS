@@ -36,10 +36,10 @@ public sealed partial class AgentLinkTests
         public ValueTask DisposeAsync() => Agent.DisposeAsync();
     }
 
-    private static async Task<HostRig> RigAsync(TestDb db, Server app, object? caps = null, object? allow = null, string version = "0.5.0")
+    private static async Task<HostRig> RigAsync(TestDb db, Server app, object? caps = null, object? allow = null, string version = "0.5.0", string platform = "linux-host")
     {
         var e = await EnrollAsync(app, db, "Server");
-        var agent = await FakeLinkAgent.ConnectAsync(app.Server, e.Token, version: version, platform: "linux-host", hostname: "srv-01", os: "Debian GNU/Linux 13", caps: caps ?? AllCaps, allow: allow);
+        var agent = await FakeLinkAgent.ConnectAsync(app.Server, e.Token, version: version, platform: platform, hostname: "srv-01", os: "Debian GNU/Linux 13", caps: caps ?? AllCaps, allow: allow);
         await Eventually(() => Online(app, e.Connection));
         agent.HostReplies["/v1/host/sysinfo"] = (200, SysinfoBody);
         agent.HostReplies["/v1/host/updates"] = (200, UpdatesBody);
@@ -64,14 +64,14 @@ public sealed partial class AgentLinkTests
         await using var r = await RigAsync(db, app, caps: new[] { "updates", "bogus", "sysinfo", "sysinfo", "rm -rf" }, allow: new[] { "updates", "format" });
         var agent = await AgentOf(r.Http, r.Cookie, r.Host);
         Assert.Equal("host", agent.GetProperty("kind").GetString());
-        Assert.Equal(["sysinfo", "updates"], agent.GetProperty("caps").EnumerateArray().Select(x => x.GetString()).ToArray());   // nur bekannte Namen, ohne Doppelte, in fester Reihenfolge
+        Assert.Equal(["host", "sysinfo", "updates"], agent.GetProperty("caps").EnumerateArray().Select(x => x.GetString()).ToArray());   // nur bekannte Namen, ohne Doppelte, in fester Reihenfolge; "host" ergaenzt der Server fuer Agenten vor 0.7.0
         Assert.Equal(["updates"], agent.GetProperty("allow").EnumerateArray().Select(x => x.GetString()).ToArray());
         Assert.Equal("read", agent.GetProperty("control").GetString());
         Assert.Equal("linux-host", agent.GetProperty("platform").GetString());
     }
 
     [Fact]
-    public async Task A_desktop_agent_has_no_capabilities_and_stays_a_desktop_agent()
+    public async Task An_old_desktop_agent_reports_no_host_capabilities_and_stays_a_desktop_agent()
     {
         await using var db = await TestDb.CreateAsync();
         await using var app = new Server(db);
@@ -80,7 +80,8 @@ public sealed partial class AgentLinkTests
         await Eventually(() => Online(app, e.Connection));
         var a = await AgentOf(e.Http, e.Cookie, e.Host);
         Assert.Equal("desktop", a.GetProperty("kind").GetString());
-        Assert.Empty(a.GetProperty("caps").EnumerateArray());
+        Assert.Equal(["desktop"], a.GetProperty("caps").EnumerateArray().Select(x => x.GetString()).ToArray());        // der Server ergaenzt "desktop" aus der Plattform, sonst meldet der alte Agent nichts
+        Assert.Equal("update", a.GetProperty("hostSupport").GetString());                                          // liefert noch keine Systemwerte: ein Selbst-Update bringt sie
         var res = await e.Http.SendAsync(Send(HttpMethod.Get, $"/api/hosts/{e.Host}/status", e.Cookie));
         Assert.Equal("unsupported", (await Json(res)).GetProperty("state").GetString());
         Assert.Empty(agent.Requests);                                       // dem Desktop-Agenten wird nichts Unbekanntes geschickt

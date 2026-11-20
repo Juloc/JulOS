@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""JulOS Agent fuer Linux: Desktop-Modus (X11, XFCE getestet) und Host-Modus (Server ohne Desktop)
+"""JulOS Agent fuer Linux: EIN Agent pro Rechner mit zwei Faehigkeitsgruppen (Desktop und Host)
 
-Zwei Betriebsarten, eine Datei, eine Verbindung zum Server:
-- Desktop-Modus (Standard, wenn GTK/Wnck da sind): laeuft in der grafischen Sitzung, siehe unten.
+Eine Datei, eine Verbindung zum Server, zwei Betriebsarten:
+- Desktop-Modus (Standard, wenn GTK/Wnck da sind): laeuft in der grafischen Sitzung des Benutzers (als Benutzerprozess, nie als root) und stellt die
+  Desktop-Faehigkeiten bereit (siehe unten). Seit 0.7.0 beantwortet er ZUSAETZLICH alle /v1/host/*-Anfragen des Host-Modus (Systemwerte, Updates, Festplatten,
+  Dienste, Docker, bestaetigte Aktionen) mit denselben Pruefungen: ein Rechner mit Desktop hat damit auch die Host-Funktionen, ohne zweiten Agenten.
 - Host-Modus (--host, oder automatisch ohne GTK/Wnck): fuer Rechner ohne Desktop (Docker-VM, Proxmox-Host, Debian/Ubuntu-Server).
-  Nur Python-Standardbibliothek, laeuft als eigener Benutzer ohne Anmeldung (tools/install-host-agent.sh). Er meldet seine Faehigkeiten
+  Nur Python-Standardbibliothek, laeuft als eigener Benutzer ohne Anmeldung (tools/install-agent.sh). Er meldet seine Faehigkeiten
   (sysinfo, updates, services, docker) und beantwortet die LESENDEN Anfragen /v1/host/* (docs/HOST-AGENT.md). Dazu kommen ab 0.6.0 die Schreib-Aktionen
   (Updates, Neustart, Dienste, Container, Logs): nur mit lokaler Erlaubnis je Aktionsart (/etc/julos-agent/permissions) und nur auf bestaetigte Auftraege des Servers.
+  Die Host-Faehigkeiten brauchen nur die Standardbibliothek; GTK wird nur fuer die Desktop-Faehigkeiten geladen.
 
-Desktop-Modus: laeuft in der grafischen Sitzung und stellt dem Server die "Agent-API v1" bereit
-(siehe docs/AGENT_API.md): Fensterliste, Fenster aktivieren/schliessen, Programmliste und
+Desktop-Faehigkeiten: die "Agent-API v1" (siehe docs/AGENT_API.md): Fensterliste, Fenster aktivieren/schliessen, Programmliste und
 Programmstart, den Programm-Modus (Taskleiste der Sitzung ausblenden) sowie Foto, Datei und Zwischenablage
 fuer den Helfer julos-clip.py.
 
@@ -40,7 +42,7 @@ if sys.version_info < MIN_PYTHON:
 import argparse, base64, hashlib, hmac, http.client, http.server, json, logging, logging.handlers, os, queue, random, re, shutil, signal, socket, socketserver, ssl, stat, struct, subprocess, tempfile, threading, time
 import urllib.error, urllib.parse, urllib.request
 
-AGENT_VERSION = "0.6.0"      # der Server lehnt aeltere ab (AgentLinks.MinAgentVersion); ab 0.4.0 aktualisiert er sich auf Anweisung selbst; ab 0.5.0 gibt es den Host-Modus; ab 0.6.0 Schreib-Aktionen
+AGENT_VERSION = "0.7.0"      # der Server lehnt aeltere ab (AgentLinks.MinAgentVersion); ab 0.4.0 aktualisiert er sich auf Anweisung selbst; ab 0.5.0 gibt es den Host-Modus; ab 0.6.0 Schreib-Aktionen; ab 0.7.0 beantwortet auch der Desktop-Agent die Host-Anfragen (hello: caps desktop/host)
 API_VERSION = 1
 PLATFORM = "linux-x11"         # im Host-Modus "linux-host" (HOST_PLATFORM)
 HOST_PLATFORM = "linux-host"
@@ -140,10 +142,10 @@ def parse_args(argv=None):
     p.add_argument("--allow-http", action="store_true", help="nur zum Testen: auch ohne TLS verbinden")
     p.add_argument("--no-socket", action="store_true", help="den lokalen Unix-Socket nicht anbieten")
     p.add_argument("--host", action="store_true", help="Host-Modus (Rechner ohne Desktop: Systemwerte, Updates, Dienste, Docker; nur Python-Standardbibliothek)")
-    p.add_argument("--desktop", action="store_true", help="Desktop-Modus erzwingen (ohne GTK/Anzeige mit Fehlermeldung beenden statt in den Host-Modus zu wechseln)")
-    p.add_argument("--allow-updates", action="store_true", help="Host-Modus: Installieren von Updates erlauben (wirkt erst mit Stufe 3 des Host-Agenten; sonst /etc/julos-agent/permissions)")
-    p.add_argument("--allow-reboot", action="store_true", help="Host-Modus: Neustart erlauben (wirkt erst mit Stufe 3 des Host-Agenten)")
-    p.add_argument("--docker-socket", help="Host-Modus: Docker-Socket (Standard /var/run/docker.sock); nur lesend benutzt, ein Socket-Proxy ist besser als die Gruppe docker")
+    p.add_argument("--desktop", action="store_true", help="Desktop-Modus erzwingen (ohne GTK/Anzeige mit Fehlermeldung beenden statt in den Host-Modus zu wechseln); er beantwortet auch die Host-Anfragen")
+    p.add_argument("--allow-updates", action="store_true", help="Host-Faehigkeiten (Host-Modus und Desktop-Agent): Installieren von Updates erlauben (wirkt erst mit Stufe 3 des Host-Agenten; sonst /etc/julos-agent/permissions)")
+    p.add_argument("--allow-reboot", action="store_true", help="Host-Faehigkeiten: Neustart erlauben (wirkt erst mit Stufe 3 des Host-Agenten)")
+    p.add_argument("--docker-socket", help="Host-Faehigkeiten: Docker-Socket (Standard /var/run/docker.sock); nur lesend benutzt, ein Socket-Proxy ist besser als die Gruppe docker")
     p.add_argument("--forget", action="store_true", help="gespeicherte Einrichtung loeschen und beenden")
     p.add_argument("--yes", action="store_true", help="uninstall: ohne Rueckfrage")
     p.add_argument("--keep-config", action="store_true", help="uninstall: die Einrichtung (Token) behalten")
@@ -308,7 +310,7 @@ def _clock(ts):
 
 
 def system_unit_active():
-    """Laeuft der Host-Agent als systemd-Systemdienst (tools/install-host-agent.sh)?"""
+    """Laeuft der Host-Agent als systemd-Systemdienst (tools/install-agent.sh --host)?"""
     try:
         r = subprocess.run(["systemctl", "is-active", UNIT_NAME], capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
@@ -323,7 +325,8 @@ def command_status():
     mode = choose_mode(ARGS)
     problems, notes = missing_requirements(mode)
     print("julos-agent %s (%s, Python %s)" % (AGENT_VERSION, HOST_PLATFORM if mode == "host" else PLATFORM, sys.version.split()[0]))
-    print("Modus:             %s" % ("Host (ohne Desktop; Faehigkeiten: %s)" % (", ".join(host_caps()) or "keine") if mode == "host" else "Desktop"))
+    print("Modus:             %s" % ("Host (ohne Desktop; Faehigkeiten: %s)" % (", ".join(host_caps()) or "keine") if mode == "host" else "Desktop (dazu die Host-Faehigkeiten: %s)" % (", ".join(host_caps()) or "keine")))
+    print("Lokal erlaubt:     %s" % (", ".join(sorted(permissions())) or "nichts (nur Lesen)"))
     print("Laeuft:            %s" % ("ja (PID %d)" % pid if pid else "nein"))
     print("Einrichtung:       %s" % ("Server %s" % cfg["server"] if cfg else "keine (nur lokaler Socket, kein Server eingerichtet)"))
     if cfg and pid and st.get("pid") == pid:
@@ -354,7 +357,7 @@ def command_status():
 def command_check():
     mode = choose_mode(ARGS)
     problems, notes = missing_requirements(mode)
-    print("Modus: %s" % ("Host (ohne Desktop)" if mode == "host" else "Desktop"))
+    print("Modus: %s" % ("Host (ohne Desktop)" if mode == "host" else "Desktop (mit den Host-Faehigkeiten)"))
     for t in problems:
         print("FEHLT: " + t)
     for t in notes:
@@ -366,7 +369,7 @@ def command_check():
 
 def command_stop(wait=8, hint=True):
     if system_unit_active():
-        print("Der Agent laeuft als Systemdienst: sudo systemctl stop %s (entfernen: tools/install-host-agent.sh --uninstall)" % UNIT_NAME)
+        print("Der Agent laeuft als Systemdienst: sudo systemctl stop %s (entfernen: sudo sh install-agent.sh --uninstall)" % UNIT_NAME)
         return 1
     unit = unit_active()
     if unit:
@@ -431,7 +434,7 @@ def uninstall_plan(keep_config):
     if _in_checkout(SCRIPT):
         plan.append(("(Programmdateien bleiben: sie liegen in einem Git-Checkout)", lambda: None))
     else:
-        files = [os.path.join(here, n) for n in ("julos-agent.py", "julos-clip.py", "install-linux-agent.sh") if os.path.exists(os.path.join(here, n))]
+        files = [os.path.join(here, n) for n in ("julos-agent.py", "julos-clip.py", "install-linux-agent.sh", "install-agent.sh") if os.path.exists(os.path.join(here, n))]
         for f in files:
             plan.append(("Datei " + f, lambda f=f: _remove(f)))
         if files and os.path.realpath(here) != os.path.realpath(os.path.expanduser("~")):
@@ -1752,8 +1755,15 @@ def host_api(method, path, body, emit=None):
 
 
 def host_hello():
-    """Was der Host-Agent im hello zusaetzlich meldet: die Plattform (linux-host: daran erkennt der Server einen Agenten ohne Desktop), Faehigkeiten und lokal erlaubte Schreibrechte."""
-    return {"platform": HOST_PLATFORM, "caps": host_caps(), "allow": sorted(permissions())}
+    """Was der Host-Agent im hello zusaetzlich meldet: die Plattform (linux-host), die Faehigkeiten ("host" und was der Rechner kann) und lokal erlaubte Schreibrechte."""
+    return {"platform": HOST_PLATFORM, "caps": ["host"] + host_caps(), "allow": sorted(permissions())}
+
+
+def desktop_hello():
+    """Was der Desktop-Agent im hello zusaetzlich meldet (seit 0.7.0): "desktop" immer, "host" samt den Faehigkeiten des Rechners, wenn er die Host-Anfragen beantworten kann
+    (Linux), und die lokal erlaubten Schreibrechte aus /etc/julos-agent/permissions. Die Plattform bleibt linux-x11. Der Server richtet sich nach diesen Woertern, nicht nach dem Plattformnamen."""
+    caps = host_caps()
+    return {"caps": ["desktop"] + (["host"] + caps if caps else []), "allow": sorted(permissions())}
 
 
 if __name__ == "__main__":
@@ -1985,6 +1995,14 @@ def api(method, path, b):
         return 404, {"error": "unbekannt"}
     except Exception as e:  # noqa: BLE001
         return 500, {"error": str(e)[:120]}
+
+
+def agent_api(method, path, body, emit=None):
+    """Die Anfragen an den Desktop-Agenten ueber den Link (seit 0.7.0): /v1/host/* geht an den Host-Teil (gleiche Pruefungen, gleiche lokale Erlaubnisdatei wie im Host-Modus),
+    alles andere an die Desktop-API. Der Host-Teil laeuft im Arbeitsthread des Links, nie im GTK-Hauptthread. Der lokale Unix-Socket kennt /v1/host/* nicht (nur die Desktop-API)."""
+    if path.split("?")[0].startswith("/v1/host/"):
+        return host_api(method, path, body, emit)
+    return api(method, path, body)
 
 
 # ---------------------------------------------------------------- HTTP ueber Unix-Socket (Server und Desktop auf demselben Rechner)
@@ -2680,10 +2698,14 @@ if __name__ == "__main__":
     if cfg:
         sweep_leftovers()
         write_status("verbindet")
-        threading.Thread(target=Link(cfg).run, daemon=True).start()
+        threading.Thread(target=Link(cfg, handler=agent_api, hello=desktop_hello, progress=True).run, daemon=True).start()
         GLib.timeout_add_seconds(3600, lambda: (sweep_leftovers(), True)[1])
     else:
         write_status("kein Server eingerichtet")
     GLib.timeout_add_seconds(15, idle_check)
     log.info("julos-agent %s laeuft (API v%d)%s%s", AGENT_VERSION, API_VERSION, ", Socket " + SOCK if (not cfg or not ARGS.no_socket) else "", ", Server " + cfg["server"] if cfg else "")
+    if cfg:
+        log.info("Host-Faehigkeiten des Desktop-Agenten: %s", ", ".join(host_caps()) or "keine")
+        if permissions():
+            log.info("Lokal erlaubte Aktionen (nur auf bestaetigten Auftrag des Servers): %s", ", ".join(sorted(permissions())))
     Gtk.main()

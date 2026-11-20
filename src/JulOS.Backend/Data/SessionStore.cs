@@ -90,6 +90,13 @@ public sealed class SessionStore(NpgsqlDataSource db)
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    /// <summary>Eine geaenderte Dauer gilt sofort: bestehende Freigaben aller Sitzungen werden auf die neue Dauer gekuerzt, bei "immer fragen" (0) gestrichen. Laengere werden nie verlaengert.</summary>
+    public async Task CapStepUpAsync(DateTimeOffset now, int minutes, CancellationToken ct = default)
+    {
+        await using var cmd = db.Cmd("update sessions set step_up_until = case when $2 = 0 then null else least(step_up_until, $1::timestamptz + make_interval(mins => $2)) end where step_up_until is not null", now, minutes);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
     /// <summary>Ob die Sitzung jetzt freigegeben ist. Eine Freigabe "fuer eine Aktion" wird dabei verbraucht (atomar: zwei gleichzeitige Aktionen bekommen sie nicht beide).</summary>
     public async Task<bool> TakeStepUpAsync(Guid sessionId, DateTimeOffset now, CancellationToken ct = default)
     {

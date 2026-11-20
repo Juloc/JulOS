@@ -139,12 +139,13 @@ internal static class SecurityEndpoints
         });
 
         // ---- zweiter Faktor fuer Aktionen (F-04) ----
-        app.MapPut("/api/security/step-up", async (StepUpSettingRequest body, HttpContext ctx, SecurityConfig cfg, SecurityAuditStore audit, HitCounter hits) =>
+        app.MapPut("/api/security/step-up", async (StepUpSettingRequest body, HttpContext ctx, SecurityConfig cfg, SessionStore sessions, TimeProvider clock, SecurityAuditStore audit, HitCounter hits) =>
         {
             if (Limited(ctx, hits)) return Error(429, "Zu viele Anfragen, bitte kurz warten.", "rate_limited");
             if (body.Enabled is not { } enabled || body.Minutes is not { } minutes) return Error(400, "Angaben fehlen.");
             if (SecurityConfig.ValidateStepUp(enabled, minutes) is { } problem) return Error(400, problem);
             await cfg.SetStepUpAsync(enabled, minutes, ctx.RequestAborted);
+            await sessions.CapStepUpAsync(clock.GetUtcNow(), minutes, ctx.RequestAborted);        // eine kuerzere Dauer gilt sofort auch fuer Freigaben, die schon erteilt sind
             await Audit(audit, ctx, "step_up.set", enabled ? (minutes == 0 ? "immer fragen" : minutes + " min") : "aus");
             return Results.Json(new StepUpDto(cfg.StepUp.Enabled, cfg.StepUp.Minutes), AppJson.Default.StepUpDto);
         });

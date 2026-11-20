@@ -74,6 +74,26 @@ public sealed class StepUpTests
     }
 
     [Fact]
+    public async Task A_shorter_window_applies_at_once_to_approvals_already_given()
+    {
+        await using var db = await TestDb.CreateAsync();
+        var r = await Rig.CreateAsync(db);
+        var (_, who) = await r.SetupAsync();
+        var ct = TestContext.Current.CancellationToken;
+        await r.Sessions.CapStepUpAsync(r.Time.GetUtcNow(), 60, ct);                    // laenger: nie verlaengert
+        r.Time.Advance(TimeSpan.FromMinutes(9));
+        Assert.True(await r.Auth.StepUpFreshAsync(who, ct));
+        await r.Sessions.CapStepUpAsync(r.Time.GetUtcNow(), 1, ct);                     // jetzt nur noch eine Minute
+        r.Time.Advance(TimeSpan.FromSeconds(30));
+        Assert.True(await r.Auth.StepUpFreshAsync(who, ct));
+        r.Time.Advance(TimeSpan.FromSeconds(40));
+        Assert.False(await r.Auth.StepUpFreshAsync(who, ct));
+        await r.Sessions.GrantStepUpAsync(who.Id, r.Time.GetUtcNow().AddMinutes(5), false, ct);
+        await r.Sessions.CapStepUpAsync(r.Time.GetUtcNow(), 0, ct);                     // "immer fragen": bestehende Freigaben entfallen
+        Assert.False(await r.Auth.StepUpFreshAsync(who, ct));
+    }
+
+    [Fact]
     public async Task Wrong_codes_lock_the_account_for_a_while()
     {
         await using var db = await TestDb.CreateAsync();

@@ -20,9 +20,9 @@ public sealed partial class AgentLinkTests
     private static readonly string[] AllRights = ["updates", "reboot", "services", "docker", "logs"];
     private static readonly string[] ActionCaps = ["sysinfo", "updates", "services", "docker"];
 
-    private static async Task<HostRig> ActionRigAsync(TestDb db, Server app, string? control = "full", string version = "0.6.0", object? allow = null, object? caps = null)
+    private static async Task<HostRig> ActionRigAsync(TestDb db, Server app, string? control = "full", string version = "0.6.0", object? allow = null, object? caps = null, string platform = "linux-host")
     {
-        var r = await RigAsync(db, app, caps ?? ActionCaps, allow ?? AllRights, version);
+        var r = await RigAsync(db, app, caps ?? ActionCaps, allow ?? AllRights, version, platform);
         r.Agent.HostReplies["/v1/host/units"] = (200, UnitsBody);
         r.Agent.HostReplies["/v1/host/docker"] = (200, ActionDockerBody);
         if (control is not null) Assert.Equal(HttpStatusCode.OK, (await Control(r, control)).StatusCode);

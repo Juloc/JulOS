@@ -1,103 +1,63 @@
-#!/usr/bin/env bash
-# Installiert die Hilfsprogramme in der grafischen Sitzung dieses Linux-Rechners (X11, XFCE getestet):
-#  - julos-agent.py : Fensterleiste, Programmstarter, Programm-Modus, Foto/Datei/Zwischenablage (Agent-API v1)
-#  - julos-clip.py  : Fotos und Dateien aus dem Handy in die Zwischenablage legen
-# Beide starten beim Anmelden von selbst und laufen sofort in der aktuellen Sitzung.
-#
-# Server auf einem ANDEREN Rechner: in der App beim Host "Agent einrichten" waehlen und den Befehl daraus nehmen:
-#     bash install-linux-agent.sh --server https://os.example.org --code ABCDE-FGHIJ
-# Der Agent meldet sich dann von hier aus beim Server (nur ausgehend, es lauscht nichts). Ohne --server/--code bleibt es beim
-# lokalen Weg (Unix-Socket im Ordner ~/julos-uploads, den der Server auf demselben Rechner einbindet).
-#
-# Weitere Optionen:
-#   --systemd    den Agenten als systemd-Benutzerdienst starten (Neustart nach Absturz) statt per Autostart-Eintrag
-#   --no-start   nur einrichten, nichts starten
-#   --allow-http nur zum Testen: auch ohne TLS verbinden
-# Danach auf diesem Rechner:  python3 julos-agent.py status | stop | uninstall   (Log: ~/.local/state/julos/agent.log)
-#
-# (Der Agent wird hier immer mit --desktop gestartet: ohne GTK/Anzeige meldet er den Mangel, statt still zum Host-Agenten zu werden; Rechner ohne Desktop: install-host-agent.sh.)
-# Voraussetzung: python3 (3.8 oder neuer) mit PyGObject, GTK3 und Wnck:  sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-wnck-3.0
-set -euo pipefail
-dir="$(cd "$(dirname "$0")" && pwd)"
-agent="$dir/julos-agent.py"
-server="" code="" extra=() systemd=0 start=1
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --server) server="${2:-}"; shift 2 ;;
-    --code) code="${2:-}"; shift 2 ;;
-    --allow-http) extra+=(--allow-http); shift ;;   # nur zum Testen
-    --systemd) systemd=1; shift ;;
-    --no-start) start=0; shift ;;
-    --help|-h) sed -n '2,18p' "$0"; exit 0 ;;
-    *) echo "Unbekannte Option: $1 (siehe --help)" >&2; exit 2 ;;
-  esac
-done
-command -v python3 >/dev/null || { echo "python3 fehlt: sudo apt install python3 python3-gi gir1.2-gtk-3.0 gir1.2-wnck-3.0" >&2; exit 1; }
-# Voraussetzungen klar benennen, bevor etwas eingerichtet wird
-python3 "$agent" check --desktop || { echo "Bitte das Fehlende installieren und dieses Skript erneut starten." >&2; exit 1; }
-if [ -n "$server$code" ]; then
-  [ -n "$server" ] && [ -n "$code" ] || { echo "--server und --code gehoeren zusammen" >&2; exit 2; }
-  python3 "$agent" --desktop --server "$server" --code "$code" ${extra[@]+"${extra[@]}"}   # tauscht den Code gegen ein Token (ohne Anzeige)
+#!/bin/sh
+# install-linux-agent.sh - kept so that existing commands keep working. There is ONE installer for the JulOS agent now: install-agent.sh (desktop and host in one,
+# docs/HOST-AGENT.md). This file only forwards to it with --desktop in front of your options, so everything it understood still works:
+#   sh install-linux-agent.sh --server https://julos.example.org --code ABCDE-FGHIJ [options]    ==    sh install-agent.sh --desktop --server ... --code ... [options]
+# The installer is taken from the folder of this file; when it is not there, from the server you name with --server (/agent-files/install-agent.sh,
+# SHA-256 checked against /agent-files/SHA256SUMS, TLS required, no redirects). That download happens even with --dry-run: it is only the installer, it is not run
+# beyond what you asked for. No password is read here; sudo (if you use it) asks for its own.
+# POSIX sh; checked with "shellcheck -s sh".
+
+set -eu
+FLAG=--desktop
+dir=$(cd "$(dirname "$0")" && pwd)
+printf 'note: install-linux-agent.sh is now install-agent.sh (one installer for desktop and host); forwarding with %s\n' "$FLAG" >&2
+
+if [ -f "$dir/install-agent.sh" ]; then
+  exec sh "$dir/install-agent.sh" "$FLAG" "$@"
 fi
-config="${XDG_CONFIG_HOME:-$HOME/.config}"
-state="${XDG_STATE_HOME:-$HOME/.local/state}/julos"
-mkdir -p "$HOME/julos-uploads" "$config/autostart" "$state"
-chmod 700 "$state"
 
-# Laufende Instanzen beenden: der Agent ueber seine eigene Pid-Datei/seinen Dienst, aeltere Staende ohne Pid-Datei und der Helfer ueber den
-# genauen Pfad dieser Installation (andere Kopien auf dem Rechner bleiben unberuehrt)
-python3 "$agent" stop >/dev/null 2>&1 || true
-for name in julos-agent julos-clip; do
-  for p in $(ps -eo pid,args | awk -v n="python3 $dir/$name.py" 'index($0, n) {print $1}'); do kill "$p" 2>/dev/null || true; done
+# Not next to this file (it was downloaded alone): fetch it from the named server
+SERVER="" HTTP=0 prev=""
+for a in "$@"; do
+  if [ "$prev" = --server ]; then SERVER=$a; fi
+  if [ "$a" = --allow-http ]; then HTTP=1; fi
+  prev=$a
 done
+[ -n "$SERVER" ] || { echo "error: install-agent.sh is not next to this file: give --server so it can be downloaded from your JulOS server" >&2; exit 1; }
+SERVER=${SERVER%/}
+case "$SERVER" in
+  https://*) ;;
+  http://localhost|http://localhost:*|http://127.0.0.1|http://127.0.0.1:*) ;;
+  http://*) [ "$HTTP" = 1 ] || { echo "error: a server address without TLS (http) is refused. Test only: --allow-http" >&2; exit 1; } ;;
+  *) echo "error: --server must start with https://" >&2; exit 1 ;;
+esac
+case "$SERVER" in
+  *[!A-Za-z0-9._:/-]*) echo "error: --server contains characters that do not belong in a server address" >&2; exit 1 ;;
+esac
+tmp=$(mktemp -d)
+# shellcheck disable=SC2317  # called through the trap
+cleanup() { rm -rf "$tmp"; }
+trap cleanup EXIT INT TERM
 
-autostart() {   # $1 = Name ohne Endung
-  cat > "$config/autostart/$1.desktop" <<DESKTOP
-[Desktop Entry]
-Type=Application
-Name=JulOS ${1#julos-}
-Exec=/usr/bin/python3 "$dir/$1.py"$([ "$1" = julos-agent ] && echo " --desktop")
-X-GNOME-Autostart-enabled=true
-NoDisplay=true
-DESKTOP
-}
-autostart julos-clip
-if [ "$systemd" = 1 ]; then
-  command -v systemctl >/dev/null || { echo "systemctl fehlt: ohne --systemd installieren (Autostart-Eintrag)" >&2; exit 1; }
-  mkdir -p "$config/systemd/user"
-  rm -f "$config/autostart/julos-agent.desktop"      # nicht doppelt starten
-  escaped="${agent//%/%%}"
-  cat > "$config/systemd/user/julos-agent.service" <<UNIT
-[Unit]
-Description=JulOS Agent (Fensterleiste, Programmstart, Foto/Datei/Zwischenablage)
-After=graphical-session.target
-
-[Service]
-# Ohne grafische Sitzung (DISPLAY fehlt) beendet sich der Agent mit einer klaren Meldung im Log und wird spaeter erneut versucht
-ExecStart=/usr/bin/python3 "$escaped" --desktop
-Restart=on-failure
-RestartSec=30
-
-[Install]
-WantedBy=default.target
-UNIT
-  # die Umgebung der grafischen Sitzung an den Dienst weitergeben (DISPLAY, XAUTHORITY)
-  systemctl --user import-environment DISPLAY XAUTHORITY 2>/dev/null || true
-  systemctl --user daemon-reload
-  [ "$start" = 1 ] && systemctl --user enable --now julos-agent.service || systemctl --user enable julos-agent.service
-else
-  autostart julos-agent
-  if [ -f "$config/systemd/user/julos-agent.service" ]; then
-    systemctl --user disable --now julos-agent.service 2>/dev/null || true; rm -f "$config/systemd/user/julos-agent.service"; systemctl --user daemon-reload 2>/dev/null || true
+fetch() {  # url dest
+  if command -v curl >/dev/null 2>&1; then curl -fsS --max-redirs 0 --max-filesize 2097152 --connect-timeout 15 --max-time 60 -o "$2" "$1"
+  elif command -v wget >/dev/null 2>&1; then wget -q --max-redirect=0 --timeout=30 -O "$2" "$1"
+  else echo "error: neither curl nor wget found" >&2; return 1
   fi
-fi
-if [ "$start" = 1 ]; then
-  sleep 1
-  [ "$systemd" = 1 ] || (setsid nohup python3 "$agent" --desktop >/dev/null 2>&1 </dev/null &)      # der Agent schreibt sein Log selbst (mit Rotation)
-  (setsid nohup python3 "$dir/julos-clip.py" >"$state/clip.log" 2>&1 </dev/null &)
-  sleep 2
-  python3 "$agent" status || true
-  echo "Gestartet. Log des Agenten: $state/agent.log, des Helfers: $state/clip.log"
-else
-  echo "Eingerichtet, nichts gestartet. Starten: python3 $agent"
-fi
+}
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1
+  elif command -v openssl >/dev/null 2>&1; then openssl dgst -sha256 "$1" | sed 's/^.*= //'
+  else echo "error: no sha256sum, shasum or openssl to check the download" >&2; return 1
+  fi
+}
+fetch "$SERVER/agent-files/install-agent.sh" "$tmp/install-agent.sh" || { echo "error: download of install-agent.sh failed (is $SERVER your JulOS server, and is it new enough?)" >&2; exit 1; }
+fetch "$SERVER/agent-files/SHA256SUMS" "$tmp/SHA256SUMS" || { echo "error: download of SHA256SUMS failed" >&2; exit 1; }
+want=$(awk '$2 == "install-agent.sh" || $2 == "*install-agent.sh" { print $1 }' "$tmp/SHA256SUMS" | head -n 1)
+[ -n "$want" ] || { echo "error: SHA256SUMS does not list install-agent.sh" >&2; exit 1; }
+got=$(sha256_of "$tmp/install-agent.sh") || exit 1
+[ "$want" = "$got" ] || { echo "error: checksum mismatch for install-agent.sh (server says $want, download is $got): nothing done" >&2; exit 1; }
+rc=0
+sh "$tmp/install-agent.sh" "$FLAG" "$@" || rc=$?
+exit "$rc"

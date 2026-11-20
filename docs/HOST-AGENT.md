@@ -1,8 +1,9 @@
-# Host agent: manage machines without a desktop
+# Host agent: look after a machine, with or without a desktop
 
-The JulOS agent (`tools/julos-agent.py`) has two modes. The **desktop mode** runs inside the graphical session of a machine (window bar, program launcher, photo, file and
-clipboard, see [AGENT_API.md](AGENT_API.md)). The **host mode** is for machines **without a desktop**: a Docker VM, a Proxmox host, any Debian or Ubuntu server. It reports
-the machine to JulOS and answers a few **read-only** questions. It is the same file, the same enrolment, the same outbound connection; nothing listens on the machine.
+The JulOS agent (`tools/julos-agent.py`) is **one agent per machine** with two groups of abilities. The **desktop abilities** work inside the graphical session of a machine (window bar, program launcher, photo, file and
+clipboard, see [AGENT_API.md](AGENT_API.md)). The **host abilities** report the machine to JulOS and answer a few **read-only** questions (system values, updates, disks, services, Docker), plus the confirmed actions below.
+A machine **without a desktop** (a Docker VM, a Proxmox host, any Debian or Ubuntu server) runs the agent in **host mode**: only the host abilities. A machine **with a desktop** runs it in **desktop mode** (since agent 0.7.0): the desktop abilities **and** the host abilities,
+in one process. It is the same file, the same enrolment, the same outbound connection; nothing listens on the machine.
 
 What you get per host, at a glance (host card on the desktop and on the phone, plus the dialog "Host-Details"):
 
@@ -19,34 +20,63 @@ and every single one is **confirmed by you in the app, every time**: see [Action
 
 ## Modes
 
-| | Desktop mode | Host mode |
+| | Desktop mode (since 0.7.0: both groups) | Host mode |
 | --- | --- | --- |
 | For | a machine with a graphical session (X11, XFCE tested) | a machine without one (Docker VM, Proxmox, servers) |
-| Needs | Python 3.8+, PyGObject, GTK 3, Wnck, a display | Python 3.8+ and nothing else (standard library) |
-| Runs as | your user, in your session (autostart or user service) | its own system user `julos-agent` without login shell, as a systemd system service |
+| Needs | Python 3.8+, PyGObject, GTK 3, Wnck, a display (the host abilities need only the standard library) | Python 3.8+ and nothing else (standard library) |
+| Runs as | **your user**, in your session (autostart or user service); never root, never sudo | its own system user `julos-agent` without login shell, as a systemd system service |
 | Platform in `hello` | `linux-x11` | `linux-host` |
-| Requests | `/v1/windows`, `/v1/apps`, `/v1/mode`, clipboard | `/v1/host/*` (below) |
+| `caps` in `hello` | `desktop`, `host`, and what the machine can: `sysinfo`, `updates`, `services`, `docker` | `host` and the same four (as far as the machine can) |
+| Requests | `/v1/windows`, `/v1/apps`, `/v1/mode`, clipboard, **and** `/v1/host/*` (below) | `/v1/host/*` (below) |
 
 The mode is chosen when the agent starts: `--host` forces the host mode, `--desktop` forces the desktop mode, and without either the agent uses the host mode **when the desktop
 stack (PyGObject, GTK, Wnck) is missing**. If the stack is there but `DISPLAY` is not (for example a user service that starts before the login), the agent refuses to start with a clear
 message instead of silently becoming a host: a desktop machine must not change its role because of a start order. `julos-agent.py check` and `status` say which mode applies.
 
-One host has one agent. A machine with a desktop **and** an interesting server side (a workstation that also runs Docker) uses the desktop agent; the host-mode requests need the host agent,
-so give such a machine two hosts if you want both (two agents cannot share a host; this is a deliberate limit, see "What is deliberately missing").
+### One agent per machine
 
-## Install from JulOS over SSH
+A machine with a desktop **and** an interesting server side (a workstation that also runs Docker, a development VM) needs no second agent: the desktop agent answers the host requests as well. It uses the same code as the host mode
+(`host_api`, not a copy) and the same checks: the same fixed paths, the same local permission file `/etc/julos-agent/permissions`, the same root helper, the same validation of every name. A refusal without the word is `403 not_permitted`, exactly as in host mode.
+The desktop agent answers `/v1/host/*` only over the **link to the server** (never over the local Unix socket) and in worker threads (never in the GTK thread).
 
-In the app: open the host, choose **Agent per SSH installieren**. JulOS creates a one-time code, opens the SSH connection of this host in the terminal and **puts the finished command
-into the input bar without sending it**. You read it, press Enter, and type your `sudo` password **in the terminal yourself**. JulOS never stores, sees or sends the sudo password.
-If the host has no terminal connection, the dialog shows the command to copy (**Befehl kopieren**) and you run it on the host.
+**`caps` in the `hello`** (agent 0.7.0 and later) says what the agent can do; the server asks and shows by these words and **not by the platform name**:
 
-The command downloads the installer into a file (so you can look at it) and runs it with sudo:
+| Word | Means |
+| --- | --- |
+| `desktop` | window bar, programs, mode, photo, file, clipboard |
+| `host` | answers the `/v1/host/*` requests (set when at least one of the following is there) |
+| `sysinfo`, `updates`, `services`, `docker` | the four read abilities (see "What the agent reads"); each is announced only if the machine can do it |
+
+`allow` (the words of the local permission file) is reported the same way for both modes. For agents before 0.7.0 the server fills in the words so the app can ask uniformly: a host agent 0.5/0.6 gets `host`, an old desktop agent gets `desktop`.
+An **old desktop agent (0.5.x/0.6.0)** is still valid; it has no system values. `GET /api/hosts` shows this as `agent.hostSupport`: `yes` (the agent answers host requests), `update` (a desktop agent before 0.7.0: "liefert noch keine Systemwerte", the update to 0.7.0 brings them; the status calls answer `state: unsupported`, never an error),
+`none` (new enough but no host abilities, for example not Linux) or `unknown` (not connected and nothing known about it). The self-update of such an agent **never switches a word on**: it replaces only `julos-agent.py`; the permission file is root's and is not touched (without it the new agent can read, nothing more).
+
+A desktop agent differs from a host agent in one honest way: it is **your user's process** without the sandbox of the system service, so the root helper's socket belongs to your user (mode 0600), and every program of that user can ask the helper for what the permission file allows (see [Security](#security) and `docs/SECURITY-REVIEW.md`). Choose the words for a desktop machine with that in mind (`updates,logs` are the modest choice).
+
+## Install: one installer for every machine
+
+In the app: open the host, choose the set-up of the agent. JulOS creates a one-time code and shows (or, over SSH, **puts into the terminal's input bar without sending it**) the finished command. You read it, press Enter, and type your `sudo` password **in the terminal yourself**.
+JulOS never stores, sees or sends the sudo password.
+
+The command downloads the installer into a file (so you can look at it) and runs it with sudo. It is the same line on every machine; the installer finds out what the machine is:
 
 ```sh
-curl -fsSL https://SERVER/agent-files/install-host-agent.sh -o julos-install-host-agent.sh && sudo sh julos-install-host-agent.sh --server https://SERVER --code ABCDE-FGHIJ
+curl -fsSL https://SERVER/agent-files/install-agent.sh -o julos-install-agent.sh && sudo sh julos-install-agent.sh --server https://SERVER --code ABCDE-FGHIJ [--allow updates,logs,services,docker,reboot] [--docker-group] [--allow-http] [--dry-run] [--uninstall]
 ```
 
-The installer (`tools/install-host-agent.sh`, POSIX `sh`, `shellcheck`-clean, idempotent):
+`tools/install-agent.sh` (POSIX `sh`, `shellcheck`-clean, idempotent) decides:
+
+- **Desktop**: the user who called `sudo` (`SUDO_USER`, or `--user`) has a graphical session (per `loginctl`; without it the display variables) **and** the desktop stack (python3-gi, GTK 3, Wnck) is installed. The installer says **"Desktop detected"** and installs the agent **as that user, in the user's session**: files in `~/.local/share/julos`
+  (an existing installation is updated **where it already is**), enrolment as that user, an autostart entry (or with `--systemd` a systemd **user** service; one that exists stays), then it stops an old agent of that user and starts the new one in the session (when `DISPLAY` is known; otherwise at the next login).
+  The agent stays a user process: **no root, no sudo, no service account**. Besides `julos-agent.py` the desktop gets `julos-clip.py` (the clipboard helper), as before.
+- **Host**: no desktop (or none that can be used): the host installation of the next list, as it always was.
+- An **installation that exists decides first** (a host agent as a system service stays a host agent, an autostart entry or user service of the user stays a desktop agent), so updating needs no new code and never switches the kind by accident. A graphical session without the desktop stack is **not** guessed to be a host: the installer says what to install (or you add `--host`).
+- `--desktop` and `--host` force the kind. **One machine, one agent**: forcing `--desktop` while a host agent is installed is refused with the way out (remove the host agent, enrol with a new code), and the other way round it only warns.
+
+In both kinds the same rules hold: the permission file is root's and **empty of words unless you name some with `--allow`**, the root helper is installed **only** if one of `updates`, `reboot`, `services`, `logs` was chosen (its socket is reachable only by the agent's user: the service account's own group for a host, the user's own socket with mode 0600 for a desktop), the downloads come only from your server and are checked, and a password is never read or typed.
+The old commands keep working: `install-host-agent.sh` and `install-linux-agent.sh` are thin callers that print a note and forward to `install-agent.sh` (with `--host` and `--desktop` in front); when the new script is not next to them they fetch it from `--server` the same checked way.
+
+The host installation, step by step:
 
 1. creates the system user `julos-agent` (no login shell, home `/var/lib/julos-agent`),
 2. downloads `julos-agent.py` **from your own JulOS server only** (`/agent-files/`, no redirects, at most 2 MB), checks it against `/agent-files/SHA256SUMS` and as valid Python, installs it in `/opt/julos-agent`,
@@ -56,11 +86,21 @@ The installer (`tools/install-host-agent.sh`, POSIX `sh`, `shellcheck`-clean, id
 6. **only if you allowed something that needs root** (`updates`, `reboot`, `services`, `logs`): downloads `julos-agent-helper.py` the same way (own server, checksum), installs it as root in `/usr/local/libexec/julos-agent/` and sets up
    the socket-activated services `julos-agent-helper.socket` and `julos-agent-helper@.service` (see [The root helper](#the-root-helper)). Re-running the installer updates the helper; the agent's self-update never touches it.
 
-Options: `--dry-run` (shows every step and the unit files, changes and downloads nothing, needs no root), `--user NAME`, `--allow WORDS` (comma separated from `updates reboot services docker logs`, written to the
-permission file; **never a default**, see [Actions](#actions-stage-3); `--allow-updates` is the same as `--allow updates`), `--docker-group` (see below), `--allow-http` (test instance only), `--no-start`, `--uninstall`. Without systemd the files are installed and the command to start the agent by hand is printed.
+Options: `--dry-run` (shows every step and the unit files, changes and downloads nothing, needs no root), `--desktop` / `--host`, `--user NAME` (host: the service account; desktop: the user), `--allow WORDS` (comma separated from `updates reboot services docker logs`, written to the
+permission file; **never a default**, see [Actions](#actions-stage-3); `--allow-updates` is the same as `--allow updates`), `--docker-group` (host: see below; desktop: it only checks whether your user is in the group `docker` and tells you, the installer **never changes your groups**), `--systemd` (desktop: user service instead of autostart), `--allow-http` (test instance only), `--no-start`, `--uninstall`.
+Without systemd the files are installed and the command to start the agent by hand is printed.
 The checksum protects against a damaged or truncated download; it does **not** protect against a hostile server (both come from the same server). That is the same trust as the existing desktop agent update.
 
-Requirements on the host: `python3` (3.8 or newer), `curl` or `wget`, `sudo`/root. Nothing else is installed.
+Requirements on the host: `python3` (3.8 or newer), `curl` or `wget`, `sudo`/root. For a desktop also python3-gi, GTK 3 and Wnck (the installer names the packages). Nothing else is installed.
+
+### Moving from older installations
+
+| You have | Do | What happens |
+| --- | --- | --- |
+| a **desktop agent 0.5.x/0.6.0** (autostart entry or user service from `install-linux-agent.sh`) | nothing, or **Jetzt aktualisieren** in the host dialog | the self-update brings 0.7.0; the host reads (system values, updates, services, Docker) appear without any new right. |
+| the same, and you want actions | run the one command above **without a new code** (`--server` only, or with a fresh code, either works) plus `--allow ...` | the agent files are updated where they are, the token stays, the autostart entry is rewritten, the old agent is replaced, the permission file and (if needed) the root helper are set up. |
+| a **host agent** on a server | re-run the command as before (or `install-host-agent.sh`, which forwards) | updated like before; nothing changes about its user, service or words. |
+| a host agent on a machine that **has** a desktop | `sudo sh install-agent.sh --host --uninstall`, remove the agent in the app, then the new command with a new code | one agent, as the desktop agent; the old host token dies with the removal. |
 
 ### Updating
 
@@ -71,11 +111,12 @@ Re-running the installer does the same by hand.
 ### Uninstall
 
 ```sh
-sudo sh install-host-agent.sh --uninstall           # or: --dry-run --uninstall first
+sudo sh install-agent.sh --uninstall           # or: --dry-run --uninstall first; --host or --desktop to remove only one kind
 ```
 
-It stops and removes the service, the root helper and its two units, `/opt/julos-agent`, `/etc/julos-agent`, `/var/lib/julos-agent` (log, token, results of actions) and the user (only if the installer created it). Then use **Agent entfernen** in the
-host dialog so the token is also dead on the server. The agent file on the host is the only thing JulOS ever installs.
+Without `--host` or `--desktop` it removes whatever is installed here. A **host** installation: it stops and removes the service, the root helper and its two units, `/opt/julos-agent`, `/etc/julos-agent`, `/var/lib/julos-agent` (log, token, results of actions) and the user (only if the installer created it).
+A **desktop** installation: `julos-agent.py uninstall --yes` as the user (stops the agent, removes the autostart entry or user service, the files, token and log; `~/julos-uploads` stays), and with root also the root helper and `/etc/julos-agent`. Then use **Agent entfernen** in the
+host dialog so the token is also dead on the server. The agent file on the machine is the only thing JulOS ever installs.
 
 ## What the agent reads
 
@@ -119,7 +160,7 @@ the proxy must allow `POST /containers/<id>/start|stop|restart`, `GET /container
 | GET | `/api/hosts/{id}/audit?limit=` | the history (audit) of this host, newest first, at most 200 |
 | PUT | `/api/hosts/{id}/agent/control` | `{level}`: `read` (default, no actions), `updates` (updates and logs) or `full` |
 | PUT | `/api/host-actions/pause` | `{paused}`: the pause switch (below) |
-| GET | `/agent-files/install-host-agent.sh`, `/agent-files/julos-agent-helper.py`, `/agent-files/SHA256SUMS` | public like the other agent files; `SHA256SUMS` is `sha256sum` format over exactly the served bytes |
+| GET | `/agent-files/install-agent.sh` (and the thin callers `install-host-agent.sh`, `install-linux-agent.sh`), `/agent-files/julos-agent-helper.py`, `/agent-files/SHA256SUMS` | public like the other agent files; `SHA256SUMS` is `sha256sum` format over exactly the served bytes |
 
 Answer shape: `{"state", "at", "stale", "error"?, "info"|"updates"|"services"|"docker"?}`. `state` is `ok`, `offline` (agent enrolled, not connected), `no_agent`, `unsupported` (the agent lacks the capability: the agent is not even asked) or `error`
 (`error` is a short code such as `timeout`, `apt_failed`, `invalid_answer`; free text of the agent is never passed on). On `offline` and `error` the last good data is still returned with `stale: true`.
@@ -130,7 +171,8 @@ Answer shape: `{"state", "at", "stale", "error"?, "info"|"updates"|"services"|"d
 - **Limits.** Answers are at most 600 kB (link limit), packages 500, containers 100, other lists 64 entries. Every field is read one by one: texts are cut and stripped of control characters, numbers clamped, wrong types dropped,
   IP addresses must parse. Hostile or broken answers cannot reach the page as markup (the front end also escapes everything).
 - **Rights.** Every route needs the session cookie (ApiGuard) and shows only your own hosts; 90 requests per minute and user.
-- **`GET /api/hosts`** gains, inside `agent`: `kind` (`host` or `desktop`), `caps`, `allow` (what the agent allows locally for actions), `control` (the server-side level); at the top `actionsPaused`. Old fields are unchanged.
+- **`GET /api/hosts`** gains, inside `agent`: `kind` (`host` or `desktop`: the platform), `caps` (the words above: `desktop`, `host`, `sysinfo`, ...), `allow` (what the agent allows locally for actions), `control` (the server-side level), `hostSupport` (`yes`, `update`, `none`, `unknown`, see "One agent per machine"); at the top `actionsPaused`. Old fields are unchanged.
+  **Ask `caps`, not `kind`**: a desktop agent 0.7.0 has `kind: desktop` and also `caps: [host, sysinfo, ...]`; everything the app shows for the host abilities (values, updates, actions) follows the words.
 - **Migration 017** adds `agents.control` (`read`, `updates`, `full`; default `read`); **migration 018** adds the table `host_audit` (016 is an intentional gap).
 
 ## Security
@@ -138,6 +180,7 @@ Answer shape: `{"state", "at", "stale", "error"?, "info"|"updates"|"services"|"d
 The design follows [INTEGRATIONS.md](INTEGRATIONS.md) section 3. For this agent specifically:
 
 - **Outbound only.** The agent connects to the server over `wss://` (system certificate store, no "insecure" switch); a plain `http://` server is refused except `localhost` or `--allow-http` for tests. Nothing listens on the machine.
+- **The desktop agent is a user process.** It runs as the user of the session (never root, never with `sudo`), has none of the sandbox below, and answers the host requests with the same checks. The permission file, the root helper and the words are the protection: **a word is a right for every program of that user**, because the helper's socket belongs to the user. The default is no word. Keep `reboot` and `services` off where a hostile program of your own user must not be able to reboot the machine or stop its services; `updates` and `logs` are the modest choice. `--docker-group` is not done for a desktop: the user's membership in the group `docker` is the user's own decision.
 - **Own user, no shell, locked down.** `julos-agent` has no login shell and no password; the unit has `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=read-only`, `PrivateTmp`, an empty capability set, and writes only to its own two folders.
 - **No shell, no free command.** Programs are fixed argument lists (`subprocess` with a list, never a shell string); names are checked against patterns **and** against the lists the agent itself reported; the agent never gets `sudo` and keeps `NoNewPrivileges`.
   Reading uses only `apt-get -s` (simulate); everything that writes is in the [Actions](#actions-stage-3) section below and behind the keys described there.
@@ -200,13 +243,13 @@ The entry `started` is written **before** the action is sent; if it cannot be wr
 
 ### The root helper
 
-`tools/julos-agent-helper.py` is a small program (standard library only, about 200 lines) that runs **as root, one request per connection**, started by systemd's socket activation (`julos-agent-helper.socket`, `/run/julos-agent-helper.sock`, mode 0660, group = the agent's user; `Accept=yes`).
+`tools/julos-agent-helper.py` is a small program (standard library only, about 200 lines) that runs **as root, one request per connection**, started by systemd's socket activation (`julos-agent-helper.socket`, `/run/julos-agent-helper.sock`, mode 0660, group = the service account; for a desktop agent the socket belongs to the user with mode 0600; `Accept=yes`).
 It exists because the agent is deliberately an unprivileged user with `NoNewPrivileges` and a read-only file system: it cannot run `apt-get` itself, and `sudo` would not work under that sandbox (and would be a much bigger door). The helper:
 
 - reads **one JSON line**, accepts only five verbs (`apt.refresh`, `apt.upgrade`, `power`, `service`, `journal`), checks the matching word in `/etc/julos-agent/permissions` (root-owned, not writable by others), validates every value (package pattern **without a trailing `-`**,
   which would mean "remove" to apt; unit pattern; never `julos-agent*`) and runs **exactly one fixed program as an argument list**: no shell, no `sudo`, no environment from the caller (`DEBIAN_FRONTEND=noninteractive`, `needrestart` only reports);
 - streams the program's output lines back as progress and ends with a short result code; when the agent hangs up, the action **runs to the end** (a half-finished `apt` is worse than an unread result);
-- is **not replaced by the agent's self-update**: it is installed and updated only by re-running `install-host-agent.sh` as root. The installer installs it only when you allow `updates`, `reboot`, `services` or `logs`. Without systemd it is not installed and those actions answer `helper_unavailable`.
+- is **not replaced by the agent's self-update**: it is installed and updated only by re-running `install-agent.sh` as root. The installer installs it only when you allow `updates`, `reboot`, `services` or `logs`. Without systemd it is not installed and those actions answer `helper_unavailable`.
 
 Honest limit: the permission file is the access control for the helper, and anyone who can write to the agent's user (or to the helper's socket group) can ask for **exactly the actions the file allows, with values the helper validates**, without your confirmation in the app. That is why the user stays
 unprivileged, the words are never a default, and `reboot`/`services` should be allowed only on machines where this is acceptable.
@@ -245,7 +288,7 @@ The plan is, in this order of preference:
 - **Anything unattended**: no schedule, no automatic update, no action started by the agent. That is stage 5 and needs its own opt-in.
 - **Windows** agent (planned, see [AGENT_API.md](AGENT_API.md)), macOS, BSD. The host mode needs Linux.
 - **Refreshing package lists silently**: `apt-get update` needs root; it is the explicit, confirmed action "Paketlisten aktualisieren" of stage 3 and never runs by itself.
-- **Both agents on one host.** One host has one agent; a machine that needs both modes becomes two hosts (for example "workstation" and "workstation (server)").
+- **Two agents on one host.** One host has one agent, and since 0.7.0 that one agent can do both (desktop abilities and host abilities); there is no reason for two. A machine with a desktop and a host agent installed is refused by the installer.
 - **Btrfs and LVM health**, per-container restart counters, Docker stats (CPU/memory per container), log search or streaming (logs are bounded, on request).
 - **A history.** Values are a snapshot; there are no graphs and no alerts yet (see "Later").
 - **dnf/apk/pacman details**: no security flag, no list age, and `dnf` only from its cache.
@@ -281,7 +324,8 @@ Effort: as listed there (M to L).
 ## Tests
 
 - `tests/agent/test_host.py`: parsers with fixtures (apt with security, new and kept-back packages, empty list, Ubuntu origins; dnf, apk, pacman; mdstat, zpool, smartctl; failed units; Docker over a real Unix socket), `sysinfo` from fake `/proc` files, permissions (owner and mode rules), the request table, the mode decision, a real `Link` against a small WebSocket server.
-- `tests/agent/test_installer.py`: the installer in dry-run (no root, no network) and its argument checks.
+- `tests/agent/test_installer.py`: `install-agent.sh` in dry-run (no root, no network): the host branch as before, the desktop branch (detection by faked desktop, forced kinds, existing installation decides, socket owned by the user, no service account or sudo for a desktop, docker note), and the thin old installers (forwarding, fetching the installer with a checksum from a local server); argument checks and `shellcheck`.
+- `tests/agent/test_unified.py`: the desktop agent answers `/v1/host/*` through the real link with the same checks (route table, `hello` with `caps` and `allow`, refusal without the word and nothing run, the allowed action sends exactly its request), the local socket does not know the host paths, and the self-update never touches the permission file.
 - `tests/agent/test_actions.py`: every action against a **request recorder** (it proves that exactly the expected requests reach the helper and the Docker socket, and that any real program aborts the test), one refusal test per missing right, injection tests (package names like `x; rm -rf /`, trailing `-`, `=`, newlines; unit names; container ids; job ids), busy and duplicate jobs, progress, results that survive a restart,
   the helper's verbs with an injectable runner, and the agent talking to the real helper code over a real Unix socket.
 - `tests/JulOS.Backend.Tests/HostActionTests.cs`: the two-step confirmation (expired, reused, wrong session, wrong host, changed action or target, typed name), the keys (level, local permission, version, offline, pause switch from the setting and from the environment), rate limit, history entries and ownership, target checks, one action per host, progress, failure codes,
@@ -289,4 +333,5 @@ Effort: as listed there (M to L).
 - `tests/frontend/hostactions.test.mjs`: when buttons appear, the confirmation text, typing the machine name, progress and result, error texts, the history, HTML escaping, and that the browser knows no other way than prepare then run.
 - `tests/JulOS.Backend.Tests/HostInfoTests.cs`: endpoints with a fake agent: all four reads, cache and refresh limits, simultaneous requests, offline and stale, no agent, unsupported, error codes, hostile data, session and ownership, migration 017 and the control check.
 - `tests/frontend/hostinfo.test.mjs`, `hosts.test.mjs`: formatters, card lines, HTML escaping, the store, the install command, the choice of the terminal connection.
+- `tests/JulOS.Backend.Tests/UnifiedAgentTests.cs`: a desktop agent with `caps` host shows values and allows actions with the same keys; an old desktop agent (0.5.x/0.6.0) stays valid, gets no host request and shows `hostSupport: update`; the support rule; the installer is served with a checksum.
 - By hand: the installer in a throw-away `debian:trixie` container without desktop against a test instance; the agent connects, status and updates show up (see the CHANGELOG entry for what was verified).

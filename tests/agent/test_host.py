@@ -672,7 +672,7 @@ class LinkTests(unittest.TestCase):
             hello = server.wait(lambda m: m.get("t") == "hello")
             self.assertIsNotNone(hello)
             self.assertEqual(server.auth, "Bearer jat_test")
-            self.assertEqual((hello["platform"], hello["caps"], hello["allow"], hello["agent"]), ("linux-host", ["sysinfo", "services"], [], agent.AGENT_VERSION))
+            self.assertEqual((hello["platform"], hello["caps"], hello["allow"], hello["agent"]), ("linux-host", ["host", "sysinfo", "services"], [], agent.AGENT_VERSION))
             self.assertTrue(hello["hostname"])
             server.send({"t": "welcome", "server": "9.9.9"})
             server.send({"t": "req", "id": 7, "method": "GET", "path": "/v1/host/services"})

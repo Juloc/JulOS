@@ -24,7 +24,7 @@ The default test instance shares a folder between server and desktop, so it uses
 
 1. start it, set up a throwaway account, add a desktop connection to `rdp-target` (it lands on your default host), connect once (this starts the agent in socket mode);
 2. in the host dialog (Hosts view, edit the host) choose **Agent einrichten**; in the desktop container, as the desktop user and with `DISPLAY=:10`, download the files from `http://<server>:8080/agent-files/` and run
-   `bash install-linux-agent.sh --server http://<server>:8080 --code CODE --allow-http` (`--allow-http` is only for this plain-HTTP test network);
+   `bash install-linux-agent.sh --server http://<server>:8080 --code CODE --allow-http` (it forwards to `install-agent.sh --desktop`; as the desktop user, no root needed without `--allow`) (`--allow-http` is only for this plain-HTTP test network);
 3. reconnect in the browser: the window bar, the launcher, the photo button and "Bild aus der VM holen" now work over the link; the host dialog shows **Agent verbunden**.
 
 `AgentLinkTests` (enrolment, tokens, routing, transfers with a fake agent in memory) run with `deploy/dev/test.sh`.

@@ -114,7 +114,8 @@ export const ERR_KEYS = {
   too_many_items: tk('files.err.too_many_items'), too_deep: tk('files.err.too_deep'), too_large: tk('files.err.too_large'), into_itself: tk('files.err.into_itself'),
   same_place: tk('files.err.same_place'), type_mismatch: tk('files.err.type_mismatch'), target_is_link: tk('files.err.target_is_link'), root_forbidden: tk('files.err.root_forbidden'),
   invalid_name: tk('files.err.invalid_name'), invalid_path: tk('files.err.invalid_path'), invalid_request: tk('files.err.invalid_request'),
-  not_text: tk('files.err.not_text'), write_off: tk('files.err.write_off'), confirm_required: tk('files.err.confirm_required'),
+  not_text: tk('files.err.not_text'), write_off: tk('files.err.write_off'), confirmation_invalid: tk('files.err.confirmation_invalid'), confirmation_expired: tk('files.err.confirmation_expired'),
+  confirmation_mismatch: tk('files.err.confirmation_mismatch'), too_many_pending: tk('files.err.too_many_pending'), audit_failed: tk('files.err.audit_failed'),
   connection_not_found: tk('files.err.connection_not_found'), not_ssh: tk('files.err.not_ssh'), target_not_allowed: tk('files.err.target_not_allowed'),
   password_required: tk('files.err.password_required'), password_unreadable: tk('files.err.password_unreadable'), logon_failed: tk('files.err.logon_failed'),
   unreachable: tk('files.err.unreachable'), timeout: tk('files.err.timeout'), sftp_unavailable: tk('files.err.sftp_unavailable'),
@@ -145,19 +146,23 @@ export function makeFilesApi(api, { createXhr = () => new XMLHttpRequest() } = {
     search: (path, text) => api('/api/files/search?path=' + q(path || '') + '&q=' + q(text)),
     text: (place, path) => api(`/api/files/remote/text?c=${place.id}&path=${q(path)}`),
     downloadUrl: (place, path) => (local(place) ? '/api/files/download?path=' + q(path) : `/api/files/remote/download?c=${place.id}&path=${q(path)}`),
-    mkdir: (place, dir, name) => api('/api/files/remote/mkdir', body({ connection: place.id, dir, name, confirm: true })),
-    rename: (place, path, name, overwrite = false) => api('/api/files/remote/rename', body({ connection: place.id, path, name, overwrite, confirm: true })),
-    plan: (action, place, paths, target) => api('/api/files/remote/plan', body({ action, connection: place.id, paths, target: target ? { connection: target.place.id, dir: target.dir } : undefined })),
-    remove: (place, paths, recursive) => api('/api/files/remote/delete', body({ connection: place.id, paths, recursive: !!recursive, confirm: true })),
-    copy: (place, paths, target, { move = false, overwrite = false } = {}) => api('/api/files/remote/copy', body({ connection: place.id, paths, target: { connection: target.place.id, dir: target.dir }, move, overwrite, confirm: true })),
+    /**
+     * Schritt 1 jeder schreibenden Aktion: der Server prueft und beschreibt, was geschaehe (Host, Pfade, Anzahl, Namen, die ersetzt wuerden, ein Ordner mit Inhalt) und stellt eine Bestaetigung (token) aus, die 60 s gilt,
+     * einmal, nur fuer diese Sitzung und genau diese Anfrage. action: upload, mkdir, rename, delete, copy, move. Die Antwort ist die Grundlage des Dialogs.
+     */
+    prepare: (action, place, { paths, dir, name, names, target } = {}) => api('/api/files/remote/prepare', body({ action, connection: place.id, paths, dir, name, names, target: target ? { connection: target.place.id, dir: target.dir } : undefined })),
+    mkdir: (place, dir, name, token) => api('/api/files/remote/mkdir', body({ connection: place.id, dir, name, token })),
+    rename: (place, path, name, overwrite, token) => api('/api/files/remote/rename', body({ connection: place.id, path, name, overwrite: !!overwrite, token })),
+    remove: (place, paths, recursive, token) => api('/api/files/remote/delete', body({ connection: place.id, paths, recursive: !!recursive, token })),
+    copy: (place, paths, target, { move = false, overwrite = false, token } = {}) => api('/api/files/remote/copy', body({ connection: place.id, paths, target: { connection: target.place.id, dir: target.dir }, move, overwrite, token })),
     job: (id) => api('/api/files/remote/jobs/' + id),
     cancel: (id) => api(`/api/files/remote/jobs/${id}/cancel`, { method: 'POST' }).catch(() => {}),
     audit: (limit = 50) => api('/api/files/audit?limit=' + limit),
     /** Eine Datei hochladen (roher Koerper). Gibt { promise, abort } zurueck; onProgress(geladen, gesamt). Ein Fehler hat code und data wie bei api(). */
-    upload(place, dir, file, { overwrite = false, onProgress } = {}) {
+    upload(place, dir, file, { overwrite = false, token, onProgress } = {}) {
       const xhr = createXhr();
       const promise = new Promise((resolve, reject) => {
-        const url = `/api/files/remote/upload?c=${place.id}&dir=${q(dir)}&name=${q(file.name)}&confirm=1${overwrite ? '&overwrite=1' : ''}`;
+        const url = `/api/files/remote/upload?c=${place.id}&dir=${q(dir)}&name=${q(file.name)}&token=${q(token || '')}${overwrite ? '&overwrite=1' : ''}`;
         xhr.open('POST', url);
         xhr.setRequestHeader('X-JulOS', '1');
         xhr.setRequestHeader('Content-Type', 'application/octet-stream');
@@ -253,7 +258,7 @@ export function jobSummary(job, action) {
   return extra.length ? base + ' ' + extra.join(' ') : base;
 }
 
-/* ---------- Die Saetze der Bestaetigungen: Host, Pfad und Anzahl stehen immer drin ---------- */
+/* ---------- Die Saetze der Bestaetigungen: alles kommt vom Server (prepare), die Seite zeigt es nur ---------- */
 const shortPath = (p, max = 70) => (p.length <= max ? p : '…' + p.slice(-(max - 1)));
 export const pathsText = (paths) => (paths.length === 1 ? shortPath(paths[0]) : `${shortPath(paths[0], 50)} ${t('files.andMore', { n: paths.length - 1 })}`);
 export const countText = (plan) => {
@@ -264,89 +269,81 @@ export const countText = (plan) => {
   const s = parts.join(', ') || t('files.nothing');
   return plan.bytes ? `${s} · ${fileSize(plan.bytes)}` : s;
 };
+const namesText = (names) => names.slice(0, 5).join(', ') + (names.length > 5 ? ' …' : '');
 
-/** Loeschen: nennt Host, Pfad und Anzahl; ein Ordner mit Inhalt braucht den ausdruecklichen zweiten Schritt (recursive), einen Papierkorb gibt es nicht */
-export function deleteModel(place, paths, plan, { recursiveAck = false } = {}) {
-  const needsAck = !!plan.nonEmpty;
+/** Loeschen: nennt Host, Pfad und Anzahl (vom Server); ein Ordner mit Inhalt braucht den ausdruecklichen zweiten Schritt (recursive), einen Papierkorb gibt es nicht */
+export function deleteModel(prep) {
+  const needsAck = !!prep.nonEmpty;
   return {
     title: t('files.delete.title'),
-    sentence: t('files.delete.sentence', { host: place.label, path: pathsText(paths) }),
-    rows: [[t('files.rowHost'), place.label], [t('files.rowPath'), pathsText(paths)], [t('files.rowCount'), countText(plan)]],
+    sentence: t('files.delete.sentence', { host: prep.host, path: pathsText(prep.paths) }),
+    rows: [[t('files.rowHost'), prep.host], [t('files.rowPath'), pathsText(prep.paths)], [t('files.rowCount'), countText(prep)]],
     warning: needsAck ? t('files.delete.recursiveWarning') : t('files.delete.noTrash'),
     ack: needsAck ? t('files.delete.recursiveAck') : null,
-    ready: !needsAck || recursiveAck,
     recursive: needsAck,
     confirm: t('files.delete.confirm'),
     danger: true,
   };
 }
 /** Kopieren und Verschieben (auch auf einen anderen Host); ersetzt etwas, steht das ausdruecklich da und braucht ein Haekchen */
-export function copyModel(action, srcPlace, target, paths, plan, { overwriteAck = false } = {}) {
+export function copyModel(action, prep) {
   const move = action === 'move';
-  const conflicts = plan.conflicts || [];
-  const other = target.place.id !== srcPlace.id;
+  const conflicts = prep.conflicts || [];
+  const to = prep.targetHost || prep.host;
   return {
     title: t(move ? tk('files.move.title') : tk('files.copy.title')),
-    sentence: t(move ? tk('files.move.sentence') : tk('files.copy.sentence'), { from: srcPlace.label, path: pathsText(paths), to: target.place.label, dir: shortPath(target.dir) }),
-    rows: [[t('files.rowFrom'), srcPlace.label], [t('files.rowPath'), pathsText(paths)], [t('files.rowTo'), `${target.place.label}: ${shortPath(target.dir)}`], [t('files.rowCount'), countText(plan)]],
-    note: other ? t('files.copy.viaServer') : null,
+    sentence: t(move ? tk('files.move.sentence') : tk('files.copy.sentence'), { from: prep.host, path: pathsText(prep.paths), to, dir: shortPath(prep.dir) }),
+    rows: [[t('files.rowFrom'), prep.host], [t('files.rowPath'), pathsText(prep.paths)], [t('files.rowTo'), `${to}: ${shortPath(prep.dir)}`], [t('files.rowCount'), countText(prep)]],
+    note: prep.targetHost ? t('files.copy.viaServer') : null,
     conflicts,
-    warning: conflicts.length ? t('files.copy.overwriteWarning', { names: conflicts.slice(0, 5).join(', ') + (conflicts.length > 5 ? ' …' : ''), n: conflicts.length }) : null,
+    warning: conflicts.length ? t('files.copy.overwriteWarning', { names: namesText(conflicts), n: conflicts.length }) : null,
     ack: conflicts.length ? t('files.copy.overwriteAck') : null,
-    ready: !conflicts.length || overwriteAck,
     overwrite: conflicts.length > 0,
     confirm: t(move ? tk('files.move.confirm') : tk('files.copy.confirm')),
     danger: conflicts.length > 0 || move,
   };
 }
 /** Hochladen: ersetzt etwas, steht Host, Pfad und Anzahl da und es braucht ein Haekchen */
-export function uploadModel(place, dir, files, existing) {
+export function uploadModel(prep, files) {
   const total = files.reduce((n, f) => n + (f.size || 0), 0);
-  const names = existing.slice(0, 5).join(', ') + (existing.length > 5 ? ' …' : '');
+  const conflicts = prep.conflicts || [];
   return {
     title: t('files.upload.title'),
-    sentence: t('files.upload.sentence', { host: place.label, dir: shortPath(dir), n: tp('files.nFiles', files.length) }),
-    rows: [[t('files.rowHost'), place.label], [t('files.rowPath'), shortPath(dir)], [t('files.rowCount'), `${tp('files.nFiles', files.length)} · ${fileSize(total)}`]],
-    warning: existing.length ? t('files.upload.overwriteWarning', { names, n: existing.length }) : null,
-    ack: existing.length ? t('files.upload.overwriteAck') : null,
-    ready: !existing.length,
-    overwrite: existing.length > 0,
+    sentence: t('files.upload.sentence', { host: prep.host, dir: shortPath(prep.dir), n: tp('files.nFiles', files.length) }),
+    rows: [[t('files.rowHost'), prep.host], [t('files.rowPath'), shortPath(prep.dir)], [t('files.rowCount'), `${tp('files.nFiles', files.length)} · ${fileSize(total)}`]],
+    warning: conflicts.length ? t('files.upload.overwriteWarning', { names: namesText(conflicts), n: conflicts.length }) : null,
+    ack: conflicts.length ? t('files.upload.overwriteAck') : null,
+    overwrite: conflicts.length > 0,
     confirm: t('files.upload.confirm'),
-    danger: existing.length > 0,
+    danger: conflicts.length > 0,
   };
 }
-/** Umbenennen: ersetzt der neue Name eine Datei, braucht es ein Haekchen */
-export function renameModel(place, path, newName, exists) {
+/** Umbenennen: ersetzt der neue Name eine Datei (der Server meldet es als Konflikt), braucht es ein Haekchen */
+export function renameModel(prep) {
+  const exists = (prep.conflicts || []).length > 0;
   return {
     title: t('files.rename.title'),
-    sentence: t('files.rename.sentence', { host: place.label, path: shortPath(path), name: newName }),
-    rows: [[t('files.rowHost'), place.label], [t('files.rowPath'), shortPath(path)], [t('files.rowNewName'), newName]],
-    warning: exists ? t('files.rename.overwriteWarning', { name: newName }) : null,
+    sentence: t('files.rename.sentence', { host: prep.host, path: shortPath(prep.paths[0]), name: prep.name }),
+    rows: [[t('files.rowHost'), prep.host], [t('files.rowPath'), shortPath(prep.paths[0])], [t('files.rowNewName'), prep.name]],
+    warning: exists ? t('files.rename.overwriteWarning', { name: prep.name }) : null,
     ack: exists ? t('files.rename.overwriteAck') : null,
-    ready: !exists,
-    overwrite: !!exists,
+    overwrite: exists,
     confirm: t('files.rename.confirm'),
-    danger: !!exists,
+    danger: exists,
   };
 }
-export function mkdirModel(place, dir, name) {
+export function mkdirModel(prep) {
   return {
     title: t('files.mkdir.title'),
-    sentence: t('files.mkdir.sentence', { host: place.label, dir: shortPath(dir), name }),
-    rows: [[t('files.rowHost'), place.label], [t('files.rowPath'), shortPath(dir)], [t('files.rowNewName'), name]],
-    ready: true, confirm: t('files.mkdir.confirm'), danger: false,
+    sentence: t('files.mkdir.sentence', { host: prep.host, dir: shortPath(prep.dir), name: prep.name }),
+    rows: [[t('files.rowHost'), prep.host], [t('files.rowPath'), shortPath(prep.dir)], [t('files.rowNewName'), prep.name]],
+    confirm: t('files.mkdir.confirm'), danger: false,
   };
-}
-
-/** Hochladen vorbereiten: welche Namen gibt es im Ordner schon (Pruefung gegen die geladene Liste) */
-export function uploadConflicts(files, entries) {
-  const have = new Set(entries.map((e) => e.name));
-  return [...files].filter((f) => have.has(f.name)).map((f) => f.name);
 }
 
 /* ---------- Verlauf ---------- */
 const ACTION = { upload: tk('files.a.upload'), mkdir: tk('files.a.mkdir'), rename: tk('files.a.rename'), delete: tk('files.a.delete'), copy: tk('files.a.copy'), move: tk('files.a.move'), open: tk('files.a.open'), list: tk('files.a.list'), text: tk('files.a.text'), download: tk('files.a.download') };
-const RESULT = { ok: tk('files.r.ok'), failed: tk('files.r.failed'), denied: tk('files.r.denied'), cancelled: tk('files.r.cancelled') };
+const RESULT = { started: tk('files.r.started'), ok: tk('files.r.ok'), failed: tk('files.r.failed'), denied: tk('files.r.denied'), cancelled: tk('files.r.cancelled') };
 export const auditLine = (e) => ({
   when: fmtDate(e.at, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }),
   host: e.host, action: t(ACTION[e.action] || tk('files.a.unknown')), path: e.path || '', result: t(RESULT[e.result] || tk('files.r.failed')), failed: e.result !== 'ok',

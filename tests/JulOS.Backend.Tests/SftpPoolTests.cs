@@ -195,4 +195,24 @@ public sealed class SftpPoolTests
         Assert.True(pool.IsOpen(U1, c));
         Assert.Single(b.Sessions);
     }
+
+    [Fact]
+    public async Task Invalidating_closes_an_idle_session_at_once_and_a_leased_one_when_the_last_lease_is_back()
+    {
+        var (pool, _) = Make(); var b = new Bench(); var c1 = Guid.NewGuid(); var c2 = Guid.NewGuid();
+        await (await pool.AcquireAsync(U1, c1, b.Connect, default)).DisposeAsync();
+        var busy = await pool.AcquireAsync(U1, c2, b.Connect, default);
+        await using var theirs = await pool.AcquireAsync(U2, c1, b.Connect, default);
+        await pool.InvalidateAsync(U1, c1);                                                   // unbenutzt: gleich zu
+        Assert.Equal((1, false), (b.Sessions[0].Disposed, pool.IsOpen(U1, c1)));
+        await pool.InvalidateUserAsync(U1);                                                   // in Gebrauch: nicht mehr zu bekommen, zu sobald zurueckgegeben
+        Assert.Equal((0, false), (b.Sessions[1].Disposed, pool.IsOpen(U1, c2)));
+        Assert.Null(pool.TryAcquire(U1, c2));
+        await busy.DisposeAsync();
+        Assert.Equal(1, b.Sessions[1].Disposed);
+        Assert.Equal(0, pool.CountFor(U1));
+        Assert.Equal((0, true), (b.Sessions[2].Disposed, pool.IsOpen(U2, c1)));                // ein anderer Benutzer bleibt unberuehrt
+        await using var fresh = await pool.AcquireAsync(U1, c2, b.Connect, default);          // danach wird neu verbunden
+        Assert.Equal(4, b.Sessions.Count);
+    }
 }

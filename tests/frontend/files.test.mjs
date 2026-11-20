@@ -111,11 +111,11 @@ test('Fehlertexte: jeder Code des Servers hat einen Schluessel in Deutsch und En
 /** Ein api() das alle Aufrufe aufzeichnet und antwortet */
 function stubApi(answer = () => ({})) {
   const calls = [];
-  const api = async (path, o = {}) => { calls.push([o.method || 'GET', path, o.body]); const r = await answer(path, o, calls); return r; };
+  const api = async (path, o = {}) => { calls.push([o.method || 'GET', path, o.body === undefined ? undefined : JSON.parse(JSON.stringify(o.body))]); const r = await answer(path, o, calls); return r; };
   return { api, calls };
 }
 
-test('Aufrufe: lesen mit Ort und Pfad (gequotet), schreiben immer mit confirm, Host-zu-Host mit Ziel', async () => {
+test('Aufrufe: lesen mit Ort und Pfad (gequotet), Schreiben in zwei Schritten (prepare, dann die Aktion mit dem Token), Host-zu-Host mit Ziel', async () => {
   const { api, calls } = stubApi((path) => (path.includes('/list') ? { path: '/a b', entries: [] } : {}));
   const f = C.makeFilesApi(api);
   await f.list(remote, '/a b/ä&x');
@@ -126,22 +126,28 @@ test('Aufrufe: lesen mit Ort und Pfad (gequotet), schreiben immer mit confirm, H
   assert.equal(f.downloadUrl(local, 'a/b'), '/api/files/download?path=a%2Fb');
   await f.text(remote, '/t.txt');
   assert.equal(calls[2][1], '/api/files/remote/text?c=c1&path=%2Ft.txt');
-  await f.mkdir(remote, '/a', 'n');
-  await f.rename(remote, '/a/x', 'y');
-  await f.remove(remote, ['/a/x'], true);
-  await f.copy(remote, ['/a/x'], { place: other, dir: '/dst' }, { move: true, overwrite: true });
-  await f.plan('copy', remote, ['/a/x'], { place: other, dir: '/dst' });
-  await f.plan('delete', remote, ['/a/x']);
+  await f.prepare('mkdir', remote, { dir: '/a', name: 'n' });
+  await f.prepare('delete', remote, { paths: ['/a/x'] });
+  await f.prepare('copy', remote, { paths: ['/a/x'], target: { place: other, dir: '/dst' } });
+  await f.prepare('upload', remote, { dir: '/a', names: ['a.txt', 'b.txt'] });
+  await f.mkdir(remote, '/a', 'n', 'T1');
+  await f.rename(remote, '/a/x', 'y', true, 'T2');
+  await f.remove(remote, ['/a/x'], true, 'T3');
+  await f.copy(remote, ['/a/x'], { place: other, dir: '/dst' }, { move: true, overwrite: true, token: 'T4' });
   const writes = calls.slice(3);
-  assert.deepEqual(writes.map((c) => [c[0], c[1]]), [['POST', '/api/files/remote/mkdir'], ['POST', '/api/files/remote/rename'], ['POST', '/api/files/remote/delete'], ['POST', '/api/files/remote/copy'], ['POST', '/api/files/remote/plan'], ['POST', '/api/files/remote/plan']]);
-  for (const c of writes.slice(0, 4)) assert.equal(c[2].confirm, true, c[1]);
-  assert.deepEqual(writes[0][2], { connection: 'c1', dir: '/a', name: 'n', confirm: true });
-  assert.deepEqual(writes[2][2], { connection: 'c1', paths: ['/a/x'], recursive: true, confirm: true });
-  assert.deepEqual(writes[3][2], { connection: 'c1', paths: ['/a/x'], target: { connection: 'c2', dir: '/dst' }, move: true, overwrite: true, confirm: true });
-  assert.deepEqual(writes[4][2].target, { connection: 'c2', dir: '/dst' });
-  assert.equal(writes[5][2].target, undefined);
+  assert.deepEqual(writes.map((c) => [c[0], c[1]]), [['POST', '/api/files/remote/prepare'], ['POST', '/api/files/remote/prepare'], ['POST', '/api/files/remote/prepare'], ['POST', '/api/files/remote/prepare'],
+    ['POST', '/api/files/remote/mkdir'], ['POST', '/api/files/remote/rename'], ['POST', '/api/files/remote/delete'], ['POST', '/api/files/remote/copy']]);
+  // Schritt 1: Aktion und Felder, nie ein Token; Schritt 2: das Token statt eines Flags "confirm"
+  assert.deepEqual(writes[0][2], { action: 'mkdir', connection: 'c1', dir: '/a', name: 'n' });
+  assert.deepEqual(writes[2][2], { action: 'copy', connection: 'c1', paths: ['/a/x'], target: { connection: 'c2', dir: '/dst' } });
+  assert.deepEqual(writes[3][2], { action: 'upload', connection: 'c1', dir: '/a', names: ['a.txt', 'b.txt'] });
+  assert.deepEqual(writes[4][2], { connection: 'c1', dir: '/a', name: 'n', token: 'T1' });
+  assert.deepEqual(writes[5][2], { connection: 'c1', path: '/a/x', name: 'y', overwrite: true, token: 'T2' });
+  assert.deepEqual(writes[6][2], { connection: 'c1', paths: ['/a/x'], recursive: true, token: 'T3' });
+  assert.deepEqual(writes[7][2], { connection: 'c1', paths: ['/a/x'], target: { connection: 'c2', dir: '/dst' }, move: true, overwrite: true, token: 'T4' });
+  for (const c of writes) assert.equal('confirm' in c[2], false, c[1]);
   await f.job('j1'); await f.cancel('j1'); await f.audit(5);
-  assert.deepEqual(calls.slice(9).map((c) => [c[0], c[1]]), [['GET', '/api/files/remote/jobs/j1'], ['POST', '/api/files/remote/jobs/j1/cancel'], ['GET', '/api/files/audit?limit=5']]);
+  assert.deepEqual(calls.slice(11).map((c) => [c[0], c[1]]), [['GET', '/api/files/remote/jobs/j1'], ['POST', '/api/files/remote/jobs/j1/cancel'], ['GET', '/api/files/audit?limit=5']]);
 });
 
 /** Ein Ersatz fuer XMLHttpRequest */
@@ -156,10 +162,10 @@ test('Hochladen: roher Koerper mit Sonderkopfzeile, Fortschritt, Fehler mit Code
   const f = C.makeFilesApi(async () => ({}), { createXhr: () => (x = fakeXhr((r) => { r.status = 200; r.responseText = '{"path":"/d/a.txt","bytes":10,"replaced":false}'; r.onload(); })) });
   const seen = [];
   const file = { name: 'ä b.txt', size: 10 };
-  const up = f.upload(remote, '/d', file, { overwrite: true, onProgress: (a, b) => seen.push([a, b]) });
+  const up = f.upload(remote, '/d', file, { overwrite: true, token: 'T9', onProgress: (a, b) => seen.push([a, b]) });
   assert.deepEqual(await up.promise, { path: '/d/a.txt', bytes: 10, replaced: false });
   assert.equal(x.method, 'POST');
-  assert.equal(x.url, '/api/files/remote/upload?c=c1&dir=%2Fd&name=%C3%A4%20b.txt&confirm=1&overwrite=1');
+  assert.equal(x.url, '/api/files/remote/upload?c=c1&dir=%2Fd&name=%C3%A4%20b.txt&token=T9&overwrite=1');
   assert.equal(x.headers['X-JulOS'], '1');
   assert.equal(x.sent, file);
   assert.deepEqual(seen, [[5, 10]]);
@@ -250,54 +256,51 @@ test('Ergebnis eines Auftrags: was geschah, uebersprungene Links, Fehler als Tex
   assert.match(C.jobSummary({ state: 'cancelled' }, 'copy'), /Abgebrochen/);
 });
 
-test('Bestaetigung Loeschen: nennt Host, Pfad und Anzahl; ein Ordner mit Inhalt braucht das ausdrueckliche Haekchen; kein Papierkorb', () => {
-  const plan = { files: 3, directories: 2, links: 1, bytes: 2048, conflicts: [], nonEmpty: true };
-  const m = C.deleteModel(remote, ['/home/jul/projekt', '/home/jul/x.txt'], plan);
+const prep = (over = {}) => ({ token: 'TOK', expiresIn: 60, action: 'delete', host: 'Server A', targetHost: null, paths: ['/home/jul/projekt', '/home/jul/x.txt'], dir: null, name: null, names: null, files: 3, directories: 2, links: 1, bytes: 2048, conflicts: [], nonEmpty: true, ...over });
+
+test('Bestaetigung Loeschen: alles vom Server; nennt Host, Pfad und Anzahl; ein Ordner mit Inhalt braucht das ausdrueckliche Haekchen; kein Papierkorb', () => {
+  const m = C.deleteModel(prep());
   assert.match(m.sentence, /Server A/);
   assert.match(m.sentence, /\/home\/jul\/projekt/);
   assert.deepEqual(m.rows.map((r) => r[0]), ['Host', 'Pfad', 'Umfang']);
   assert.match(m.rows[2][1], /3 Dateien, 2 Ordner, 1 Link · 2,0 KiB/);
   assert.match(m.rows[1][1], /und 1 weitere/);
   assert.ok(m.ack && m.recursive && m.danger);
-  assert.equal(m.ready, false);
-  assert.equal(C.deleteModel(remote, ['/a'], plan, { recursiveAck: true }).ready, true);
-  const simple = C.deleteModel(remote, ['/a/x.txt'], { files: 1, directories: 0, links: 0, bytes: 3, nonEmpty: false });
-  assert.deepEqual([simple.ack, simple.ready, simple.recursive], [null, true, false]);
+  const simple = C.deleteModel(prep({ paths: ['/a/x.txt'], files: 1, directories: 0, links: 0, bytes: 3, nonEmpty: false }));
+  assert.deepEqual([simple.ack, simple.recursive], [null, false]);
   assert.match(simple.warning, /keinen Papierkorb/);
   assert.match(simple.rows[2][1], /1 Datei · 3 B/);
 });
 
 test('Bestaetigung Kopieren und Verschieben: Quelle, Ziel (auch ein anderer Host), Anzahl; Ersetzen nur mit Haekchen', () => {
-  const plan = { files: 2, directories: 0, links: 0, bytes: 10, conflicts: [], nonEmpty: false };
-  const copy = C.copyModel('copy', remote, { place: other, dir: '/srv/ziel' }, ['/home/jul/a', '/home/jul/b'], plan);
+  const base = prep({ action: 'copy', paths: ['/home/jul/a', '/home/jul/b'], dir: '/srv/ziel', targetHost: 'Server B', files: 2, directories: 0, links: 0, bytes: 10, nonEmpty: false });
+  const copy = C.copyModel('copy', base);
   assert.match(copy.sentence, /Server A/); assert.match(copy.sentence, /Server B/); assert.match(copy.sentence, /\/srv\/ziel/);
   assert.match(copy.note, /JulOS-Server/);                                                  // laeuft ueber den Server
-  assert.ok(copy.ready && !copy.ack && !copy.overwrite);
-  assert.equal(C.copyModel('copy', remote, { place: remote, dir: '/x' }, ['/a'], plan).note, null);
-  const clash = C.copyModel('move', remote, { place: other, dir: '/srv' }, ['/a'], { ...plan, conflicts: ['a', 'b', 'c', 'd', 'e', 'f'] });
-  assert.ok(clash.ack && clash.overwrite && clash.danger && !clash.ready);
+  assert.ok(!copy.ack && !copy.overwrite);
+  assert.equal(C.copyModel('copy', { ...base, targetHost: null, dir: '/x' }).note, null);
+  const clash = C.copyModel('move', { ...base, conflicts: ['a', 'b', 'c', 'd', 'e', 'f'] });
+  assert.ok(clash.ack && clash.overwrite && clash.danger);
   assert.match(clash.warning, /\(6\)/);
   assert.match(clash.warning, /a, b, c, d, e …/);
-  assert.equal(C.copyModel('move', remote, { place: other, dir: '/srv' }, ['/a'], { ...plan, conflicts: ['a'] }, { overwriteAck: true }).ready, true);
   assert.equal(clash.title, 'Verschieben');
 });
 
 test('Bestaetigung Hochladen, Umbenennen, Ordner: Host und Pfad stehen drin, Ersetzen braucht das Haekchen', () => {
   const files = [{ name: 'a.txt', size: 1024 }, { name: 'b.txt', size: 2048 }];
-  const fresh = C.uploadModel(remote, '/home/jul', files, []);
-  assert.deepEqual([fresh.ready, fresh.ack, fresh.danger], [true, null, false]);
+  const fresh = C.uploadModel(prep({ action: 'upload', dir: '/home/jul', names: ['a.txt', 'b.txt'], paths: [] }), files);
+  assert.deepEqual([fresh.ack, fresh.danger], [null, false]);
   assert.match(fresh.sentence, /2 Dateien nach Server A/);
   assert.match(fresh.rows[2][1], /2 Dateien · 3,0 KiB/);
-  const clash = C.uploadModel(remote, '/home/jul', files, ['a.txt']);
-  assert.ok(clash.ack && !clash.ready && clash.danger && clash.overwrite);
+  const clash = C.uploadModel(prep({ action: 'upload', dir: '/home/jul', names: ['a.txt', 'b.txt'], paths: [], conflicts: ['a.txt'] }), files);
+  assert.ok(clash.ack && clash.danger && clash.overwrite);
   assert.match(clash.warning, /a\.txt/);
-  assert.deepEqual(C.uploadConflicts(files, [{ name: 'b.txt' }, { name: 'c' }]), ['b.txt']);
-  const ren = C.renameModel(remote, '/home/jul/a.txt', 'b.txt', true);
-  assert.ok(ren.ack && !ren.ready && ren.danger);
+  const ren = C.renameModel(prep({ action: 'rename', paths: ['/home/jul/a.txt'], name: 'b.txt', conflicts: ['b.txt'] }));
+  assert.ok(ren.ack && ren.danger);
   assert.match(ren.sentence, /Server A/); assert.match(ren.sentence, /b\.txt/);
-  assert.equal(C.renameModel(remote, '/home/jul/a.txt', 'z.txt', false).ready, true);
-  const mk = C.mkdirModel(remote, '/home/jul', 'neu');
-  assert.deepEqual([mk.ready, mk.confirm], [true, 'Anlegen']);
+  assert.equal(C.renameModel(prep({ action: 'rename', paths: ['/home/jul/a.txt'], name: 'z.txt' })).ack, null);
+  const mk = C.mkdirModel(prep({ action: 'mkdir', dir: '/home/jul', name: 'neu', paths: [] }));
+  assert.equal(mk.confirm, 'Anlegen');
   assert.match(mk.sentence, /neu/);
   assert.equal(C.pathsText(['/x'.padEnd(120, 'y')]).length, 70);                          // lange Pfade werden gekuerzt, das Ende bleibt
   assert.ok(C.pathsText(['/x'.padEnd(120, 'y')]).startsWith('…'));
@@ -306,6 +309,7 @@ test('Bestaetigung Hochladen, Umbenennen, Ordner: Host und Pfad stehen drin, Ers
 test('Verlauf: eine Zeile mit Aktion, Pfad, Ergebnis und Zusatz; Unbekanntes wird allgemein gemeldet, nie roh', () => {
   const l = C.auditLine({ at: '2026-11-19T10:05:00Z', host: 'Server A', action: 'delete', path: '/x', result: 'failed', detail: 'not_empty', items: 0 });
   assert.deepEqual([l.action, l.result, l.failed, l.detail, l.items], ['Gelöscht', 'fehlgeschlagen', true, 'Der Ordner ist nicht leer.', '0 Elemente']);
+  assert.deepEqual(['gestartet', false], [C.auditLine({ at: '2026-11-19T10:05:00Z', host: 'h', action: 'delete', result: 'started' }).result, C.auditLine({ at: '2026-11-19T10:05:00Z', host: 'h', action: 'delete', result: 'ok' }).failed === true]);
   assert.equal(C.auditLine({ at: '2026-11-19T10:05:00Z', host: 'h', action: 'upload', result: 'ok', detail: 'overwrite' }).detail, 'mit Ersetzen');
   const odd = C.auditLine({ at: '2026-11-19T10:05:00Z', host: 'h', action: '<img onerror=x>', result: '??', detail: '<b>' });
   assert.equal(odd.action, 'Aktion'); assert.equal(odd.result, 'fehlgeschlagen'); assert.equal(odd.detail, '');

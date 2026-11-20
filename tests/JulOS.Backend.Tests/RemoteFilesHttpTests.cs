@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using JulOS.Backend.Data;
 using JulOS.Frontend.Files;
 using JulOS.Integrations.Files;
 using JulOS.Integrations.Ssh;
@@ -22,7 +23,7 @@ public sealed class RemoteFilesHttpTests
     private static readonly string TestKey = Convert.ToBase64String(new byte[32].Select((_, i) => (byte)(i + 7)).ToArray());
     private const string StoredPassword = "Gespeichert-Passwort-123", TypedPassword = "Getippt-Passwort-456";
 
-    private sealed class Rig(TestDb db, string? write = "on", string? maxMb = null, string? allowed = null, List<string>? log = null) : WebApplicationFactory<Program>
+    private sealed class Rig(TestDb db, string? write = "on", string? maxMb = null, string? allowed = null, List<string>? log = null, TimeSpan? confirmLifetime = null) : WebApplicationFactory<Program>
     {
         public readonly Queue<FakeFileSession> Hosts = new();
         public readonly List<FakeFileSession> Created = [];
@@ -38,6 +39,7 @@ public sealed class RemoteFilesHttpTests
             builder.ConfigureServices(s => s.AddTransient<IStartupFilter, LoopbackFilter>());
             builder.ConfigureTestServices(s =>
             {
+                if (confirmLifetime is { } life) s.AddSingleton(new FileConfirmations(TimeProvider.System, life));
                 s.AddSingleton(new FileSessionFactory(() => { var f = Hosts.Count > 0 ? Hosts.Dequeue() : new FakeFileSession(); Created.Add(f); return f; }));
                 if (log is not null) s.AddLogging(b => b.SetMinimumLevel(Microsoft.Extensions.Logging.LogLevel.Trace).AddProvider(new Capture(log)));
             });
@@ -61,6 +63,29 @@ public sealed class RemoteFilesHttpTests
         public Task<(HttpStatusCode Status, JsonElement Body)> Get(string url) => Json(HttpMethod.Get, url);
         public Task<(HttpStatusCode Status, JsonElement Body)> Post(string url, object body) => Json(HttpMethod.Post, url, body);
         public Task<HttpResponseMessage> Raw(HttpRequestMessage r) => http.SendAsync(r);
+
+        /// <summary>Die zwei Schritte: erst prepare mit den Feldern der Aktion (der Server prueft und stellt die Bestaetigung aus), dann die Aktion selbst mit dem Token.</summary>
+        public async Task<(HttpStatusCode Status, JsonElement Body)> Write(string url, object body)
+        {
+            var (token, failed) = await Prepare(url, body);
+            if (token is null) return failed;
+            var run = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(body))!.AsObject();
+            run["token"] = token;
+            return await Json(HttpMethod.Post, url, run);
+        }
+
+        /// <summary>Schritt 1 fuer die Aktion, die zu dieser Adresse gehoert; gibt das Token oder die Fehlerantwort.</summary>
+        public async Task<(string? Token, (HttpStatusCode Status, JsonElement Body) Failed)> Prepare(string url, object body)
+        {
+            var o = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(body))!.AsObject();
+            var action = url.Split('/')[^1];
+            if (action == "copy") action = o["move"]?.GetValue<bool>() == true ? "move" : "copy";
+            var prep = new System.Text.Json.Nodes.JsonObject { ["action"] = action, ["connection"] = o["connection"]?.DeepClone() };
+            foreach (var k in new[] { "paths", "dir", "name", "target", "names" }) if (o[k] is { } v) prep[k] = v.DeepClone();
+            if (action == "rename") prep["paths"] = new System.Text.Json.Nodes.JsonArray(o["path"]!.DeepClone());
+            var (status, resp) = await Json(HttpMethod.Post, "/api/files/remote/prepare", prep);
+            return status == HttpStatusCode.OK ? (resp.GetProperty("token").GetString(), default) : (null, (status, resp));
+        }
         public HttpRequestMessage Authed(HttpMethod m, string url) { var r = new HttpRequestMessage(m, url); r.Headers.Add("Cookie", cookie); if (m != HttpMethod.Get) { r.Headers.Add("X-JulOS", "1"); r.Headers.Add("Origin", "http://localhost"); } return r; }
     }
 
@@ -105,7 +130,7 @@ public sealed class RemoteFilesHttpTests
             Assert.Equal(HttpStatusCode.Unauthorized, (await http.GetAsync(url)).StatusCode);
         var (api, _, _) = await SignedIn(app, db);
         var id = await Connection(api, "A");
-        foreach (var url in new[] { "/api/files/remote/open", "/api/files/remote/mkdir", "/api/files/remote/rename", "/api/files/remote/delete", "/api/files/remote/copy", "/api/files/remote/plan", "/api/files/remote/upload?c=" + id + "&dir=/&name=x&confirm=1" })
+        foreach (var url in new[] { "/api/files/remote/open", "/api/files/remote/mkdir", "/api/files/remote/rename", "/api/files/remote/delete", "/api/files/remote/copy", "/api/files/remote/prepare", "/api/files/remote/upload?c=" + id + "&dir=/&name=x" })
         {
             var noHeader = api.Authed(HttpMethod.Post, url); noHeader.Headers.Remove("X-JulOS"); noHeader.Content = JsonContent.Create(new { connection = id });
             Assert.Equal(HttpStatusCode.Forbidden, (await api.Raw(noHeader)).StatusCode);
@@ -284,9 +309,9 @@ public sealed class RemoteFilesHttpTests
 
     // ---------- Lesen ----------
 
-    private static async Task<(Rig App, Client Api, Guid C, FakeFileSession Host, Guid User)> OpenHost(TestDb db, Action<FakeFileSession>? seed = null, string? write = "on", string? maxMb = null)
+    private static async Task<(Rig App, Client Api, Guid C, FakeFileSession Host, Guid User)> OpenHost(TestDb db, Action<FakeFileSession>? seed = null, string? write = "on", string? maxMb = null, TimeSpan? confirmLifetime = null)
     {
-        var app = new Rig(db, write, maxMb);
+        var app = new Rig(db, write, maxMb, confirmLifetime: confirmLifetime);
         var (api, user, _) = await SignedIn(app, db);
         var c = await Connection(api, "A");
         var host = new FakeFileSession();
@@ -417,17 +442,17 @@ public sealed class RemoteFilesHttpTests
         await using var rigGuard = app;
         var calls = new (string Url, object Body)[]
         {
-            ("/api/files/remote/mkdir", new { connection = c, dir = "/home/tester", name = "n", confirm = true }),
-            ("/api/files/remote/rename", new { connection = c, path = "/home/tester/a.txt", name = "b.txt", confirm = true }),
-            ("/api/files/remote/delete", new { connection = c, paths = new[] { "/home/tester/a.txt" }, confirm = true }),
-            ("/api/files/remote/copy", new { connection = c, paths = new[] { "/home/tester/a.txt" }, target = new { connection = c, dir = "/" }, confirm = true }),
+            ("/api/files/remote/mkdir", new { connection = c, dir = "/home/tester", name = "n" }),
+            ("/api/files/remote/rename", new { connection = c, path = "/home/tester/a.txt", name = "b.txt" }),
+            ("/api/files/remote/delete", new { connection = c, paths = new[] { "/home/tester/a.txt" } }),
+            ("/api/files/remote/copy", new { connection = c, paths = new[] { "/home/tester/a.txt" }, target = new { connection = c, dir = "/" } }),
         };
         foreach (var (url, body) in calls)
         {
             var r = await api.Post(url, body);
             Assert.Equal((HttpStatusCode.Forbidden, "write_off"), (r.Status, Code(r.Body)));
         }
-        var up = api.Authed(HttpMethod.Post, $"/api/files/remote/upload?c={c}&dir=/home/tester&name=u.txt&confirm=1"); up.Content = new ByteArrayContent([1, 2, 3]);
+        var up = api.Authed(HttpMethod.Post, $"/api/files/remote/upload?c={c}&dir=/home/tester&name=u.txt"); up.Content = new ByteArrayContent([1, 2, 3]);
         Assert.Equal(HttpStatusCode.Forbidden, (await api.Raw(up)).StatusCode);
         Assert.DoesNotContain(host.Log, l => l.StartsWith("create ") || l.StartsWith("mkdir ") || l.StartsWith("rename ") || l.StartsWith("delete ") || l.StartsWith("rmdir "));
         Assert.Equal(["a.txt"], host.Under("/home/tester").Select(RemotePath.NameOf).ToArray());
@@ -437,7 +462,7 @@ public sealed class RemoteFilesHttpTests
     }
 
     [Fact]
-    public async Task Without_the_confirmation_of_the_page_nothing_is_written()
+    public async Task Without_a_valid_confirmation_nothing_is_written()
     {
         await using var db = await TestDb.CreateAsync();
         var (app, api, c, host, _) = await OpenHost(db, h => h.File("/home/tester/a.txt", "A"));
@@ -445,19 +470,28 @@ public sealed class RemoteFilesHttpTests
         foreach (var (url, body) in new (string, object)[]
         {
             ("/api/files/remote/mkdir", new { connection = c, dir = "/home/tester", name = "n" }),
-            ("/api/files/remote/rename", new { connection = c, path = "/home/tester/a.txt", name = "b.txt", confirm = false }),
+            ("/api/files/remote/rename", new { connection = c, path = "/home/tester/a.txt", name = "b.txt" }),
             ("/api/files/remote/delete", new { connection = c, paths = new[] { "/home/tester/a.txt" } }),
             ("/api/files/remote/copy", new { connection = c, paths = new[] { "/home/tester/a.txt" }, target = new { connection = c, dir = "/" } }),
         })
-            Assert.Equal("confirm_required", Code((await api.Post(url, body)).Body));
-        var up = api.Authed(HttpMethod.Post, $"/api/files/remote/upload?c={c}&dir=/home/tester&name=u.txt"); up.Content = new ByteArrayContent([1]);
-        Assert.Equal(HttpStatusCode.BadRequest, (await api.Raw(up)).StatusCode);
+            Assert.Equal((HttpStatusCode.Forbidden, "confirmation_invalid"), ((await api.Post(url, body)).Status, Code((await api.Post(url, body)).Body)));       // ohne Token und mit einem erfundenen
+        var up = api.Authed(HttpMethod.Post, $"/api/files/remote/upload?c={c}&dir=/home/tester&name=u.txt&token=erfunden"); up.Content = new ByteArrayContent([1]);
+        Assert.Equal(HttpStatusCode.Forbidden, (await api.Raw(up)).StatusCode);
         Assert.Equal(["a.txt"], host.Under("/home/tester").Select(RemotePath.NameOf).ToArray());
     }
 
     private static async Task<HttpResponseMessage> Upload(Client api, Guid c, string dir, string name, byte[] data, bool overwrite = false, bool stream = false)
     {
-        var r = api.Authed(HttpMethod.Post, $"/api/files/remote/upload?c={c}&dir={Uri.EscapeDataString(dir)}&name={Uri.EscapeDataString(name)}&confirm=1" + (overwrite ? "&overwrite=1" : ""));
+        // Schritt 1 (die Bestaetigung fuer genau diese Datei in diesem Ordner); schlaegt er fehl, ist seine Antwort die Antwort
+        var prep = await api.Raw(api.Req(HttpMethod.Post, "/api/files/remote/prepare", new { action = "upload", connection = c, dir, names = new[] { name } }));
+        if (!prep.IsSuccessStatusCode) return prep;
+        var token = ApiKit.J(await prep.Content.ReadAsStringAsync()).GetProperty("token").GetString();
+        return await UploadWith(api, c, dir, name, data, token!, overwrite, stream);
+    }
+
+    private static async Task<HttpResponseMessage> UploadWith(Client api, Guid c, string dir, string name, byte[] data, string token, bool overwrite = false, bool stream = false)
+    {
+        var r = api.Authed(HttpMethod.Post, $"/api/files/remote/upload?c={c}&dir={Uri.EscapeDataString(dir)}&name={Uri.EscapeDataString(name)}&token={Uri.EscapeDataString(token)}" + (overwrite ? "&overwrite=1" : ""));
         r.Content = stream ? new StreamContent(new MemoryStream(data)) : new ByteArrayContent(data);
         r.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
         return await api.Raw(r);
@@ -516,23 +550,23 @@ public sealed class RemoteFilesHttpTests
         await using var db = await TestDb.CreateAsync();
         var (app, api, c, host, _) = await OpenHost(db, h => h.File("/home/tester/a.txt", "A").File("/home/tester/b.txt", "B").Dir("/home/tester/d").Dir("/home/tester/e"));
         await using var rigGuard = app;
-        Assert.Equal(HttpStatusCode.OK, (await api.Post("/api/files/remote/mkdir", new { connection = c, dir = "/home/tester", name = "neu", confirm = true })).Status);
+        Assert.Equal(HttpStatusCode.OK, (await api.Write("/api/files/remote/mkdir", new { connection = c, dir = "/home/tester", name = "neu" })).Status);
         Assert.True(host.Has("/home/tester/neu"));
-        Assert.Equal("exists", Code((await api.Post("/api/files/remote/mkdir", new { connection = c, dir = "/home/tester", name = "neu", confirm = true })).Body));
-        Assert.Equal("invalid_name", Code((await api.Post("/api/files/remote/mkdir", new { connection = c, dir = "/home/tester", name = "a/b", confirm = true })).Body));
+        Assert.Equal("exists", Code((await api.Write("/api/files/remote/mkdir", new { connection = c, dir = "/home/tester", name = "neu" })).Body));
+        Assert.Equal("invalid_name", Code((await api.Write("/api/files/remote/mkdir", new { connection = c, dir = "/home/tester", name = "a/b" })).Body));
 
-        Assert.Equal("exists", Code((await api.Post("/api/files/remote/rename", new { connection = c, path = "/home/tester/a.txt", name = "b.txt", confirm = true })).Body));
+        Assert.Equal("exists", Code((await api.Write("/api/files/remote/rename", new { connection = c, path = "/home/tester/a.txt", name = "b.txt" })).Body));
         Assert.Equal("B", host.Text("/home/tester/b.txt"));
-        var ok = await api.Post("/api/files/remote/rename", new { connection = c, path = "/home/tester/a.txt", name = "b.txt", overwrite = true, confirm = true });
+        var ok = await api.Write("/api/files/remote/rename", new { connection = c, path = "/home/tester/a.txt", name = "b.txt", overwrite = true });
         Assert.Equal(("/home/tester/b.txt", HttpStatusCode.OK), (ok.Body.GetProperty("path").GetString(), ok.Status));
         Assert.Equal("A", host.Text("/home/tester/b.txt"));
         Assert.False(host.Has("/home/tester/a.txt"));
-        Assert.Equal("type_mismatch", Code((await api.Post("/api/files/remote/rename", new { connection = c, path = "/home/tester/d", name = "e", overwrite = true, confirm = true })).Body));
+        Assert.Equal("type_mismatch", Code((await api.Write("/api/files/remote/rename", new { connection = c, path = "/home/tester/d", name = "e", overwrite = true })).Body));
         Assert.True(host.Has("/home/tester/e") && host.Has("/home/tester/d"));
-        Assert.Equal("same_place", Code((await api.Post("/api/files/remote/rename", new { connection = c, path = "/home/tester/d", name = "d", confirm = true })).Body));
-        Assert.Equal("invalid_name", Code((await api.Post("/api/files/remote/rename", new { connection = c, path = "/home/tester/d", name = "..", confirm = true })).Body));
-        Assert.Equal("not_found", Code((await api.Post("/api/files/remote/rename", new { connection = c, path = "/home/tester/zz", name = "q", confirm = true })).Body));
-        Assert.Equal("invalid_path", Code((await api.Post("/api/files/remote/rename", new { connection = c, path = "/", name = "q", confirm = true })).Body));
+        Assert.Equal("same_place", Code((await api.Write("/api/files/remote/rename", new { connection = c, path = "/home/tester/d", name = "d" })).Body));
+        Assert.Equal("invalid_name", Code((await api.Write("/api/files/remote/rename", new { connection = c, path = "/home/tester/d", name = ".." })).Body));
+        Assert.Equal("not_found", Code((await api.Write("/api/files/remote/rename", new { connection = c, path = "/home/tester/zz", name = "q" })).Body));
+        Assert.Equal("invalid_path", Code((await api.Write("/api/files/remote/rename", new { connection = c, path = "/", name = "q" })).Body));
     }
 
     [Fact]
@@ -541,15 +575,15 @@ public sealed class RemoteFilesHttpTests
         await using var db = await TestDb.CreateAsync();
         var (app, api, c, host, _) = await OpenHost(db, h => h.Dir("/p/d/sub").File("/p/d/a", "123").File("/p/d/sub/b", "45").Link("/p/d/l", "/p/d/a").File("/p/x", "9").Dir("/p/leer").Dir("/z").File("/z/x", "alt"));
         await using var rigGuard = app;
-        var del = (await api.Post("/api/files/remote/plan", new { action = "delete", connection = c, paths = new[] { "/p/d", "/p/x", "/p/leer" } })).Body;
+        var del = (await api.Post("/api/files/remote/prepare", new { action = "delete", connection = c, paths = new[] { "/p/d", "/p/x", "/p/leer" } })).Body;
         Assert.Equal((3, 3, 1, 6L, true), (del.GetProperty("files").GetInt32(), del.GetProperty("directories").GetInt32(), del.GetProperty("links").GetInt32(), del.GetProperty("bytes").GetInt64(), del.GetProperty("nonEmpty").GetBoolean()));
-        var leer = (await api.Post("/api/files/remote/plan", new { action = "delete", connection = c, paths = new[] { "/p/leer" } })).Body;
+        var leer = (await api.Post("/api/files/remote/prepare", new { action = "delete", connection = c, paths = new[] { "/p/leer" } })).Body;
         Assert.False(leer.GetProperty("nonEmpty").GetBoolean());
-        var copy = (await api.Post("/api/files/remote/plan", new { action = "copy", connection = c, paths = new[] { "/p/x", "/p/d" }, target = new { connection = c, dir = "/z" } })).Body;
+        var copy = (await api.Post("/api/files/remote/prepare", new { action = "copy", connection = c, paths = new[] { "/p/x", "/p/d" }, target = new { connection = c, dir = "/z" } })).Body;
         Assert.Equal(["x"], copy.GetProperty("conflicts").EnumerateArray().Select(e => e.GetString()).ToArray());
-        Assert.Equal("invalid_request", Code((await api.Post("/api/files/remote/plan", new { action = "format", connection = c, paths = new[] { "/p" } })).Body));
-        Assert.Equal("invalid_request", Code((await api.Post("/api/files/remote/plan", new { action = "copy", connection = c, paths = new[] { "/p" } })).Body));
-        Assert.Equal("not_found", Code((await api.Post("/api/files/remote/plan", new { action = "delete", connection = c, paths = new[] { "/p/nope" } })).Body));
+        Assert.Equal("invalid_request", Code((await api.Post("/api/files/remote/prepare", new { action = "format", connection = c, paths = new[] { "/p" } })).Body));
+        Assert.Equal("invalid_request", Code((await api.Post("/api/files/remote/prepare", new { action = "copy", connection = c, paths = new[] { "/p" } })).Body));
+        Assert.Equal("not_found", Code((await api.Post("/api/files/remote/prepare", new { action = "delete", connection = c, paths = new[] { "/p/nope" } })).Body));
         Assert.DoesNotContain(host.Log, l => l.StartsWith("delete ") || l.StartsWith("create "));                  // der Plan aendert nichts
     }
 
@@ -559,13 +593,13 @@ public sealed class RemoteFilesHttpTests
         await using var db = await TestDb.CreateAsync();
         var (app, api, c, host, _) = await OpenHost(db, h => h.Dir("/p/d/sub").File("/p/d/a", "1").File("/p/d/sub/b", "2").Link("/p/d/out", "/keep").Dir("/keep").File("/keep/wichtig", "w").File("/p/einzeln", "x"));
         await using var rigGuard = app;
-        var first = await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/d" }, confirm = true });
+        var first = await api.Write("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/d" } });
         Assert.Equal(HttpStatusCode.Accepted, first.Status);
         var j1 = await WaitJob(api, first.Body.GetProperty("job").GetString()!);
         Assert.Equal(("failed", "not_empty"), (j1.GetProperty("state").GetString(), j1.GetProperty("error").GetString()));
         Assert.True(host.Has("/p/d/sub/b"));
 
-        var second = await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/d", "/p/einzeln" }, recursive = true, confirm = true });
+        var second = await api.Write("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/d", "/p/einzeln" }, recursive = true });
         var j2 = await WaitJob(api, second.Body.GetProperty("job").GetString()!);
         Assert.Equal("done", j2.GetProperty("state").GetString());
         Assert.False(host.Has("/p/d")); Assert.False(host.Has("/p/einzeln"));
@@ -591,9 +625,9 @@ public sealed class RemoteFilesHttpTests
         var dst = new FakeFileSession(); dst.Dir("/dst");
         foreach (var (id, f) in new[] { (a, src), (b, dst) }) { await db.ExecAsync("update connections set host_key = $1 where id = $2", f.Key.Id, id); app.Hosts.Enqueue(f); Assert.Equal(HttpStatusCode.OK, (await api.Post("/api/files/remote/open", new { connection = id })).Status); }
 
-        var plan = (await api.Post("/api/files/remote/plan", new { action = "copy", connection = a, paths = new[] { "/s/proj" }, target = new { connection = b, dir = "/dst" } })).Body;
+        var plan = (await api.Post("/api/files/remote/prepare", new { action = "copy", connection = a, paths = new[] { "/s/proj" }, target = new { connection = b, dir = "/dst" } })).Body;
         Assert.Empty(plan.GetProperty("conflicts").EnumerateArray());
-        var started = await api.Post("/api/files/remote/copy", new { connection = a, paths = new[] { "/s/proj" }, target = new { connection = b, dir = "/dst" }, confirm = true });
+        var started = await api.Write("/api/files/remote/copy", new { connection = a, paths = new[] { "/s/proj" }, target = new { connection = b, dir = "/dst" } });
         Assert.Equal(HttpStatusCode.Accepted, started.Status);
         var job = await WaitJob(api, started.Body.GetProperty("job").GetString()!);
         Assert.Equal("done", job.GetProperty("state").GetString());
@@ -605,11 +639,11 @@ public sealed class RemoteFilesHttpTests
         Assert.DoesNotContain(dst.Nodes.Keys, k => k.EndsWith(".part"));
 
         // Ein vorhandenes Ziel nur mit overwrite
-        var again = await api.Post("/api/files/remote/copy", new { connection = a, paths = new[] { "/s/proj/x.txt" }, target = new { connection = b, dir = "/dst/proj" }, confirm = true });
+        var again = await api.Write("/api/files/remote/copy", new { connection = a, paths = new[] { "/s/proj/x.txt" }, target = new { connection = b, dir = "/dst/proj" } });
         Assert.Equal("failed", (await WaitJob(api, again.Body.GetProperty("job").GetString()!)).GetProperty("state").GetString());
 
         // Verschieben ueber Hosts: erst kopiert, dann an der Quelle geloescht (der Link bleibt)
-        var move = await api.Post("/api/files/remote/copy", new { connection = a, paths = new[] { "/s/proj" }, target = new { connection = b, dir = "/dst" }, move = true, overwrite = true, confirm = true });
+        var move = await api.Write("/api/files/remote/copy", new { connection = a, paths = new[] { "/s/proj" }, target = new { connection = b, dir = "/dst" }, move = true, overwrite = true });
         var moved = await WaitJob(api, move.Body.GetProperty("job").GetString()!);
         Assert.Equal("done", moved.GetProperty("state").GetString());
         Assert.False(src.Has("/s/proj/x.txt")); Assert.False(src.Has("/s/proj/sub"));
@@ -618,7 +652,7 @@ public sealed class RemoteFilesHttpTests
         // Abbrechen: der Auftrag haelt mitten in der Datei an, raeumt auf und meldet cancelled
         var gate = new TaskCompletionSource(); var reading = new TaskCompletionSource();
         src.BeforeRead = async (p, ct) => { if (p == "/s/zwei") { reading.TrySetResult(); await gate.Task.WaitAsync(ct); } };
-        var slow = await api.Post("/api/files/remote/copy", new { connection = a, paths = new[] { "/s/zwei" }, target = new { connection = b, dir = "/dst" }, confirm = true });
+        var slow = await api.Write("/api/files/remote/copy", new { connection = a, paths = new[] { "/s/zwei" }, target = new { connection = b, dir = "/dst" } });
         await reading.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var jobId = slow.Body.GetProperty("job").GetString()!;
         Assert.Equal(HttpStatusCode.NoContent, (await api.Raw(api.Authed(HttpMethod.Post, $"/api/files/remote/jobs/{jobId}/cancel"))).StatusCode);
@@ -643,9 +677,9 @@ public sealed class RemoteFilesHttpTests
         var (app, api, c, host, _) = await OpenHost(db, h => h.File("/s/a", "1").File("/s/b", "1").File("/s/c", "1").Dir("/dst"));
         await using var rigGuard = app;
         host.BeforeRead = (_, ct) => gate.Task.WaitAsync(ct);
-        async Task<string> Start(string name) => (await api.Post("/api/files/remote/copy", new { connection = c, paths = new[] { "/s/" + name }, target = new { connection = c, dir = "/dst" }, confirm = true })).Body.GetProperty("job").GetString()!;
+        async Task<string> Start(string name) => (await api.Write("/api/files/remote/copy", new { connection = c, paths = new[] { "/s/" + name }, target = new { connection = c, dir = "/dst" } })).Body.GetProperty("job").GetString()!;
         var j1 = await Start("a"); var j2 = await Start("b");
-        var third = await api.Post("/api/files/remote/copy", new { connection = c, paths = new[] { "/s/c" }, target = new { connection = c, dir = "/dst" }, confirm = true });
+        var third = await api.Write("/api/files/remote/copy", new { connection = c, paths = new[] { "/s/c" }, target = new { connection = c, dir = "/dst" } });
         Assert.Equal((HttpStatusCode.TooManyRequests, "busy"), (third.Status, Code(third.Body)));
         // Ein anderer Benutzer sieht den Auftrag nicht
         var anna = await Insert(db, "insert into users (name, password_hash, totp_secret) values ('anna', 'x', 'x') returning id");
@@ -680,15 +714,16 @@ public sealed class RemoteFilesHttpTests
         await using var db = await TestDb.CreateAsync();
         var (app, api, c, _, user) = await OpenHost(db);
         await using var rigGuard = app;
-        await api.Post("/api/files/remote/mkdir", new { connection = c, dir = "/home/tester", name = "eins", confirm = true });
-        await api.Post("/api/files/remote/mkdir", new { connection = c, dir = "/home/tester", name = "zwei", confirm = true });
+        await api.Write("/api/files/remote/mkdir", new { connection = c, dir = "/home/tester", name = "eins" });
+        await api.Write("/api/files/remote/mkdir", new { connection = c, dir = "/home/tester", name = "zwei" });
         var anna = await Insert(db, "insert into users (name, password_hash, totp_secret) values ('anna', 'x', 'x') returning id");
         await db.ExecAsync("insert into files_audit (at, user_id, host_name, action, path, result) values (now(), $1, 'fremd', 'delete', '/geheim', 'ok')", anna);
         var entries = (await api.Get("/api/files/audit?limit=10")).Body.GetProperty("entries").EnumerateArray().ToArray();
-        Assert.Equal(["/home/tester/zwei", "/home/tester/eins"], entries.Select(e => e.GetProperty("path").GetString()).ToArray());
+        Assert.Equal(["/home/tester/zwei", "/home/tester/zwei", "/home/tester/eins", "/home/tester/eins"], entries.Select(e => e.GetProperty("path").GetString()).ToArray());        // je Aktion "ok" nach "started"
+        Assert.Equal(["ok", "started", "ok", "started"], entries.Select(e => e.GetProperty("result").GetString()).ToArray());
         Assert.All(entries, e => Assert.Equal("A", e.GetProperty("host").GetString()));
         Assert.DoesNotContain("geheim", await (await api.Raw(api.Authed(HttpMethod.Get, "/api/files/audit"))).Content.ReadAsStringAsync());
-        Assert.Equal(2, await db.ScalarAsync<long>("select count(*) from files_audit where user_id = $1", user));
+        Assert.Equal(4, await db.ScalarAsync<long>("select count(*) from files_audit where user_id = $1", user));
     }
 
     [Fact]
@@ -704,6 +739,248 @@ public sealed class RemoteFilesHttpTests
         Assert.EndsWith("/ende zeile", e.Path);
         for (var i = 0; i < JulOS.Backend.Data.FileAuditStore.KeepPerUser + 5; i++) if (i % 500 == 0) await store.AddAsync(user, null, "H", "x", "/p", "ok");
         Assert.True(await db.ScalarAsync<long>("select count(*) from files_audit where user_id = $1", user) <= JulOS.Backend.Data.FileAuditStore.KeepPerUser);
+    }
+
+    // ---------- Bestaetigung vom Server (F-25) ----------
+
+    [Fact]
+    public async Task A_confirmation_is_prepared_by_the_server_with_a_summary_and_is_single_use()
+    {
+        await using var db = await TestDb.CreateAsync();
+        var (app, api, c, host, _) = await OpenHost(db, h => h.Dir("/p/d").File("/p/d/a", "123").File("/p/b", "45"));
+        await using var rigGuard = app;
+        var prep = await api.Post("/api/files/remote/prepare", new { action = "delete", connection = c, paths = new[] { "/p/d", "/p/b" } });
+        Assert.Equal(HttpStatusCode.OK, prep.Status);
+        Assert.Equal(("delete", "A", 2, 1, 5L, 60, true), (prep.Body.GetProperty("action").GetString(), prep.Body.GetProperty("host").GetString(), prep.Body.GetProperty("files").GetInt32(), prep.Body.GetProperty("directories").GetInt32(), prep.Body.GetProperty("bytes").GetInt64(), prep.Body.GetProperty("expiresIn").GetInt32(), prep.Body.GetProperty("nonEmpty").GetBoolean()));
+        Assert.Equal(["/p/d", "/p/b"], prep.Body.GetProperty("paths").EnumerateArray().Select(e => e.GetString()).ToArray());
+        var token = prep.Body.GetProperty("token").GetString()!;
+        Assert.Equal(43, token.Length);
+        Assert.DoesNotContain(host.Log, l => l.StartsWith("delete ") || l.StartsWith("rmdir "));                  // Vorbereiten aendert nichts
+        var run = await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/d", "/p/b" }, recursive = true, token });
+        Assert.Equal(HttpStatusCode.Accepted, run.Status);
+        await WaitJob(api, run.Body.GetProperty("job").GetString()!);
+        Assert.False(host.Has("/p/d"));
+        // einmalig
+        var again = await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/d", "/p/b" }, recursive = true, token });
+        Assert.Equal((HttpStatusCode.Forbidden, "confirmation_invalid"), (again.Status, Code(again.Body)));
+    }
+
+    [Fact]
+    public async Task A_confirmation_is_bound_to_the_action_the_paths_the_target_and_the_count()
+    {
+        await using var db = await TestDb.CreateAsync();
+        var (app, api, c, host, _) = await OpenHost(db, h => h.File("/p/a", "A").File("/p/b", "B").File("/p/c", "C").Dir("/dst").Dir("/dst2"));
+        await using var rigGuard = app;
+        async Task<string> Token(object body) => (await api.Post("/api/files/remote/prepare", body)).Body.GetProperty("token").GetString()!;
+        var tg = new { connection = c, dir = "/dst" };
+        // andere Pfade
+        var t1 = await Token(new { action = "delete", connection = c, paths = new[] { "/p/a" } });
+        var m1 = await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/b" }, token = t1 });
+        Assert.Equal((HttpStatusCode.Forbidden, "confirmation_mismatch"), (m1.Status, Code(m1.Body)));
+        // mehr Pfade (andere Anzahl)
+        var t2 = await Token(new { action = "delete", connection = c, paths = new[] { "/p/a" } });
+        Assert.Equal("confirmation_mismatch", Code((await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/a", "/p/b" }, token = t2 })).Body));
+        // andere Aktion: eine Loesch-Bestaetigung ist kein Kopieren und kein Verschieben
+        var t3 = await Token(new { action = "delete", connection = c, paths = new[] { "/p/a" } });
+        Assert.Equal("confirmation_mismatch", Code((await api.Post("/api/files/remote/copy", new { connection = c, paths = new[] { "/p/a" }, target = tg, token = t3 })).Body));
+        var t4 = await Token(new { action = "copy", connection = c, paths = new[] { "/p/a" }, target = tg });
+        Assert.Equal("confirmation_mismatch", Code((await api.Post("/api/files/remote/copy", new { connection = c, paths = new[] { "/p/a" }, target = tg, move = true, token = t4 })).Body));
+        // anderes Ziel
+        var t5 = await Token(new { action = "copy", connection = c, paths = new[] { "/p/a" }, target = tg });
+        Assert.Equal("confirmation_mismatch", Code((await api.Post("/api/files/remote/copy", new { connection = c, paths = new[] { "/p/a" }, target = new { connection = c, dir = "/dst2" }, token = t5 })).Body));
+        // anderer Name beim Umbenennen und Ordner anlegen
+        var t6 = await Token(new { action = "rename", connection = c, paths = new[] { "/p/a" }, name = "x" });
+        Assert.Equal("confirmation_mismatch", Code((await api.Post("/api/files/remote/rename", new { connection = c, path = "/p/a", name = "y", token = t6 })).Body));
+        var t7 = await Token(new { action = "mkdir", connection = c, dir = "/p", name = "ordner" });
+        Assert.Equal("confirmation_mismatch", Code((await api.Post("/api/files/remote/mkdir", new { connection = c, dir = "/p", name = "anderer", token = t7 })).Body));
+        // eine abgelehnte Bestaetigung ist verbraucht (auch der richtige Aufruf danach geht nicht mehr)
+        Assert.Equal("confirmation_invalid", Code((await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/a" }, token = t1 })).Body));
+        Assert.DoesNotContain(host.Log, l => l.StartsWith("delete ") || l.StartsWith("mkdir ") || l.StartsWith("create ") || l.StartsWith("rename /p"));
+        Assert.True(host.Has("/p/a") && host.Has("/p/b"));
+        Assert.True(await db.ScalarAsync<long>("select count(*) from files_audit where result = 'denied' and detail = 'confirmation_mismatch'") >= 6);
+    }
+
+    [Fact]
+    public async Task A_recursive_delete_or_an_overwrite_is_only_allowed_when_the_server_showed_it()
+    {
+        await using var db = await TestDb.CreateAsync();
+        var (app, api, c, host, _) = await OpenHost(db, h => h.Dir("/p/leer").Dir("/p/voll").File("/p/voll/x", "1").File("/p/a", "A").File("/p/b", "B").Dir("/dst").File("/dst/b", "alt").Dir("/home/tester"));
+        await using var rigGuard = app;
+        // Ordner ohne Inhalt: "recursive" war nicht gezeigt, also gilt die Bestaetigung nicht dafuer
+        var t1 = (await api.Post("/api/files/remote/prepare", new { action = "delete", connection = c, paths = new[] { "/p/leer" } })).Body.GetProperty("token").GetString();
+        Assert.Equal("confirmation_mismatch", Code((await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/leer" }, recursive = true, token = t1 })).Body));
+        // Ordner mit Inhalt ohne den zweiten Schritt: der Auftrag scheitert, nichts wird geloescht
+        var t2 = (await api.Post("/api/files/remote/prepare", new { action = "delete", connection = c, paths = new[] { "/p/voll" } })).Body;
+        Assert.True(t2.GetProperty("nonEmpty").GetBoolean());
+        var run = await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/voll" }, token = t2.GetProperty("token").GetString() });
+        Assert.Equal("not_empty", (await WaitJob(api, run.Body.GetProperty("job").GetString()!)).GetProperty("error").GetString());
+        Assert.True(host.Has("/p/voll/x"));
+        // Kopieren: Namen, die ersetzt wuerden, stehen in der Antwort; "overwrite" nur dann
+        var cp = (await api.Post("/api/files/remote/prepare", new { action = "copy", connection = c, paths = new[] { "/p/a" }, target = new { connection = c, dir = "/dst" } })).Body;
+        Assert.Empty(cp.GetProperty("conflicts").EnumerateArray());
+        Assert.Equal("confirmation_mismatch", Code((await api.Post("/api/files/remote/copy", new { connection = c, paths = new[] { "/p/a" }, target = new { connection = c, dir = "/dst" }, overwrite = true, token = cp.GetProperty("token").GetString() })).Body));
+        var cp2 = (await api.Post("/api/files/remote/prepare", new { action = "copy", connection = c, paths = new[] { "/p/b" }, target = new { connection = c, dir = "/dst" } })).Body;
+        Assert.Equal(["b"], cp2.GetProperty("conflicts").EnumerateArray().Select(e => e.GetString()).ToArray());
+        var ok = await api.Post("/api/files/remote/copy", new { connection = c, paths = new[] { "/p/b" }, target = new { connection = c, dir = "/dst" }, overwrite = true, token = cp2.GetProperty("token").GetString() });
+        Assert.Equal("done", (await WaitJob(api, ok.Body.GetProperty("job").GetString()!)).GetProperty("state").GetString());
+        Assert.Equal("B", host.Text("/dst/b"));
+        // Hochladen: dasselbe fuer ein vorhandenes Ziel
+        var up = (await api.Post("/api/files/remote/prepare", new { action = "upload", connection = c, dir = "/dst", names = new[] { "neu.txt" } })).Body;
+        Assert.Equal("confirmation_mismatch", Code(ApiKit.J(await (await UploadWith(api, c, "/dst", "neu.txt", [1], up.GetProperty("token").GetString()!, overwrite: true)).Content.ReadAsStringAsync())));
+        Assert.False(host.Has("/dst/neu.txt"));
+    }
+
+    [Fact]
+    public async Task An_upload_confirmation_covers_exactly_the_prepared_names_each_once()
+    {
+        await using var db = await TestDb.CreateAsync();
+        var (app, api, c, host, _) = await OpenHost(db, h => h.Dir("/dst").File("/dst/vorhanden", "alt"));
+        await using var rigGuard = app;
+        var prep = (await api.Post("/api/files/remote/prepare", new { action = "upload", connection = c, dir = "/dst", names = new[] { "eins", "zwei", "vorhanden" } })).Body;
+        Assert.Equal(["vorhanden"], prep.GetProperty("conflicts").EnumerateArray().Select(e => e.GetString()).ToArray());
+        var token = prep.GetProperty("token").GetString()!;
+        Assert.Equal(HttpStatusCode.OK, (await UploadWith(api, c, "/dst", "eins", [1], token)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await UploadWith(api, c, "/dst", "zwei", [2], token)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await UploadWith(api, c, "/dst", "vorhanden", [4], token, overwrite: true)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await UploadWith(api, c, "/dst", "zwei", [5], token)).StatusCode);                         // jede Datei einmal; alles benutzt, die Bestaetigung ist weg
+        Assert.Equal(HttpStatusCode.Forbidden, (await UploadWith(api, c, "/dst", "eins", [3], token)).StatusCode);
+        // ein Name, der nicht vorbereitet war, und ein anderer Ordner
+        var t2 = (await api.Post("/api/files/remote/prepare", new { action = "upload", connection = c, dir = "/dst", names = new[] { "a" } })).Body.GetProperty("token").GetString()!;
+        Assert.Equal(HttpStatusCode.Forbidden, (await UploadWith(api, c, "/dst", "b", [1], t2)).StatusCode);
+        var t3 = (await api.Post("/api/files/remote/prepare", new { action = "upload", connection = c, dir = "/dst", names = new[] { "a" } })).Body.GetProperty("token").GetString()!;
+        Assert.Equal(HttpStatusCode.Forbidden, (await UploadWith(api, c, "/", "a", [1], t3)).StatusCode);
+        Assert.False(host.Has("/dst/a") || host.Has("/dst/b") || host.Has("/a"));
+        Assert.Equal("\u0004", host.Text("/dst/vorhanden"));
+    }
+
+    [Fact]
+    public async Task A_confirmation_expires_after_its_lifetime_and_a_prepare_needs_writing_on()
+    {
+        await using var db = await TestDb.CreateAsync();
+        var (app, api, c, host, _) = await OpenHost(db, h => h.Dir("/p"), confirmLifetime: TimeSpan.FromMilliseconds(300));
+        await using var rigGuard = app;
+        var token = (await api.Post("/api/files/remote/prepare", new { action = "mkdir", connection = c, dir = "/p", name = "n" })).Body.GetProperty("token").GetString();
+        await Task.Delay(500);
+        var late = await api.Post("/api/files/remote/mkdir", new { connection = c, dir = "/p", name = "n", token });
+        Assert.Equal((HttpStatusCode.Forbidden, "confirmation_expired"), (late.Status, Code(late.Body)));
+        Assert.False(host.Has("/p/n"));
+        // ohne eingeschaltetes Schreiben gibt es nicht einmal eine Bestaetigung
+        await using var db2 = await TestDb.CreateAsync();
+        var (app2, api2, c2, _, _) = await OpenHost(db2, write: null);
+        await using var rig2 = app2;
+        var denied = await api2.Post("/api/files/remote/prepare", new { action = "mkdir", connection = c2, dir = "/home/tester", name = "n" });
+        Assert.Equal((HttpStatusCode.Forbidden, "write_off"), (denied.Status, Code(denied.Body)));
+    }
+
+    [Fact]
+    public async Task A_confirmation_belongs_to_the_session_that_asked_for_it_and_there_are_at_most_twenty_open()
+    {
+        // Ohne zweite Sitzung im HTTP-Test: die Bindung an die Sitzung und die Obergrenze am Dienst selbst
+        var time = TimeProvider.System;
+        var conf = new FileConfirmations(time, TimeSpan.FromSeconds(60));
+        var user = Guid.NewGuid();
+        var mine = new SessionIdentity(user, "jul", "h1", null, Guid.NewGuid());
+        var other = new SessionIdentity(user, "jul", "h2", null, Guid.NewGuid());          // derselbe Benutzer, eine andere Sitzung
+        var canon = FileConfirmations.Canon("delete", Guid.NewGuid(), null, ["/a"], null, null);
+        var t = conf.Issue(mine, canon, "delete", false, false)!;
+        Assert.Equal(ConfirmResult.Mismatch, conf.Take(other, t, canon, "delete", null, out _));
+        Assert.Equal(ConfirmResult.Invalid, conf.Take(mine, t, canon, "delete", null, out _));          // verbraucht
+        var t2 = conf.Issue(mine, canon, "delete", true, false)!;
+        Assert.Equal(ConfirmResult.Ok, conf.Take(mine, t2, canon, "delete", null, out var c));
+        Assert.True(c!.NeedsRecursive);
+        Assert.Equal(ConfirmResult.Invalid, conf.Take(mine, null, canon, "delete", null, out _));
+        Assert.Equal(ConfirmResult.Invalid, conf.Take(mine, new string('x', 200), canon, "delete", null, out _));
+        for (var i = 0; i < FileConfirmations.MaxPerUser; i++) Assert.NotNull(conf.Issue(mine, canon + i, "delete", false, false));
+        Assert.Null(conf.Issue(mine, canon, "delete", false, false));
+        Assert.NotNull(conf.Issue(new SessionIdentity(Guid.NewGuid(), "anna", "h3", null, Guid.NewGuid()), canon, "delete", false, false));          // die Grenze gilt je Benutzer
+        Assert.Equal(FileConfirmations.MaxPerUser + 1, conf.Count);
+        // nur der Hash steht im Speicher: das Token selbst taucht nirgends auf (Dienst hat keinen Zugriff auf Klartext)
+    }
+
+    // ---------- Verlauf: fail-closed (F-26) ----------
+
+    [Fact]
+    public async Task Every_write_writes_started_before_the_first_step_and_a_result_at_the_end()
+    {
+        await using var db = await TestDb.CreateAsync();
+        var (app, api, c, host, _) = await OpenHost(db, h => h.Dir("/p").File("/p/a", "A"));
+        await using var rigGuard = app;
+        Assert.Equal(HttpStatusCode.OK, (await api.Write("/api/files/remote/mkdir", new { connection = c, dir = "/p", name = "neu" })).Status);
+        Assert.Equal(HttpStatusCode.OK, (await api.Write("/api/files/remote/rename", new { connection = c, path = "/p/a", name = "b" })).Status);
+        Assert.Equal(HttpStatusCode.OK, (await Upload(api, c, "/p", "u", [1])).StatusCode);
+        var del = await api.Write("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/b" } });
+        await WaitJob(api, del.Body.GetProperty("job").GetString()!);
+        var rows = new List<(string, string)>();
+        await using (var cmd = db.Data.Cmd("select action, result from files_audit where result in ('started','ok','failed') and action <> 'open' order by id"))
+        await using (var rd = await cmd.ExecuteReaderAsync())
+            while (await rd.ReadAsync()) rows.Add((rd.GetString(0), rd.GetString(1)));
+        Assert.Equal([("mkdir", "started"), ("mkdir", "ok"), ("rename", "started"), ("rename", "ok"), ("upload", "started"), ("upload", "ok"), ("delete", "started"), ("delete", "ok")], rows);
+    }
+
+    [Fact]
+    public async Task Without_a_history_entry_nothing_is_executed()
+    {
+        await using var db = await TestDb.CreateAsync();
+        var (app, api, c, host, _) = await OpenHost(db, h => h.Dir("/p").File("/p/a", "A").File("/p/zu-loeschen", "x").Dir("/dst"));
+        await using var rigGuard = app;
+        // Alle Bestaetigungen vorher holen, dann faellt die Datenbanktabelle des Verlaufs aus
+        var tokens = new Dictionary<string, string>();
+        async Task<string> Token(string key, object body) => tokens[key] = (await api.Post("/api/files/remote/prepare", body)).Body.GetProperty("token").GetString()!;
+        await Token("mkdir", new { action = "mkdir", connection = c, dir = "/p", name = "neu" });
+        await Token("rename", new { action = "rename", connection = c, paths = new[] { "/p/a" }, name = "b" });
+        await Token("delete", new { action = "delete", connection = c, paths = new[] { "/p/zu-loeschen" } });
+        await Token("copy", new { action = "copy", connection = c, paths = new[] { "/p/a" }, target = new { connection = c, dir = "/dst" } });
+        await Token("upload", new { action = "upload", connection = c, dir = "/p", names = new[] { "u" } });
+        await db.ExecAsync("drop table files_audit");
+        var before = host.Log.Count(l => l.StartsWith("create ") || l.StartsWith("mkdir ") || l.StartsWith("rename ") || l.StartsWith("delete ") || l.StartsWith("rmdir "));
+        var results = new[]
+        {
+            await api.Post("/api/files/remote/mkdir", new { connection = c, dir = "/p", name = "neu", token = tokens["mkdir"] }),
+            await api.Post("/api/files/remote/rename", new { connection = c, path = "/p/a", name = "b", token = tokens["rename"] }),
+            await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/zu-loeschen" }, token = tokens["delete"] }),
+            await api.Post("/api/files/remote/copy", new { connection = c, paths = new[] { "/p/a" }, target = new { connection = c, dir = "/dst" }, token = tokens["copy"] }),
+        };
+        Assert.All(results, r => Assert.Equal((HttpStatusCode.InternalServerError, "audit_failed"), (r.Status, Code(r.Body))));
+        var up = await UploadWith(api, c, "/p", "u", [1], tokens["upload"]);
+        Assert.Equal(HttpStatusCode.InternalServerError, up.StatusCode);
+        Assert.Equal("audit_failed", Code(ApiKit.J(await up.Content.ReadAsStringAsync())));
+        Assert.Equal(before, host.Log.Count(l => l.StartsWith("create ") || l.StartsWith("mkdir ") || l.StartsWith("rename ") || l.StartsWith("delete ") || l.StartsWith("rmdir ")));   // kein schreibender Schritt
+        Assert.Equal(["a", "zu-loeschen"], host.Under("/p").Select(RemotePath.NameOf).Order().ToArray());
+        Assert.Empty(host.Under("/dst"));
+        Assert.Equal(0, host.OpenStreams);
+    }
+
+    // ---------- Sitzungen im Pool (F-29) ----------
+
+    [Fact]
+    public async Task Editing_or_deleting_the_connection_and_signing_out_close_the_pooled_session()
+    {
+        await using var db = await TestDb.CreateAsync();
+        var (app, api, c, host, user) = await OpenHost(db);
+        await using var rigGuard = app;
+        Assert.Equal(1, app.Pool.CountFor(user));
+        // Ändern: die Sitzung mit den alten Zugangsdaten und dem alten Host-Schluessel ist weg
+        var edit = await api.Json(HttpMethod.Put, "/api/connections/" + c, new { name = "A", kind = "terminal", host = "srv-neu", username = "jul" });
+        Assert.Equal(HttpStatusCode.OK, edit.Status);
+        Assert.Equal(0, app.Pool.CountFor(user));
+        Assert.Equal(1, host.Disposed);
+        // Neu geoeffnet (anderes Passwort noetig, es ist geloescht), dann Verbindung loeschen
+        var second = new FakeFileSession(); app.Hosts.Enqueue(second);
+        await db.ExecAsync("update connections set host_key = $1 where id = $2", second.Key.Id, c);
+        await api.Json(HttpMethod.Put, "/api/connections/" + c, new { name = "A", kind = "terminal", host = "srv-neu", username = "jul", password = StoredPassword });
+        await db.ExecAsync("update connections set host_key = $1 where id = $2", second.Key.Id, c);
+        Assert.Equal(HttpStatusCode.OK, (await api.Post("/api/files/remote/open", new { connection = c })).Status);
+        Assert.Equal(1, app.Pool.CountFor(user));
+        Assert.Equal(HttpStatusCode.NoContent, (await api.Raw(api.Req(HttpMethod.Delete, "/api/connections/" + c))).StatusCode);
+        Assert.Equal((0, 1), (app.Pool.CountFor(user), second.Disposed));
+        // Abmelden schliesst alle Orte des Benutzers
+        var c2 = await Connection(api, "B");
+        var third = new FakeFileSession(); app.Hosts.Enqueue(third);
+        await db.ExecAsync("update connections set host_key = $1 where id = $2", third.Key.Id, c2);
+        Assert.Equal(HttpStatusCode.OK, (await api.Post("/api/files/remote/open", new { connection = c2 })).Status);
+        Assert.Equal(1, app.Pool.CountFor(user));
+        Assert.Equal(HttpStatusCode.NoContent, (await api.Json(HttpMethod.Post, "/api/auth/logout", new { })).Status);
+        Assert.Equal((0, 1), (app.Pool.CountFor(user), third.Disposed));
     }
 
     [Fact]

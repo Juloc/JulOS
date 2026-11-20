@@ -56,24 +56,29 @@ internal static class AuthEndpoints
             return Results.Json(new LoginResponse(r.User!, r.RecoveryLeft), AppJson.Default.LoginResponse);
         });
 
-        app.MapPost("/api/auth/logout", async (HttpContext ctx, AuthService auth) =>
+        app.MapPost("/api/auth/logout", async (HttpContext ctx, AuthService auth, Files.SftpPool pool) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             await auth.LogoutAsync(id.Hash, ctx.RequestAborted);
+            await pool.InvalidateUserAsync(id.UserId);          // die Dateien-App haelt nach dem Abmelden keine SFTP-Sitzung offen
             SessionCookie.Clear(ctx);
             return Results.NoContent();
         });
 
-        app.MapPost("/api/auth/logout-others", async (HttpContext ctx, AuthService auth) =>
+        app.MapPost("/api/auth/logout-others", async (HttpContext ctx, AuthService auth, Files.SftpPool pool) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
-            return new EndedResponse(await auth.LogoutOthersAsync(id.UserId, id.Hash, ctx.RequestAborted));
+            var ended = await auth.LogoutOthersAsync(id.UserId, id.Hash, ctx.RequestAborted);
+            await pool.InvalidateUserAsync(id.UserId);          // die anderen Geraete sind weg: ihre geoeffneten Orte auch
+            return new EndedResponse(ended);
         });
 
         // Konto: Passwort aendern und Authenticator neu einrichten. Hinter ApiGuard (Sitzung, Origin, 4 KiB); das aktuelle Passwort wird jedes Mal verlangt.
-        app.MapPost("/api/auth/password", async (PasswordChangeRequest body, HttpContext ctx, AuthService auth) =>
+        app.MapPost("/api/auth/password", async (PasswordChangeRequest body, HttpContext ctx, AuthService auth, Files.SftpPool pool) =>
         {
-            var r = await auth.ChangePasswordAsync((SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!, body.Current, body.Next, Ip(ctx), ctx.RequestAborted);
+            var who = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
+            var r = await auth.ChangePasswordAsync(who, body.Current, body.Next, Ip(ctx), ctx.RequestAborted);
+            if (r.Ok) await pool.InvalidateUserAsync(who.UserId);          // andere Sitzungen enden mit dem neuen Passwort, ihre geoeffneten Orte auch
             return r.Ok ? Results.NoContent() : Fail(ctx, r.Status, r.Error!, r.RetryAfter);
         });
 

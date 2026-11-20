@@ -28,6 +28,9 @@ export const GROUPS = [
     { id: 'claude', ctl: 'button', label: tk('set.claude'), help: tk('set.claudeHelp'), action: tk('set.start') },
     { id: 'codex', ctl: 'button', label: tk('set.codex'), help: tk('set.codexHelp'), action: tk('set.start') },
   ] },
+  { id: 'alerts', title: tk('set.alertsGroup'), help: tk('set.alertsGroupHelp'), rows: [
+    { id: 'alerts', ctl: 'button', label: tk('set.alerts'), help: tk('set.alertsHelp'), action: tk('set.manage') },
+  ] },
   { id: 'sync', title: tk('set.sync'), help: tk('set.syncHelp'), rows: [
     { id: 'clipboard', ctl: 'note', label: tk('set.clipboard'), help: tk('set.clipboardHelp') },
     { id: 'sound', ctl: 'note', label: tk('set.sound'), help: tk('set.soundHelp') },

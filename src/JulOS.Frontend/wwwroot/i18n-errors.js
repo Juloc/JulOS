@@ -8,6 +8,13 @@ import { t, tk, getLang } from './i18n.js';
 /** Fester Text des Servers -> Schluessel (Quellen: Error(...)-Antworten in src/JulOS.Frontend, Regelpruefungen in src/JulOS.Backend/Logic, Anmeldung, SSH- und Bildstrom-Meldungen). */
 export const SERVER_TEXTS = {
   "Zu viele Anfragen, bitte kurz warten.": "err.tooMany",
+  "Push-Meldungen brauchen den Schlüssel des Servers.": "err.pushNoKey",
+  "Der Endpunkt des Push-Dienstes ist nicht zulässig.": "err.pushEndpoint",
+  "Die Schlüssel des Abos sind ungültig.": "err.pushKeys",
+  "Zu viele Geräte. Bitte erst eins entfernen.": "err.pushTooMany",
+  "Dieses Gerät ist schon einem anderen Benutzer zugeordnet.": "err.pushTaken",
+  "Gerät nicht gefunden.": "err.deviceNotFound",
+  "Zu viele Testmeldungen, bitte kurz warten.": "err.pushTestMany",
   "DDNS ist auf diesem Server nur zum Ansehen eingeschaltet (JULOS_DDNS=control erlaubt Aktualisieren).": "err.ddnsReadOnly",
   "Es ist kein DNS-Anbieter eingestellt (JULOS_DDNS_PROVIDER).": "err.ddnsNoProvider",
   "Dienst nicht gefunden.": "err.serviceNotFound",

@@ -15,19 +15,22 @@ internal sealed record HostVirt(string Kind, string Name);
 internal sealed record HostProxmox(string Product, string? Version);
 internal sealed record HostNet(string Iface, long RxBytes, long TxBytes);
 /// <summary>Gesundheit der Platten (nur lesend): SMART je Platte (oder warum nicht lesbar), Software-RAID aus /proc/mdstat, ZFS-Pools. Pending: der Agent hat noch nicht gelesen (erste Abfrage).</summary>
-internal sealed record HostSmartDevice(string Name, string Health);
+internal sealed record HostSmartDevice(string Name, string Health, int? Temp = null);
 internal sealed record HostSmart(bool Available, string? Reason, HostSmartDevice[] Devices);
 internal sealed record HostMdArray(string Name, string? Level, string State, int Active, int Total, double? SyncPercent);
-internal sealed record HostZpool(string Name, string State);
-internal sealed record HostZfs(bool Healthy, HostZpool[] Pools);
+/// <summary>Ein Pool, den <c>zpool status -x</c> nennt (also einer mit Problem), mit Zustand und den Zeilen scan, errors und status, wenn vorhanden.</summary>
+internal sealed record HostZpool(string Name, string State, string? Scan = null, string? Errors = null, string? Status = null);
+/// <summary>State: healthy, none (keine Pools), problem (Pools mit Problem), unknown (nicht lesbar, dann kurze Message). Healthy bleibt fuer aeltere Agenten (ohne State).</summary>
+internal sealed record HostZfs(bool Healthy, HostZpool[] Pools, string State = "healthy", string? Message = null);
 internal sealed record HostHealth(bool Pending, HostSmart? Smart, HostMdArray[] Md, HostZfs? Zfs);
 internal sealed record HostSysinfo(string? Hostname, string? Os, string? OsId, string? OsVersion, string? Kernel, string? Arch, long? UptimeSeconds, double[]? Load, int CpuCount,
     HostMemory Memory, HostDisk[] Disks, HostAddress[] Addresses, bool RebootRequired, string[] RebootPackages, HostVirt? Virt, HostProxmox? Proxmox,
-    HostNet[]? Network = null, HostHealth? Health = null);
+    HostNet[]? Network = null, HostHealth? Health = null, string? NewKernel = null);
 
 internal sealed record HostPackage(string Name, string? From, string To, bool? Security, bool New);
+/// <summary>Proxmox: der Rechner darf nur als Ganzes aktualisiert werden (dist-upgrade). NewPackages: wie viele der Pakete neu hinzukommen (neue Abhaengigkeiten, zum Beispiel ein Kernel).</summary>
 internal sealed record HostUpdates(string Manager, int Count, int? Security, bool SecurityKnown, bool Truncated, HostPackage[] Packages, string[] KeptBack, string[] Held, int Removals,
-    DateTimeOffset? ListsCheckedAt, long? ListsAgeSeconds);
+    DateTimeOffset? ListsCheckedAt, long? ListsAgeSeconds, bool Proxmox = false, int NewPackages = 0);
 
 internal sealed record HostFailedUnit(string Unit, string Sub, string? Description);
 internal sealed record HostServices(string State, int Count, HostFailedUnit[] Failed);
@@ -114,7 +117,7 @@ internal static class HostReportParser
             vk is "none" or "vm" or "container" ? new HostVirt(vk, Text(virt, "name", 24) ?? "") : null,
             product is "ve" or "pbs" or "pmg" ? new HostProxmox(product, Text(proxmox, "version", 24)) : null,
             [.. Items(root, "network", 16).Where(n => n.ValueKind == JsonValueKind.Object && Text(n, "iface", 20) is not null).Select(n => new HostNet(Text(n, "iface", 20)!, Long(n, "rxBytes"), Long(n, "txBytes")))],
-            Health(Obj(root, "health")));
+            Health(Obj(root, "health")), Text(root, "newKernel", 64));
     }
 
     private static HostHealth? Health(JsonElement h)
@@ -126,9 +129,10 @@ internal static class HostReportParser
         if (s.ValueKind == JsonValueKind.Object)
         {
             var reason = Text(s, "reason", 16);
-            smart = new HostSmart(Bool(s, "available"), reason is "no_smartctl" or "no_access" or "no_devices" ? reason : null,
+            smart = new HostSmart(Bool(s, "available"), reason is "no_smartctl" or "no_access" or "no_devices" or "helper_unavailable" or "read_failed" ? reason : null,
                 [.. Items(s, "devices", 16).Where(d => d.ValueKind == JsonValueKind.Object && Text(d, "name", 40) is not null).Select(d =>
-                    new HostSmartDevice(Text(d, "name", 40)!, Text(d, "health", 8) is "ok" or "failing" ? Text(d, "health", 8)! : "unknown"))]);
+                    new HostSmartDevice(Text(d, "name", 40)!, Text(d, "health", 8) is "ok" or "failing" ? Text(d, "health", 8)! : "unknown",
+                        d.TryGetProperty("temp", out var tp) && tp.ValueKind == JsonValueKind.Number && tp.TryGetInt32(out var tv) && tv is >= -50 and <= 150 ? tv : null))]);
         }
         var md = Items(h, "md", MaxItems).Where(a => a.ValueKind == JsonValueKind.Object && Text(a, "name", 16) is not null).Select(a =>
         {
@@ -139,7 +143,14 @@ internal static class HostReportParser
         HostZfs? zfs = null;
         var z = Obj(h, "zfs");
         if (z.ValueKind == JsonValueKind.Object)
-            zfs = new HostZfs(Bool(z, "healthy"), [.. Items(z, "pools", MaxItems).Where(p => p.ValueKind == JsonValueKind.Object && Text(p, "name", 40) is not null).Select(p => new HostZpool(Text(p, "name", 40)!, Text(p, "state", 16) ?? ""))]);
+        {
+            var pools = Items(z, "pools", MaxItems).Where(p => p.ValueKind == JsonValueKind.Object && Text(p, "name", 40) is not null)
+                .Select(p => new HostZpool(Text(p, "name", 40)!, Text(p, "state", 16) ?? "", Text(p, "scan", 100), Text(p, "errors", 100), Text(p, "status", 100))).ToArray();
+            var healthy = Bool(z, "healthy");
+            // Ein aelterer Agent sagt nur healthy und Pools; er kennt "nicht lesbar" nicht (dort wurde ein Pool "?" gemeldet): ohne Pool-Namen heisst "nicht gesund" hier "unbekannt"
+            var state = Text(z, "state", 8) is "healthy" or "none" or "problem" or "unknown" ? Text(z, "state", 8)! : healthy ? "healthy" : pools.Length > 0 ? "problem" : "unknown";
+            zfs = new HostZfs(healthy, pools, state, Text(z, "message", 120));
+        }
         return new HostHealth(false, smart, md, zfs);
     }
 
@@ -159,7 +170,7 @@ internal static class HostReportParser
         var age = LongOrNull(root, "listsAgeSeconds", 100L * 365 * 86400);
         return new HostUpdates(manager, count, known ? (int)Math.Min(Long(root, "security", 1_000_000), count) : null, known, Bool(root, "truncated") || count > packages.Length, packages,
             Strings(root, "keptBack", MaxItems), Strings(root, "held", MaxItems), (int)Long(root, "removals", 100000),
-            checkedAt is > 0 ? DateTimeOffset.FromUnixTimeSeconds(checkedAt.Value) : null, age);
+            checkedAt is > 0 ? DateTimeOffset.FromUnixTimeSeconds(checkedAt.Value) : null, age, Bool(root, "proxmox"), (int)Long(root, "newPackages", 100000));
     }
 
     public static HostServices? Services(JsonElement root)

@@ -608,7 +608,7 @@ public sealed partial class AgentLinkTests
     [Fact]
     public void The_action_table_is_closed_and_the_parser_never_passes_hostile_text_on()
     {
-        Assert.Equal(13, HostActions.All.Count);
+        Assert.Equal(14, HostActions.All.Count);
         Assert.All(HostActions.All, a => Assert.StartsWith("/v1/host/", a.Path));
         Assert.All(HostActions.All, a => Assert.Contains(a.Right, AgentControl.Rights));
         Assert.Equal(HostActions.All.Count, HostActions.All.Select(a => a.Path).Distinct().Count());

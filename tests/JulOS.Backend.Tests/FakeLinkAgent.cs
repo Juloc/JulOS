@@ -35,6 +35,8 @@ internal sealed class FakeLinkAgent : IAsyncDisposable
     public Dictionary<string, (int Status, string Body)> HostReplies { get; } = [];
     /// <summary>Schreibaktionen (Stufe 3): beantwortet eine POST-Anfrage an /v1/host/* selbst (Lesen kommt weiter aus <see cref="HostReplies"/>), mit Fortschrittsmeldungen (Text, erledigt, gesamt); Status -1 heisst: Verbindung kappen. Laeuft im Hintergrund, der Agent bleibt ansprechbar.</summary>
     public Func<string, string, string, Func<string, int?, int?, Task>, Task<(int Status, string Body)>>? OnHost { get; set; }
+    /// <summary>Ausgabezeilen, die jede Fortschrittsmeldung mitbringt (Live-Ansicht der Aufgabe).</summary>
+    public string[]? ProgressLines { get; set; }
     /// <summary>Verzoegert jede Antwort auf /v1/host/* (fuer Tests mit gleichzeitigen Anfragen).</summary>
     public TimeSpan HostDelay { get; set; }
     /// <summary>Nach dem ersten Stueck einer Uebertragung die Verbindung kappen.</summary>
@@ -124,7 +126,7 @@ internal sealed class FakeLinkAgent : IAsyncDisposable
                         {
                             try
                             {
-                                var (st, bd) = await handler(method, path, bodyText, (text, done, total) => Reply(JsonSerializer.Serialize(new { t = "progress", id, text, done, total })));
+                                var (st, bd) = await handler(method, path, bodyText, (text, done, total) => Reply(JsonSerializer.Serialize(new { t = "progress", id, text, done, total, lines = ProgressLines })));
                                 if (st < 0) { _ws.Abort(); Closed = true; return; }
                                 await Reply($$"""{"t":"res","id":{{id}},"status":{{st}},"body":{{bd}}}""");
                             }

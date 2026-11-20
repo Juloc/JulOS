@@ -17,15 +17,26 @@ internal sealed record HostActionOptions(TimeSpan ConfirmLifetime, TimeSpan Reco
 /// <summary>Ein Nein des Dienstes: HTTP-Status und ein kurzer Code (der Browser uebersetzt ihn; der Code steht auch im Verlauf).</summary>
 internal sealed record ActionDenied(int Status, string Code);
 
-/// <summary>Was der Benutzer bestaetigen soll: genau Host, Aktion, Ziel; bei Neustart, Ausschalten und "alle Updates" muss er <see cref="TypeToConfirm"/> (den Rechnernamen) tippen.</summary>
-internal sealed record ActionConfirmation(string Token, int ExpiresIn, string Action, string? Target, string? TargetName, string Host, string? TypeToConfirm, string[] Warnings, bool ReadOnly);
+/// <summary>Wahlmoeglichkeiten der Bestaetigung "alle Updates": Proxmox (wird immer vollstaendig aktualisiert, dist-upgrade), FullChoice (der Benutzer darf "auch Pakete mit neuen Abhaengigkeiten" dazunehmen), Full (Vorgabe), KeptBack (was <c>apt-get upgrade</c> zurueckhaelt) und Removals (was ein dist-upgrade entfernen wuerde).</summary>
+internal sealed record ActionOptions(bool Proxmox, bool FullChoice, bool Full, string[] KeptBack, int Removals);
 
-/// <summary>Das Ergebnis, das der Agent meldet, Feld fuer Feld gelesen (er ist nicht der Server): kurze Texte, begrenzte Listen.</summary>
-internal sealed record HostActionResult(bool Ok, bool Accepted, bool Already, bool? Updated, bool RebootRequired, int? Count, string[]? Lines, string? Output, string? Name, string? Image);
+/// <summary>Was der Benutzer bestaetigen soll: genau Host, Aktion, Ziel; bei Neustart, Ausschalten und "alle Updates" muss er <see cref="TypeToConfirm"/> (den Rechnernamen) tippen.</summary>
+internal sealed record ActionConfirmation(string Token, int ExpiresIn, string Action, string? Target, string? TargetName, string Host, string? TypeToConfirm, string[] Warnings, bool ReadOnly, ActionOptions? Options = null);
+
+/// <summary>Die Fehlerzusammenfassung eines apt-Laufs, aus dem Protokoll des Agenten gelesen: E:-Zeilen, betroffene und zurueckgehaltene Pakete, offene Fragen, Sperre.</summary>
+internal sealed record ActionSummary(string[] Errors, string[] FailedPackages, string[] KeptBack, bool ConfigQuestion, bool Locked, int Installed);
+
+/// <summary>Das Ergebnis, das der Agent meldet, Feld fuer Feld gelesen (er ist nicht der Server): kurze Texte, begrenzte Listen. Log: das begrenzte Protokoll eines apt-Laufs (Einrueckung bleibt), NeedsRepair: Pakete blieben halb eingerichtet.</summary>
+internal sealed record HostActionResult(bool Ok, bool Accepted, bool Already, bool? Updated, bool RebootRequired, int? Count, string[]? Lines, string? Output, string? Name, string? Image,
+    ActionSummary? Summary = null, string[]? Log = null, bool NeedsRepair = false, bool Full = false);
 
 /// <summary>Ein laufender oder fertiger Auftrag, im Speicher des Servers. State: running, ok, failed, accepted (Neustart angenommen), lost (Verbindung weg, Ergebnis wird beim Agenten abgeholt).</summary>
-internal sealed class HostActionJob(string id, Guid hostId, Guid userId, string action, string? target, string? targetName, DateTimeOffset started)
+internal sealed class HostActionJob(string id, Guid hostId, Guid userId, string action, string? target, string? targetName, DateTimeOffset started, string hostName = "", bool full = false)
 {
+    public const int MaxTail = 200;
+    public string HostName { get; } = hostName;
+    public bool Full { get; } = full;                          // alle Updates als dist-upgrade (Proxmox immer, sonst auf Wunsch)
+    public List<string> Tail { get; } = [];                    // die letzten Ausgabezeilen, die der Agent waehrend des Laufs geschickt hat (Live-Ansicht); unter lock(job)
     public string Id { get; } = id;
     public Guid HostId { get; } = hostId;
     public Guid UserId { get; } = userId;
@@ -119,7 +130,13 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
     }
 
     /// <summary>Das Ziel muss in der Liste stehen, die der Agent selbst gemeldet hat (Paket der Update-Liste, Dienst der Dienstliste, Container der Containerliste). Gibt den Anzeigenamen und Warnungen zurueck.</summary>
-    private async Task<(string? Name, string[] Warnings, ActionDenied? Denied)> CheckTargetAsync(Guid userId, Gate g, string? target, CancellationToken ct)
+    private sealed record Checked(string? Name, string[] Warnings, ActionOptions? Options, ActionDenied? Denied)
+    {
+        public static Checked Deny(int status, string code) => new(null, [], null, new ActionDenied(status, code));
+        public static Checked Pass(string? name, params string[] warnings) => new(name, warnings, null, null);
+    }
+
+    private async Task<Checked> CheckTargetAsync(Guid userId, Gate g, string? target, CancellationToken ct)
     {
         var warnings = new List<string>();
         switch (g.Def.Target)
@@ -127,34 +144,41 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
             case HostTarget.Package:
             {
                 var r = await info.GetAsync(userId, g.Host.Id, HostInfoEndpoints.Updates, false, ct);
-                if (r?.Data is not { } u || r.State != "ok") return (null, [], new(409, "list_unavailable"));
+                if (r?.Data is not { } u || r.State != "ok") return Checked.Deny(409, "list_unavailable");
                 if (target == HostActions.AllPackages)
                 {
-                    if (u.KeptBack.Length > 0) warnings.Add("kept_back");
-                    return ("all", [.. warnings], null);
+                    // Proxmox wird als Ganzes aktualisiert (dist-upgrade); sonst bleibt "upgrade" der Standard und der Benutzer darf "auch Pakete mit neuen Abhaengigkeiten" dazunehmen
+                    if (u.Proxmox) warnings.Add("proxmox_full");
+                    else if (u.KeptBack.Length > 0) warnings.Add("kept_back");
+                    var options = new ActionOptions(u.Proxmox, !u.Proxmox && u.KeptBack.Length > 0, u.Proxmox, [.. u.KeptBack.Take(20)], u.Removals);
+                    return new Checked("all", [.. warnings], options, null);
                 }
-                return u.Packages.Any(p => p.Name == target) ? (target, [], null) : (null, [], new(404, "unknown_target"));
+                if (u.Proxmox) return Checked.Deny(409, "proxmox_whole");        // einzelne Pakete lassen Proxmox halb aktualisiert zurueck
+                return u.Packages.Any(p => p.Name == target) ? Checked.Pass(target) : Checked.Deny(404, "unknown_target");
             }
             case HostTarget.Unit:
             {
-                if (g.Def.Name is "service.stop" or "service.restart" && target!.StartsWith("julos-agent", StringComparison.Ordinal)) return (null, [], new(409, "protected_unit"));
+                if (g.Def.Name is "service.stop" or "service.restart" && target!.StartsWith("julos-agent", StringComparison.Ordinal)) return Checked.Deny(409, "protected_unit");
                 var r = await info.GetAsync(userId, g.Host.Id, HostInfoEndpoints.Units, true, ct);
-                if (r?.Data is not { } list || r.State != "ok") return (null, [], new(409, "list_unavailable"));
-                return list.Units.Any(x => x.Unit == target) ? (target, [], null) : (null, [], new(404, "unknown_target"));
+                if (r?.Data is not { } list || r.State != "ok") return Checked.Deny(409, "list_unavailable");
+                return list.Units.Any(x => x.Unit == target) ? Checked.Pass(target) : Checked.Deny(404, "unknown_target");
             }
             case HostTarget.Container:
             {
                 var r = await info.GetAsync(userId, g.Host.Id, HostInfoEndpoints.Docker, true, ct);
-                if (r?.Data is not { } d || r.State != "ok") return (null, [], new(409, "list_unavailable"));
-                if (d.Containers.FirstOrDefault(c => c.Id == target) is not { } c) return (null, [], new(404, "unknown_target"));
+                if (r?.Data is not { } d || r.State != "ok") return Checked.Deny(409, "list_unavailable");
+                if (d.Containers.FirstOrDefault(c => c.Id == target) is not { } c) return Checked.Deny(404, "unknown_target");
                 if (g.Def.Name is "docker.stop" or "docker.restart" && HostActions.LooksLikeJulOs(c.Project, c.Image)) warnings.Add("julos_group");
-                return (c.Name.Length > 0 ? c.Name : target, [.. warnings], null);
+                return Checked.Pass(c.Name.Length > 0 ? c.Name : target, [.. warnings]);
             }
-            default: return (null, [], null);
+            default: return Checked.Pass(null);
         }
     }
 
     private static string AuditTarget(string? target, string? name) => name is not null && name != target && target is not null ? $"{name} ({target})" : target ?? "";
+
+    /// <summary>Das Ziel fuer den Verlauf; "all (full)" wenn alle Updates als dist-upgrade liefen.</summary>
+    private static string AuditTargetOf(HostActionJob job) => job.Full ? "all (full)" : AuditTarget(job.Target, job.TargetName);
 
     // ---------------------------------------------------------------- Schritt 1: Bestaetigung
 
@@ -163,7 +187,7 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
         target = string.IsNullOrWhiteSpace(target) ? null : target;
         var (gate, denied) = await GateAsync(who, hostId, actionName, target, ct);
         if (gate is null) return (null, denied);
-        var (name, warnings, bad) = await CheckTargetAsync(who.UserId, gate, target, ct);
+        var (name, warnings, options0, bad) = await CheckTargetAsync(who.UserId, gate, target, ct);
         if (bad is not null) { await TryAudit(who.UserId, gate.Host, gate.Def.Name, target, "denied", bad.Code, null, ct); return (null, bad); }
 
         var now = time.GetUtcNow();
@@ -176,7 +200,7 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
         var n = Math.Clamp(lines ?? 100, 10, 200);
         _confirmations[Hash(token)] = new Pending(who.UserId, who.Id, hostId, gate.Def.Name, target, typed, n, expires);
         await TryAudit(who.UserId, gate.Host, gate.Def.Name, AuditTarget(target, name), "prepared", null, null, ct);
-        return (new ActionConfirmation(token, (int)options.ConfirmLifetime.TotalSeconds, gate.Def.Name, target, name, gate.Host.Name, typed, warnings, gate.Def.ReadOnly), null);
+        return (new ActionConfirmation(token, (int)options.ConfirmLifetime.TotalSeconds, gate.Def.Name, target, name, gate.Host.Name, typed, warnings, gate.Def.ReadOnly, options0), null);
     }
 
     /// <summary>Der Name, den der Benutzer zur Bestaetigung tippen soll: der Rechnername, den der Agent meldet, sonst der Name des Hosts in JulOS.</summary>
@@ -186,7 +210,7 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
 
     // ---------------------------------------------------------------- Schritt 2: ausfuehren
 
-    public async Task<(HostActionJob? Job, ActionDenied? Denied)> RunAsync(SessionIdentity who, Guid hostId, string? token, string? actionName, string? target, string? typed, CancellationToken ct)
+    public async Task<(HostActionJob? Job, ActionDenied? Denied)> RunAsync(SessionIdentity who, Guid hostId, string? token, string? actionName, string? target, string? typed, bool full, CancellationToken ct)
     {
         target = string.IsNullOrWhiteSpace(target) ? null : target;
         if (await hosts.GetAsync(who.UserId, hostId, ct) is not { } host) return (null, new(404, "host_not_found"));
@@ -207,13 +231,15 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
         // Alles noch einmal: zwischen Schritt 1 und 2 kann sich etwas geaendert haben (Pause, Stufe, Verbindung)
         var (gate, denied) = await GateAsync(who, hostId, p.Action, p.Target, ct);
         if (gate is null) return (null, denied);
-        var (name, _, bad) = await CheckTargetAsync(who.UserId, gate, p.Target, ct);
+        var (name, _, options0, bad) = await CheckTargetAsync(who.UserId, gate, p.Target, ct);
         if (bad is not null) { await TryAudit(who.UserId, host, gate.Def.Name, p.Target, "denied", bad.Code, null, ct); return (null, bad); }
+        // dist-upgrade: auf Proxmox immer, sonst nur, wenn der Benutzer es in der Bestaetigung ausdruecklich angehakt hat
+        var useFull = gate.Def.Name == "updates.install" && p.Target == HostActions.AllPackages && (options0?.Proxmox == true || full);
 
         var id = Guid.NewGuid().ToString("N");
         if (!_busy.TryAdd(hostId, id)) return await No(409, "busy");
-        var job = new HostActionJob(id, hostId, who.UserId, gate.Def.Name, p.Target, name, time.GetUtcNow());
-        try { await audit.AddAsync(who.UserId, hostId, host.Name, gate.Def.Name, AuditTarget(p.Target, name), "started", null, id, ct); }
+        var job = new HostActionJob(id, hostId, who.UserId, gate.Def.Name, p.Target, name, time.GetUtcNow(), host.Name, useFull);
+        try { await audit.AddAsync(who.UserId, hostId, host.Name, gate.Def.Name, AuditTargetOf(job), "started", null, id, ct); }
         catch (Exception e) when (e is Npgsql.NpgsqlException or InvalidOperationException)
         {
             _busy.TryRemove(hostId, out _);                      // ohne Eintrag im Verlauf geschieht nichts
@@ -227,7 +253,7 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
         return (job, null);
     }
 
-    private static string BodyFor(HostActionDef def, string job, string? target, int lines)
+    private static string BodyFor(HostActionDef def, string job, string? target, int lines, bool full = false)
     {
         using var ms = new MemoryStream();
         using (var w = new Utf8JsonWriter(ms))
@@ -236,7 +262,7 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
             w.WriteString("job", job);
             switch (def.Target)
             {
-                case HostTarget.Package when target == HostActions.AllPackages: w.WriteBoolean("all", true); break;
+                case HostTarget.Package when target == HostActions.AllPackages: w.WriteBoolean("all", true); if (full) w.WriteBoolean("full", true); break;
                 case HostTarget.Package: w.WriteStartArray("packages"); w.WriteStringValue(target); w.WriteEndArray(); break;
                 case HostTarget.Unit: w.WriteString("unit", target); break;
                 case HostTarget.Container: w.WriteString("id", target); break;
@@ -251,9 +277,14 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
     {
         try
         {
-            var reply = await g.Link.RequestAsync(HttpMethod.Post, g.Def.Path, BodyFor(g.Def, job.Id, job.Target, lines), g.Def.Timeout, CancellationToken.None, p =>
+            var reply = await g.Link.RequestAsync(HttpMethod.Post, g.Def.Path, BodyFor(g.Def, job.Id, job.Target, lines, job.Full), g.Def.Timeout, CancellationToken.None, p =>
             {
-                lock (job) { job.Progress = p.Text; job.Done = p.Done; job.Total = p.Total; }
+                lock (job)
+                {
+                    job.Progress = p.Text; job.Done = p.Done; job.Total = p.Total;
+                    if (p.Lines is { Length: > 0 }) { job.Tail.AddRange(p.Lines.Where(l => l.Length > 0)); if (job.Tail.Count > HostActionJob.MaxTail) job.Tail.RemoveRange(0, job.Tail.Count - HostActionJob.MaxTail); }
+                    else if (p.Text.Length > 0 && (job.Tail.Count == 0 || job.Tail[^1] != p.Text)) { job.Tail.Add(p.Text); if (job.Tail.Count > HostActionJob.MaxTail) job.Tail.RemoveAt(0); }
+                }
             });
             await FinishAsync(g.Host, g.Def, job, reply.Status, reply.Json);
         }
@@ -262,7 +293,7 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
             // Verbindung weg oder keine Antwort: die Aktion kann trotzdem laufen oder fertig sein. Das Ergebnis holt der Server beim Agenten ab, sobald er wieder da ist.
             lock (job) job.State = "lost";
             _busy.TryRemove(job.HostId, out _);
-            await TryAudit(job.UserId, g.Host, job.Action, AuditTarget(job.Target, job.TargetName), "lost", "no_answer", job.Id);
+            await TryAudit(job.UserId, g.Host, job.Action, AuditTargetOf(job), "lost", "no_answer", job.Id);
             _ = Task.Run(() => ReconcileAsync(g.Host, g.Def, job));
         }
         catch (Exception e) when (e is not OutOfMemoryException)
@@ -285,7 +316,7 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
         _busy.TryRemove(job.HostId, out _);
         var detail = error ?? (result?.RebootRequired == true ? "reboot_required" : result?.Already == true ? "already" : null);
         // Erst der Verlauf, dann der sichtbare Endzustand: wer "fertig" sieht, findet das Ergebnis auch im Verlauf
-        await TryAudit(job.UserId, host, job.Action, AuditTarget(job.Target, job.TargetName), state, detail, job.Id);
+        await TryAudit(job.UserId, host, job.Action, AuditTargetOf(job), state, detail, job.Id);
         lock (job)
         {
             job.Result = result;
@@ -307,21 +338,41 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
             string? Text(string name, int max) => o.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? AgentLabels.Printable(v.GetString(), max) is { Length: > 0 } s ? s : null : null;
             string? Multiline(string name, int max) => o.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? AgentLabels.PrintableLines(v.GetString(), max) is { Length: > 0 } s ? s : null : null;
             bool Bool(string name) => o.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+            var summary = ParseSummary(o);
+            var log = ParseLog(o);
             if (status != 200)
             {
                 var code = Text("error", 32);
                 var safe = code is not null && code.All(c => c is >= 'a' and <= 'z' or '_') ? code : "agent_error";
                 var output = Multiline("output", 4000);
-                return (output is null ? null : new HostActionResult(false, false, false, null, false, null, null, output, null, null), safe);
+                return (output is null && summary is null && log is null ? null : new HostActionResult(false, false, false, null, false, null, null, output, null, null, summary, log, Bool("needsRepair")), safe);
             }
             string[]? lines = o.TryGetProperty("lines", out var l) && l.ValueKind == JsonValueKind.Array
                 ? [.. l.EnumerateArray().Take(200).Where(x => x.ValueKind == JsonValueKind.String).Select(x => AgentLabels.Printable(x.GetString(), 400))] : null;
             int? count = o.TryGetProperty("count", out var c2) && c2.ValueKind == JsonValueKind.Number && c2.TryGetInt32(out var cn) ? Math.Clamp(cn, 0, 1_000_000) : null;
             bool? updated = o.TryGetProperty("updated", out var u) && u.ValueKind is JsonValueKind.True or JsonValueKind.False ? u.ValueKind == JsonValueKind.True : null;
             var name = Text("unit", 100) ?? Text("container", 64);
-            return (new HostActionResult(true, Bool("accepted"), Bool("already"), updated, Bool("rebootRequired"), count, lines, Multiline("output", 4000), name, Text("image", 200)), null);
+            return (new HostActionResult(true, Bool("accepted"), Bool("already"), updated, Bool("rebootRequired"), count, lines, Multiline("output", 4000), name, Text("image", 200), summary, log, false, Bool("full")), null);
         }
         catch (JsonException) { return (null, "invalid_answer"); }
+    }
+
+    public const int MaxLogLines = 2000;
+
+    /// <summary>Das Protokoll eines apt-Laufs aus der Antwort: hoechstens 2000 Zeilen zu je 240 Zeichen, die Einrueckung bleibt, Steuerzeichen fallen weg.</summary>
+    private static string[]? ParseLog(JsonElement o)
+        => o.TryGetProperty("log", out var l) && l.ValueKind == JsonValueKind.Array
+            ? [.. l.EnumerateArray().Take(MaxLogLines).Where(x => x.ValueKind == JsonValueKind.String).Select(x => AgentLabels.PrintableIndented(x.GetString(), 240))] : null;
+
+    /// <summary>Die Fehlerzusammenfassung des Agenten, Feld fuer Feld: Paketnamen nur, wenn sie wie Debian-Paketnamen aussehen.</summary>
+    private static ActionSummary? ParseSummary(JsonElement o)
+    {
+        if (!o.TryGetProperty("summary", out var s) || s.ValueKind != JsonValueKind.Object) return null;
+        string[] Strings(string name, int max, int len, bool packages) => s.TryGetProperty(name, out var a) && a.ValueKind == JsonValueKind.Array
+            ? [.. a.EnumerateArray().Take(max).Where(x => x.ValueKind == JsonValueKind.String).Select(x => AgentLabels.Printable(x.GetString(), len)).Where(x => x.Length > 0 && (!packages || HostActions.IsPackageName(x)))] : [];
+        bool Bool(string name) => s.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+        var installed = s.TryGetProperty("installed", out var i) && i.ValueKind == JsonValueKind.Number && i.TryGetInt32(out var n) ? Math.Clamp(n, 0, 100000) : 0;
+        return new ActionSummary(Strings("errors", 8, 200, false), Strings("failedPackages", 64, 80, true), Strings("keptBack", 64, 80, true), Bool("configQuestion"), Bool("locked"), installed);
     }
 
     /// <summary>Nach einem Verbindungsabbruch: wartet, bis der Agent wieder da ist, und fragt seine letzten Auftraege ab (GET /v1/host/jobs). Er hat die Aktion zu Ende gefuehrt und das Ergebnis gemerkt.</summary>
@@ -377,6 +428,13 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
         if (!_jobs.TryGetValue(job, out var j) || j.UserId != who.UserId || j.HostId != hostId) return null;
         if (j.State == "lost" && await hosts.GetAsync(who.UserId, hostId, ct) is { } host && HostActions.Find(j.Action) is { } def) await TryReconcileOnceAsync(host, def, j);
         return j;
+    }
+
+    /// <summary>Die Auftraege dieses Benutzers fuer die Leiste der Hintergrund-Aufgaben: laufende (auch verlorene) und in der letzten Stunde beendete, neueste zuerst. Nach einem Neuladen der Seite findet der Browser sie damit wieder.</summary>
+    public IReadOnlyList<HostActionJob> ListJobs(Guid userId)
+    {
+        var since = time.GetUtcNow() - TimeSpan.FromHours(1);
+        return [.. _jobs.Values.Where(j => j.UserId == userId && (!j.Final || j.Finished >= since) && HostActions.Find(j.Action) is { ReadOnly: false }).OrderByDescending(j => j.Started)];
     }
 
     public async Task<IReadOnlyList<AuditEntry>?> HistoryAsync(Guid userId, Guid hostId, int limit, CancellationToken ct)

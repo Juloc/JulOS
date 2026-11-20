@@ -7,11 +7,17 @@ using JulOS.Frontend.Auth;
 namespace JulOS.Frontend.Hosts;
 
 internal sealed record ActionPrepareRequest(string? Action, string? Target, int? Lines);
-internal sealed record ActionRunRequest(string? Token, string? Action, string? Target, string? Typed);
-internal sealed record ActionConfirmationResponse(string Token, int ExpiresIn, string Action, string? Target, string? TargetName, string Host, string? TypeToConfirm, string[] Warnings, bool ReadOnly);
+internal sealed record ActionRunRequest(string? Token, string? Action, string? Target, string? Typed, bool? Full = null);
+internal sealed record ActionConfirmationResponse(string Token, int ExpiresIn, string Action, string? Target, string? TargetName, string Host, string? TypeToConfirm, string[] Warnings, bool ReadOnly, ActionOptions? Options = null);
 internal sealed record ActionStarted(string Job, string State);
-internal sealed record ActionResultDto(bool Ok, bool Accepted, bool Already, bool? Updated, bool RebootRequired, int? Count, string[]? Lines, string? Output, string? Name, string? Image);
-internal sealed record ActionJobResponse(string Job, string Action, string? Target, string? TargetName, string State, string? Error, string? Progress, int? Done, int? Total, DateTimeOffset Started, DateTimeOffset? Finished, ActionResultDto? Result);
+internal sealed record ActionResultDto(bool Ok, bool Accepted, bool Already, bool? Updated, bool RebootRequired, int? Count, string[]? Lines, string? Output, string? Name, string? Image,
+    ActionSummary? Summary = null, string[]? Log = null, bool NeedsRepair = false, bool Full = false);
+/// <summary>Tail: die letzten Ausgabezeilen waehrend des Laufs (Live-Ansicht); Full: dist-upgrade.</summary>
+internal sealed record ActionJobResponse(string Job, string Action, string? Target, string? TargetName, string State, string? Error, string? Progress, int? Done, int? Total, DateTimeOffset Started, DateTimeOffset? Finished, ActionResultDto? Result,
+    string[]? Tail = null, bool Full = false);
+/// <summary>Ein Auftrag mit seinem Host, fuer die Liste der Hintergrund-Aufgaben.</summary>
+internal sealed record HostJobItem(Guid Host, string HostName, ActionJobResponse Job);
+internal sealed record HostJobsResponse(HostJobItem[] Jobs);
 internal sealed record ActionError(string Error, string Code);
 internal sealed record AuditEntryDto(long Id, DateTimeOffset At, string User, string Action, string? Target, string Event, string? Detail);
 internal sealed record AuditResponse(AuditEntryDto[] Entries);
@@ -41,6 +47,7 @@ internal static class HostActionEndpoints
         ["confirmation_invalid"] = "Die Bestätigung gilt nicht (mehr).", ["confirmation_expired"] = "Die Bestätigung ist abgelaufen.", ["confirmation_mismatch"] = "Die Bestätigung gehört zu etwas anderem.",
         ["typed_mismatch"] = "Der getippte Name stimmt nicht.", ["audit_failed"] = "Der Verlauf ließ sich nicht schreiben, die Aktion wurde nicht ausgeführt.", ["invalid_level"] = "Ungültige Stufe.",
         ["rate_limited"] = "Zu viele Anfragen, bitte kurz warten.", ["job_not_found"] = "Auftrag nicht gefunden.",
+        ["proxmox_whole"] = "Proxmox wird nur als Ganzes aktualisiert, nicht Paket für Paket.",
     };
 
     private static IResult Fail(ActionDenied d) => Fail(d.Status, d.Code);
@@ -52,7 +59,8 @@ internal static class HostActionEndpoints
     {
         lock (j)
             return new ActionJobResponse(j.Id, j.Action, j.Target, j.TargetName, j.State, j.Error, j.Progress, j.Done, j.Total, j.Started, j.Finished,
-                j.Result is { } r ? new ActionResultDto(r.Ok, r.Accepted, r.Already, r.Updated, r.RebootRequired, r.Count, r.Lines, r.Output, r.Name, r.Image) : null);
+                j.Result is { } r ? new ActionResultDto(r.Ok, r.Accepted, r.Already, r.Updated, r.RebootRequired, r.Count, r.Lines, r.Output, r.Name, r.Image, r.Summary, r.Log, r.NeedsRepair, r.Full) : null,
+                j.State is "running" or "lost" ? [.. j.Tail] : null, j.Full);
     }
 
     public static void MapHostActions(this IEndpointRouteBuilder app)
@@ -63,7 +71,7 @@ internal static class HostActionEndpoints
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (!hits.Allow("host-action:" + id.UserId, PerMinute, Minute)) return Fail(429, "rate_limited");
             var (value, denied) = await svc.PrepareAsync(id, host, body.Action, body.Target, body.Lines, ctx.RequestAborted);
-            return value is null ? Fail(denied!) : Results.Json(new ActionConfirmationResponse(value.Token, value.ExpiresIn, value.Action, value.Target, value.TargetName, value.Host, value.TypeToConfirm, value.Warnings, value.ReadOnly), AppJson.Default.ActionConfirmationResponse);
+            return value is null ? Fail(denied!) : Results.Json(new ActionConfirmationResponse(value.Token, value.ExpiresIn, value.Action, value.Target, value.TargetName, value.Host, value.TypeToConfirm, value.Warnings, value.ReadOnly, value.Options), AppJson.Default.ActionConfirmationResponse);
         });
 
         // Schritt 2: mit der Bestaetigung ausfuehren. Antwort sofort (202), der Fortschritt kommt ueber den Auftrag
@@ -71,8 +79,18 @@ internal static class HostActionEndpoints
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (!hits.Allow("host-action:" + id.UserId, PerMinute, Minute)) return Fail(429, "rate_limited");
-            var (job, denied) = await svc.RunAsync(id, host, body.Token, body.Action, body.Target, body.Typed, ctx.RequestAborted);
+            var (job, denied) = await svc.RunAsync(id, host, body.Token, body.Action, body.Target, body.Typed, body.Full == true, ctx.RequestAborted);
             return job is null ? Fail(denied!) : Results.Json(new ActionStarted(job.Id, job.State), AppJson.Default.ActionStarted, statusCode: 202);
+        });
+
+        // Die laufenden und gerade beendeten Aufgaben dieses Benutzers (Leiste der Hintergrund-Aufgaben; auch nach einem Neuladen der Seite)
+        app.MapGet("/api/host-jobs", (HttpContext ctx, HostActionService svc) =>
+        {
+            var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
+            var items = new List<HostJobItem>();
+            foreach (var j in svc.ListJobs(id.UserId))
+                items.Add(new HostJobItem(j.HostId, j.HostName, Describe(j)));
+            return Results.Json(new HostJobsResponse([.. items]), AppJson.Default.HostJobsResponse);
         });
 
         app.MapGet("/api/hosts/{host:guid}/actions/{job}", async (Guid host, string job, HttpContext ctx, HostActionService svc) =>

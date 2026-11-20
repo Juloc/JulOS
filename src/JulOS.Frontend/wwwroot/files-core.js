@@ -76,10 +76,10 @@ export function buildPlaces({ connections = [], hosts = [], info = {} } = {}) {
     if (!g.places.length && !g.root) continue;
     const many = g.places.length > 1;
     const places = g.places.map((c) => ({
-      id: c.id, kind: 'ssh', name: c.name, host: g.name, hasPassword: loginSaved(c), address: `${loginUser(c) ? loginUser(c) + '@' : ''}${c.host}`,
+      id: c.id, kind: 'ssh', name: c.name, host: g.name, user: loginUser(c) || '', hasPassword: loginSaved(c), address: `${loginUser(c) ? loginUser(c) + '@' : ''}${c.host}`,
       label: many ? `${g.name} · ${c.name}` : g.name,
     }));
-    if (g.root) places.push({ id: g.id, kind: 'root', name: g.name, host: `${g.name} (Root)`, hasPassword: true, address: t('files.rootAddress'), label: `${g.name} (Root)` });
+    if (g.root) places.push({ id: g.id, kind: 'root', name: g.name, host: `${g.name} (Root)`, user: 'root', hasPassword: true, address: t('files.rootAddress'), label: `${g.name} (Root)` });
     groups.push({ id: g.id, name: g.name, places });
   }
   const flat = groups.flatMap((g) => g.places);
@@ -380,6 +380,35 @@ export function mkdirModel(prep) {
     sentence: t('files.mkdir.sentence', { host: prep.host, dir: shortPath(prep.dir), name: prep.name }),
     rows: [[t('files.rowHost'), prep.host], [t('files.rowPath'), shortPath(prep.dir)], [t('files.rowNewName'), prep.name]],
     confirm: t('files.mkdir.confirm'), danger: false,
+  }, prep);
+}
+
+/** Eine Datei speichern (Editor): ersetzt die Datei mit dem bearbeiteten Text. Hat sie sich auf dem Host seit dem Oeffnen geaendert (oder gibt es sie nicht mehr), steht das als Warnung da und es braucht ein Haekchen. */
+export function saveModel(prep, name, bytes, changed) {
+  const path = (prep.dir === '/' || !prep.dir ? '' : prep.dir) + '/' + name;
+  return rootify({
+    title: t('files.save.title'),
+    sentence: t('files.save.sentence', { host: prep.host, path: shortPath(path) }),
+    rows: [[t('files.rowHost'), prep.host], [t('files.rowPath'), shortPath(path)], [t('files.rowCount'), fileSize(bytes)]],
+    warning: changed ? t('files.save.changedWarning') : null,
+    ack: changed ? t('files.save.changedAck') : null,
+    overwrite: (prep.conflicts || []).includes(name),
+    confirm: t('files.save.confirm'),
+    danger: !!changed,
+  }, prep);
+}
+/** Eine leere Textdatei anlegen (ein Upload ohne Inhalt); gibt es den Namen schon, wuerde sie ersetzt und es braucht ein Haekchen */
+export function newFileModel(prep, name) {
+  const exists = (prep.conflicts || []).includes(name);
+  return rootify({
+    title: t('files.newFile.title'),
+    sentence: t('files.newFile.sentence', { host: prep.host, dir: shortPath(prep.dir), name }),
+    rows: [[t('files.rowHost'), prep.host], [t('files.rowPath'), shortPath(prep.dir)], [t('files.rowNewName'), name]],
+    warning: exists ? t('files.rename.overwriteWarning', { name }) : null,
+    ack: exists ? t('files.rename.overwriteAck') : null,
+    overwrite: exists,
+    confirm: t('files.mkdir.confirm'),
+    danger: exists,
   }, prep);
 }
 

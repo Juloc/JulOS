@@ -9,7 +9,7 @@
 # In both cases the same rules apply (details in the documentation):
 #   - julos-agent.py (and for a desktop julos-clip.py) come from YOUR JulOS server only (/agent-files/, SHA-256 checked against /agent-files/SHA256SUMS, no redirects, size limit),
 #   - /etc/julos-agent/permissions is owned by root (the agent cannot change what it may do) and EMPTY unless you name words with --allow,
-#   - the small root helper (julos-agent-helper.py, from your server, checksum checked) is installed ONLY when a word that needs root is allowed (updates, reboot, services, logs):
+#   - the small root helper (julos-agent-helper.py, from your server, checksum checked) is installed ONLY when a word that needs root is allowed (updates, reboot, services, logs, files-root):
 #     a socket-activated systemd service, socket reachable only by the agent's user. The agent itself never gets sudo or root.
 # The script talks to the server you name with --server and to nobody else. It never reads or asks for a password; sudo asks for its own.
 #
@@ -18,10 +18,13 @@
 #   --dry-run          only show what would happen (needs no root, changes nothing, downloads nothing)
 #   --desktop | --host force the kind of installation (default: detect; an existing installation decides first)
 #   --user NAME        host: the service account (default julos-agent, created when missing); desktop: the user whose session runs the agent (default: the user who called sudo)
-#   --allow WORDS      write these words to /etc/julos-agent/permissions, comma separated, from: updates reboot services docker logs. NEVER a default: without this option the agent can only read.
+#   --allow WORDS      write these words to /etc/julos-agent/permissions, comma separated, from: updates reboot services docker logs files-root. NEVER a default: without this option the agent can only read.
 #                      Every action also needs your confirmation in the app each time and the "Aktionen" level for this host there. updates: install updates, refresh package lists (apt only);
 #                      reboot: reboot and power off; services: list/start/stop/restart systemd services; docker: start/stop/restart containers, pull images (needs Docker socket access:
-#                      see --docker-group); logs: read bounded logs of services and containers. The words only add; remove one by editing the file as root.
+#                      see --docker-group); logs: read bounded logs of services and containers;
+#                      files-root: the Files app may list, read, write, rename and delete files on this machine AS ROOT (only with the level "Alles" for this host in the app; every action
+#                      and every read is confirmed there and recorded; the agent's own files stay protected). That is almost as much as root itself: allow it only where you accept that.
+#                      The words only add; remove one by editing the file as root.
 #   --allow-updates    same as --allow updates
 #   --docker-group     host: let the service read the Docker socket (supplementary group "docker"; that group is root-equivalent, read the docs first).
 #                      desktop: only checks whether your user is in the group "docker" and tells you; the installer never changes your groups
@@ -48,7 +51,7 @@ HELPER_SOCKET_UNIT=julos-agent-helper.socket
 HELPER_SERVICE_UNIT=julos-agent-helper@.service
 HELPER_SOCKET_FILE=/etc/systemd/system/$HELPER_SOCKET_UNIT
 HELPER_SERVICE_FILE=/etc/systemd/system/$HELPER_SERVICE_UNIT
-KNOWN_WORDS="updates reboot services docker logs"
+KNOWN_WORDS="updates reboot services docker logs files-root"
 
 SERVER="" CODE="" USER_OPT="" ALLOW_WORDS="" DOCKER_GROUP=0 ALLOW_HTTP=0 DRY=0 NO_START=0 UNINSTALL=0 FORCE_MODE="" WANT_SYSTEMD=0
 TMPDIRS=""
@@ -112,9 +115,9 @@ for w in $ALLOW_WORDS; do
 done
 WORDS=${WORDS# }
 has_word() { case " $WORDS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
-# What needs root: apt, systemctl, journalctl, reboot. Docker goes through the socket the agent already reads.
+# What needs root: apt, systemctl, journalctl, reboot, files as root. Docker goes through the socket the agent already reads.
 NEED_HELPER=0
-for w in updates reboot services logs; do if has_word "$w"; then NEED_HELPER=1; fi; done
+for w in updates reboot services logs files-root; do if has_word "$w"; then NEED_HELPER=1; fi; done
 
 IS_ROOT=0
 if [ "$(id -u)" = 0 ]; then IS_ROOT=1; fi
@@ -500,6 +503,7 @@ install_permissions() {
 #   services   list, start, stop, restart systemd services
 #   docker     start, stop, restart containers, pull images (also needs access to the Docker socket)
 #   logs       read bounded logs of services and containers
+#   files-root the Files app may list, read, write, rename and delete files as ROOT (needs the level "Alles" for this host in the app)
 PERMS
   fi
   chown root:root "$ETC_DIR/permissions" 2>/dev/null || true
@@ -542,18 +546,19 @@ StandardInput=socket
 StandardOutput=socket
 StandardError=journal
 TimeoutStopSec=30
-ProtectHome=yes
-PrivateTmp=yes
 ProtectKernelModules=yes
 LockPersonality=yes
 UNIT
+  # The sandbox would hide /home and give the helper its own /tmp. For files as root that would be a lie (the Files app would show an empty /home and a private /tmp),
+  # so with files-root the helper sees the real file system; without that word the stricter view stays.
+  if ! has_word files-root; then printf 'ProtectHome=yes\nPrivateTmp=yes\n'; fi
 }
 
 # The root helper for actions that need root. Only installed when such a word was named with --allow; re-running this script updates it.
 install_helper() {
   [ "$NEED_HELPER" = 1 ] || return 0
   if [ "$SYSTEMD" = 0 ]; then
-    warn "no systemd on this machine: the root helper is not installed, so actions that need root (updates, reboot, services, logs) will not work"
+    warn "no systemd on this machine: the root helper is not installed, so actions that need root (updates, reboot, services, logs, files-root) will not work"
     return 0
   fi
   if [ "$DRY" = 1 ]; then

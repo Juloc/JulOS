@@ -731,7 +731,7 @@ const NAV = [
   { id: 'start', name: t('desktop.start'), ic: 'home' }, { id: 'apps', name: t('desktop.apps'), ic: 'grid' }, { id: 'dienste', name: t('desktop.services'), ic: 'monitor' }, { id: 'hosts', name: t('desktop.hosts'), ic: 'server' },
   { id: 'dateien', name: t('desktop.files'), ic: 'folder' }, { id: 'system', name: t('desktop.system'), ic: 'activity' }, { id: 'einstellungen', name: t('desktop.settings'), ic: 'sliders' },
 ];
-const nav = { view: 'start', back: [], fwd: [] };
+const nav = { view: 'start', back: [], fwd: [], hostId: null, panel: null };
 const greeting = () => { const h = new Date().getHours(); return h < 5 ? t('desktop.greetNight') : h < 11 ? t('desktop.greetMorning') : h < 17 ? t('desktop.greetDay') : h < 22 ? t('desktop.greetEvening') : t('desktop.greetNight'); };
 
 /** Groesse des Start-Fensters aus der Anzeige: gut vier Fuenftel in der Breite und Hoehe, mindestens 960 x 640 und hoechstens 1280 x 860 (eine gemerkte Groesse gilt weiter) */
@@ -750,7 +750,7 @@ function openHome(view) {
     back.addEventListener('click', () => { if (nav.back.length) { nav.fwd.push(nav.view); nav.view = nav.back.pop(); renderHome(); } });
     fwd.addEventListener('click', () => { if (nav.fwd.length) { nav.back.push(nav.view); nav.view = nav.fwd.pop(); renderHome(); } });
     w = createWindow({ id: 'home', title: t('desktop.start'), icon: `<span class="dk-ti" style="--g1:#7b78ee;--g2:#5160e6;width:22px;height:22px;border-radius:7px">${ic('home')}</span>`,
-      rect: defaultRect('home', ...homeSize(), -30, 0), minW: 640, minH: 420, head, onClose: () => { stopOverview(); nav.view = 'start'; nav.back = []; nav.fwd = []; } });
+      rect: defaultRect('home', ...homeSize(), -30, 0), minW: 640, minH: 420, head, onClose: () => { stopOverview(); ctx.hostPage.unmount(); nav.view = 'start'; nav.back = []; nav.fwd = []; } });
     w.head.querySelector('.dk-wt').style.minWidth = '60px';
     w.body.innerHTML = `<div class="dk-home"><nav class="dk-side" aria-label="${t('desktop.areas')}"></nav><div class="dk-main"></div></div>`;
     w.side = $('.dk-side', w.body); w.main = $('.dk-main', w.body);
@@ -776,7 +776,7 @@ function renderHome() {
   w.side.replaceChildren();
   NAV.forEach((n, i) => {
     if (n.id === 'dateien') w.side.appendChild(document.createElement('hr'));
-    const b = btn('dk-nav' + (n.id === nav.view ? ' sel' : ''), ic(n.ic) + '<span></span>' + (n.soon ? `<span class="dk-tag">${t('desktop.soon')}</span>` : '')); b.querySelector('span').textContent = n.name;
+    const b = btn('dk-nav' + (n.id === (nav.view === 'host' ? 'hosts' : nav.view) ? ' sel' : ''), ic(n.ic) + '<span></span>' + (n.soon ? `<span class="dk-tag">${t('desktop.soon')}</span>` : '')); b.querySelector('span').textContent = n.name;
     b.dataset.nav = n.id; b.dataset.name = n.name; if (n.soon) b.setAttribute('aria-disabled', 'true');
     w.side.appendChild(b);
   });
@@ -784,7 +784,8 @@ function renderHome() {
   hist[0].disabled = !nav.back.length; hist[1].disabled = !nav.fwd.length;
   const m = w.main; m.scrollTop = 0;
   stopOverview();
-  ({ start: renderStart, apps: renderAppsView, dienste: renderServices, hosts: renderHosts, system: renderSystem, einstellungen: renderSettings }[nav.view] || renderStart)(m);
+  if (nav.view !== 'host') ctx.hostPage.unmount();
+  ({ start: renderStart, apps: renderAppsView, dienste: renderServices, hosts: renderHosts, host: renderHostPage, system: renderSystem, einstellungen: renderSettings }[nav.view] || renderStart)(m);
   tickClock();
 }
 
@@ -926,6 +927,20 @@ function renderHosts(m) {
     ${hosts.length ? '' : `<p class="dk-lead">${t('desktop.noHosts')}</p>`}
     <div class="hu-grid">${hosts.map((h) => hostCardHtml(h, ctx.info.get(h.id), { esc: ctx.esc, connection })).join('')}</div>`;
 }
+/** Die Seite eines Hosts (hostpage.js) in der Ansicht des Start-Fensters; der Pfeil bringt zur Liste zurueck */
+function renderHostPage(m) {
+  const h = ctx.state.hosts.find((x) => x.id === nav.hostId);
+  if (!h) { nav.view = 'hosts'; renderHost_list(m); return; }
+  ctx.hostPage.mount(m, h, nav.panel, { onBack: () => { const w = wins.get('home'); const b = w && w.head.querySelector('[data-nv=back]'); if (b && !b.disabled) b.click(); else goto('hosts'); } });
+}
+const renderHost_list = (m) => renderHosts(m);
+/** Oeffnet die Seite eines Hosts (optional gleich in einem Abschnitt) im Start-Fenster */
+export function openHost(host, panel) {
+  nav.hostId = host.id; nav.panel = panel || null;
+  const same = nav.view === 'host' && wins.get('home');
+  openHome('host');
+  if (same) renderHome();
+}
 function renderAppsView(m) {
   m.innerHTML = `<h3 style="margin-top:14px">${t('desktop.apps')}</h3><div class="dk-grid">${shownApps().map((a) => `<button type="button" class="dk-b dk-app" data-app="${a.id}"${a.soon ? ` aria-disabled="true" title="${t('desktop.soonTitle')}"` : ''}>${tile(a.g, a.ic)}<span class="dk-n">${a.name}</span>${a.soon ? `<span class="dk-tag">${t('desktop.soon')}</span>` : ''}</button>`).join('')}</div>
     <p class="dk-lead">${t('desktop.appsGrayed')}</p>`;
@@ -970,7 +985,7 @@ function renderSettings(m) {
   }
 }
 function onMainClick(e) {
-  const t = e.target.closest('[data-conn],[data-edit],[data-extra],[data-act],[data-go],[data-app],[data-dockmode],[data-scheme],[data-lang],[data-hostfilter],[data-folderfilter],[data-groupby],[data-fav],[data-hostedit],[data-hostagent],[data-hostinfo]'); if (!t) return;
+  const t = e.target.closest('[data-conn],[data-edit],[data-extra],[data-act],[data-go],[data-app],[data-dockmode],[data-scheme],[data-lang],[data-hostfilter],[data-folderfilter],[data-groupby],[data-fav],[data-hostedit],[data-hostagent],[data-hostinfo],[data-hcact]'); if (!t) return;
   const find = (id) => ctx.state.connections.find((c) => c.id === id);
   const host = (id) => ctx.state.hosts.find((h) => h.id === id);
   if (t.dataset.lang) { if (t.dataset.lang !== getPref()) setLanguage(t.dataset.lang); }
@@ -982,7 +997,8 @@ function onMainClick(e) {
   else if (t.dataset.fav) { const c = find(t.dataset.fav); c && setFavorite(ctx.api, c, !c.favorite).then(() => renderHome(), (err) => notify(serverMsg(err.message))); }
   else if (t.dataset.act === 'folders') ctx.folders();
   else if (t.dataset.hostedit || t.dataset.hostagent) { const h = host(t.dataset.hostedit || t.dataset.hostagent); h && ctx.editHost(h); }
-  else if (t.dataset.hostinfo) { const h = host(t.dataset.hostinfo); h && ctx.hostInfo(h); }
+  else if (t.dataset.hcact) { const h = host(t.dataset.host); h && ctx.hostAction(h, t.dataset.hcact, t.dataset.htarget || null, { onDone: () => ctx.info.load(h, { fresh: true }) }); }
+  else if (t.dataset.hostinfo) { const h = host(t.dataset.hostinfo); h && ctx.hostInfo(h, t.dataset.hpage || null); }
   else if (t.dataset.act === 'addhost') ctx.addHost();
   else if (t.dataset.conn) { const c = find(t.dataset.conn); c && ctx.connect(c); }
   else if (t.dataset.extra) { const c = find(t.dataset.extra); c && ctx.connect(c, { extra: true }); }

@@ -4,7 +4,7 @@ The JulOS agent (`tools/julos-agent.py`) has two modes. The **desktop mode** run
 clipboard, see [AGENT_API.md](AGENT_API.md)). The **host mode** is for machines **without a desktop**: a Docker VM, a Proxmox host, any Debian or Ubuntu server. It reports
 the machine to JulOS and answers a few **read-only** questions. It is the same file, the same enrolment, the same outbound connection; nothing listens on the machine.
 
-What you get per host, at a glance (host card on the desktop and on the phone, plus the dialog "Host-Details"):
+What you get per host, at a glance (host card on the desktop and on the phone, plus the page "Host-Details"):
 
 | Area | Shown |
 | --- | --- |
@@ -19,7 +19,7 @@ and every single one is **confirmed by you in the app, every time**: see [Action
 
 ### Where you see it
 
-The **host card** (list of hosts, phone and desktop; see [HOSTS.md](HOSTS.md)) shows state, kind of agent, load, memory, the main disk, and notes only when there is something. **Details** opens the dialog **Host-Details**: a large window with a side list on the desktop, a sheet with tabs on the phone. Every section is a few cards:
+The **host card** (list of hosts, phone and desktop; see [HOSTS.md](HOSTS.md)) shows state, kind of agent, load, memory, the main disk, and notes only when there is something; the notes are buttons (the updates note reads "Updates ansehen und installieren"), and the card menu has the simple actions (below). **Details** opens the **page "Host-Details"**: no dialog, on the desktop a view in the Start window (view Hosts, side list of sections, arrow back to the list), on the phone its own page with a back arrow and tabs. Every host has the same page with the same sections; what an agent does not deliver, the section says in one sentence with the button **Agent aktualisieren / einrichten**. What is shown follows the **capabilities the agent reports** (`caps` and `allow` in its hello), not the name of its platform: an agent that reports `sysinfo` is read, whatever it calls itself. Every section is a few cards:
 
 | Section | Cards |
 | --- | --- |
@@ -29,9 +29,12 @@ The **host card** (list of hosts, phone and desktop; see [HOSTS.md](HOSTS.md)) s
 | Netzwerk | the real interfaces first (IPv4 prominent, IPv6, link-local `fe80` addresses only as a count, traffic since boot, the rate from two readings); Docker and bridge interfaces (`docker0`, `br-…`, `veth…`, `virbr…`, …) folded into one group |
 | Updates | security updates first, then the others, kept-back and held packages, the age of the lists; the buttons below |
 | Dienste, Docker | failed services and the containers, with their buttons |
-| Logs, Aktionen, Verlauf | only for a host agent from 0.6.0: [Logs](#logs-from-a-list), the level, the pause switch and the local permission, restart and power off, the history |
+| Agent | state of the agent, **Jetzt aktualisieren**, automatic update, **Agent entfernen**, and the one flow **Agent einrichten** (ticks, command to copy or install over SSH); the way out of every empty state ("Agent aktualisieren / einrichten") |
+| Logs, Aktionen, Verlauf | for an agent that reports capabilities, from 0.6.0: [Logs](#logs-from-a-list), the level, the pause switch and the local permission, restart and power off, the history |
 
 The numbers in the navigation (updates, failed services, restarting containers, `!` for a disk problem) show where to look. Everything the agent sends (host names, packages, addresses, output) is escaped; the markup is built in one place (`hostview.js`).
+
+**Simple actions on the card.** The card menu offers **Paketlisten aktualisieren**, **Updates installieren** (all), **Neu starten**, **Ausschalten** and **Logs ansehen** without opening the page first. Each one goes through the usual two-step confirmation (a small sheet with host, action, target and, where required, the typed host name); nothing is executed by the menu itself. An entry that the keys do not allow is **greyed out with the reason and the way to unlock it**: "Aktionen sind für diesen Host aus" (level off), "Alle Aktionen sind pausiert" (pause), "Auf dem Rechner nicht erlaubt (Wort reboot): Agent mit --allow reboot neu einrichten" (local word), or that the agent is not connected, too old or reports nothing; the first group leads to the section **Aktionen** when tapped. Without an agent the menu has no actions. **Logs** opens the page at the section Logs, where you pick the service.
 
 The hint "Die Listen aktualisiert nur root, auf dem Host: sudo apt update." appears only when the button **Paketlisten aktualisieren** is not available (level off, the word `updates` missing on the host, pause); with the button there only the age of the lists is shown.
 
@@ -54,15 +57,16 @@ so give such a machine two hosts if you want both (two agents cannot share a hos
 
 ## Install from JulOS over SSH
 
-In the app: open the host, choose **Agent per SSH installieren**. JulOS creates a one-time code, opens the SSH connection of this host in the terminal and **puts the finished command
-into the input bar without sending it**. You read it, press Enter, and type your `sudo` password **in the terminal yourself**. JulOS never stores, sees or sends the sudo password.
-If the host has no terminal connection, the dialog shows the command to copy (**Befehl kopieren**) and you run it on the host.
+In the app: open the host page at the section **Agent** (**Agent verwalten** in the card menu, or **Agent einrichten** on a host without one). **One flow for every machine**, no separate "desktop agent" and "host agent" any more: choose what the agent may do with the ticks (**Updates installieren, Logs lesen, Dienste, Container, Neu starten und ausschalten**; none is ticked by default, see [Actions](#actions-stage-3)), then **Agent per SSH installieren** or **Befehl kopieren**. The ticks become `--allow a,b` (always in the order updates, logs, services, docker, reboot; only these words ever reach the command) and, only with Docker ticked and the extra tick "Docker-Zugriff geben (Gruppe docker: entspricht root auf dem Rechner)", `--docker-group`. JulOS creates a one-time code, opens the SSH connection of this host in the terminal and **puts the finished command into the input bar without sending it**. You read it, press Enter, and type your `sudo` password **in the terminal yourself**. JulOS never stores, sees or sends the sudo password.
+If the host has no terminal connection, the page shows the command to copy and you run it on the host.
 
-The command downloads the installer into a file (so you can look at it) and runs it with sudo:
+The command downloads the installer into a file (so you can look at it) and runs it with sudo; the script detects itself whether the machine has a desktop:
 
 ```sh
-curl -fsSL https://SERVER/agent-files/install-host-agent.sh -o julos-install-host-agent.sh && sudo sh julos-install-host-agent.sh --server https://SERVER --code ABCDE-FGHIJ
+curl -fsSL https://SERVER/agent-files/install-agent.sh -o julos-install-agent.sh && sudo sh julos-install-agent.sh --server https://SERVER --code ABCDE-FGHIJ --allow updates,logs --docker-group
 ```
+
+The script name is one constant in the app (`AGENT_INSTALLER` in `hostinfo.js`). **The server side belongs to the unified agent work** (`install-agent.sh` served from `/agent-files/`, detection of the desktop); until it is merged the older `install-host-agent.sh` described below is what the server ships, and the command of this page needs that script first.
 
 The installer (`tools/install-host-agent.sh`, POSIX `sh`, `shellcheck`-clean, idempotent):
 
@@ -82,7 +86,7 @@ Requirements on the host: `python3` (3.8 or newer), `curl` or `wget`, `sudo`/roo
 
 ### Updating
 
-Use **Jetzt aktualisieren** (or the automatic update) in the host dialog, exactly like the desktop agent ([AGENT_API.md](AGENT_API.md) "Updating the agent"): the agent downloads
+Use **Jetzt aktualisieren** (or the automatic update) in the section Agent of the host page, exactly like the desktop agent ([AGENT_API.md](AGENT_API.md) "Updating the agent"): the agent downloads
 `/agent-files/julos-agent.py` from its own server, checks the SHA-256, replaces its file atomically and restarts itself. For this the service user owns `/opt/julos-agent`.
 Re-running the installer does the same by hand.
 
@@ -93,7 +97,7 @@ sudo sh install-host-agent.sh --uninstall           # or: --dry-run --uninstall 
 ```
 
 It stops and removes the service, the root helper and its two units, `/opt/julos-agent`, `/etc/julos-agent`, `/var/lib/julos-agent` (log, token, results of actions) and the user (only if the installer created it). Then use **Agent entfernen** in the
-host dialog so the token is also dead on the server. The agent file on the host is the only thing JulOS ever installs.
+section Agent of the host page so the token is also dead on the server. The agent file on the host is the only thing JulOS ever installs.
 
 ## What the agent reads
 
@@ -183,7 +187,7 @@ Actions are the first thing in JulOS that changes a machine, so they are built t
 
 #### Logs from a list
 
-The section **Logs** of the dialog offers the services of the agent's own list (`GET /api/hosts/{id}/units`, the list `GET /v1/host/units` above) and a number of lines from 10 to 200; the button opens the usual two-step confirmation, nothing is read before it. There is **no free input** of a name: the list is the only source, and the server checks the target against the same list (`unknown_target` otherwise). Logs of **containers** and of the **failed services** keep their button at the entry.
+The section **Logs** of the host page offers the services of the agent's own list (`GET /api/hosts/{id}/units`, the list `GET /v1/host/units` above) and a number of lines from 10 to 200; the button opens the usual two-step confirmation, nothing is read before it. There is **no free input** of a name: the list is the only source, and the server checks the target against the same list (`unknown_target` otherwise). Logs of **containers** and of the **failed services** keep their button at the entry.
 
 Limit, without loosening the keys: the list needs the local word `services` on the host **and** the level "alles" on the server (`GET /units` is a service query). With only `logs` (level "Updates und Logs", or no word `services`) there is no list, and the dialog says so; the logs of failed services and containers stay available from their lists. Reading logs does not give services control.
 
@@ -199,11 +203,11 @@ Paths are fixed: `POST /v1/host/updates/refresh|install`, `/reboot`, `/poweroff`
 2. `POST .../actions/run {token, action, target, typed}` runs it. The confirmation is **single use** (it is removed on first sight, also when something does not match), bound to **your session, this host, this action and this target**, and expires. A wrong typed name does not burn it
    (the server checks the name too, not only the page). Before running, **every check is repeated**: between the steps the pause switch, the level or the connection may have changed.
 
-The page shows a dialog with host, action and target (and the typing field where required); after "Ausführen" it shows progress and result. Closing the dialog does not cancel a running action.
+The page shows a small sheet with host, action and target (and the typing field where required); after "Ausführen" it shows progress and result. Closing the dialog does not cancel a running action.
 
 ### Who must agree (the keys)
 
-Server: the **pause switch** (`JULOS_HOST_ACTIONS=off` in the environment, or "Alle Aktionen pausieren" in the dialog; the environment wins), the **level** per host (`agents.control`, default `read` = no action; `updates` = updates and logs; `full` = everything), your **session**,
+Server: the **pause switch** (`JULOS_HOST_ACTIONS=off` in the environment, or "Alle Aktionen pausieren" on the page; the environment wins), the **level** per host (`agents.control`, default `read` = no action; `updates` = updates and logs; `full` = everything), your **session**,
 the **rate limit** (30 requests per minute and user, at most 20 open confirmations), an **agent of version 0.6.0 or later that is connected and announced the capability**, and the agent's **`allow`** from its hello. Agent: the **local word** in `/etc/julos-agent/permissions`
 (`updates`, `reboot`, `services`, `docker`, `logs`), checked again for every request (`403 not_permitted`). The root helper checks the file **a third time**. Missing any one: refused, and the refusal is written to the history.
 
@@ -282,7 +286,7 @@ The user's decisions for the host agent (answers collected before the build) are
 
 ### Stage 1 and 2 (this version): read and show, install over SSH
 
-Done in this version: the host mode, the four read capabilities, disk health, the endpoints with cache, the host cards and the dialog with its sections, the SSH install, the permission file and the `control` level (unused).
+Done in this version: the host mode, the four read capabilities, disk health, the endpoints with cache, the host cards and the host page with its sections, the SSH install, the permission file and the `control` level (unused).
 
 ### Stage 3: actions (write), every one confirmed, never silent: built, see [Actions](#actions-stage-3)
 

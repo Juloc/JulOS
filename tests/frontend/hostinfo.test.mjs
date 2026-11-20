@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import { setPref } from '../../src/JulOS.Frontend/wwwroot/i18n.js';
 import {
   fmtBytes, fmtUptime, fmtAge, ramPercent, mainDisk, updatesLine, agentModeText, capsText, agentDetail, wantsInfo,
-  errorText, stateNote, createHostInfoStore, installCommand, pickTerminal, fetchKind, FRESH_MS,
+  errorText, stateNote, createHostInfoStore, installCommand, AGENT_INSTALLER, pickTerminal, fetchKind, FRESH_MS,
 } from '../../src/JulOS.Frontend/wwwroot/hostinfo.js';
 import { prefillState } from '../../src/JulOS.Frontend/wwwroot/terminal-input.js';
 
@@ -132,14 +132,24 @@ test('Speicher: gleichzeitige Anforderung teilt eine Abfrage', async () => {
   assert.equal(n, 1);
 });
 
-test('Einzeiler fuer den Host: Datei bleibt zum Ansehen, nichts wird in eine Shell geleitet, --allow-http nur fuer fremdes http', () => {
+test('Einzeiler fuer den Host: EIN Installer, Datei bleibt zum Ansehen, nichts wird in eine Shell geleitet, --allow-http nur fuer fremdes http', () => {
   const cmd = installCommand('https://julos.example.org', 'ABCDE-FGHIJ');
-  assert.equal(cmd, 'curl -fsSL https://julos.example.org/agent-files/install-host-agent.sh -o julos-install-host-agent.sh && sudo sh julos-install-host-agent.sh --server https://julos.example.org --code ABCDE-FGHIJ');
+  assert.equal(cmd, 'curl -fsSL https://julos.example.org/agent-files/install-agent.sh -o julos-install-agent.sh && sudo sh julos-install-agent.sh --server https://julos.example.org --code ABCDE-FGHIJ');
+  assert.equal(AGENT_INSTALLER, 'install-agent.sh');                       // der Skriptname steht an einer Stelle
   assert.doesNotMatch(cmd, /\|/);
-  assert.doesNotMatch(cmd, /allow-http/);
+  assert.doesNotMatch(cmd, /allow-http|--allow /);                         // ohne Auswahl keine Erlaubnis: nie ein Standard
   assert.match(installCommand('http://192.0.2.5:8080', 'ABCDE-FGHIJ'), / --allow-http$/);
   assert.doesNotMatch(installCommand('http://localhost:18191', 'ABCDE-FGHIJ'), /allow-http/);
   assert.doesNotMatch(installCommand('http://127.0.0.1', 'ABCDE-FGHIJ'), /allow-http/);
+});
+
+test('Einzeiler: die Haken werden zu --allow (feste Reihenfolge, nur bekannte Woerter) und --docker-group nur mit dem Wort docker', () => {
+  const c = (o) => installCommand('https://julos.example.org', 'ABCDE-FGHIJ', o);
+  assert.match(c({ allow: ['reboot', 'updates', 'logs'] }), / --code ABCDE-FGHIJ --allow updates,logs,reboot$/);
+  assert.match(c({ allow: ['docker', 'services'], dockerGroup: true }), / --allow services,docker --docker-group$/);
+  assert.doesNotMatch(c({ allow: ['updates'], dockerGroup: true }), /docker-group/);        // die Gruppe gehoert zum Wort docker
+  assert.doesNotMatch(c({ allow: ['rm -rf /', 'updates;ls'] }), /--allow/);                 // Unbekanntes kommt nie in den Befehl
+  assert.match(installCommand('http://192.0.2.5:8080', 'X', { allow: ['logs'] }), / --allow logs --allow-http$/);
 });
 
 test('Terminal fuer die Installation: nur eine blanke Shell dieses Hosts, die zuletzt benutzte zuerst', () => {
@@ -169,7 +179,7 @@ test('prefillState: Entwurf ersetzen, Leiste oeffnen, nichts senden', () => {
 test('die neue Datei steht im Service Worker und die Version ist erhoeht', () => {
   const sw = fs.readFileSync(new URL('../../src/JulOS.Frontend/wwwroot/sw.js', import.meta.url), 'utf8');
   assert.ok(Number(/VERSION = 'pd-v(\d+)'/.exec(sw)[1]) >= 55);
-  for (const f of ['/hostinfo.js', '/hostinfo-dialog.js', '/hostui.js', '/hostview.js', '/hostui.css']) assert.ok(sw.includes(`'${f}'`), f);
+  for (const f of ['/hostinfo.js', '/hostpage.js', '/hostui.js', '/hostview.js', '/hostagent.js', '/hostui.css']) assert.ok(sw.includes(`'${f}'`), f);
   assert.ok(Number(/VERSION = 'pd-v(\d+)'/.exec(sw)[1]) >= 60);
 });
 

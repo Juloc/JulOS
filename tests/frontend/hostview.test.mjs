@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { setPref } from '../../src/JulOS.Frontend/wwwroot/i18n.js';
-import { cardModel, hostCardHtml, meters, attention, interfaces, healthCard, panelsFor, PANELS, clampLines, LOG_LINES } from '../../src/JulOS.Frontend/wwwroot/hostview.js';
+import { cardModel, hostCardHtml, meters, attention, interfaces, healthCard, panelsFor, unavailable, PANELS, clampLines, LOG_LINES } from '../../src/JulOS.Frontend/wwwroot/hostview.js';
 import { makeAct } from '../../src/JulOS.Frontend/wwwroot/hostactions.js';
 import { bar, meter, listBlock, icon, ICON_NAMES, empty } from '../../src/JulOS.Frontend/wwwroot/hostui.js';
 
@@ -61,7 +61,7 @@ test('Host-Karte: Markup mit Name, Zustand, Aktionen; Tasten tragen Attribute fu
   assert.match(html, /class="hu-state ok"/);
   assert.match(html, /data-act="hostinfo" data-host="h1" data-hostinfo="h1"/);               // Hauptaktion: Details
   assert.match(html, /data-hmenu aria-haspopup="menu" aria-expanded="false"/);                // Nebenaktionen im Menue
-  assert.match(html, /role="menuitem"[^>]*data-hostagent="h1"/);
+  assert.match(html, /role="menuitem"[^>]*data-hostinfo="h1" data-hpage="agent"/);               // Agent verwalten: Abschnitt Agent der Seite
   assert.match(html, /role="menuitem"[^>]*data-hostedit="h1"/);
   assert.match(html, /role="meter"/);                                                          // Balken sind vorlesbar
   assert.doesNotMatch(html, /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u);                        // nie Emojis als Symbole
@@ -69,16 +69,56 @@ test('Host-Karte: Markup mit Name, Zustand, Aktionen; Tasten tragen Attribute fu
   assert.match(off, /hu-host off/); assert.match(off, /class="hu-state off"/);
 });
 
-test('Host-Karte ohne Agent: klare naechste Handlung statt leerer Zeilen; Desktop-Agent und getrennter Agent erklaeren sich', () => {
+test('Host-Karte ohne Agent: klare naechste Handlung statt leerer Zeilen; ein Agent ohne Werte oder getrennt erklaert sich und bietet den naechsten Schritt', () => {
   const none = hostCardHtml(host({ agent: undefined }), null, O);
   assert.match(none, /Noch kein Agent/);
-  assert.match(none, /class="hu-btn filled"[^>]*data-hostagent="h1"/);                       // Agent einrichten
-  assert.doesNotMatch(none, /hostinfo=/);                                                      // nichts zu lesen: keine Details-Taste
-  assert.match(hostCardHtml(host({}, { kind: 'desktop', caps: [] }), null, O), /läuft in einer Desktop-Sitzung/);
+  assert.match(none, /class="hu-btn filled"[^>]*data-hostinfo="h1" data-hpage="agent"/);       // Agent einrichten: zum Abschnitt Agent
+  assert.match(none, /data-hostinfo="h1"/);                                                    // jeder Host hat dieselbe Seite mit denselben Abschnitten
+  const noVals = hostCardHtml(host({}, { kind: 'desktop', caps: [] }), null, O);
+  assert.match(noVals, /liefert noch keine Systemwerte/);                                      // statt leer ein klarer Satz
+  assert.match(noVals, /data-hpage="agent"[^>]*>[\s\S]*Agent aktualisieren \/ einrichten/);          // mit Knopf
   assert.match(hostCardHtml(host({}, { online: false, lastSeen: '2026-01-02T10:00:00Z' }), null, O), /nicht verbunden/);
-  const dis = hostCardHtml(host({}, { online: false }), null, O);
-  assert.match(dis, /data-hostagent="h1"/);                                                    // Hauptaktion dann: Agent verwalten
-  assert.doesNotMatch(dis, /data-hostinfo/);
+  // massgeblich sind die gemeldeten Faehigkeiten, nicht der Name der Plattform: ein Desktop-Agent mit caps wird gelesen
+  const rich = hostCardHtml(host({}, { kind: 'desktop', caps: ['sysinfo'] }), { status: { info: info() } }, O);
+  assert.doesNotMatch(rich, /liefert noch keine Systemwerte/); assert.match(rich, /role="meter"/);
+});
+
+test('Karte: der Updates-Hinweis ist selbst eine Taste zur Seite, die Hinweise fuehren zu ihren Abschnitten', () => {
+  const entry = { status: { info: info({ rebootRequired: true }) }, updates: { updates: { count: 14, security: 8, securityKnown: true } }, services: { services: { count: 1 } } };
+  const html = hostCardHtml(host(), entry, O);
+  assert.match(html, /<button type="button" class="hu-chip btn bad" data-act="hostinfo" data-host="h1" data-hostinfo="h1" data-hpage="updates" title="Updates ansehen und installieren">[\s\S]*?14 Updates · 8 davon Sicherheit/);
+  assert.match(html, /class="hu-chip btn warn"[^>]*data-hpage="actions"/);                    // Neustart nötig
+  assert.match(html, /class="hu-chip btn bad"[^>]*data-hpage="services"/);
+});
+
+test('Menue der Karte: einfache Aktionen ueber den bestaetigten Ablauf, gesperrte ausgegraut mit Grund und Weg zum Freischalten', () => {
+  const entry = { updates: { updates: { count: 3, security: 0, securityKnown: true } } };
+  const open = hostCardHtml(host(), entry, O);
+  for (const a of ['updates.refresh', 'updates.install', 'power.reboot', 'power.poweroff']) assert.match(open, new RegExp(`data-act="hostaction" data-hcact="${a.replace('.', '\\.')}"`));
+  assert.match(open, /data-hcact="updates.install" data-htarget="all"/);                      // alle Updates: der Server verlangt dabei das Tippen des Rechnernamens
+  assert.match(open, /role="menuitem" class="hu-mi"[^>]*data-hpage="logs"/);                  // Logs: zur Seite, dort die Auswahl
+  for (const label of ['Paketlisten aktualisieren', 'Updates installieren', 'Neu starten', 'Ausschalten', 'Logs ansehen', 'Agent verwalten', 'Bearbeiten']) assert.ok(open.includes(label), label);
+  assert.doesNotMatch(open, /aria-disabled/);
+  // Stufe aus: alles gesperrt, mit Grund und dem Weg (Abschnitt Aktionen)
+  const off = hostCardHtml(host({}, { control: 'read' }), entry, O);
+  assert.doesNotMatch(off, /data-hcact=/);
+  assert.match(off, /unter Aktionen einschalten[\s\S]*aria-disabled="true"[^>]*data-hpage="actions"/);
+  assert.equal((off.match(/unter Aktionen einschalten/g) || []).length, 1);                  // der gemeinsame Grund steht einmal oben im Menue, nicht unter jedem Eintrag
+  // Nur updates erlaubt (Stufe "Updates und Logs", Wort nur updates): Updates frei, Neustart gesperrt mit dem Wort
+  const part = hostCardHtml(host({}, { control: 'full', allow: ['updates'] }), entry, O);
+  assert.match(part, /data-hcact="updates.refresh"/); assert.doesNotMatch(part, /data-hcact="power.reboot"/);
+  assert.match(part, /Wort reboot/);
+  assert.match(hostCardHtml(host({}, { control: 'updates' }), entry, O), /Stufe zu niedrig/);
+  assert.match(hostCardHtml(host(), entry, { ...O, paused: true }), /Pausiert: unter Aktionen aufheben/);
+  // keine Updates: die Installation ist ausgegraut, ohne Weg (es gibt nichts zu installieren)
+  const none = hostCardHtml(host(), { updates: { updates: { count: 0 } } }, O);
+  assert.match(none, /aria-disabled="true"[^>]*>[^]*?Keine Updates verfügbar/);
+  assert.match(none, /data-hcact="updates.refresh"/);
+  // ein Agent ohne Faehigkeiten oder getrennt: Aktionen gesperrt mit dem Grund, ohne Link ausser dem zum Agenten
+  assert.match(hostCardHtml(host({}, { kind: 'desktop', caps: [], allow: [] }), null, O), /Dieser Agent kann das noch nicht/);
+  assert.doesNotMatch(hostCardHtml(host({ agent: undefined }), null, O), /data-hcact=|Paketlisten aktualisieren/);   // ohne Agent gibt es keine Aktionen im Menue
+  // Werte vom Agenten im Menue? Der Rechnername der Karte ist geschuetzt
+  assert.doesNotMatch(hostCardHtml(host({ id: EVIL }), entry, O), /<img/);
 });
 
 test('Host-Karte: Verbindungen als Chips, alle Werte vom Agenten und Nutzer geschuetzt', () => {
@@ -194,11 +234,20 @@ test('Aktionen: Stufe, Pause, Erlaubnis; Neustart nur mit Erlaubnis', () => {
   assert.match(read, /--allow/);                                                                // Hinweis auf den Installer
 });
 
-test('Abschnitte je Host: nach Faehigkeit des Agenten, Logs/Aktionen/Verlauf nur beim Host-Agenten ab 0.6.0', () => {
-  assert.deepEqual(panelsFor(host()).map((p) => p.id), ['overview', 'load', 'disks', 'network', 'updates', 'services', 'docker', 'logs', 'actions', 'history']);
-  assert.deepEqual(panelsFor(host({}, { caps: ['updates'] })).map((p) => p.id), ['updates', 'logs', 'actions', 'history']);
-  assert.deepEqual(panelsFor(host({}, { version: '0.5.0' })).map((p) => p.id), ['overview', 'load', 'disks', 'network', 'updates', 'services', 'docker']);
-  assert.deepEqual(panelsFor(host({}, { kind: 'desktop', caps: [] })).map((p) => p.id), []);
+test('Abschnitte je Host: jeder Host zeigt dieselben; was der Agent nicht liefert, erklaert der Abschnitt mit dem naechsten Schritt', () => {
+  const ALL = ['overview', 'load', 'disks', 'network', 'updates', 'services', 'docker', 'logs', 'actions', 'history', 'agent'];
+  for (const h of [host(), host({}, { caps: ['updates'] }), host({}, { kind: 'desktop', caps: [] }), host({ agent: undefined })]) assert.deepEqual(panelsFor(h).map((p) => p.id), ALL);
+  const P = (id) => PANELS.find((p) => p.id === id);
+  assert.equal(unavailable(host(), P('updates'), esc), '');                                                   // Daten da: keine Erklaerung
+  assert.equal(unavailable(host(), P('logs'), esc), '');
+  const bare = host({}, { kind: 'desktop', caps: [], allow: [] });
+  for (const p of PANELS) { const u = unavailable(bare, p, esc); if (p.id !== 'agent') { assert.match(u, /liefert noch keine Systemwerte/, p.id); assert.match(u, /data-hgoto="agent"/, p.id); } else assert.equal(u, ''); }
+  assert.match(unavailable(host({}, { caps: ['updates'] }), P('disks'), esc), /liefert noch keine Systemwerte/);
+  assert.equal(unavailable(host({ agent: undefined }), P('agent'), esc), '');                                 // der Abschnitt Agent ist der Weg aus jedem leeren Zustand   // nach den gemeldeten Faehigkeiten, nicht nach der Plattform
+  assert.equal(unavailable(host({}, { kind: 'desktop', caps: ['sysinfo', 'updates'] }), P('updates'), esc), '');
+  assert.match(unavailable(host({}, { version: '0.5.0' }), P('actions'), esc), /liefert noch keine Systemwerte/);
+  assert.match(unavailable(host({}, { online: false }), P('updates'), esc), /Agent nicht verbunden/);
+  assert.match(unavailable(host({ agent: undefined }), P('updates'), esc), /Noch kein Agent[\s\S]*Agent einrichten/);
   // jeder Abschnitt hat Namen und Symbol, jedes Symbol gibt es
   for (const p of PANELS) { assert.ok(p.title && p.html && ICON_NAMES.includes(p.icon), p.id); }
   // Zaehler an der Navigation: Updates mit Sicherheit rot, sonst gelb
@@ -226,11 +275,13 @@ test('Bausteine: Kennzahl, Liste und leerer Zustand schuetzen Text; Symbole ohne
   for (const n of ICON_NAMES) assert.match(icon(n), /^<svg class="hu-i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="[^"]+"\/><\/svg>$/);
 });
 
-test('Dateien: Karte und Dialog sind im Service Worker, hostui.css wird geladen, Texte >= 13 px', () => {
+test('Dateien: Seite und Karte sind im Service Worker, hostui.css wird geladen, Texte >= 13 px', () => {
   const www = new URL('../../src/JulOS.Frontend/wwwroot/', import.meta.url);
   const html = fs.readFileSync(new URL('index.html', www), 'utf8');
   assert.match(html, /<link rel="stylesheet" href="hostui.css">/);
-  assert.match(html, /<nav id="hostInfoNav" class="hu-nav" role="tablist"/);
+  assert.doesNotMatch(html, /id="hostInfoDlg"/);                                                // Host-Details sind eine Seite, kein Dialog
+  assert.match(html, /id="hostActDlg"/);                                                         // nur die Bestaetigung bleibt ein kleines Blatt
+  assert.match(fs.readFileSync(new URL('hostpage.js', www), 'utf8'), /<nav id="hostInfoNav" class="hu-nav" role="tablist"/);
   const css = fs.readFileSync(new URL('hostui.css', www), 'utf8');
   const small = [...css.matchAll(/font-size:\s*(\d+(?:\.\d+)?)px/g)].map((m) => Number(m[1])).filter((n) => n < 13);
   assert.deepEqual([...new Set(small)], [12]);                                                  // nur die Zaehler der Navigation (12 px, fett)

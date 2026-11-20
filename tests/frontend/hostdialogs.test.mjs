@@ -1,4 +1,4 @@
-// Die beiden Dialoge der Host-Aktionen (hostinfo-dialog.js, hostactions-dialog.js) mit einem winzigen Ersatz fuer das DOM: der Ablauf Taste -> Bestaetigung -> Tippen -> Ausfuehren -> Fortschritt -> Ergebnis,
+// Die Seite Host-Details (hostpage.js) und der Bestaetigungsdialog der Host-Aktionen (hostactions-dialog.js) mit einem winzigen Ersatz fuer das DOM: der Ablauf Taste -> Bestaetigung -> Tippen -> Ausfuehren -> Fortschritt -> Ergebnis,
 // und dass nichts ohne die Bestaetigung an den Server geht. Kein Browser noetig; echte Browser-Pruefung auf dem Handy steht aus (siehe CHANGELOG).
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -105,9 +105,9 @@ test('Aktionsdialog: ein falsch getippter Name beim Ausfuehren (Server) laesst d
   await closed;
 });
 
-test('Host-Details: Tasten oeffnen nur den Bestaetigungsdialog; Stufe und Pause gehen an den Server und laden neu', async () => {
+test('Host-Details (Seite): Tasten oeffnen nur den Bestaetigungsdialog; Stufe und Pause gehen an den Server und laden neu', async () => {
   const els = setupDom();
-  const { initHostInfoDialog } = await import('../../src/JulOS.Frontend/wwwroot/hostinfo-dialog.js?t=4');
+  const { initHostPage } = await import('../../src/JulOS.Frontend/wwwroot/hostpage.js?t=4');
   const calls = [];
   const state = { hosts: [host], actionsPaused: false };
   const api = async (path, o = {}) => {
@@ -122,13 +122,20 @@ test('Host-Details: Tasten oeffnen nur den Bestaetigungsdialog; Stufe und Pause 
   };
   const opened = [];
   let lastOpts = null, reloads = 0;
-  const open = initHostInfoDialog({ state, api, esc, store: { load() {} }, openAction: (...a) => { opened.push(a.slice(0, 3)); lastOpts = a[3]; }, reloadHosts: async () => { reloads++; } });
+  let back = 0;
+  const page = initHostPage({ state, api, esc, store: { load() {} }, openAction: (...a) => { opened.push(a.slice(0, 3)); lastOpts = a[3]; }, reloadHosts: async () => { reloads++; } });
+  const ls = [];
+  const rootEl = { innerHTML: '', querySelector: (sel) => globalThis.document.querySelector(sel), querySelectorAll: () => [], addEventListener: (n, f) => ls.push([n, f]), removeEventListener: (n, f) => { const i = ls.findIndex((x) => x[0] === n && x[1] === f); if (i >= 0) ls.splice(i, 1); }, fire: (n, ev) => { for (const [m, f] of [...ls]) if (m === n) f(ev); } };
+  const open = (h, panel) => page.mount(rootEl, h, panel, { onBack: () => { back++; } });
   open(host);
   await new Promise((r) => setTimeout(r, 30));
   const body = els.get('#hostInfoBody');
+  assert.match(rootEl.innerHTML, /id="hostBack"/);                                        // Zurueck-Pfeil statt Dialog
+  rootEl.fire('click', { target: { closest: (sel) => (sel === '#hostBack' ? {} : null), id: '' } });
+  assert.equal(back, 1);
   assert.match(els.get('#hostInfoBody [data-panel="updates"]').innerHTML, /data-hact="updates.install" data-htarget="libc6"/);    // der Abschnitt wurde mit Tasten gezeichnet
-  assert.match(els.get('#hostInfoNav').innerHTML, /data-tab="updates"/);                 // die Navigation kennt die Abschnitte
-  const goTo = (tab) => { els.get('#hostInfoNav').fire('click', { target: { closest: (sel) => (sel === '[data-tab]' ? { dataset: { tab } } : null) } }); };
+  assert.match(rootEl.innerHTML, /data-tab="updates"/);                 // die Navigation kennt die Abschnitte
+  const goTo = (tab) => { rootEl.fire('click', { target: { closest: (sel) => (sel === '[data-tab]' ? { dataset: { tab } } : null) } }); };
   goTo('actions');
   assert.match(els.get('#hostInfoBody [data-panel="actions"]').innerHTML, /id="hostActLevel"/);
   goTo('history');
@@ -136,7 +143,7 @@ test('Host-Details: Tasten oeffnen nur den Bestaetigungsdialog; Stufe und Pause 
   assert.match(els.get('#hostInfoBody [data-panel="history"]').innerHTML, /data-hact-open="history"/);
   assert.match(els.get('#hostInfoBody [data-panel="history"]').innerHTML, /Aktualisieren|Neu lesen/);
   const reads = calls.length;
-  body.fire('click', click({ hact: 'updates.install', htarget: 'libc6' }));
+  rootEl.fire('click', click({ hact: 'updates.install', htarget: 'libc6' }));
   assert.deepEqual(opened, [[host, 'updates.install', 'libc6']]);
   assert.equal(calls.length, reads);                                                     // die Taste selbst schickt nichts an den Server
   assert.ok(calls.every((c) => c[0] === 'GET'));
@@ -148,21 +155,32 @@ test('Host-Details: Tasten oeffnen nur den Bestaetigungsdialog; Stufe und Pause 
   assert.ok(!/type="text"/.test(els.get('#hostInfoBody [data-panel="logs"]').innerHTML));       // keine freie Namenseingabe
   const dq = (sel) => globalThis.document.querySelector(sel);
   dq('#hostLogUnit').value = 'nginx.service'; dq('#hostLogLines').value = '5000';
-  body.fire('click', { target: { closest: (sel) => (sel === '[data-hlogs]' ? { dataset: { hlogs: '1' } } : null), id: '' } });
+  rootEl.fire('click', { target: { closest: (sel) => (sel === '[data-hlogs]' ? { dataset: { hlogs: '1' } } : null), id: '' } });
   assert.deepEqual(opened[1], [host, 'logs.unit', 'nginx.service']);
   assert.equal(lastOpts.lines, 200);                                                     // 5000 wird auf 200 begrenzt
   assert.equal(calls.length, reads + 1);                                                 // nur die Einheitenliste wurde gelesen (GET), die Taste selbst nichts
   dq('#hostLogUnit').value = '';
-  body.fire('click', { target: { closest: (sel) => (sel === '[data-hlogs]' ? { dataset: { hlogs: '1' } } : null), id: '' } });
+  rootEl.fire('click', { target: { closest: (sel) => (sel === '[data-hlogs]' ? { dataset: { hlogs: '1' } } : null), id: '' } });
   assert.equal(opened.length, 2);                                                        // ohne Auswahl wird nichts geoeffnet
 
-  body.fire('change', { target: { id: 'hostActLevel', value: 'updates' } });
+  rootEl.fire('change', { target: { id: 'hostActLevel', value: 'updates' } });
   await new Promise((r) => setTimeout(r, 30));
   assert.ok(calls.some((c) => c[0] === 'PUT' && c[1] === '/api/hosts/h1/agent/control' && c[2].level === 'updates'));
-  body.fire('change', { target: { id: 'hostActPause', checked: true } });
+  rootEl.fire('change', { target: { id: 'hostActPause', checked: true } });
   await new Promise((r) => setTimeout(r, 30));
   assert.ok(calls.some((c) => c[0] === 'PUT' && c[1] === '/api/host-actions/pause' && c[2].paused === true));
   assert.equal(reloads, 2);
+
+  // Ein Agent ohne Faehigkeiten: jeder Abschnitt erklaert es und bietet die Einrichtung an, es wird nichts gelesen
+  const calls0 = calls.length;
+  const bare = { ...host, agent: { ...host.agent, kind: 'desktop', caps: [], allow: [] } };
+  state.hosts = [bare];
+  open(bare, 'updates');
+  await new Promise((r) => setTimeout(r, 30));
+  assert.match(els.get('#hostInfoBody [data-panel="updates"]').innerHTML, /liefert noch keine Systemwerte/);
+  assert.equal(calls.length, calls0);
+  rootEl.fire('click', { target: { closest: (sel) => (sel === '[data-hgoto]' ? { dataset: { hgoto: 'agent' } } : null), id: '' } });
+  assert.match(els.get('#hostInfoBody [data-panel="agent"]').innerHTML, /data-hag-copy/);      // "Agent aktualisieren / einrichten" fuehrt zum Abschnitt Agent mit der Einrichtung
 
   // Ohne Erlaubnis keine Tasten
   const readOnly = { ...host, agent: { ...host.agent, control: 'read' } };

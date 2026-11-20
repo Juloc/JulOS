@@ -61,9 +61,9 @@ All need the session, the `X-JulOS` header for changes, and only ever show the s
 
 ## In the app
 
-- **Desktop interface:** menu **Hosts** (list with state, manage, new), dock icon **Hosts**, and the Start window's view **Hosts**: one **host card** per host (below). In **Dienste** a host selection plus services grouped by host once there is more than one host. The Start window opens at about 82 % of the screen (at least 960 x 640, at most 1280 x 860); a size you chose yourself is remembered.
+- **Desktop interface:** menu **Hosts** (list with state, manage, new), dock icon **Hosts**, and the Start window's view **Hosts**: one **host card** per host (below); **Details** or a note on it opens the host page as a view of the same window, with an arrow back. In **Dienste** a host selection plus services grouped by host once there is more than one host. The Start window opens at about 82 % of the screen (at least 960 x 640, at most 1280 x 860); a size you chose yourself is remembered.
 - **Phone:** page **Hosts** shows the same host cards below the server's load; **Dienste** gets a host selection when there is more than one host, and every tile has its status dot.
-- **Connection dialog:** a **Host** field (with "Neuer Host …"); the **host dialog** holds the name, delete and **Agent einrichten / entfernen** for that host.
+- **Connection dialog:** a **Host** field (with "Neuer Host …"); the **host dialog** (**Bearbeiten**) holds only the name and delete. The agent has its place on the host page, section **Agent**: the one flow **Agent einrichten** (what the agent may do as ticks, command to copy or install over SSH), update, automatic update, remove.
 
 ### The host card
 
@@ -74,10 +74,10 @@ One card for phone and desktop (`hostview.js`, styles `hostui.css`, building blo
 | Header | name, host name and system, state pill (online or offline) |
 | Kind | "Host-Agent", "Desktop-Agent" or "Kein Agent", with the agent version; a disconnected agent says when it was last seen |
 | Key figures | CPU load (per core), RAM, the main disk ("/" or the fullest) with a bar each; yellow from 80 %, red from 90 %; only for a connected host agent that reports system values |
-| Notes | only when there is something: updates (security ones red), reboot needed, failed services, a disk problem, an outdated agent; plus the uptime |
+| Notes | only when there is something: updates (security ones red), reboot needed, failed services, a disk problem, an outdated agent; plus the uptime. The notes are buttons: the updates note ("14 Updates · 8 davon Sicherheit") opens the page at **Updates ansehen und installieren**, the others at their section |
 | Connections | the host's connections as chips with a status dot; a tap connects |
-| Actions | the one calm main action **Details** (or **Agent verwalten** without readable data); in the menu **Agent verwalten** and **Bearbeiten** |
-| Empty | a host without an agent explains what the agent brings and offers **Agent einrichten**; a desktop agent says that the host agent reads system values; a disconnected agent says that values return when it reports in |
+| Actions | the one calm main action **Details**; the menu has **Paketlisten aktualisieren**, **Updates installieren**, **Neu starten**, **Ausschalten**, **Logs ansehen** (greyed out with the reason and the way to unlock when the level, the pause or the local word forbids it; each goes through the confirmed flow), then **Agent verwalten** and **Bearbeiten** |
+| Empty | a host without an agent explains what the agent brings and offers **Agent einrichten**; an agent that reports no capabilities (for example an older desktop agent) says "Dieser Agent liefert noch keine Systemwerte" with the button **Agent aktualisieren / einrichten**; a disconnected agent says that values return when it reports in. Which sections show data follows the `caps` the agent reports, not its platform name |
 
 Pictures (placeholder names and addresses, light and dark, phone and desktop, before and after): [host-ui-screens](host-ui-screens/).
 
@@ -85,7 +85,7 @@ The numbers come from the cards' own memory (at most one read per host every 55 
 
 ## Host agent
 
-A host without a desktop (Docker VM, Proxmox, servers) gets the **host-mode agent**: `GET /api/hosts/{id}/status`, `/updates`, `/services`, `/docker` (session needed, 60 s memory, never polled by the server) show load, memory, disks, disk health, updates and containers on the host card and in the dialog **Host-Details**. `agent` in `GET /api/hosts` gains `kind`, `caps`, `allow` and `control`. Install it from the host dialog with **Agent per SSH installieren**. Since agent 0.6.0 the dialog can also run **actions** (install updates, reboot, services, containers, logs, images): off by default, switched on per host, every single one confirmed by you in the app, with a history; see [HOST-AGENT.md](HOST-AGENT.md#actions-stage-3). All of it: [HOST-AGENT.md](HOST-AGENT.md).
+A host without a desktop (Docker VM, Proxmox, servers) gets the **host-mode agent**: `GET /api/hosts/{id}/status`, `/updates`, `/services`, `/docker` (session needed, 60 s memory, never polled by the server) show load, memory, disks, disk health, updates and containers on the host card and in the dialog **Host-Details**. `agent` in `GET /api/hosts` gains `kind`, `caps`, `allow` and `control`. Install it from the host page (section Agent) with **Agent per SSH installieren**. Since agent 0.6.0 the dialog can also run **actions** (install updates, reboot, services, containers, logs, images): off by default, switched on per host, every single one confirmed by you in the app, with a history; see [HOST-AGENT.md](HOST-AGENT.md#actions-stage-3). All of it: [HOST-AGENT.md](HOST-AGENT.md).
 
 ## Not part of this step
 

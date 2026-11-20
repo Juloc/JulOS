@@ -31,6 +31,7 @@ const ICONS = {
   edit: 'M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z',
   add: 'M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z',
   terminal: 'M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v10zm-2-1h-6v-2h6v2zM7.5 17l-1.41-1.41L8.67 13l-2.58-2.59L7.5 9l4 4-4 4z',
+  back: 'M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z',
   chevron: 'M8.59 16.59 13.17 12 8.59 7.41 10 6l6 6-6 6z',
 };
 export const icon = (name, cls = '') => `<svg class="hu-i${cls ? ' ' + cls : ''}" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="${ICONS[name] || ICONS.info}"/></svg>`;
@@ -76,4 +77,4 @@ export const listBlock = (items, esc) => `<ul class="hu-list">${items.map((i) =>
 export const empty = (title, text, esc, action = '', ico = 'server') => `<div class="hu-empty">${icon(ico, 'big')}<b>${esc(title)}</b><span>${esc(text)}</span>${action}</div>`;
 
 /** Tasten: tone filled | tonal | text | danger; data: Attribute als Objekt (Werte werden geschuetzt) */
-export const button = (text, esc, o = {}) => `<button type="button" class="hu-btn ${o.tone || 'tonal'}${o.sm ? ' sm' : ''}${o.cls ? ' ' + o.cls : ''}"${Object.entries(o.data || {}).map(([k, v]) => ` data-${k}="${esc(v)}"`).join('')}${o.aria ? ` aria-label="${esc(o.aria)}"` : ''}${o.title ? ` title="${esc(o.title)}"` : ''}>${o.icon ? icon(o.icon) : ''}${text ? `<span>${esc(text)}</span>` : ''}</button>`;
+export const button = (text, esc, o = {}) => `<button type="button"${o.disabled ? ' disabled' : ''} class="hu-btn ${o.tone || 'tonal'}${o.sm ? ' sm' : ''}${o.cls ? ' ' + o.cls : ''}"${Object.entries(o.data || {}).map(([k, v]) => ` data-${k}="${esc(v)}"`).join('')}${o.aria ? ` aria-label="${esc(o.aria)}"` : ''}${o.title ? ` title="${esc(o.title)}"` : ''}>${o.icon ? icon(o.icon) : ''}${text ? `<span>${esc(text)}</span>` : ''}</button>`;

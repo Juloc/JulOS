@@ -8,8 +8,9 @@
 import { t, tp, tk, fmtNumber } from './i18n.js';
 import { fmtBytes, fmtUptime, fmtAge, fmtPercent, loadText, when, ramPercent, mainDisk, healthIssues, MD_STATE, SMART_STATE, SMART_WHY, rateText, wantsInfo, stateNote, agentModeText } from './hostinfo.js';
 import { stateText, dotClass, hostDetail, serviceState } from './hosts.js';
+import { agentPanel } from './hostagent.js';
 import { icon, dl, noteP, callout, subH, chip, bar, meter, card, listBlock, empty, button } from './hostui.js';
-import { hasActionAgent, controlHtml, auditHtml, errText } from './hostactions.js';
+import { hasActionAgent, controlHtml, auditHtml, errText, blockReason, whyText } from './hostactions.js';
 
 /* ---------- Kennzahlen ---------- */
 /** Last je Kern in Prozent (1 = jeder Kern ausgelastet); null, wenn die Kernzahl fehlt */
@@ -35,12 +36,12 @@ export function cardModel(h, entry) {
   const info = entry && entry.status && entry.status.info;
   const flags = [];
   const u = entry && entry.updates && entry.updates.updates;
-  if (u && u.count > 0) flags.push({ id: 'updates', icon: 'update', tone: u.security > 0 ? 'bad' : '', text: tp('hostview.flagUpdates', u.count), detail: u.securityKnown && u.security > 0 ? t('hostview.flagSecurity', { n: u.security }) : '' });
-  if (info && info.rebootRequired) flags.push({ id: 'reboot', icon: 'power', tone: 'warn', text: t('hostinfo.rebootNeeded') });
+  if (u && u.count > 0) flags.push({ id: 'updates', panel: 'updates', icon: 'update', tone: u.security > 0 ? 'bad' : '', text: tp('hostview.flagUpdates', u.count), detail: u.securityKnown && u.security > 0 ? t('hostview.flagSecurity', { n: u.security }) : '' });
+  if (info && info.rebootRequired) flags.push({ id: 'reboot', panel: 'actions', icon: 'power', tone: 'warn', text: t('hostinfo.rebootNeeded') });
   const svc = entry && entry.services && entry.services.services;
-  if (svc && svc.count > 0) flags.push({ id: 'services', icon: 'gear', tone: 'bad', text: tp('hostinfo.failedUnits', svc.count) });
+  if (svc && svc.count > 0) flags.push({ id: 'services', panel: 'services', icon: 'gear', tone: 'bad', text: tp('hostinfo.failedUnits', svc.count) });
   const issues = healthIssues(info);
-  if (issues.length) flags.push({ id: 'health', icon: 'disk', tone: 'bad', text: t('hostview.flagDisk'), detail: issues[0] });
+  if (issues.length) flags.push({ id: 'health', panel: 'disks', icon: 'disk', tone: 'bad', text: t('hostview.flagDisk'), detail: issues[0] });
   if (a && a.outdated) flags.push({ id: 'agent', icon: 'warn', tone: 'warn', text: t('hosts.outdated') });
   else if (a && a.updateAvailable) flags.push({ id: 'agent', icon: 'update', tone: '', text: t('hosts.updateAvailable') });
   const m = meters(info);
@@ -59,35 +60,64 @@ function agentLine(h) {
   return parts.join(' · ');
 }
 
-/** Das Markup einer Host-Karte. o: { esc, connection(id) -> Verbindung | undefined }. Die Tasten tragen Attribute fuer beide Oberflaechen (data-act fuers Handy, data-hostinfo usw. fuer den Desktop). */
+/** Die Aktionen im Menue der Karte: Aktion (oder Seite), noetiges Recht, Symbol, Text. Jede laeuft ueber den bestaetigten Ablauf (hostactions-dialog.js); gesperrte stehen ausgegraut mit Grund. */
+const CARD_ACTIONS = [
+  { id: 'refresh', action: 'updates.refresh', right: 'updates', icon: 'refresh', label: tk('hostview.mRefresh') },
+  { id: 'install', action: 'updates.install', target: 'all', right: 'updates', icon: 'download', label: tk('hostview.mInstall') },
+  { id: 'reboot', action: 'power.reboot', right: 'reboot', icon: 'power', label: tk('hostview.mReboot') },
+  { id: 'poweroff', action: 'power.poweroff', right: 'reboot', icon: 'power', label: tk('hostview.mPoweroff') },
+  { id: 'logs', page: 'logs', right: 'logs', icon: 'logs', label: tk('hostview.mLogs') },
+];
+
+/**
+ * Das Markup einer Host-Karte. o: { esc, connection(id) -> Verbindung | undefined, paused? }. Die Tasten tragen Attribute fuer beide Oberflaechen (data-act fuers Handy, data-hostinfo usw. fuer den Desktop):
+ * data-hpage oeffnet die Seite des Hosts in diesem Abschnitt, data-hcact fuehrt eine Aktion ueber die Bestaetigung aus.
+ */
 export function hostCardHtml(h, entry, o) {
   const { esc } = o;
   const m = cardModel(h, entry);
   const id = esc(h.id);
-  const attrs = (act, extra = '') => `data-act="${act}" data-host="${id}" ${extra}`;
-  const btn = (act, desk, text, ico, tone, cls = '') => `<button type="button" class="hu-btn ${tone}${cls ? ' ' + cls : ''}" ${attrs(act, `data-${desk}="${id}"`)}>${icon(ico)}<span>${esc(text)}</span></button>`;
-  const item = (act, desk, text, ico) => `<button type="button" role="menuitem" class="hu-mi" ${attrs(act, `data-${desk}="${id}"`)}>${icon(ico)}<span>${esc(text)}</span></button>`;
-  const detail = hostDetail(h);
   const hasInfo = wantsInfo(h);
+  const page = (panel) => `data-act="hostinfo" data-host="${id}" data-hostinfo="${id}"${panel ? ` data-hpage="${esc(panel)}"` : ''}`;
+  const btn = (attr, text, ico, tone) => `<button type="button" class="hu-btn ${tone}" data-host="${id}" ${attr}>${icon(ico)}<span>${esc(text)}</span></button>`;
+  const agentBtn = (text, tone = 'tonal') => btn(page('agent'), text, 'download', tone);
   const nothing = m.kind === 'none'
-    ? empty(t('hostview.noAgentTitle'), t('hostview.noAgentText'), esc, btn('hostagent', 'hostagent', t('shell.agentSetup'), 'download', 'filled'), 'server')
+    ? empty(t('hostview.noAgentTitle'), t('hostview.noAgentText'), esc, agentBtn(t('shell.agentSetup'), 'filled'), 'server')
     : !m.agentOnline ? noteP(t('hostview.agentOfflineText'), esc)
-      : m.kind === 'desktop' ? noteP(t('hostview.desktopAgentText'), esc) : '';
+      : !hasInfo ? `<div class="hu-nodata">${noteP(t('hostview.noValuesText'), esc)}${agentBtn(t('hostview.agentUpdateSetup'))}</div>` : '';
   const stat = m.meters.length ? `<div class="hu-meters">${m.meters.map((x) => meter({ ...x, label: x.short }, esc)).join('')}</div>` : (hasInfo && !m.loaded ? noteP(t('hostinfo.stLoading'), esc) : '');
-  const flags = [...(m.uptime ? [`<span class="hu-chip">${icon('history')}<span>${esc(t('hostinfo.uptime', { v: m.uptime }))}</span></span>`] : []),
-    ...m.flags.map((f) => `<span class="hu-chip ${f.tone}">${icon(f.icon)}<span>${esc(f.text)}${f.detail ? ' · ' + esc(f.detail) : ''}</span></span>`)];
+  const flag = (f) => {
+    const inner = `${icon(f.icon)}<span>${esc(f.text)}${f.detail ? ' · ' + esc(f.detail) : ''}</span>`;
+    return f.panel ? `<button type="button" class="hu-chip btn ${f.tone}" ${page(f.panel)} title="${esc(f.id === 'updates' ? t('hostview.updatesOpen') : t('hostview.look'))}">${inner}</button>` : `<span class="hu-chip ${f.tone}">${inner}</span>`;
+  };
+  const flags = [...(m.uptime ? [`<span class="hu-chip">${icon('history')}<span>${esc(t('hostinfo.uptime', { v: m.uptime }))}</span></span>`] : []), ...m.flags.map(flag)];
   const svcs = h.services.map((s) => { const c = o.connection(s.connection); const st = serviceState(h, s.connection); return c ? `<button type="button" class="hu-chip btn" data-act="start" data-conn="${esc(c.id)}" title="${esc(c.host)}:${esc(c.port)} – ${esc(stateText(st))}"><i class="hu-dot ${dotClass(st)}"></i><span>${esc(c.name)}</span></button>` : ''; }).join('');
   const conns = h.services.length ? `<div class="hu-svcs"><span class="hu-sl">${esc(t('hostview.connections'))}</span>${svcs}</div>` : '';
-  const main = hasInfo ? btn('hostinfo', 'hostinfo', t('hostview.details'), 'info', 'tonal') : (m.kind === 'none' ? '' : btn('hostagent', 'hostagent', t('hostview.manageAgent'), 'download', 'tonal'));
+  // Menue: erst die einfachen Aktionen (ausgegraut mit Grund und Weg zum Freischalten, wenn gesperrt), dann Agent und Bearbeiten
+  const noUpdates = entry && entry.updates && entry.updates.updates && entry.updates.updates.count === 0;
+  const whys = CARD_ACTIONS.map((a) => blockReason(h, a.right, !!o.paused) || (a.id === 'install' && noUpdates ? { why: 'none' } : null));
+  // Sperrt dasselbe alles (kein Agent-Wert, Stufe aus, Pause), steht der Grund einmal oben statt unter jedem Eintrag
+  const texts = whys.map((w) => (w ? (w.why === 'none' ? t('hostview.noUpdates') : whyText(w)) : ''));
+  const shared = whys.filter((w) => w && w.why !== 'none').length >= 2 && new Set(whys.filter((w) => w && w.why !== 'none').map((w) => w.why)).size === 1 ? texts.find((x, i) => whys[i] && whys[i].why !== 'none') : '';
+  const link = (w) => (w && w.link ? ` ${page(w.link)}` : '');
+  const act = (a, i) => {
+    const why = whys[i], label = esc(t(a.label));
+    if (!why) return `<button type="button" role="menuitem" class="hu-mi" data-host="${id}" ${a.page ? page(a.page) : `data-act="hostaction" data-hcact="${esc(a.action)}" data-htarget="${esc(a.target || '')}"`}>${icon(a.icon)}<span class="hu-mt">${label}</span></button>`;
+    const reason = why.why !== 'none' && shared ? '' : texts[i];
+    return `<button type="button" role="menuitem" class="hu-mi dis" aria-disabled="true" data-host="${id}"${link(why)}>${icon(a.icon)}<span class="hu-mt">${label}${reason ? `<small>${esc(reason)}</small>` : ''}</span></button>`;
+  };
+  const item = (attr, text, ico) => `<button type="button" role="menuitem" class="hu-mi" data-host="${id}" ${attr}>${icon(ico)}<span class="hu-mt">${esc(text)}</span></button>`;
   const menu = `<span class="hu-menuw"><button type="button" class="hu-btn icon" data-hmenu aria-haspopup="menu" aria-expanded="false" aria-label="${esc(t('hostview.more'))}" title="${esc(t('hostview.more'))}">${icon('more')}</button>`
-    + `<span class="hu-menu" role="menu" hidden>${hasInfo ? item('hostagent', 'hostagent', t('mobile.agentManage'), 'download') : ''}${item('hostedit', 'hostedit', t('hostview.rename'), 'edit')}</span></span>`;
+    + `<span class="hu-menu" role="menu" hidden>${m.kind === 'none' ? '' : (shared ? `<span class="hu-mnote">${esc(shared)}</span>` : '') + CARD_ACTIONS.map(act).join('') + '<span class="hu-msep" role="separator"></span>'}`
+    + `${m.kind === 'none' ? '' : item(page('agent'), t('mobile.agentManage'), 'download')}${item(`data-act="hostedit" data-hostedit="${id}"`, t('hostview.rename'), 'edit')}</span></span>`;
   return `<article class="hu-card hu-host${h.online ? '' : ' off'}" data-host-card="${id}">
-    <header class="hu-hh"><span class="hu-hi">${icon('server')}</span><div class="hu-ht"><div class="hu-hn" role="heading" aria-level="3">${esc(h.name)}</div><p>${esc(detail || agentLine(h))}</p></div>
+    <header class="hu-hh"><span class="hu-hi">${icon('server')}</span><div class="hu-ht"><div class="hu-hn" role="heading" aria-level="3">${esc(h.name)}</div><p>${esc(detail(h))}</p></div>
       <span class="hu-state ${h.online ? 'ok' : 'off'}"><i class="hu-dot ${dotClass(h.online)}"></i>${esc(stateText(h.online))}</span></header>
     <div class="hu-hk">${chip(agentLine(h), esc, '', m.kind === 'none' ? 'info' : 'terminal')}</div>
     ${nothing}${stat}${flags.length ? `<div class="hu-flags">${flags.join('')}</div>` : ''}${conns}
-    <footer class="hu-hf">${main}${menu}</footer></article>`;
+    <footer class="hu-hf">${btn(page(''), t('hostview.details'), 'info', 'tonal')}${menu}</footer></article>`;
 }
+const detail = (h) => hostDetail(h) || agentLine(h);
 
 /* ---------- Menue der Karte (Nebenaktionen) ---------- */
 const closeMenus = (except) => { for (const m of document.querySelectorAll('.hu-menu:not([hidden])')) if (m !== except) { m.hidden = true; const b = m.previousElementSibling; if (b) b.setAttribute('aria-expanded', 'false'); } };
@@ -101,7 +131,15 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
     if (!menu) return;
     menu.hidden = !menu.hidden;
     b.setAttribute('aria-expanded', String(!menu.hidden));
-    if (!menu.hidden) { const first = menu.querySelector('[role=menuitem]'); if (first) first.focus(); }
+    if (!menu.hidden) {
+      // Richtung und Hoehe nach dem Platz im Fenster: ueber dem Knopf, sonst darunter; was nicht passt, scrollt im Menue
+      const r = b.getBoundingClientRect(), pr = (b.closest('.dk-main, .m3-page') || document.documentElement).getBoundingClientRect();
+      const above = r.top - Math.max(pr.top, 0) - 12, below = Math.min(pr.bottom, innerHeight - 100) - r.bottom - 12;
+      const up = above >= 340 || above >= below;
+      menu.classList.toggle('down', !up);
+      menu.style.maxHeight = Math.max(160, Math.min(460, up ? above : below)) + 'px';
+      const first = menu.querySelector('[role=menuitem]'); if (first) first.focus();
+    }
   });
   document.addEventListener('keydown', (e) => {
     const menu = document.querySelector('.hu-menu:not([hidden])'); if (!menu) return;
@@ -335,10 +373,22 @@ export const PANELS = [
   { id: 'logs', icon: 'logs', title: tk('hostview.pLogs'), needs: 'actions', html: logsPanel },
   { id: 'actions', icon: 'tune', title: tk('hostview.pActions'), needs: 'actions', html: actionsPanel },
   { id: 'history', icon: 'history', title: tk('hostview.pHistory'), needs: 'actions', html: historyPanel },
+  { id: 'agent', icon: 'terminal', title: tk('hostview.pAgent'), html: (c) => agentPanel(c) },
 ];
 
-/** Die Abschnitte, die fuer diesen Host gezeigt werden: Faehigkeit gemeldet bzw. Aktionen moeglich (Host-Agent, neu genug) */
-export const panelsFor = (host) => {
-  const caps = (host.agent && host.agent.caps) || [];
-  return PANELS.filter((p) => (p.cap ? caps.includes(p.cap) : p.needs === 'actions' ? hasActionAgent(host) : true));
-};
+/** Jeder Host zeigt dieselben Abschnitte; was der Agent nicht liefert, erklaert der Abschnitt selbst (hostpage.js, unavailable) */
+export const panelsFor = () => PANELS;
+
+/**
+ * Warum ein Abschnitt fuer diesen Host leer bleibt, als fertiges HTML mit dem naechsten Schritt; '' wenn er Daten haben kann. Massgeblich sind die Faehigkeiten (caps), die der Agent im hello nennt,
+ * nicht der Name der Plattform. Die Taste "Agent aktualisieren / einrichten" traegt data-hgoto="agent" (hostpage.js wechselt zum Abschnitt Agent).
+ */
+export function unavailable(host, p, esc) {
+  if (p.id === 'agent') return '';                       // der Abschnitt Agent ist der Weg aus jedem leeren Zustand
+  const a = host.agent;
+  const setup = button(t('hostview.agentUpdateSetup'), esc, { tone: 'filled', icon: 'download', data: { hgoto: 'agent' } });
+  if (!a) return empty(t('hostview.noAgentTitle'), t('hostview.noAgentText'), esc, button(t('shell.agentSetup'), esc, { tone: 'filled', icon: 'download', data: { hgoto: 'agent' } }), 'server');
+  if (!a.online) return empty(t('hostview.agentOfflineTitle'), t('hostview.agentOfflineText'), esc, button(t('hostview.manageAgent'), esc, { tone: 'tonal', icon: 'download', data: { hgoto: 'agent' } }), 'server');
+  const has = p.cap ? (a.caps || []).includes(p.cap) : p.needs === 'actions' ? hasActionAgent(host) : true;
+  return has ? '' : empty(t('hostview.noValuesTitle'), t('hostview.noValuesText'), esc, setup, 'server');
+}

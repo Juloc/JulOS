@@ -167,6 +167,20 @@
     <section class="hu-card"><h4 class="hu-sub">Sicherheitsupdates</h4><ul class="hu-list"><li class="tagged"><div class="hu-lt"><span class="hu-ln">libssl3</span><span class="hu-chip bad">Sicherheit</span></div><span class="hu-ld">3.0.15 → 3.0.16</span><div class="hu-acts"><button type="button" class="hu-btn sm tonal">Installieren</button></div></li></ul></section>
   </div>
 
+  <div class="name">Hosts: Menü der Karte (einfache Aktionen, gesperrte mit Grund) und Haken</div>
+  <p class="doc">Jede Aktion läuft über den bestätigten Ablauf. Was Stufe, Pause oder das lokale Wort nicht erlauben, steht ausgegraut; sperrt dasselbe alles, steht der Grund einmal oben.</p>
+  <div class="hu-menu" role="menu" style="position:static;min-width:0;max-width:340px">
+    <span class="hu-mnote">Aus für diesen Host: unter Aktionen einschalten</span>
+    <button type="button" role="menuitem" class="hu-mi dis" aria-disabled="true"><svg class="hu-i" data-i="update"></svg><span class="hu-mt">Updates installieren</span></button>
+    <button type="button" role="menuitem" class="hu-mi dis" aria-disabled="true"><svg class="hu-i" data-i="power"></svg><span class="hu-mt">Neu starten</span></button>
+    <span class="hu-msep" role="separator"></span>
+    <button type="button" role="menuitem" class="hu-mi"><svg class="hu-i" data-i="more"></svg><span class="hu-mt">Agent verwalten</span></button>
+  </div>
+  <div class="hu-checks" style="margin-top:var(--m3-sp-2)">
+    <label class="hu-check"><input type="checkbox" checked><span class="hu-cb" aria-hidden="true"></span><span>Updates installieren</span></label>
+    <label class="hu-check"><input type="checkbox"><span class="hu-cb" aria-hidden="true"></span><span>Neu starten und ausschalten</span></label>
+  </div>
+
   <div class="name">Hosts: Navigation der Details (Reiter am Handy, Seitenleiste am Desktop)</div>
   <nav class="hu-nav" role="tablist" aria-label="Beispiel" style="flex-direction:row;overflow-x:auto;border:0;padding:0">
     <button type="button" role="tab" class="hu-tab" aria-selected="true"><svg class="hu-i" data-i="dns"></svg><span class="hu-tl" style="flex:none">Überblick</span><i class="hu-bd warn">4</i></button>

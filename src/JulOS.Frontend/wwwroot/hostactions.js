@@ -35,14 +35,36 @@ const versionOk = (v) => {
   return true;
 };
 
-/** Zeigt die Oberflaeche diese Aktionsart fuer den Host an? Nur ein verbundener Host-Agent ab 0.6.0, dessen Stufe am Server UND dessen lokale Erlaubnis sie nennen, und nicht pausiert. */
-export function canAct(host, right, paused = false) {
+/** Meldet der Agent Faehigkeiten (caps im hello)? Danach richtet sich die Anzeige, nicht nach dem Namen der Plattform: ein Agent, der caps nennt, kann gelesen und (mit Erlaubnis) geschaltet werden. */
+const capable = (a) => (Array.isArray(a.caps) ? a.caps.length > 0 : false) || a.kind === 'host';
+
+/**
+ * Warum wird diese Aktionsart gerade nicht angeboten? null = sie ist erlaubt. Sonst { why, link? }: why benennt den Grund (Text: whyText), link 'actions' heisst, dass der Abschnitt
+ * "Aktionen" der Weg zum Freischalten ist (Stufe am Server, Pause), sonst gibt es hier nichts zu tun (kein Agent, nicht verbunden, zu alt, meldet nichts).
+ */
+export function blockReason(host, right, paused = false) {
   const a = host && host.agent;
-  return !!(a && a.online && a.kind === 'host' && !paused && versionOk(a.version) && (LEVEL_RIGHTS[a.control] || []).includes(right) && Array.isArray(a.allow) && a.allow.includes(right));
+  if (!a) return { why: 'noAgent' };
+  if (!a.online) return { why: 'offline' };
+  if (!capable(a)) return { why: 'noCaps' };
+  if (!versionOk(a.version)) return { why: 'outdated' };
+  if (paused) return { why: 'paused', link: 'actions' };
+  if (!(LEVEL_RIGHTS[a.control] || []).includes(right)) return { why: !a.control || a.control === 'read' ? 'levelOff' : 'level', link: 'actions' };
+  if (!Array.isArray(a.allow) || !a.allow.includes(right)) return { why: 'word', word: right, link: 'actions' };
+  return null;
 }
+const WHY = {
+  noAgent: tk('hostact.why.noAgent'), offline: tk('hostact.why.offline'), noCaps: tk('hostact.why.noCaps'), outdated: tk('hostact.why.outdated'), paused: tk('hostact.why.paused'),
+  levelOff: tk('hostact.why.levelOff'), level: tk('hostact.why.level'), word: tk('hostact.why.word'),
+};
+/** Der Satz zum Grund einer gesperrten Aktion, mit dem Weg zum Freischalten */
+export const whyText = (r) => t(WHY[r.why] || WHY.noCaps, { word: r.word || '' });
+
+/** Zeigt die Oberflaeche diese Aktionsart fuer den Host an? Nur ein verbundener Agent, der Faehigkeiten meldet und ab 0.6.0 ist, dessen Stufe am Server UND dessen lokale Erlaubnis sie nennen, und nicht pausiert. */
+export const canAct = (host, right, paused = false) => blockReason(host, right, paused) === null;
 
 /** Gibt es fuer diesen Host etwas zu schalten (Stufe, lokale Erlaubnis)? Fuer den Abschnitt "Aktionen" */
-export const hasActionAgent = (host) => !!(host && host.agent && host.agent.kind === 'host' && versionOk(host.agent.version));
+export const hasActionAgent = (host) => !!(host && host.agent && capable(host.agent) && versionOk(host.agent.version));
 
 /* ---------- die Bestaetigung ---------- */
 /** Ziel zum Anzeigen: "alle Updates", der Name des Containers, der Dienst, das Paket; '' ohne Ziel */

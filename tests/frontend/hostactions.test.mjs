@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { setPref } from '../../src/JulOS.Frontend/wwwroot/i18n.js';
 import {
-  canAct, hasActionAgent, confirmModel, confirmHtml, typedOk, typedName, targetText, isDanger, actionLabel, errText, jobHtml, jobFinal, jobPercent,
+  canAct, hasActionAgent, blockReason, whyText, confirmModel, confirmHtml, typedOk, typedName, targetText, isDanger, actionLabel, errText, jobHtml, jobFinal, jobPercent,
   auditHtml, auditLine, controlHtml, makeAct, unitsHtml, prepareAction, runAction, fetchJob, setControl, setPause, ACTION_LABEL, RIGHTS,
 } from '../../src/JulOS.Frontend/wwwroot/hostactions.js';
 import { PANELS } from '../../src/JulOS.Frontend/wwwroot/hostview.js';
@@ -26,11 +26,27 @@ test('Tasten erscheinen nur, wenn Stufe am Server UND lokale Erlaubnis des Agent
   assert.ok(!canAct(host({ version: '0.5.0' }), 'updates'));
   assert.ok(canAct(host({ version: '0.10.1' }), 'updates'));
   assert.ok(!canAct(host({ online: false }), 'updates'));
-  assert.ok(!canAct(host({ kind: 'desktop' }), 'updates'));
+  assert.ok(canAct(host({ kind: 'desktop' }), 'updates'));                       // massgeblich sind die gemeldeten Faehigkeiten, nicht der Name der Plattform
+  assert.ok(!canAct(host({ kind: 'desktop', caps: [] }), 'updates'));            // ein Agent ohne Faehigkeiten kann nichts
   assert.ok(!canAct(host(), 'updates', true));                                   // Pause
   assert.ok(!canAct(host({ control: 'bogus' }), 'updates'));
   assert.ok(!canAct({ id: 'x' }, 'updates') && !canAct(null, 'updates'));
-  assert.ok(hasActionAgent(host()) && !hasActionAgent(host({ kind: 'desktop' })) && !hasActionAgent(host({ version: '0.5.0' })));
+  assert.ok(hasActionAgent(host()) && hasActionAgent(host({ kind: 'desktop' })) && !hasActionAgent(host({ kind: 'desktop', caps: [] })) && !hasActionAgent(host({ version: '0.5.0' })));
+});
+
+test('Warum eine Aktion gesperrt ist: Grund und Weg zum Freischalten (Abschnitt Aktionen) oder nichts zu tun', () => {
+  assert.equal(blockReason(host(), 'reboot'), null);
+  assert.deepEqual(blockReason(null, 'updates'), { why: 'noAgent' });
+  assert.deepEqual(blockReason(host({ online: false }), 'updates'), { why: 'offline' });
+  assert.deepEqual(blockReason(host({ caps: [], kind: 'desktop' }), 'updates'), { why: 'noCaps' });
+  assert.deepEqual(blockReason(host({ version: '0.5.0' }), 'updates'), { why: 'outdated' });
+  assert.deepEqual(blockReason(host(), 'updates', true), { why: 'paused', link: 'actions' });
+  assert.deepEqual(blockReason(host({ control: 'read' }), 'updates'), { why: 'levelOff', link: 'actions' });
+  assert.deepEqual(blockReason(host({ control: 'updates' }), 'reboot'), { why: 'level', link: 'actions' });
+  assert.deepEqual(blockReason(host({ allow: ['updates'] }), 'docker'), { why: 'word', word: 'docker', link: 'actions' });
+  assert.match(whyText({ why: 'word', word: 'docker' }), /Wort docker.*Agent neu einrichten/);
+  assert.match(whyText({ why: 'levelOff', link: 'actions' }), /unter Aktionen einschalten/);
+  assert.match(whyText({ why: 'unbekannt' }), /kann das noch nicht/);                     // Unbekanntes: allgemeiner Satz
 });
 
 test('Text der Bestaetigung nennt Host, Aktion und Ziel', () => {

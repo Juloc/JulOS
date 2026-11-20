@@ -167,14 +167,20 @@ export function createHostInfoStore({ api, onChange = () => {}, now = Date.now, 
 }
 
 /* ---------- Installation per SSH ---------- */
+/** Das Installationsskript, das der Server ausliefert (/agent-files/): ein Ablauf fuer jede Maschine, das Skript erkennt selbst, ob sie einen Desktop hat */
+export const AGENT_INSTALLER = 'install-agent.sh';
+const INSTALLER_FILE = 'julos-install-agent.sh';
 /**
- * Der Einzeiler fuer den Host (docs/HOST-AGENT.md): laedt das Skript vom eigenen Server in eine Datei (so bleibt es zum Ansehen liegen, nichts wird blind in eine
- * Shell geleitet) und startet es mit sudo. Das sudo-Passwort tippt der Benutzer im Terminal selbst; JulOS sieht es nie.
+ * Der Einzeiler fuer den Host (docs/HOST-AGENT.md): laedt das Skript vom eigenen Server in eine Datei (so bleibt es zum Ansehen liegen, nichts wird blind in eine Shell geleitet) und startet es mit sudo.
+ * opts.allow: die Woerter, die der Agent lokal erlauben soll (nur aus den bekannten, in fester Reihenfolge, nie ein Standard); opts.dockerGroup: --docker-group (nur mit dem Wort docker).
+ * Das sudo-Passwort tippt der Benutzer im Terminal selbst; JulOS sieht es nie.
  */
-export function installCommand(origin, code) {
+export function installCommand(origin, code, opts = {}) {
   const http = origin.startsWith('http:') && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(origin);
-  return `curl -fsSL ${origin}/agent-files/install-host-agent.sh -o julos-install-host-agent.sh && sudo sh julos-install-host-agent.sh --server ${origin} --code ${code}${http ? ' --allow-http' : ''}`;
+  const allow = ALLOW_WORDS.filter((w) => (opts.allow || []).includes(w));
+  return `curl -fsSL ${origin}/agent-files/${AGENT_INSTALLER} -o ${INSTALLER_FILE} && sudo sh ${INSTALLER_FILE} --server ${origin} --code ${code}${allow.length ? ` --allow ${allow.join(',')}` : ''}${opts.dockerGroup && allow.includes('docker') ? ' --docker-group' : ''}${http ? ' --allow-http' : ''}`;
 }
+const ALLOW_WORDS = ['updates', 'logs', 'services', 'docker', 'reboot'];
 
 /**
  * Die Terminal-Verbindung, in der der Befehl landen soll: eine SSH-Verbindung dieses Hosts mit der blanken Shell (nie eine Claude- oder Codex-Kachel: dort ginge

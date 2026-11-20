@@ -464,7 +464,7 @@ function tasksMenu(anchor) {
 export function openTask(task) {
   let w = taskWins.get(task.job);
   if (w) { w.minimized ? restoreWin(w) : focusWin(w); return; }
-  w = createWindow({ id: 'task-' + task.job, rectKey: 'task', title: chipText(task), rect: defaultRect('task', 520, 460, 30 * taskWins.size, 24 * taskWins.size), minW: 360, minH: 260, cascade: 0, cls: 'dk-taskwin',
+  w = createWindow({ id: 'task-' + task.job, rectKey: 'task', title: chipText(task), rect: defaultRect('task', 520, 460), minW: 360, minH: 260, cascade: 26 * taskWins.size, cls: 'dk-taskwin',
     onClose: () => taskWins.delete(task.job) });
   taskWins.set(task.job, w);
   w.body.innerHTML = '<div class="dk-tpb"></div>';

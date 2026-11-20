@@ -3,7 +3,7 @@ namespace JulOS.Backend.Logic;
 /// <summary>
 /// Die Stufe 'control' eines Agenten (Spalte agents.control, docs/HOST-AGENT.md): was der SERVER ihm auftragen darf. Lesen braucht keine Stufe.
 /// Standard ist 'read': keine Aktion. Der Benutzer schaltet Aktionen je Host ein: 'updates' (Updates installieren, Logs lesen) oder 'full' (zusaetzlich Neustart/Ausschalten,
-/// Dienste, Container). Der Agent prueft lokal noch einmal gegen seine Datei /etc/julos-agent/permissions; eine Aktion geht nur durch, wenn beide erlauben.
+/// Dienste, Container, Dateien als root). Der Agent prueft lokal noch einmal gegen seine Datei /etc/julos-agent/permissions; eine Aktion geht nur durch, wenn beide erlauben.
 /// </summary>
 public static class AgentControl
 {
@@ -11,7 +11,7 @@ public static class AgentControl
     public static readonly string[] Levels = [Read, Updates, Full];
 
     /// <summary>Rechte, die ein Auftrag verlangen kann (dieselben Woerter wie in der Datei des Agenten).</summary>
-    public static readonly string[] Rights = ["updates", "reboot", "services", "docker", "logs"];
+    public static readonly string[] Rights = ["updates", "reboot", "services", "docker", "logs", "files-root"];
 
     public static bool IsLevel(string? level) => level is Read or Updates or Full;
 
@@ -20,6 +20,7 @@ public static class AgentControl
     {
         (Updates or Full, "updates" or "logs") => true,
         (Full, "reboot" or "services" or "docker") => true,
+        (Full, "files-root") => true,                                  // Dateien als root: nur auf der hoechsten Stufe (docs/FILES.md)
         _ => false,
     };
 

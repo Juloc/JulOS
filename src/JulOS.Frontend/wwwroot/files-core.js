@@ -1,6 +1,7 @@
 /* =====================================================================
  * Dateien-App (docs/FILES.md): die Logik ohne DOM, damit Desktop, Handy und die Tests sie teilen.
- *  - Orte: der gemeinsame Ordner des Servers ("local", nur lesen) und jede SSH-Verbindung (SFTP mit den gespeicherten Zugangsdaten); Hosts mit mehreren SSH-Verbindungen bieten eine Auswahl
+ *  - Orte: der gemeinsame Ordner des Servers ("local", nur lesen), jede SSH-Verbindung (SFTP mit den gespeicherten Zugangsdaten; Hosts mit mehreren SSH-Verbindungen bieten eine Auswahl)
+ *    und "<Host> (Root)" fuer Hosts, deren Agent Dateien als root erlaubt (Wort files-root, Stufe "full", Agent ab 0.8.0, online); dort braucht auch Lesen eine Bestaetigung
  *  - Pfade (auf Hosts absolut "/a/b", im gemeinsamen Ordner relativ "a/b"), Namen, Eintraege, Anzeigetexte
  *  - Fehlertexte nach Code (der Server schickt {error, code}), Oeffnen eines Orts mit Passwort- und Host-Schluessel-Abfrage (nie still)
  *  - die Aufrufe: lesen, hochladen, Ordner, umbenennen, loeschen, kopieren, verschieben, Auftraege abfragen und abbrechen
@@ -18,6 +19,7 @@ export const fmtModified = (iso) => fmtDate(iso, { day: '2-digit', month: '2-dig
 
 /* ---------- Pfade ---------- */
 export const isLocal = (place) => !!place && place.kind === 'local';
+export const isRoot = (place) => !!place && place.kind === 'root';
 /** Der Wurzelpfad eines Orts: auf Hosts "/", im gemeinsamen Ordner leer */
 export const rootOf = (place) => (isLocal(place) ? '' : '/');
 
@@ -45,26 +47,39 @@ export function validName(name) {
 }
 
 /* ---------- Orte ---------- */
+const ROOT_MIN = [0, 8, 0];
+/** Bietet der Agent dieses Hosts Dateien als root an? Online, Stufe "full", das Wort files-root erlaubt, Agent ab 0.8.0. Pause und Rest prueft der Server bei jeder Anfrage. */
+export function rootAvailable(agent) {
+  if (!agent || !agent.online || agent.control !== 'full' || !Array.isArray(agent.allow) || !agent.allow.includes('files-root')) return false;
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(agent.version || ''));
+  if (!m) return false;
+  for (let i = 0; i < 3; i++) { const a = Number(m[i + 1]); if (a !== ROOT_MIN[i]) return a > ROOT_MIN[i]; }
+  return true;
+}
+
 /**
- * Aus den Verbindungen und Hosts die Orte: nur SSH-Verbindungen (Art "terminal") sind Dateiorte, RDP und VNC nicht. Gruppiert nach Host; hat ein Host mehrere SSH-Verbindungen, bekommt
- * jede die Beschriftung "Host · Verbindung", sonst heisst der Ort wie der Host. Hosts ohne SSH-Verbindung kommen nicht vor.
+ * Aus den Verbindungen und Hosts die Orte: SSH-Verbindungen (Art "terminal") sind Dateiorte, RDP und VNC nicht. Gruppiert nach Host; hat ein Host mehrere SSH-Verbindungen, bekommt
+ * jede die Beschriftung "Host · Verbindung", sonst heisst der Ort wie der Host. Dazu je Host mit freigegebenem Agenten der Ort "Host (Root)" (seine Kennung ist die des Hosts).
+ * Hosts ohne SSH-Verbindung und ohne Root-Zugang kommen nicht vor.
  */
 export function buildPlaces({ connections = [], hosts = [], info = {} } = {}) {
   const ssh = connections.filter((c) => c && c.kind === 'terminal');
   const byHost = new Map();
-  for (const h of hosts) byHost.set(h.id, { id: h.id, name: h.name, places: [] });
+  for (const h of hosts) byHost.set(h.id, { id: h.id, name: h.name, places: [], root: rootAvailable(h.agent) });
   for (const c of ssh) {
     if (!byHost.has(c.hostId)) byHost.set(c.hostId, { id: c.hostId, name: c.name, places: [] });
     byHost.get(c.hostId).places.push(c);
   }
   const groups = [];
   for (const g of byHost.values()) {
-    if (!g.places.length) continue;
+    if (!g.places.length && !g.root) continue;
     const many = g.places.length > 1;
-    groups.push({ id: g.id, name: g.name, places: g.places.map((c) => ({
+    const places = g.places.map((c) => ({
       id: c.id, kind: 'ssh', name: c.name, host: g.name, hasPassword: !!c.hasPassword, address: `${c.username ? c.username + '@' : ''}${c.host}`,
       label: many ? `${g.name} · ${c.name}` : g.name,
-    })) });
+    }));
+    if (g.root) places.push({ id: g.id, kind: 'root', name: g.name, host: `${g.name} (Root)`, hasPassword: true, address: t('files.rootAddress'), label: `${g.name} (Root)` });
+    groups.push({ id: g.id, name: g.name, places });
   }
   const flat = groups.flatMap((g) => g.places);
   return { local: info.local ? { id: LOCAL_ID, kind: 'local', name: t('files.local'), label: t('files.local'), host: t('files.local') } : null, groups, flat };
@@ -122,6 +137,8 @@ export const ERR_KEYS = {
   host_key_new: tk('files.err.host_key_new'), host_key_changed: tk('files.err.host_key_changed'), too_many_sessions: tk('files.err.too_many_sessions'),
   rate_limited: tk('files.err.rate_limited'), busy: tk('files.err.busy'), job_not_found: tk('files.err.job_not_found'), cancelled: tk('files.err.cancelled'),
   incomplete: tk('files.err.incomplete'),
+  root_off: tk('files.err.root_off'), root_not_permitted: tk('files.err.root_not_permitted'), root_offline: tk('files.err.root_offline'), root_outdated: tk('files.err.root_outdated'),
+  root_paused: tk('files.err.root_paused'), root_helper: tk('files.err.root_helper'), protected_path: tk('files.err.protected_path'),
 };
 /** Fehlercode (vom Server) in der Sprache der Oberflaeche; unbekannte Codes werden allgemein gemeldet, nie roh gezeigt */
 export const errText = (code) => t(ERR_KEYS[code] || tk('files.err.failed'));
@@ -144,11 +161,12 @@ export function makeFilesApi(api, { createXhr = () => new XMLHttpRequest() } = {
     close: (conn) => api('/api/files/remote/close', body({ connection: conn })).catch(() => {}),
     list: (place, path) => (local(place) ? api('/api/files/list?path=' + q(path || '')) : api(`/api/files/remote/list?c=${place.id}&path=${q(path || '')}`)).then((d) => normalizeListing(place, d)),
     search: (path, text) => api('/api/files/search?path=' + q(path || '') + '&q=' + q(text)),
-    text: (place, path) => api(`/api/files/remote/text?c=${place.id}&path=${q(path)}`),
-    downloadUrl: (place, path) => (local(place) ? '/api/files/download?path=' + q(path) : `/api/files/remote/download?c=${place.id}&path=${q(path)}`),
+    /** Auf SSH-Orten ohne Token; ein Root-Ort liest nur mit der Bestaetigung (prepare "text" oder "download", dann das Token hier) */
+    text: (place, path, token) => api(`/api/files/remote/text?c=${place.id}&path=${q(path)}` + (token ? '&token=' + q(token) : '')),
+    downloadUrl: (place, path, token) => (local(place) ? '/api/files/download?path=' + q(path) : `/api/files/remote/download?c=${place.id}&path=${q(path)}` + (token ? '&token=' + q(token) : '')),
     /**
      * Schritt 1 jeder schreibenden Aktion: der Server prueft und beschreibt, was geschaehe (Host, Pfade, Anzahl, Namen, die ersetzt wuerden, ein Ordner mit Inhalt) und stellt eine Bestaetigung (token) aus, die 60 s gilt,
-     * einmal, nur fuer diese Sitzung und genau diese Anfrage. action: upload, mkdir, rename, delete, copy, move. Die Antwort ist die Grundlage des Dialogs.
+     * einmal, nur fuer diese Sitzung und genau diese Anfrage. action: upload, mkdir, rename, delete, copy, move (auf Root-Orten auch download und text). Die Antwort ist die Grundlage des Dialogs.
      */
     prepare: (action, place, { paths, dir, name, names, target } = {}) => api('/api/files/remote/prepare', body({ action, connection: place.id, paths, dir, name, names, target: target ? { connection: target.place.id, dir: target.dir } : undefined })),
     mkdir: (place, dir, name, token) => api('/api/files/remote/mkdir', body({ connection: place.id, dir, name, token })),
@@ -271,10 +289,28 @@ export const countText = (plan) => {
 };
 const namesText = (names) => names.slice(0, 5).join(', ') + (names.length > 5 ? ' …' : '');
 
+/**
+ * Betrifft eine Aktion einen Root-Ort (prepare meldet root), steht das in jedem Dialog auffaellig dabei und die Taste ist rot: root darf fast alles, auch Dinge, die das System kaputt machen.
+ * Das Ziel eines Kopierens zaehlt mit.
+ */
+const rootify = (model, prep) => (prep && prep.root ? { ...model, root: true, rootNote: t('files.root.dialogNote'), danger: true } : model);
+
+/** Lesen als root (Download und Textansicht): bestaetigt wird die Datei, sie wird danach vom Server als root gelesen und im Verlauf vermerkt */
+export function readModel(action, prep) {
+  const path = pathsText(prep.paths);
+  return rootify({
+    title: t(action === 'download' ? tk('files.read.titleDownload') : tk('files.read.titleText')),
+    sentence: t(action === 'download' ? tk('files.read.sentenceDownload') : tk('files.read.sentenceText'), { host: prep.host, path }),
+    rows: [[t('files.rowHost'), prep.host], [t('files.rowPath'), path], [t('files.rowCount'), countText(prep)]],
+    confirm: t(action === 'download' ? tk('files.read.confirmDownload') : tk('files.read.confirmText')),
+    danger: false,
+  }, prep);
+}
+
 /** Loeschen: nennt Host, Pfad und Anzahl (vom Server); ein Ordner mit Inhalt braucht den ausdruecklichen zweiten Schritt (recursive), einen Papierkorb gibt es nicht */
 export function deleteModel(prep) {
   const needsAck = !!prep.nonEmpty;
-  return {
+  return rootify({
     title: t('files.delete.title'),
     sentence: t('files.delete.sentence', { host: prep.host, path: pathsText(prep.paths) }),
     rows: [[t('files.rowHost'), prep.host], [t('files.rowPath'), pathsText(prep.paths)], [t('files.rowCount'), countText(prep)]],
@@ -283,14 +319,14 @@ export function deleteModel(prep) {
     recursive: needsAck,
     confirm: t('files.delete.confirm'),
     danger: true,
-  };
+  }, prep);
 }
 /** Kopieren und Verschieben (auch auf einen anderen Host); ersetzt etwas, steht das ausdruecklich da und braucht ein Haekchen */
 export function copyModel(action, prep) {
   const move = action === 'move';
   const conflicts = prep.conflicts || [];
   const to = prep.targetHost || prep.host;
-  return {
+  return rootify({
     title: t(move ? tk('files.move.title') : tk('files.copy.title')),
     sentence: t(move ? tk('files.move.sentence') : tk('files.copy.sentence'), { from: prep.host, path: pathsText(prep.paths), to, dir: shortPath(prep.dir) }),
     rows: [[t('files.rowFrom'), prep.host], [t('files.rowPath'), pathsText(prep.paths)], [t('files.rowTo'), `${to}: ${shortPath(prep.dir)}`], [t('files.rowCount'), countText(prep)]],
@@ -301,13 +337,13 @@ export function copyModel(action, prep) {
     overwrite: conflicts.length > 0,
     confirm: t(move ? tk('files.move.confirm') : tk('files.copy.confirm')),
     danger: conflicts.length > 0 || move,
-  };
+  }, prep);
 }
 /** Hochladen: ersetzt etwas, steht Host, Pfad und Anzahl da und es braucht ein Haekchen */
 export function uploadModel(prep, files) {
   const total = files.reduce((n, f) => n + (f.size || 0), 0);
   const conflicts = prep.conflicts || [];
-  return {
+  return rootify({
     title: t('files.upload.title'),
     sentence: t('files.upload.sentence', { host: prep.host, dir: shortPath(prep.dir), n: tp('files.nFiles', files.length) }),
     rows: [[t('files.rowHost'), prep.host], [t('files.rowPath'), shortPath(prep.dir)], [t('files.rowCount'), `${tp('files.nFiles', files.length)} · ${fileSize(total)}`]],
@@ -316,12 +352,12 @@ export function uploadModel(prep, files) {
     overwrite: conflicts.length > 0,
     confirm: t('files.upload.confirm'),
     danger: conflicts.length > 0,
-  };
+  }, prep);
 }
 /** Umbenennen: ersetzt der neue Name eine Datei (der Server meldet es als Konflikt), braucht es ein Haekchen */
 export function renameModel(prep) {
   const exists = (prep.conflicts || []).length > 0;
-  return {
+  return rootify({
     title: t('files.rename.title'),
     sentence: t('files.rename.sentence', { host: prep.host, path: shortPath(prep.paths[0]), name: prep.name }),
     rows: [[t('files.rowHost'), prep.host], [t('files.rowPath'), shortPath(prep.paths[0])], [t('files.rowNewName'), prep.name]],
@@ -330,15 +366,15 @@ export function renameModel(prep) {
     overwrite: exists,
     confirm: t('files.rename.confirm'),
     danger: exists,
-  };
+  }, prep);
 }
 export function mkdirModel(prep) {
-  return {
+  return rootify({
     title: t('files.mkdir.title'),
     sentence: t('files.mkdir.sentence', { host: prep.host, dir: shortPath(prep.dir), name: prep.name }),
     rows: [[t('files.rowHost'), prep.host], [t('files.rowPath'), shortPath(prep.dir)], [t('files.rowNewName'), prep.name]],
     confirm: t('files.mkdir.confirm'), danger: false,
-  };
+  }, prep);
 }
 
 /* ---------- Verlauf ---------- */

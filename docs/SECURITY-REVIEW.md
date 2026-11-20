@@ -15,7 +15,7 @@ claim can be tested. **Nothing was tested against the live address**; the live c
 
 - **No finding lets an anonymous visitor do anything beyond the public routes.** A test now enumerates every registered route and proves it (see "Routes").
 - Passwords: Argon2id, **current**. Dependencies: **no known vulnerability** in any NuGet package (direct or indirect); runtime and base image current as of 2026-11-10 (.NET 10.0.15). One unpatched Ubuntu CVE in a library JulOS only uses for encoding (F-12). Table below.
-- Findings: **0 critical, 1 high, 7 medium, 16 low, 8 info** (32; F-24 to F-32 come from the review of the Files-over-SFTP branch, see "Files over SFTP" below). **10 fixed** (F-06, F-07, F-08, F-09, F-14, F-24, F-25, F-26, F-27, F-29), one partly (F-03), the rest open with a suggestion because they need a decision on operation, key handling or a new feature. The one high finding (F-24, a compromised host could make a host-to-host copy write outside the chosen folder on another host) was fixed in the review before the merge.
+- Findings: **0 critical, 1 high, 8 medium, 19 low, 10 info** (38; F-24 to F-32 come from the review of the Files-over-SFTP branch, F-33 to F-38 from the review of root file access, see "Files over SFTP" and "Root file access" below). **11 fixed** (F-06, F-07, F-08, F-09, F-14, F-24, F-25, F-26, F-27, F-29, F-34), one partly (F-03), the rest open with a suggestion because they need a decision on operation, key handling or a new feature. The one high finding (F-24, a compromised host could make a host-to-host copy write outside the chosen folder on another host) was fixed in the review before the merge.
 - The weak spots are not in the login but around it: **where the backup lands** (F-01), **what a stolen session can do without a second confirmation** (F-04, F-17), **missing early warning** (F-18) and **configuration that is optional but should not be** (F-02, F-03).
 
 ## Findings
@@ -47,13 +47,19 @@ claim can be tested. **Nothing was tested against the live address**; the live c
 | F-23 | Info | Root helper honest limits: with the right word it starts/stops any `*.service` and reads any unit's journal; `apt` treats names with `.`/`+` as patterns | Info (documented in HOST-AGENT.md) |
 | F-24 | High | Files over SFTP: a file name from the target such as `../../x` or `a/b` was used as a path part, so copying a folder from a compromised host to another host wrote outside the chosen folder there (same class as scp CVE-2019-6111); recursive delete used it too | **Fixed** (names are hidden by the session and ignored again by `FileTransfer`; 5 tests) |
 | F-25 | Medium | Files over SFTP: the write "confirmation" is a flag the client sets (`confirm: true`), not a server-issued token like host actions; with `JULOS_FILES_WRITE=on` a stolen session can upload, overwrite, move and delete on every SSH host without friction | **Fixed** (server-issued, 60 s, single-use token bound to session, action and exact request; `prepare`/run like the host actions; tests)
-| F-26 | Low | Files audit is written at the end and failures to write it are only logged: a crash or database outage during a write leaves no entry, and the write is not refused (host actions are fail-closed) | Open |
+| F-26 | Low | Files audit is written at the end and failures to write it are only logged: a crash or database outage during a write leaves no entry, and the write is not refused (host actions are fail-closed) | **Fixed** (`started` is written before the first writing step, nothing runs if it cannot be stored; tests) |
 | F-27 | Low | A target that announces small sizes but sends more could exceed the limit for a whole copy (only each file was capped) | **Fixed** (total of received bytes capped; test) |
 | F-28 | Low | Recursive delete and copy list a folder and then use paths: a local user of the target who can write in that folder can swap a folder for a symlink in between; effect limited to what the SSH user may do | Open (accepted, documented) |
-| F-29 | Low | Pooled SFTP sessions are not closed when the connection is edited or deleted or the app session ends (up to 60 s idle, longer with a running job); they never hold a password | Open (S) |
+| F-29 | Low | Pooled SFTP sessions are not closed when the connection is edited or deleted or the app session ends (up to 60 s idle, longer with a running job); they never hold a password | **Fixed** (the pool closes sessions when the connection is edited or deleted and at sign-out; tests) |
 | F-30 | Info | Names with Unicode format characters (right-to-left override) are shown as they are (spoofing `fdp.exe`-style names) | Info |
 | F-31 | Info | After a crash of the server a `.julos-*.part` temporary file can remain on a target (visible, named) | Info |
 | F-32 | Info | Download and text view follow symlinks on the target (stat with follow): they read what the SSH user can read | Info (by design) |
+| F-33 | Medium | Root file access (`files-root`): a stolen session at the level "Alles", with the word allowed and `JULOS_FILES_WRITE=on`, can read (after a confirmation the same session gives itself), replace and delete any file of the host as root; the confirmation is not a second factor | Open (accepted by design, same class as F-04; the keys, confirmations, history and pause switch limit it) |
+| F-34 | Low | Root helper: the protection of the agent's own files was checked on the path as sent, so a symbolic link elsewhere that points into `/etc/julos-agent` (and similar) would have bypassed it | **Fixed** (checked again on the real folder after resolving links; test `test_a_link_to_the_agents_files_does_not_get_around_the_protection`) |
+| F-35 | Info | With the word `files-root` the installer starts the root helper without `ProtectHome` and a private `/tmp` (needed to see the real file system); the helper's other limits stay | Info (documented, only with the word) |
+| F-36 | Low | Anyone who can write to the agent's user or the helper socket group can use the file verbs of the helper without any confirmation in the app, now on any file (F-23 for files) | Open (accepted, documented; the word is never a default) |
+| F-37 | Low | A recursive delete or copy as root lists a folder and then works on names: a local user who can write there can swap things in between (F-28, but as root) | Open (accepted, documented in FILES.md) |
+| F-38 | Info | Reading a link on a root place reads its target as root (F-32 as root) | Info (by design) |
 
 ### F-01 Backup next to its key (Medium, open, needs a decision)
 
@@ -248,7 +254,30 @@ Reviewed on `claude/sicherheit-sftp` (the SFTP branch plus 0.13.2): `src/JulOS.F
 - **F-26 (Low, fixed):** `started` is written before the first writing step and nothing runs if it cannot be stored; the result entry follows at the end.
 - **F-28 (Low, accepted):** limit of a path-based protocol; the effect cannot exceed the SSH user's own rights. Do not run a recursive delete or copy in a folder other users can write to (for example `/tmp`) if they are not trusted.
 - **F-29 (Low, fixed):** `SftpPool.InvalidateAsync` and `InvalidateUserAsync`, called from `ConnectionEndpoints` (edit, delete) and `AuthEndpoints` (logout, logout-others, password change).
-- Root access for files is a later step (FILES.md "Not built"): it needs its own review (a `files-root` word in the permission file, confirmation, history).
+- Root access for files: built afterwards, reviewed in "Root file access" below.
+
+## Root file access (review of the branch `claude/files-root`, 2026-11-20)
+
+Reviewed: `tools/julos-agent-helper.py` (`FileOps`), `tools/julos-agent.py` (`files_root`, `host_api`), `src/JulOS.Frontend/Files/RootFiles.cs` and its use in `RemoteFileEndpoints.cs`, `FileErrors.cs`, `AgentControl`, `tools/install-agent.sh`, `files-core.js` / `files-app.js`, `docs/FILES.md`. Tests ran against a **throw-away directory** as the root of the helper (never the real `/`) and a fake or the real agent code on a loopback link; nothing touched a real host.
+
+**Design in one line:** the place is another `ISftpFileSession` (so confirmation, history, limits, jobs and the copy between places are the code that was already reviewed above), whose calls go over the agent link to a root helper that works on file descriptors.
+
+**Checked and fine**
+- **Keys:** the agent must be online and 0.8.0 or later, the host's level must be `full`, the pause switch off, the word reported by the agent present; the agent and the helper check the word again. Every request re-checks (2 s cache), also each block of a transfer; the test closes the level in the middle of a download and the transfer ends at the next block, the agent hears nothing more. Without a key the agent receives no file request at all (test asserts the recorded requests).
+- **Confirmation:** every writing action needs the server token (60 s, once, session, action, exact request); download and text of a root file need one too (`action: download|text`), checked against path and action (`confirmation_mismatch`, `confirmation_invalid`); a copy to or from a root place is prepared as root. Without a token the agent gets no `read`.
+- **History, fail-closed:** `started` before the first step, result after; reading a root file is recorded too; dropping the table makes text, download and mkdir refuse (`audit_failed`) and the agent receives nothing.
+- **Helper:** accepts only the nine file verbs, only with the word; paths absolute and plain (no `..`, no control characters, 4096 characters); writes only into new `.julos-<12 hex>.part` files created exclusively (`O_EXCL`, `O_NOFOLLOW`, mode 0600) at the exact end (`pwrite`, `bad_offset` otherwise), then `rename` (a file replaced keeps owner and mode; a link or folder is never replaced); delete removes a file or link, never a folder; `/` and the agent's own files are never changed, **also through links** (F-34, fixed in this review); read only regular files and never blocks on a pipe (`O_NONBLOCK`); the answers hold codes, never an error text of the system.
+- **Hostile agent:** the server validates what the agent reports before it is used: names (no `/`, `..`, control characters; F-24 for root), sizes, modes, times, Base64, block size and the amount (not more than asked); a hostile reply is a failed request, never a file name that leaves the folder (test with traversal names and bad data).
+- **Transport:** blocks of 48 KiB, one at a time with the next request only after the previous answer (back pressure, one block in memory); a lost link, a revoked key or an error stops it, removes the temporary file (a failed or cancelled copy) and aborts the download connection.
+- **Client:** red notice in the list, the header and every dialog (the root note in the confirmation is built from the server's `root` flag), no `innerHTML`, SVG icon, texts in German and English.
+
+**Open**
+- **F-33 (Medium, accepted):** root over a file API is a very large right. It is only as strong as the session and the three switches (level, word, `JULOS_FILES_WRITE`); like F-04 a second factor is missing. Recommendation: switch the word on only for hosts where it is worth it, keep the level at "Aktionen aus" otherwise, and use the pause switch while you are away.
+- **F-36, F-37 (Low, accepted):** see the table. **F-35, F-38 (Info).**
+
+**Not verified here**
+- A real host with systemd, the socket-activated helper, the changed unit (no `ProtectHome`), SELinux or AppArmor profiles that deny root on files, and a real phone. Special files (devices, sockets), files above 4 GiB, extremely long names and non-UTF-8 names were not tried; the helper refuses what is not a regular file and the server hides names it cannot show.
+- Behaviour with a very slow or lossy link between server and agent beyond the 60 s timeout per block.
 
 ## Not verified here
 

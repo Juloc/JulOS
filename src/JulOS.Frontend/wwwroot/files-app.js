@@ -29,6 +29,7 @@ const ICONS = {
   search: 'M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z',
   checkOn: 'M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-9 14l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z',
   checkOff: 'M19 5v14H5V5h14m0-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z',
+  root: 'M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z',
   lock: 'M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM9 8V6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9z',
 };
 const SVG = 'http://www.w3.org/2000/svg';
@@ -94,6 +95,7 @@ export async function confirmDialog(kit, model, { expiresIn = 0 } = {}) {
   const wrap = h('div', { class: 'f-confirm' });
   const dlg = modal({ title: model.title, kit, content: [wrap], actions: [{ id: 'no', label: t('common.cancel'), kind: 'ghost' }, { id: 'yes', label: model.confirm, kind: model.danger ? 'danger' : 'primary', disabled: !!model.ack }] });
   let check = null, timer = null;
+  if (model.root) wrap.append(h('div', { class: 'f-rootnote', role: 'alert' }, icon('root'), h('span', { text: model.rootNote })));
   wrap.append(h('p', { class: 'f-sentence', text: model.sentence }), rowsEl(model.rows));
   if (model.note) wrap.append(noteEl(model.note));
   if (model.warning) wrap.append(noteEl(model.warning, 'warn'));
@@ -182,10 +184,10 @@ export function mountFiles(box, deps) {
   const refreshPlaces = () => { places = C.buildPlaces({ ...getState(), info }); renderSide(); renderHead(); };
   function placeList(onPick) {
     const list = h('div', { class: kit ? 'm3-list f-places' : 'f-places', role: 'list' });
-    const item = (p, sub) => h('button', { type: 'button', class: 'f-pl ' + (kit ? 'm3-li mb m3-state' : 'dk-nav') + (st.place && st.place.id === p.id ? ' sel' : ''), onclick: () => onPick(p), 'aria-current': st.place && st.place.id === p.id ? 'true' : undefined },
-      h('span', { class: 'lead f-pl-ic' }, icon(p.kind === 'local' ? 'folder' : 'dns')), h('span', { class: 'txt' }, h('span', { class: 'hl', text: p.label }), h('span', { class: 'sl', text: sub })));
+    const item = (p, sub) => h('button', { type: 'button', class: 'f-pl ' + (kit ? 'm3-li mb m3-state' : 'dk-nav') + (st.place && st.place.id === p.id ? ' sel' : '') + (p.kind === 'root' ? ' f-pl-root' : ''), onclick: () => onPick(p), 'aria-current': st.place && st.place.id === p.id ? 'true' : undefined },
+      h('span', { class: 'lead f-pl-ic' }, icon(p.kind === 'local' ? 'folder' : p.kind === 'root' ? 'root' : 'dns')), h('span', { class: 'txt' }, h('span', { class: 'hl', text: p.label }), h('span', { class: 'sl', text: sub })));
     if (places.local) list.append(item(places.local, t('files.localNote')));
-    for (const g of places.groups) for (const p of g.places) list.append(item(p, [p.address, p.hasPassword ? t('files.pwSaved') : t('files.pwAsk')].join(' · ')));
+    for (const g of places.groups) for (const p of g.places) list.append(item(p, p.kind === 'root' ? p.address : [p.address, p.hasPassword ? t('files.pwSaved') : t('files.pwAsk')].join(' · ')));
     if (!list.childNodes.length) list.append(h('p', { class: 'f-empty', text: t('files.noPlaces') }));
     return list;
   }
@@ -254,7 +256,7 @@ export function mountFiles(box, deps) {
   }
 
   function renderHead() {
-    placeBtn.replaceChildren(icon(st.place && !C.isLocal(st.place) ? 'dns' : 'folder'), h('span', { class: 'f-place-t', text: label() }), icon('more'));
+    placeBtn.replaceChildren(icon(st.place && C.isRoot(st.place) ? 'root' : st.place && !C.isLocal(st.place) ? 'dns' : 'folder'), h('span', { class: 'f-place-t', text: label() }), icon('more'));
     placeBtn.onclick = pickPlace;
     crumbs.replaceChildren();
     if (st.place) {
@@ -277,6 +279,8 @@ export function mountFiles(box, deps) {
     const back = tools.querySelector('.f-t-back'); if (back) back.disabled = !st.back.length;
     const up = tools.querySelector('.f-t-up'); if (up) up.disabled = !st.path || st.path === '/';
     banner.replaceChildren();
+    root.classList.toggle('f-is-root', C.isRoot(st.place));
+    if (C.isRoot(st.place)) banner.append(h('div', { class: 'f-rootbar', role: 'note' }, icon('root'), h('span', { text: t('files.root.banner', { host: st.place.name }) })));
     if (st.place && !C.isLocal(st.place) && !info.write) banner.append(noteEl(t('files.writeOff'), 'hint'));
     banner.hidden = !banner.childNodes.length;
   }
@@ -342,13 +346,25 @@ export function mountFiles(box, deps) {
   }
   function dbl(e) { if (!e.openable && C.isFileLike(e)) { if (C.isLocal(st.place)) download(e); else viewText(e); } }
 
-  function download(e) {
-    const a = document.createElement('a'); a.href = fapi.downloadUrl(st.place, e.path); a.download = ''; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove();
+  /** Auf einem Root-Ort liest der Server nur mit einer Bestaetigung (prepare, Dialog, Token); sonst gibt es kein Token. Gibt { token } oder null (abgebrochen oder Fehler). */
+  async function readConfirmed(action, e) {
+    if (!C.isRoot(st.place)) return { token: undefined };
+    const prep = await prepare(action, { paths: [e.path] });
+    if (!prep || !(await confirmDialog(kit, C.readModel(action, prep), { expiresIn: prep.expiresIn }))) return null;
+    return { token: prep.token };
+  }
+
+  async function download(e) {
+    const ok = await readConfirmed('download', e);
+    if (!ok) return;
+    const a = document.createElement('a'); a.href = fapi.downloadUrl(st.place, e.path, ok.token); a.download = ''; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove();
   }
 
   async function viewText(e) {
+    const ok = await readConfirmed('text', e);
+    if (!ok) return;
     let r;
-    try { r = await guarded(() => fapi.text(st.place, e.path)); }
+    try { r = await guarded(() => fapi.text(st.place, e.path, ok.token)); }
     catch (err) {
       if (C.isCancelled(err)) return;
       if (err.code === 'not_text') return say(t('files.notText', { name: e.name }));

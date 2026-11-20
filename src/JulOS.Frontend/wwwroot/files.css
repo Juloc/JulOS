@@ -101,6 +101,13 @@
 .f-msg.warn { background: var(--f-bad-bg); color: var(--f-bad); }
 .f-msg.ok { background: var(--f-sel); }
 
+/* Root: der Ort und jeder Dialog dazu sind auffaellig (docs/FILES.md, Abschnitt Root) */
+.f-pl-root .f-pl-ic { color: var(--f-bad); }
+.f-rootbar, .f-rootnote { display: flex; align-items: flex-start; gap: 10px; margin: 8px 0; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--f-bad); background: var(--f-bad-bg); color: var(--f-bad); font-size: 13px; font-weight: 600; line-height: 1.4; }
+.f-rootbar svg.f-ic, .f-rootnote svg.f-ic { width: 20px; height: 20px; margin-top: 1px; }
+.fapp.f-is-root .f-head { box-shadow: inset 0 -3px 0 var(--f-bad); }
+.f-dlg .f-rootnote { background: rgba(229, 72, 77, .14); color: #b3261e; border-color: #b3261e; }
+
 /* Dialoge */
 .f-dlg { width: min(94vw, 520px); }
 .f-sentence { margin: 0 0 8px; line-height: 1.45; }

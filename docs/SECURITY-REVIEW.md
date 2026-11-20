@@ -294,6 +294,17 @@ New: a host can hold one user and one password for terminal, Files (SFTP) and de
 - **Root:** no stored root password and no second login; root actions and root files go through the agent (the `files-root` word), a root terminal is `sudo -i` typed by the owner. This keeps the most valuable credential out of the store.
 - **Not verified here:** a real host, a real phone and the live database takeover on production data (tested against throwaway data and a throwaway instance only).
 
+## Push messages (review of the branch `push-meldungen`, 2026-11-20)
+
+New attack surface: six routes under `/api/push` ([PUSH.md](PUSH.md)), an outbound call from the server to an address the browser names, and a key pair on the server. Labels P-1 to P-5 are local to this section.
+
+- **P-1 Outbound call to a browser-supplied address (SSRF, Medium, fixed by design).** The subscription endpoint is data from the browser. It is accepted only as `https`, port 443, with a real DNS name (no IP number in any notation, no `localhost`, `.local`, `.internal`, `.lan`, no user info, max. 1000 characters), and checked **again when the connection is made**: the connect callback resolves the name itself and refuses loopback, private, link-local, CGNAT, multicast, documentation ranges and IPv4 hidden in IPv6, so a name that points inward after the check does not help. No redirects, no environment proxy, 10 s limit, the answer body is never read. Tested (`WebPushTests`: endpoint and address lists).
+- **P-2 VAPID private key (Medium, handled).** One pair per server, created on first use. The private half is encrypted with the server key (AES-256-GCM, fixed associated data), the key is not in the database; it is never part of an API answer or log line. Like every stored secret it lands in the backup with its key (F-01 stays the big leak path: whoever reads the backup could send messages to the registered devices, but only to them and only with content the server composes). Tested: sealed in the column, same pair on a second call, off without a server key.
+- **P-3 Ownership (Low, tested).** A subscription belongs to the user who created it: the same endpoint cannot be taken over by another user (409), only the owner lists or removes it, and a send only reaches the sender's own devices. At most 10 devices per user. All routes sit behind `ApiGuard` (the route test proves 401 without a session and 403 for changes without header or origin).
+- **P-4 Content (Low, by design).** The encrypted message holds host name, rule code, kind and host id, no paths, output or secrets, at most 8 entries and 3000 bytes; the text is composed on the device. The push service of the browser vendor sees the encrypted body, the device's endpoint, the server's origin (VAPID `sub`) and timing.
+- **P-5 Abuse and load (Low).** 30 sends per user and hour, test button 5 per minute, key route 30 per minute, subscribe 20 per minute; delivery with a 10 s limit and at most two retries; the worker reads through the existing host cache and limits (at most 4 hosts in parallel, nothing new asked of agents).
+- **Not verified here:** a real push service and a real phone (Google, Mozilla, Apple); the delivery path was tested against a fake service in memory.
+
 ## Not verified here
 
 - The live setup: Caddy configuration and version, firewall, the values of `JULOS_ALLOWED_HOSTS` / `JULOS_TRUSTED_PROXIES`, tag and branch protection on GitHub, the patch level of the running image, the host `core_pattern`. No scan, no login attempt, no load against the live address.

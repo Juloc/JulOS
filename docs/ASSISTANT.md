@@ -14,7 +14,7 @@ The goal: an optional assistant inside JulOS that informs the owner about the ho
 - **Tokens:** small fast model as the default, high effort per message on request; a compact per-host overview as the base context instead of raw output; logs only on request and with a line limit; a daily/per-chat budget with a warning at 80 % and a stop at 100 %; the provider's plan usage shown in the chat where the provider gives it.
 - **Knowledge ("base prompts"):** a notes field per host, editable global rules, quick actions with templates ("check updates on all hosts", "why is the disk full", "what is notable today"), and short cheat sheets from the JulOS docs.
 - **Chats:** stored until the owner deletes them (no secrets stored), single and all deletable.
-- **Alerts:** first **deterministic, without AI**: new security updates, disk almost full (threshold), service or container failed, agent offline or reboot needed; delivered as push over the PWA (Web Push). Optional AI-run scheduled tasks (like cron jobs that write a message) later.
+- **Alerts (built, see [PUSH.md](PUSH.md)):** first **deterministic, without AI**: new security updates, disk almost full (threshold), service or container failed, agent offline or reboot needed; delivered as push over the PWA (Web Push). Optional AI-run scheduled tasks (like cron jobs that write a message) later.
 
 ## Command modes (chat setting, like other AI apps)
 
@@ -33,7 +33,7 @@ Free commands run as the **normal agent user**; **root only one command at a tim
 2. **Free commands** with the modes above, a new helper verb for a free command (fixed argument vector, no shell string composed by the model without confirmation), audit of every command.
 3. **Files:** read and change files through the Files app tools, as root where allowed, with the confirmations of [FILES.md](FILES.md).
 
-The deterministic alerts (push) are independent of the assistant and can be built first.
+The deterministic alerts (push) are independent of the assistant and **are built** ([PUSH.md](PUSH.md)).
 
 ## Security notes
 

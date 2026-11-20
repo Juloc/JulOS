@@ -4,6 +4,17 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Neu
+- **Push-Meldungen ohne KI** ([docs/PUSH.md](docs/PUSH.md)): Web Push über die PWA (RFC 8030/8291/8292, VAPID und `aes128gcm`, mit den Krypto-Bausteinen von .NET, ohne Fremdbibliothek, gegen die Testvektoren aus RFC 8291 geprüft). Feste Regeln: neue **Sicherheitsupdates**, **Platte fast voll** (Schwelle einstellbar, Standard 90 %, je Einhängepunkt), **Dienst oder Container ausgefallen**, **Agent offline** (länger als einstellbar, Standard 10 Minuten) und **Neustart nötig**; je Regel an/aus, „wieder in Ordnung“ optional (Standard an nur für „Agent offline“), **Ruhezeiten** (zum Beispiel 22 bis 7 Uhr, danach eine Sammelmeldung). Gemeldet wird beim Wechsel in den Zustand, nicht bei jeder Abfrage; je Host und Regel höchstens eine Meldung in 30 Minuten (was in der Pause neu auftritt, kommt danach), mehrere gleichzeitig als eine Sammelmeldung.
+- Neue Seite **Einstellungen, Push-Meldungen** (Handy und Desktop, Deutsch und Englisch): „Auf diesem Gerät einschalten“ mit klaren Texten bei Ablehnung, ohne HTTPS oder ohne Push im Browser (Hinweis für Brave am Handy), Liste der Geräte mit Entfernen, Regeln mit Schaltern und Schwellen, Ruhezeit, **Testmeldung** und die **letzten 50 Meldungen**; ein Tipp auf eine Meldung (auch in der Benachrichtigung) öffnet die Seite des Hosts (`/#host=<Kennung>`).
+- Der Worker `AlertWorker` wertet alle 5 Minuten die vorhandenen Host-Antworten aus (`HostInfoService`, keine neuen Anfragearten, Hosts ohne Agent werden übersprungen). Die Nachricht enthält nur Hostname, Regelcode und Art; den Text setzt der Service Worker (`sw-push.js`) auf dem Gerät zusammen.
+- Migration `022` (`push_vapid`, `push_subscriptions`, `alert_settings`, `alert_state`, `alert_log`); API unter `/api/push`. Service Worker `pd-v66`.
+
+### Sicherheit
+- Das VAPID-Schlüsselpaar entsteht beim ersten Einschalten; der private Teil liegt mit dem Server-Schlüssel (AES-256-GCM) verschlüsselt in der Datenbank, nie in Antworten oder Logs. Der Endpunkt eines Abos kommt vom Browser und wird streng geprüft (https, Port 443, Name statt IP, keine privaten Namen) und beim Verbinden noch einmal gegen die aufgelöste Adresse (SSRF, DNS-Tricks). Abos gehören dem Benutzer, höchstens 10 je Benutzer, Zustellung mit Zeitlimit, höchstens zwei Wiederholungen, 30 Sendungen je Benutzer und Stunde; tote Abos (404/410) werden entfernt. [docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md).
+
 ## [0.17.0] - 2026-11-20
 
 ### Neu

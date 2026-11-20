@@ -9,6 +9,7 @@ import { t, tp, tk, fmtNumber } from './i18n.js';
 import { hostSupport, fmtBytes, fmtUptime, fmtAge, fmtPercent, loadText, when, ramPercent, mainDisk, healthIssues, MD_STATE, SMART_STATE, SMART_WHY, rateText, wantsInfo, stateNote, agentModeText } from './hostinfo.js';
 import { stateText, dotClass, hostDetail, serviceState } from './hosts.js';
 import { agentPanel } from './hostagent.js';
+import { loginPanel } from './hostlogin.js';
 import { icon, dl, noteP, callout, subH, chip, bar, meter, card, listBlock, empty, button } from './hostui.js';
 import { hasActionAgent, controlHtml, auditHtml, errText, blockReason, whyText } from './hostactions.js';
 
@@ -373,6 +374,7 @@ export const PANELS = [
   { id: 'logs', icon: 'logs', title: tk('hostview.pLogs'), needs: 'actions', html: logsPanel },
   { id: 'actions', icon: 'tune', title: tk('hostview.pActions'), needs: 'actions', html: actionsPanel },
   { id: 'history', icon: 'history', title: tk('hostview.pHistory'), needs: 'actions', html: historyPanel },
+  { id: 'login', icon: 'lock', title: tk('hostview.pLogin'), html: (c) => loginPanel(c) },
   { id: 'agent', icon: 'terminal', title: tk('hostview.pAgent'), html: (c) => agentPanel(c) },
 ];
 
@@ -384,7 +386,7 @@ export const panelsFor = () => PANELS;
  * nicht der Name der Plattform. Die Taste "Agent aktualisieren / einrichten" traegt data-hgoto="agent" (hostpage.js wechselt zum Abschnitt Agent).
  */
 export function unavailable(host, p, esc) {
-  if (p.id === 'agent') return '';                       // der Abschnitt Agent ist der Weg aus jedem leeren Zustand
+  if (p.id === 'agent' || p.id === 'login') return '';   // der Abschnitt Agent ist der Weg aus jedem leeren Zustand; der Login braucht keinen Agenten
   const a = host.agent;
   const setup = button(t('hostview.agentUpdateSetup'), esc, { tone: 'filled', icon: 'download', data: { hgoto: 'agent' } });
   if (!a) return empty(t('hostview.noAgentTitle'), t('hostview.noAgentText'), esc, button(t('shell.agentSetup'), esc, { tone: 'filled', icon: 'download', data: { hgoto: 'agent' } }), 'server');

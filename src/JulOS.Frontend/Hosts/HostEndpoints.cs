@@ -24,7 +24,7 @@ internal static class HostEndpoints
     /// Der Zustand eines Hosts: der Agent (Link, sonst die letzte Meldung aus der Datenbank) und je Verbindung, ob ihr Port antwortet.
     /// Der Host gilt als online, wenn sein Agent verbunden ist oder mindestens ein Dienst antwortet.
     /// </summary>
-    private static async Task<HostDto> Describe(HostRecord host, AgentRecord? agent, IReadOnlyList<ConnectionRecord> connections, Guid userId, AgentLinks links, AgentRelease release, TcpProbe probe, HostPolicy policy, CancellationToken ct)
+    private static async Task<HostDto> Describe(HostRecord host, AgentRecord? agent, IReadOnlyList<ConnectionRecord> connections, HostLoginInfo? login, Guid userId, AgentLinks links, AgentRelease release, TcpProbe probe, HostPolicy policy, CancellationToken ct)
     {
         var live = links.Get(host.Id, userId) is not null ? links.Status(host.Id) : null;
         var version = live?.Version ?? agent?.Version;
@@ -35,7 +35,7 @@ internal static class HostEndpoints
             AgentLabels.KindOf(live?.Platform ?? agent.Platform), [.. live?.Caps ?? []], [.. live?.Allow ?? []], agent.Control,
             AgentLabels.HostSupport(live?.Platform ?? agent.Platform, version, live?.Caps));
         var online = live is not null || services.Any(s => s.Online == true);
-        return new HostDto(host.Id, host.Name, online, live?.Hostname ?? agent?.Hostname, live?.Os ?? agent?.Os, agentDto, services);
+        return new HostDto(host.Id, host.Name, online, live?.Hostname ?? agent?.Hostname, live?.Os ?? agent?.Os, agentDto, services, login?.User, login?.HasPassword == true);
     }
 
     public static void MapHosts(this IEndpointRouteBuilder app)
@@ -44,7 +44,7 @@ internal static class HostEndpoints
 
         // Alle Hosts mit Zustand. Ein Benutzer hat immer mindestens einen (ohne einen wird der Standard-Host angelegt).
         // Die Liste loest Verbindungsversuche zu den gespeicherten Zielen aus (kurz gemerkt, TcpProbe), daher die Grenze je Benutzer.
-        app.MapGet("/api/hosts", async (HttpContext ctx, HostStore hosts, ConnectionStore connections, AgentStore agents, AgentLinks links, AgentRelease release, TcpProbe probe, HostPolicy policy, HitCounter hits, HostActionService actions) =>
+        app.MapGet("/api/hosts", async (HttpContext ctx, HostStore hosts, ConnectionStore connections, AgentStore agents, AgentLinks links, AgentRelease release, TcpProbe probe, HostPolicy policy, HitCounter hits, HostActionService actions, HostLoginStore logins) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (!hits.Allow("hosts:" + id.UserId, 30, Minute)) return Error(429, "Zu viele Anfragen, bitte kurz warten.");
@@ -53,7 +53,8 @@ internal static class HostEndpoints
             if (list.Count == 0) { await hosts.EnsureDefaultAsync(id.UserId, ct); list = await hosts.ListAsync(id.UserId, ct); }
             var byHost = (await connections.ListAsync(id.UserId, ct)).ToLookup(c => c.HostId);
             var agentOf = (await agents.ListAsync(id.UserId, ct)).ToDictionary(a => a.HostId);
-            var described = await Task.WhenAll(list.Select(h => Describe(h, agentOf.GetValueOrDefault(h.Id), [.. byHost[h.Id]], id.UserId, links, release, probe, policy, ct)));
+            var loginOf = await logins.ListAsync(id.UserId, ct);
+            var described = await Task.WhenAll(list.Select(h => Describe(h, agentOf.GetValueOrDefault(h.Id), [.. byHost[h.Id]], loginOf.GetValueOrDefault(h.Id), id.UserId, links, release, probe, policy, ct)));
             return Results.Json(new HostsResponse(described, await actions.IsPausedAsync(id.UserId, ct)), AppJson.Default.HostsResponse);
         });
 

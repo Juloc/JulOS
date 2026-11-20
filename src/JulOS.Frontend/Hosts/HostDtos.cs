@@ -5,7 +5,8 @@ internal sealed record HostAgentDto(bool Online, DateTimeOffset? LastSeen, strin
     string? Kind = null, string[]? Caps = null, string[]? Allow = null, string? Control = null, string? HostSupport = null);
 /// <summary>Ein Dienst eines Hosts = eine gespeicherte Verbindung. Online ist leer, wenn nicht geprueft werden durfte (Erlaubnisliste).</summary>
 internal sealed record HostServiceDto(Guid Connection, string Kind, bool? Online);
-internal sealed record HostDto(Guid Id, string Name, bool Online, string? Hostname, string? Os, HostAgentDto? Agent, HostServiceDto[] Services);
+/// <summary>LoginUser und LoginPassword: der Login des Hosts (docs/HOSTS.md), nie das Passwort; ohne Login fehlt LoginUser.</summary>
+internal sealed record HostDto(Guid Id, string Name, bool Online, string? Hostname, string? Os, HostAgentDto? Agent, HostServiceDto[] Services, string? LoginUser = null, bool LoginPassword = false);
 /// <summary>ActionsPaused: der Pausenschalter fuer Aktionen steht (siehe HostActionService).</summary>
 internal sealed record HostsResponse(HostDto[] Hosts, bool ActionsPaused = false);
 internal sealed record HostRequest(string? Name);

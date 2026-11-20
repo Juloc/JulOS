@@ -200,7 +200,7 @@ export function mountFiles(box, deps) {
 
   /* ----- Oeffnen eines Orts: Passwort und Host-Schluessel nur mit ausdruecklicher Bestaetigung ----- */
   const ask = {
-    password: (place, wrong) => passwordDialog(kit, place, wrong),
+    password: (place, wrong, host) => passwordDialog(kit, place, wrong, host),
     hostKey: (place, data, changed) => hostKeyDialog(kit, place, data, changed),
   };
   async function ensureOpen(place) {
@@ -582,18 +582,21 @@ export function mountFiles(box, deps) {
 }
 
 /* ---------- Abfragen: Passwort und Host-Schluessel ---------- */
-function passwordDialog(kit, place, wrong) {
+function passwordDialog(kit, place, wrong, host) {
   const field = h('input', { type: 'password', class: 'f-input', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': t('files.password.label'), maxlength: 256 });
+  // Hat der Host einen Login nur mit Benutzer: der Benutzer steht da, gefragt wird nur das Passwort, und es laesst sich "fuer diesen Host speichern" (Standard aus)
+  const save = host && host.canSave ? h('input', { type: 'checkbox', id: 'fSaveHost' }) : null;
   const dlg = modal({ title: t('files.password.title', { host: place.label }), kit, id: 'pw', content: [
-    h('p', { class: 'f-sentence', text: t('files.password.sentence', { address: place.address }) }),
+    h('p', { class: 'f-sentence', text: host ? t('files.password.sentenceHost', { user: host.user, host: place.label }) : t('files.password.sentence', { address: place.address }) }),
     wrong ? noteEl(t('files.err.logon_failed'), 'warn') : null,
     h('label', { class: 'f-field' }, h('span', { text: t('files.password.label') }), field),
+    save ? h('label', { class: 'f-ack check', for: 'fSaveHost' }, save, ' ', t('files.password.saveHost')) : null,
     noteEl(t('files.password.note'), 'hint'),
   ], actions: [{ id: 'no', label: t('common.cancel'), kind: 'ghost' }, { id: 'yes', label: t('files.password.connect'), kind: 'primary', disabled: true }] });
   field.addEventListener('input', () => dlg.setDisabled('yes', !field.value));
   field.addEventListener('keydown', (e) => { if (e.key === 'Enter' && field.value) { e.preventDefault(); dlg.close('yes'); } });
   field.focus();
-  return dlg.promise.then((r) => { const v = r === 'yes' ? field.value : null; field.value = ''; return v; });
+  return dlg.promise.then((r) => { const v = r === 'yes' ? field.value : null; const keep = !!(save && save.checked); field.value = ''; return v !== null && save ? { password: v, save: keep } : v; });
 }
 function hostKeyDialog(kit, place, data, changed) {
   const dlg = modal({ title: t(changed ? tk('files.hostKey.changedTitle') : tk('files.hostKey.newTitle'), { host: place.label }), kit, id: 'hk', content: [

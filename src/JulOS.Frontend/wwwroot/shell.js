@@ -3,6 +3,7 @@ import { Sessions } from './sessions.js';
 import { hostDetail } from './hosts.js';
 import { createHostInfoStore } from './hostinfo.js';
 import { initHostPage } from './hostpage.js';
+import { loginUser, loginSaved, hostHasLogin } from './hostlogin.js';
 import { initHostActionDialog } from './hostactions-dialog.js';
 import { loadOrganisation, takeOverLocal, mergePlacements, setFolder, touch, move, folderName } from './folders.js';
 import { initFolderDialog } from './folder-dialog.js';
@@ -211,7 +212,7 @@ function renderConnections() {
     const row = document.createElement('div');
     row.className = 'conn';
     row.innerHTML = `<button type="button" class="connmain"><span class="connic">${ico(c.kind === 'terminal' ? 'terminal' : 'desktop')}</span>
-        <span class="conntext"><span class="connname">${esc(c.name)}</span><span class="connsub">${esc(KIND_LABEL[c.kind] ? t(KIND_LABEL[c.kind]) : c.kind)} · ${esc(c.username ? c.username + '@' : '')}${esc(c.host)}:${c.port}${folderName(state.folders, c) ? ' · ' + esc(folderName(state.folders, c)) : ''}${c.hasPassword ? `<span class="connkey" title="${esc(t('shell.passwordSaved'))}">${ico('key')}</span>` : ''}</span></span></button>
+        <span class="conntext"><span class="connname">${esc(c.name)}</span><span class="connsub">${esc(KIND_LABEL[c.kind] ? t(KIND_LABEL[c.kind]) : c.kind)} · ${esc(loginUser(c) ? loginUser(c) + '@' : '')}${esc(c.host)}:${c.port}${folderName(state.folders, c) ? ' · ' + esc(folderName(state.folders, c)) : ''}${loginSaved(c) ? `<span class="connkey" title="${esc(t('shell.passwordSaved'))}">${ico('key')}</span>` : ''}</span></span></button>
       <button type="button" class="connedit ghost" aria-label="${esc(t('common.edit'))}">${ico('edit')}</button>`;
     row.querySelector('.connmain').addEventListener('click', () => startDialog(c));
     row.querySelector('.connedit').addEventListener('click', () => editDialog(c));
@@ -287,6 +288,7 @@ function editDialog(c, kind) {
   fillFolderSelect(c ? c.folderId : '');
   $('#connUp').hidden = $('#connDown').hidden = !c;
   $('#connDelete').hidden = !c; $('#connDelete').textContent = t('common.delete');
+  $('#connOwn').checked = !!(c && c.ownLogin);
   $('#connPw').value = ''; $('#connPw').disabled = !state.canStore;
   $('#connForget').checked = false; $('#connForgetRow').hidden = !(c && c.hasPassword);
   $('#connPwHint').textContent = !state.canStore
@@ -294,6 +296,7 @@ function editDialog(c, kind) {
     : c && c.hasPassword
       ? t('shell.pwHintStored')
       : t('shell.pwHintNew');
+  syncOwnLogin();                                   // nach den Zeilen darueber: sie versteckt Benutzer, Passwort und Hinweis, wenn der Host-Login gilt
   setMsg($('#connMsg'), '');
   $('#connDlg').showModal();
 }
@@ -301,6 +304,18 @@ function editDialog(c, kind) {
 /* ---------- Hosts: Auswahl in der Verbindung, Anlegen, Umbenennen, Loeschen, Agent (docs/HOSTS.md) ---------- */
 const NEW_HOST = '__new';
 /** Die Auswahl der Verbindung: alle Hosts, am Ende "Neuer Host …". Behaelt die Wahl; ohne Wahl gilt der erste Host (so legt der Server neue Verbindungen ab). */
+/** Hat der gewaehlte Host einen Login, gilt er fuer diese Verbindung, ausser sie verwendet ausdruecklich ihren eigenen Benutzer (Haken, Standard aus); sonst bleiben Benutzer und Passwort verborgen */
+function syncOwnLogin() {
+  const host = state.hosts.find((h) => h.id === $('#connHostSel').value);
+  const has = hostHasLogin(host), own = !has || $('#connOwn').checked;
+  $('#connOwnRow').hidden = !has;
+  $('#connOwnHint').hidden = own;
+  if (!own) $('#connOwnHint').textContent = t(host.loginPassword ? tk('shell.ownLoginHintPw') : tk('shell.ownLoginHint'), { user: host.loginUser });
+  $('#connUserRow').hidden = $('#connPwRow').hidden = $('#connPwHint').hidden = !own;
+  $('#connForgetRow').hidden = !own || !(state.editing && state.editing.hasPassword);
+}
+$('#connOwn').addEventListener('change', syncOwnLogin);
+
 function fillHostSelect(selected) {
   const sel = $('#connHostSel');
   const keep = selected ?? (sel.value && sel.value !== NEW_HOST ? sel.value : '');
@@ -311,7 +326,7 @@ function fillHostSelect(selected) {
 }
 $('#connHostSel').addEventListener('change', (e) => {
   const sel = e.currentTarget;
-  if (sel.value !== NEW_HOST) { sel.dataset.prev = sel.value; return; }
+  if (sel.value !== NEW_HOST) { sel.dataset.prev = sel.value; syncOwnLogin(); return; }
   sel.value = sel.dataset.prev;                      // bis der neue Host da ist, bleibt die bisherige Wahl
   hostDialog(null, (h) => { fillHostSelect(h.id); });
 });
@@ -385,9 +400,11 @@ $('#connForm').addEventListener('submit', async (e) => {
   const hostId = $('#connHostSel').value; if (hostId && hostId !== NEW_HOST) body.hostId = hostId;
   const drive = body.kind === 'desktop' && state.driveAvailable && $('#connDrive').checked;
   body.driveShare = drive; body.driveWrite = drive && $('#connDriveWrite').checked;
+  const hostLogin = hostHasLogin(state.hosts.find((h) => h.id === $('#connHostSel').value));
+  if (hostLogin) body.ownLogin = $('#connOwn').checked;                    // ohne Login am Host gibt es den Haken nicht: die Verbindung bleibt, wie sie ist
   const pw = $('#connPw').value;
-  if (pw) body.password = pw;
-  if ($('#connForget').checked && !pw) body.forgetPassword = true;
+  if (pw && (!hostLogin || body.ownLogin)) body.password = pw;
+  if ($('#connForget').checked && !pw && (!hostLogin || body.ownLogin)) body.forgetPassword = true;
   busy(form, true); setMsg(msg, '');
   try {
     const c = state.editing;
@@ -449,7 +466,7 @@ async function launchProgram(program, choose) {
 }
 
 /* ---------- Verbinden ---------- */
-const asConn = (c) => ({ id: c.id, name: c.name, kind: c.kind, stored: c.hasPassword ? true : undefined, target: `${c.host}:${c.port}/${c.username}`, domain: c.domain || undefined, program: programOf(c), workDir: c.workDir || undefined });
+const asConn = (c) => ({ id: c.id, name: c.name, kind: c.kind, stored: loginSaved(c) ? true : undefined, target: `${c.host}:${c.port}/${loginUser(c)}`, domain: c.domain || undefined, program: programOf(c), workDir: c.workDir || undefined });
 
 /** Text in die Eingabeleiste einer Terminal-Sitzung legen, ohne ihn zu senden (der Benutzer sieht ihn und startet ihn selbst mit Enter). Andere Sitzungsarten ignorieren es. */
 function prefillSession(session, text) {
@@ -462,9 +479,9 @@ function startDialog(c, opts = {}) {
   state.starting = { c, extra: !!opts.extra, prefill: opts.prefill };
   // Mit gespeichertem Passwort genuegt ein Tipp: der Server nimmt es aus dem verschluesselten Speicher
   // Ein VNC-Server kann ohne Anmeldung laufen: dann gleich verbinden; verlangt er ein Passwort, fragt die Sitzung danach
-  if (c.hasPassword || c.kind === 'vnc') { launch(c, '', !!opts.extra, opts.prefill); return; }
+  if (loginSaved(c) || c.kind === 'vnc') { launch(c, '', !!opts.extra, opts.prefill); return; }
   $('#startTitle').textContent = c.name;
-  $('#startUser').value = c.username;
+  $('#startUser').value = loginUser(c);
   $('#startPw').value = '';
   $('#startDlg').showModal();
   setTimeout(() => $('#startPw').focus(), 150);
@@ -565,7 +582,7 @@ Sessions.addEventListener('switcher', () => { if (M) M.openSwitcher(); else goHo
 
 const hostInfo = createHostInfoStore({ api, onChange: () => { if (D && D.hostInfoChanged) D.hostInfoChanged(); if (M && M.hostInfoChanged) M.hostInfoChanged(); } });
 const openHostAction = initHostActionDialog({ api, esc });
-const hostPage = initHostPage({ state, api, esc, store: hostInfo, openAction: openHostAction, reloadHosts: loadHosts, origin: () => location.origin,
+const hostPage = initHostPage({ state, api, esc, store: hostInfo, openAction: openHostAction, reloadHosts: loadHosts, reloadConnections: loadConnections, origin: () => location.origin,
   snack: (text) => { if (M) M.snack(text); },
   installOverSsh: (conn, cmd) => { startDialog(conn, { prefill: cmd }); notice(t('shell.sshPrefilled', { name: conn.name })); } });
 // Die Seite eines Hosts (Abschnitt panel): am Desktop eine Ansicht im Start-Fenster, am Handy eine eigene Seite

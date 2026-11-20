@@ -9,6 +9,7 @@ import { favouriteList, recentList, filterByFolder, groupByFolder, folderIconSvg
 import { hostCardHtml, menuOpen } from './hostview.js';
 import { connectionState, dotClass as hostDot, stateText } from './hosts.js';
 import { connLabels } from './conn-names.js';
+import { loginUser, loginSaved } from './hostlogin.js';
 
 /* =====================================================================
  * Handy-Oberflaeche im Stil von Material 3 (Expressive): Home, Dienste, Server, Monitoring, Profil.
@@ -629,7 +630,7 @@ function actionSheet(c) {
   let dlg = $('#mActDlg');
   if (!dlg) { dlg = document.createElement('dialog'); dlg.id = 'mActDlg'; dlg.className = 'm3sheet'; $('#app').appendChild(dlg); wireSheet(dlg); }
   const fav = !!c.favorite;
-  dlg.innerHTML = `<h2>${esc(c.name)}</h2><p class="hint">${esc(connKindText(c))} · ${esc(c.username ? c.username + '@' : '')}${esc(c.host)}:${c.port}${c.hasPassword ? ' · ' + esc(t('shell.passwordSaved')) : ''}</p>
+  dlg.innerHTML = `<h2>${esc(c.name)}</h2><p class="hint">${esc(connKindText(c))} · ${esc(loginUser(c) ? loginUser(c) + '@' : '')}${esc(c.host)}:${c.port}${loginSaved(c) ? ' · ' + esc(t('shell.passwordSaved')) : ''}</p>
     <div class="m3-list" style="margin:0 -18px">
       <button type="button" class="mb m3-li m3-state" data-a="start"><span class="lead">${icon('play')}</span><span class="txt"><span class="hl">${openCount(c) ? t('mobile.switchSession') : t('mobile.connect')}</span>${openCount(c) ? `<span class="sl">${esc(t('mobile.openCount', { n: openCount(c) }))}</span>` : ''}</span></button>
       ${openCount(c) ? `<button type="button" class="mb m3-li m3-state" data-a="extra"><span class="lead">${icon('add')}</span><span class="txt"><span class="hl">${t('mobile.anotherSession')}</span><span class="sl">${t('mobile.anotherSessionSub')}</span></span></button>` : ''}

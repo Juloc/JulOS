@@ -5,6 +5,7 @@ import { newSetup, setupCommand } from './hostagent.js';
 import { makeAct, unitsHtml, fetchUnits, fetchAudit, setControl, setPause, errText } from './hostactions.js';
 import { PANELS, panelsFor, clampLines, unavailable } from './hostview.js';
 import { noteP, icon } from './hostui.js';
+import { loginRequest, savedText } from './hostlogin.js';
 import { stateText, hostDetail } from './hosts.js';
 
 /* =====================================================================
@@ -22,15 +23,16 @@ const KINDS = ['status', 'updates', 'services', 'docker'];
  *   snack(text): kurze Rueckmeldung; origin(): Adresse dieses Servers
  * @returns {{mount: (root: Element, host: object, panel?: string|null, opts?: {onBack?: Function}) => void, unmount: () => void}}
  */
-export function initHostPage({ state, api, esc, store, openAction, reloadHosts, installOverSsh = () => {}, snack = () => {}, origin = () => location.origin }) {
+export function initHostPage({ state, api, esc, store, openAction, reloadHosts, installOverSsh = () => {}, snack = () => {}, origin = () => location.origin, reloadConnections = null }) {
   let root = null, hostId = null, token = 0, current = null, onBack = null;
   let setup = newSetup();                                       // die Haken der Einrichtung (Abschnitt Agent)
+  let login = { resp: null, error: '' };                          // der Login des Hosts (Abschnitt Login): die Antwort des Servers
   let data = {}, prev = null, units = null, history = null;   // Antworten des Servers je Art, die vorige Ablesung (Netzwerkrate), Einheiten und Verlauf (nur bei Bedarf)
   const $ = (s) => root.querySelector(s);
   const hostNow = () => state.hosts.find((h) => h.id === hostId) || null;
   const msg = (text, ok = false) => { if (root) { const m = $('#hostInfoMsg'); m.textContent = text || ''; m.className = 'msg' + (ok ? ' ok' : ''); } };
   const act = (host) => makeAct(host, !!state.actionsPaused, esc);
-  const ctx = (host) => ({ host, esc, data, act: act(host), paused: !!state.actionsPaused, units, history, rate: netRate(prev, data.status), setup, terminal: pickTerminal(state.connections || [], host.id) });
+  const ctx = (host) => ({ host, esc, data, act: act(host), paused: !!state.actionsPaused, units, history, rate: netRate(prev, data.status), setup, login, terminal: pickTerminal(state.connections || [], host.id) });
   const box = (id) => $(`#hostInfoBody [data-panel="${id}"]`);
 
   function pageHtml(host) {
@@ -79,6 +81,7 @@ export function initHostPage({ state, api, esc, store, openAction, reloadHosts, 
     if (focus && cur) cur.focus();
     if (id === 'logs') loadUnits(host);
     if (id === 'history') loadHistory(host);
+    if (id === 'login') loadLogin(host);
     draw(id);
   }
 
@@ -128,6 +131,37 @@ export function initHostPage({ state, api, esc, store, openAction, reloadHosts, 
     target.innerHTML = noteP(t('hostinfo.stLoading'), esc);
     try { target.innerHTML = unitsHtml(await fetchUnits(api, host.id, true), esc, act(host)); }
     catch (e) { target.innerHTML = noteP(e.code ? errText(e.code) : e.message, esc, true); }
+  }
+
+  /* ---------- Abschnitt Login: ein Benutzer und ein Passwort fuer alle Verbindungen des Hosts ---------- */
+  /** Nach einer Aenderung wissen Verbindungen und Host-Liste, womit sie sich jetzt anmelden (Benutzer, Passwort bereit) */
+  const refreshLists = () => (reloadConnections ? reloadConnections() : reloadHosts());
+  async function loadLogin(host) {
+    try { login = { resp: await api(`/api/hosts/${host.id}/login`), error: '' }; }
+    catch (err) { login = { resp: null, error: err.code ? errText(err.code) : err.message }; }
+    if (hostNow() && root) draw('login');
+  }
+  async function loginSave(host, btn) {
+    const fields = { user: $('#hostLoginUser').value, password: $('#hostLoginPw').value, noPassword: $('#hostLoginNoPw').checked };
+    if (!fields.user.trim()) { msg(t('hostlogin.userMissing')); return; }
+    btn.disabled = true; msg('');
+    try {
+      const resp = await api(`/api/hosts/${host.id}/login`, { method: 'PUT', body: loginRequest(fields) });
+      fields.password = ''; login = { resp, error: '' };
+      await refreshLists();
+      if (hostNow() && root) { draw('login'); msg(savedText(resp), true); snack(t('hostlogin.saved')); }
+    } catch (err) { msg(err.code ? errText(err.code) : serverMsg(err.message)); }
+    finally { btn.disabled = false; const pw = root && $('#hostLoginPw'); if (pw) pw.value = ''; }
+  }
+  // Entfernen braucht ein zweites Tippen; die Passwoerter der Verbindungen bleiben, wie sie waren
+  async function loginRemove(host, btn) {
+    if (btn.dataset.sure !== '1') { btn.dataset.sure = '1'; btn.textContent = t('hostlogin.reallyRemove'); setTimeout(() => { btn.dataset.sure = ''; btn.textContent = t('hostlogin.remove'); }, 3000); return; }
+    btn.dataset.sure = ''; btn.disabled = true; msg('');
+    try {
+      login = { resp: await api(`/api/hosts/${host.id}/login`, { method: 'DELETE' }), error: '' };
+      await refreshLists();
+      if (hostNow() && root) { draw('login'); msg(t('hostlogin.removed'), true); snack(t('hostlogin.removed')); }
+    } catch (err) { btn.disabled = false; msg(err.code ? errText(err.code) : serverMsg(err.message)); }
   }
 
   /* ---------- Abschnitt Agent: Einrichtung, aktualisieren, entfernen ---------- */
@@ -203,7 +237,9 @@ export function initHostPage({ state, api, esc, store, openAction, reloadHosts, 
     }
     const go = tg.closest('[data-hgoto]');
     if (go) { select(go.dataset.hgoto, true); return; }
-    for (const [attr, fn] of [['[data-hag-copy]', agentCopy], ['[data-hag-ssh]', agentSsh], ['[data-hag-update]', agentUpdate], ['[data-hag-remove]', agentRemove]]) { const b = tg.closest(attr); if (b) { fn(h, b); return; } }
+    const sug = tg.closest('[data-hl-suggest]');
+    if (sug) { const f = $('#hostLoginUser'); if (f) { f.value = sug.dataset.hlSuggest; f.focus(); } return; }
+    for (const [attr, fn] of [['[data-hl-save]', loginSave], ['[data-hl-remove]', loginRemove], ['[data-hag-copy]', agentCopy], ['[data-hag-ssh]', agentSsh], ['[data-hag-update]', agentUpdate], ['[data-hag-remove]', agentRemove]]) { const b = tg.closest(attr); if (b) { fn(h, b); return; } }
     const g = tg.closest('[data-goto]');
     if (g) { select(g.dataset.goto, true); return; }
     const o = tg.closest('[data-hact-open]');
@@ -212,6 +248,9 @@ export function initHostPage({ state, api, esc, store, openAction, reloadHosts, 
   };
   // Navigation mit der Tastatur: Pfeile bewegen die Auswahl, Pos1/Ende springen (Reiter-Muster)
   const onKey = (e) => {
+    if (e.key === 'Enter' && e.target.closest && e.target.closest('#hostLoginForm') && e.target.tagName === 'INPUT' && e.target.type !== 'checkbox') {    // Enter in den Feldern des Logins speichert
+      e.preventDefault(); const b = $('[data-hl-save]'), h = hostNow(); if (b && h) loginSave(h, b); return;
+    }
     const tabs = [...root.querySelectorAll('#hostInfoNav [data-tab]')], i = tabs.findIndex((x) => x === e.target.closest('[data-tab]'));
     if (i < 0) return;
     const next = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : null;
@@ -230,6 +269,7 @@ export function initHostPage({ state, api, esc, store, openAction, reloadHosts, 
     }
     if (d.hagGroup) { setup.dockerGroup = e.target.checked; setup.command = ''; const pre = $('.hu-cmd'); if (pre) pre.remove(); return; }
     if (d.hagAuto) { agentAuto(h, e.target); return; }
+    if (d.hlNopw) { const pw = $('#hostLoginPw'); if (pw) { if (e.target.checked) pw.value = ''; pw.disabled = e.target.checked; } return; }
     try {
       if (e.target.id === 'hostActLevel') { await setControl(api, h.id, e.target.value); await refreshAll(); }
       else if (e.target.id === 'hostActPause') { await setPause(api, e.target.checked); await refreshAll(); }
@@ -254,7 +294,7 @@ export function initHostPage({ state, api, esc, store, openAction, reloadHosts, 
     mount(el, host, panel = null, opts = {}) {
       detach(); root = el; hostId = host.id;
       root.addEventListener('click', onClick); root.addEventListener('keydown', onKey); root.addEventListener('change', onChange); onBack = opts.onBack || null;
-      data = {}; prev = null; units = null; history = null; current = null; setup = newSetup(); token++;
+      data = {}; prev = null; units = null; history = null; login = { resp: null, error: '' }; current = null; setup = newSetup(); token++;
       render(host, panel);
     },
     unmount() { token++; detach(); root = null; },

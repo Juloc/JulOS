@@ -668,3 +668,24 @@ test('16 Host-Login: einmal am Host setzen, die Dateien öffnen ohne Passwortfra
     await context.close();
   }
 });
+
+test('17 Host-Login gilt auch für den Desktop: eine RDP-Verbindung ohne Benutzer und Passwort verbindet ohne Frage mit dem Login des Hosts', async ({ browser }) => {
+  test.setTimeout(120_000);
+  const { context, page, errors } = await signedIn(browser);
+  const sockets = watchSockets(page);
+  const host = await (await page.request.post('/api/hosts', { headers: API, data: { name: 'E2E Login-Desktop' } })).json();
+  const conn = await (await page.request.post('/api/connections', { headers: API, data: { name: 'E2E Login-Desktop', kind: 'desktop', host: RDP.host, username: '', hostId: host.id } })).json();
+  try {
+    const login = await page.request.put(`/api/hosts/${host.id}/login`, { headers: API, data: { user: RDP.user, password: RDP.password } });
+    expect(login.status()).toBe(200);
+    await page.goto('/');
+    await tile(page, conn.name).click();                                                                   // ohne Passwortdialog: der Server nimmt den Login des Hosts
+    await expect(page.locator('#startDlg')).toBeHidden();
+    await waitForPicture(page, sockets);
+    expect(errors).toEqual([]);
+  } finally {
+    await page.request.delete('/api/connections/' + conn.id, { headers: API });
+    await page.request.delete('/api/hosts/' + host.id, { headers: API });
+    await context.close();
+  }
+});

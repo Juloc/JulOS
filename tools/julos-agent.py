@@ -42,7 +42,7 @@ if sys.version_info < MIN_PYTHON:
 import argparse, base64, hashlib, hmac, http.client, http.server, json, logging, logging.handlers, os, queue, random, re, shutil, signal, socket, socketserver, ssl, stat, struct, subprocess, tempfile, threading, time
 import urllib.error, urllib.parse, urllib.request
 
-AGENT_VERSION = "0.8.0"      # der Server lehnt aeltere ab (AgentLinks.MinAgentVersion); ab 0.4.0 aktualisiert er sich auf Anweisung selbst; ab 0.5.0 gibt es den Host-Modus; ab 0.6.0 Schreib-Aktionen; ab 0.7.0 beantwortet auch der Desktop-Agent die Host-Anfragen (hello: caps desktop/host); ab 0.8.0 Dateien als root (Wort files-root, /v1/host/files/*)
+AGENT_VERSION = "0.9.0"      # der Server lehnt aeltere ab (AgentLinks.MinAgentVersion); ab 0.4.0 aktualisiert er sich auf Anweisung selbst; ab 0.5.0 gibt es den Host-Modus; ab 0.6.0 Schreib-Aktionen; ab 0.7.0 beantwortet auch der Desktop-Agent die Host-Anfragen (hello: caps desktop/host); ab 0.8.0 Dateien als root (Wort files-root, /v1/host/files/*)
 API_VERSION = 1
 PLATFORM = "linux-x11"         # im Host-Modus "linux-host" (HOST_PLATFORM)
 HOST_PLATFORM = "linux-host"

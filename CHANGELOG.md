@@ -4,6 +4,11 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [0.19.1] - 2026-11-20
+
+### Behoben
+- **Agent 0.9.0:** Die Agenten-Änderungen aus 0.17.0 (zurückgehaltene Pakete erkennen und `full-upgrade` anbieten, `dist-upgrade` auf Proxmox, Reparieren, ZFS- und SMART-Korrektur, Fehlerzusammenfassung) trugen noch die Versionsnummer 0.8.0, deshalb haben sich laufende Agenten nie auf den neuen Stand aktualisiert. Live auf cubi aufgefallen: „Alle Updates installieren“ meldete `ok`, installierte aber nichts, weil `apt-get upgrade` den neuen Kernel zurückhielt, und JulOS zeigte es nicht. Mit 0.9.0 aktualisieren sich die Agenten über „Agent aktualisieren“ auf den neuen Stand.
+
 ## [0.19.0] - 2026-11-20
 
 ### Neu

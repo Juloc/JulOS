@@ -4,7 +4,7 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
-## [Unveröffentlicht]
+## [0.17.0] - 2026-11-20
 
 ### Neu
 - **Ein Login pro Host** ([docs/HOSTS.md](docs/HOSTS.md#login-one-user-and-password-per-host)): Benutzer und Passwort einmal am Host, es gilt für Terminal, Dateien (SFTP) und Desktop-Verbindungen (RDP/VNC) dieses Hosts; die Domäne bleibt an der Verbindung. Eine Verbindung kann ausdrücklich ihren eigenen Benutzer verwenden (Haken „Eigenen Benutzer verwenden“ im Verbindungsdialog, Standard aus). Auflösung: erst die Überschreibung der Verbindung, sonst der Host-Login, sonst wie bisher (Passwortdialog). Neue Karte **Login** auf der Host-Seite (Handy und Desktop, Deutsch und Englisch): Benutzer, Passwortfeld (nie vorbelegt), „Passwort nicht speichern“, Entfernen, Liste der Verbindungen mit dem, was jede benutzt; der Hinweis, dass Root-Aktionen der Agent erledigt und ein Root-Terminal `sudo -i` ist. Ein zweiter gespeicherter Zugang (zum Beispiel root) wird bewusst nicht gebaut.

@@ -13,7 +13,7 @@ namespace JulOS.Integrations.Ssh;
 /// </summary>
 public sealed class SshRelay(ILogger<SshRelay> log, Func<ISshSession>? factory = null, int maxSessions = 32, SessionRegistry? registry = null)
 {
-    public static readonly TimeSpan SessionCheck = TimeSpan.FromSeconds(60);
+    public static readonly TimeSpan SessionCheck = TimeSpan.FromSeconds(15);
     public static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(5);
 
     private readonly Func<ISshSession> _factory = factory ?? (() => new SshNetSession());

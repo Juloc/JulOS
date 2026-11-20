@@ -20,6 +20,7 @@ Nur die Python-Standardbibliothek.
 import json
 import os
 import re
+import select
 import signal
 import stat
 import subprocess
@@ -33,6 +34,7 @@ PKG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9+.\-]*[a-z0-9+.])?(?::[a-z0-9]+)?\Z")  
 UNIT_RE = re.compile(r"^(?!-)[A-Za-z0-9:_.@\-]{1,100}\.service\Z")
 MAX_PACKAGES = 20
 MAX_LINE = 300
+REQUEST_TIMEOUT = 15                    # Sekunden bis die ganze Anfrage-Zeile da sein muss (sonst haelt ein stummer Client einen der wenigen Plaetze, MaxConnections=4, fuer immer)
 TAIL_LINES = 40
 LOG_MAX = 200
 ENV = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C", "LANG": "C", "DEBIAN_FRONTEND": "noninteractive",
@@ -166,7 +168,29 @@ class Helper:
         return {"ok": True, "lines": out[-n:]}
 
 
-def serve(rfile, wfile, helper=None):
+def read_request_line(rfile, timeout=REQUEST_TIMEOUT, limit=65536):
+    """Eine Zeile (hoechstens limit Bytes) lesen, aber nur bis zu einer Frist fuer die GANZE Zeile. Wer nichts oder nur tropfenweise sendet, bekommt kein Ergebnis (b"").
+    Ohne echten Dateideskriptor (Tests mit BytesIO) wird normal gelesen."""
+    try:
+        fd = rfile.fileno()
+    except (AttributeError, OSError, ValueError):
+        return rfile.readline(limit)
+    deadline, data = time.monotonic() + timeout, b""
+    while len(data) < limit and not data.endswith(b"\n"):
+        left = deadline - time.monotonic()
+        if left <= 0 or not select.select([fd], [], [], left)[0]:
+            return b""
+        chunk = os.read(fd, min(4096, limit - len(data)))
+        if not chunk:
+            break
+        data += chunk
+        if b"\n" in data:
+            data = data[:data.index(b"\n") + 1]
+            break
+    return data
+
+
+def serve(rfile, wfile, helper=None, read_timeout=REQUEST_TIMEOUT):
     """Eine Anfrage lesen, bearbeiten, antworten. Bricht der Agent die Verbindung ab, laeuft die Aktion trotzdem zu Ende (ein halbes apt waere schlimmer als ein ungelesenes Ergebnis)."""
     helper = helper or Helper()
     state = {"open": True}
@@ -181,7 +205,7 @@ def serve(rfile, wfile, helper=None):
             state["open"] = False
 
     try:
-        raw = rfile.readline(65536)
+        raw = read_request_line(rfile, read_timeout)
         req = json.loads(raw.decode("utf-8", "replace")) if raw else None
     except ValueError:
         req = None

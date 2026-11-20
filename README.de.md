@@ -87,6 +87,7 @@ Eine Fernsteuerung darf nicht allein durch das Desktop-Passwort geschuetzt sein.
   `tools/make-client-cert.sh <name>` (Passphrase tippst du selbst); das Caddy-Beispiel enthaelt den `client_auth`-Block.
 - Die Agent-API ist nur ueber den Server mit gueltiger Sitzung erreichbar. Agenten antworten entweder auf einem Unix-Socket (Rechte 0600, derselbe Rechner) oder melden sich mit einem Token je Host aus (auf dem Server nur als Hash, widerrufbar, einmaliger Einrichtungscode).
 - xrdp (3389) und den Server-Port nie ohne Proxy davor ins Internet stellen.
+- **Checkliste fürs Internet** (Einzelheiten und Aufwand in [docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md), englisch): `JULOS_TRUSTED_PROXIES` auf die Adresse des Proxys setzen und Port 8080 nur für den Proxy erreichbar machen, `JULOS_ALLOWED_HOSTS` setzen, Sicherung (und ihren Schlüssel) nur an einen Ort legen, den nur du lesen kannst, bei Agenten von außen [caddy/Caddyfile.internet.example](caddy/Caddyfile.internet.example) nehmen, Images mindestens monatlich neu bauen oder ziehen (siehe [docs/RELEASING.md](docs/RELEASING.md)).
 
 Reihenfolge: Proxy-Konfiguration, Port 443 auf den Proxy, DNS; optional ein Client-Zertifikat obendrauf.
 

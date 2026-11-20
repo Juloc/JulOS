@@ -4,7 +4,7 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
-## [Unveröffentlicht]
+## [0.19.0] - 2026-11-20
 
 ### Neu
 - **Dateien als Explorer** ([docs/FILES-EXPLORER.md](docs/FILES-EXPLORER.md)): Einfachklick wählt, Doppelklick öffnet (Ordner, Textdatei im Editor, sonst Download); Auswahl wie im Windows-Explorer (`Shift`, `Strg`, `Strg+A`, Rahmen aufziehen, `Esc`); Tastatur (Pfeile, `Enter`, `Backspace`, `Alt+←/→`, `F2`, `Entf`, `F5`, `Strg+C/X/V`, `Strg+L`) und **Buchstabensprung**; **Rechtsklick-Menü** auf Datei, Auswahl, Ordner und leerer Fläche (Öffnen, Herunterladen, Ausschneiden, Kopieren, Einfügen, Umbenennen, Löschen, Neuer Ordner, Neue Textdatei, Hochladen, Pfad kopieren, An Seitenleiste anheften, Eigenschaften); **Ziehen** zwischen Ordnern, Pfadteilen und Seitenleiste (innerhalb eines Orts verschieben, zwischen Orten kopieren), Dateien vom Rechner hochladen auf einen Ordner. Jede schreibende Aktion bleibt **eine** Bestätigung (nie je Datei).

@@ -564,7 +564,7 @@ public sealed partial class AgentLinkTests
 
         // ein anderer Benutzer sieht weder den Verlauf noch einen Auftrag dieses Hosts
         var other = await db.ScalarAsync<Guid>("insert into users (name, password_hash, totp_secret, totp_confirmed) values ('zweiter', 'x', 'x', true) returning id");
-        var otherCookie = "julos_sid=" + await app.Services.GetRequiredService<SessionStore>().CreateAsync(other, "127.0.0.1", "test");
+        var otherCookie = "julos_sid=" + await app.Services.GetRequiredService<SessionStore>().CreateAsync(other, "127.0.0.1", "test", stepUpUntil: DateTimeOffset.UtcNow.AddMinutes(10));      // freigegeben: es geht um den Besitzer des Hosts, nicht um den zweiten Faktor
         Assert.Equal(HttpStatusCode.NotFound, (await r.Http.SendAsync(Send(HttpMethod.Get, $"/api/hosts/{r.Host}/audit", otherCookie))).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await Prepare(r, "updates.refresh", cookie: otherCookie)).Status);
         var job = await db.ScalarAsync<string>("select job from host_audit where event = 'started' limit 1");

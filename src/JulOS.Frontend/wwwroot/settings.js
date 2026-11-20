@@ -14,6 +14,9 @@ export const GROUPS = [
     { id: 'password', ctl: 'button', label: tk('set.password'), help: tk('set.passwordHelp'), action: tk('set.change') },
     { id: 'devices', ctl: 'button', label: tk('set.devices'), help: tk('set.devicesHelp'), action: tk('set.show') },
   ] },
+  { id: 'security', title: tk('set.security'), help: tk('set.securityHelp'), rows: [
+    { id: 'security', ctl: 'button', label: tk('set.securityPage'), help: tk('set.securityPageHelp'), action: tk('set.open') },
+  ] },
   { id: 'appearance', title: tk('set.appearance'), help: tk('set.appearanceHelp'), rows: [
     { id: 'scheme', ctl: 'choice', label: tk('set.scheme'), help: tk('set.schemeHelp') },
     { id: 'lang', ctl: 'choice', label: tk('set.lang'), help: tk('set.langHelp') },

@@ -7,6 +7,12 @@ import { t, tk, getLang } from './i18n.js';
 
 /** Fester Text des Servers -> Schluessel (Quellen: Error(...)-Antworten in src/JulOS.Frontend, Regelpruefungen in src/JulOS.Backend/Logic, Anmeldung, SSH- und Bildstrom-Meldungen). */
 export const SERVER_TEXTS = {
+  "Bitte mit dem Code aus der Authenticator-App bestätigen.": "err.stepUpRequired",
+  "Der Code stimmt nicht. Prüfe den Eintrag in der App und die Uhrzeit des Handys, ein Code gilt nur einmal.": "err.stepUpWrong",
+  "Mindestens ein Eintrag. Um die Liste zu leeren, „Auf Vorgabe zurücksetzen“ wählen.": "err.secNeedEntry",
+  "Angaben fehlen.": "err.secDetailsMissing",
+  "Es gibt keinen Schlüssel für gespeicherte Passwörter, also ist auch nichts zu sichern.": "err.secNoKey",
+  "Es wartet kein neuer Wiederherstellungsschlüssel.": "err.secNoPending",
   "Zu viele Anfragen, bitte kurz warten.": "err.tooMany",
   "DDNS ist auf diesem Server nur zum Ansehen eingeschaltet (JULOS_DDNS=control erlaubt Aktualisieren).": "err.ddnsReadOnly",
   "Es ist kein DNS-Anbieter eingestellt (JULOS_DDNS_PROVIDER).": "err.ddnsNoProvider",
@@ -159,6 +165,11 @@ export const SERVER_TEXTS = {
 
 /** [RegExp mit Gruppen, Schluessel, [Parameternamen je Gruppe]] fuer Texte mit eingesetzten Werten */
 export const SERVER_PATTERNS = [
+  [/^Dein Zugriff kommt gerade über (.{1,64}), und diese Adresse steht nicht in der Liste\. Dann würden die X-Forwarded-Kopfzeilen nicht mehr geglaubt\.$/, "err.secProxyNot", ["proxy"]],
+  [/^(\S+) gespeicherte Verbindung\(en\) wären danach gesperrt\.$/, "err.secBlockedN", ["n"]],
+  [/^„(.{1,40}…?)“ ist keine gültige Adresse.*$/, "err.secBadEntry", ["entry"]],
+  [/^Höchstens (\d+) Einträge\.$/, "err.secMaxEntries", ["n"]],
+  [/^Die Dauer muss zwischen 0 \(immer fragen\) und (\d+) Minuten liegen\.$/, "err.secMinutes", ["n"]],
   [/^Das Passwort braucht mindestens (\d+) Zeichen\.$/, "err.pwMin", ["n"]],
   [/^Es sind schon (\d+) Sitzungen offen\. Schließe eine, um eine neue zu öffnen\.$/, "err.sessionLimit", ["n"]],
   [/^Die Notizen sind zu lang \(höchstens (\d+) Zeichen\)\.$/, "err.notesTooLong", ["n"]],

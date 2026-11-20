@@ -4,6 +4,31 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Behoben
+- **Updates auf Proxmox**: „Alle Updates installieren“ lief mit `apt-get upgrade`, Proxmox verlangt aber `dist-upgrade`; so blieben `pve-manager` und `proxmox-mail-forward` halb eingerichtet („Errors were encountered while processing“, `apt_failed`). Auf Proxmox (Paket `pve-manager` oder `/etc/pve`) läuft jetzt `apt-get dist-upgrade`, einzelne Pakete werden dort nicht angeboten (`proxmox_whole`).
+- **Platten-Anzeige**: „ZFS-Pool: ?“ war kein Pool, sondern ein Text von `zpool status -x`, den der Parser nicht kannte (zum Beispiel „The ZFS modules are not loaded“ nach einem halben Upgrade). Der Parser liest jetzt auch den Rückgabewert: *no pools available* ist „keine Pools“ (nichts angezeigt), alles Unbekannte ist „ZFS: nicht lesbar: <Meldung>“ und **kein Problem**; ein echter Pool zeigt Name, Zustand, `scan` und `errors`.
+- „**Neustart nötig**“ kam bei neuem Kernel nicht (Proxmox setzt `/var/run/reboot-required` nicht): jetzt auch, wenn in `/boot` ein neuerer Kernel der gleichen Art liegt als der laufende.
+
+### Neu
+- **Hintergrund-Aufgaben statt blockierendem Dialog** ([docs/HOST-AGENT.md](docs/HOST-AGENT.md#background-tasks)): nach „Ausführen“ schließt sich das Bestätigungsblatt, die Aktion läuft im Hintergrund. Desktop: Eintrag in der Menüleiste mit Fortschrittsbalken, Klick öffnet ein verschiebbares Fenster (nicht modal) mit Live-Ausgabe, Fehlerzusammenfassung und Protokoll; Handy: Leiste unter der Kopfzeile und eine Seite. Mehrere Aufgaben (auch auf verschiedenen Hosts) sichtbar, je Host nur eine schreibende Aktion; zum Ende ein Hinweis mit „Ansehen“; Schließen bricht nichts ab. Nach einem Neuladen findet `GET /api/host-jobs` laufende und in der letzten Stunde beendete Aufgaben wieder.
+- **Fehler verstehen**: das Protokoll eines apt-Laufs wird begrenzt aufgehoben (2000 Zeilen, 240 Zeichen, 200 kB) und der Agent liefert eine **Zusammenfassung**: `E:`-Zeilen, betroffene Pakete (`Errors were encountered while processing`, `dpkg: error processing package`, `dpkg --audit`), zurückgehaltene Pakete, offene Fragen zu Konfigurationsdateien, Sperre. Oben die Zusammenfassung in Klartext, darunter das volle Protokoll aufklappbar. Neue Rückgabecodes `dpkg_failed` und `dpkg_broken` (zu `apt_failed`, `apt_locked`).
+- **Reparieren** (`updates.repair`, Wort `updates`, eigene Bestätigung): `dpkg --configure -a`, danach `apt-get -f install`. Angeboten nach einem Lauf mit halb eingerichteten Paketen, in der Update-Liste („N Pakete sind halb eingerichtet“, aus `dpkg --audit`, auch wenn `apt-get -s` daran scheitert) und wenn eine Update-Aktion mit `dpkg_broken` abgelehnt wird: **vor jedem Upgrade prüft der Helfer `dpkg --audit`**.
+- **Pakete, die `upgrade` zurückhält** (zum Beispiel `linux-image-amd64`) werden angezeigt (zweite Simulation `apt-get -s upgrade`); die Bestätigung bietet „Auch Pakete mit neuen Abhängigkeiten installieren (full-upgrade)“ (Standard aus) und zeigt, wie viele Pakete dabei entfernt würden. Proxmox: immer vollständig, mit dem Hinweis zu VMs und Neustart.
+- **SMART ohne Root**: neues Berechtigungswort **`disks`** (nie ein Standard; `install-agent.sh --allow ...,disks`, Haken „SMART der Platten lesen“) und das **lesende** Helfer-Verb `smart.health`: der Helfer bildet die Plattenliste selbst (`lsblk`), ruft `smartctl -H -A -j /dev/<name>` mit Zeitlimit und liefert ok/failing/unknown und die Temperatur. Ohne das Wort bleibt die ehrliche Meldung, jetzt mit dem Hinweis, wie man es freischaltet.
+- Der Helfer hat dazu zwei neue Verben (`apt.repair`, `smart.health`) und `apt.upgrade` kennt `full`; alle ohne freien Wert vom Agenten. Neue Aktion im Verlauf: `updates.repair`; ein `dist-upgrade` steht dort als Ziel `all (full)`.
+
+### Sicherheit
+- Review der neuen Verben und der Ausgabe als Daten: [docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md), „Host updates“ (F-39 bis F-45, keiner offen). Der Helfer, der Agent und der Server schneiden und bereinigen das Protokoll je für sich, die Seite zeigt es nur als Text.
+
+### Geändert
+- Der Agent (`tools/julos-agent.py`) und der Helfer (`tools/julos-agent-helper.py`) brauchen für diese Funktionen die neue Fassung: ein älterer Agent kennt `updates.repair` nicht (404) und liefert keine Zusammenfassung; **die Versionsnummer des Agenten (0.8.0 seit 0.16.0) wurde auf diesem Zweig nicht angehoben** (das entscheidet das Release), ohne sie aktualisiert sich ein Agent nicht von selbst. Den Helfer bringt nur ein erneuter Lauf von `install-agent.sh` (mit `--allow ...`) auf die Maschine.
+- `sw.js` `pd-v64`, neue Datei `hosttasks.js`.
+
+### Nicht verifiziert
+- Ein echtes Proxmox 9 mit dem halb aktualisierten Zustand, ein echtes `dist-upgrade` und `dpkg --configure -a`, echte Platten mit `smartctl -j`, ein echtes ZFS mit nicht passendem Modul, der Kernel-Vergleich gegen ein echtes `/boot` und die neuen Oberflächen auf einem Handy: nur mit Fakes und Node-Tests geprüft. Test-Stand im Abschlussbericht des Zweigs.
+
 ## [0.16.0] - 2026-11-20
 
 ### Neu

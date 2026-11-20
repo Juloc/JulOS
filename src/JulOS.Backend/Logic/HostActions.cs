@@ -22,6 +22,7 @@ public static partial class HostActions
     [
         new("updates.refresh", "updates", "updates", "/v1/host/updates/refresh", HostTarget.None, TimeSpan.FromMinutes(11)),
         new("updates.install", "updates", "updates", "/v1/host/updates/install", HostTarget.Package, TimeSpan.FromMinutes(65)),
+        new("updates.repair", "updates", "updates", "/v1/host/updates/repair", HostTarget.None, TimeSpan.FromMinutes(65)),
         new("power.reboot", "reboot", "sysinfo", "/v1/host/reboot", HostTarget.None, TimeSpan.FromSeconds(40)),
         new("power.poweroff", "reboot", "sysinfo", "/v1/host/poweroff", HostTarget.None, TimeSpan.FromSeconds(40)),
         new("service.start", "services", "services", "/v1/host/service/start", HostTarget.Unit, TimeSpan.FromMinutes(3)),
@@ -41,6 +42,9 @@ public static partial class HostActions
     [GeneratedRegex(@"^[a-z0-9](?:[a-z0-9+.\-]*[a-z0-9+.])?(?::[a-z0-9]+)?\z")] private static partial Regex PackagePattern();
     [GeneratedRegex(@"^(?!-)[A-Za-z0-9:_.@\-]{1,100}\.service\z")] private static partial Regex UnitPattern();
     [GeneratedRegex(@"^[0-9a-f]{12}\z")] private static partial Regex ContainerPattern();
+
+    /// <summary>Ist das ein gueltiger Debian-Paketname? (Der Agent meldet Namen aus Protokollen: nur solche werden uebernommen.)</summary>
+    public static bool IsPackageName(string? name) => name is not null && PackagePattern().IsMatch(name);
 
     /// <summary>Sieht der Zielname richtig aus? (Ob er wirklich in der Liste des Agenten steht, prueft der Dienst danach.)</summary>
     public static bool ValidTarget(HostActionDef action, string? target) => action.Target switch

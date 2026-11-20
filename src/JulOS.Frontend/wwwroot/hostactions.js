@@ -7,9 +7,9 @@
  * Server: POST /api/hosts/{id}/actions/prepare -> { token, expiresIn, action, target, targetName, host, typeToConfirm?, warnings, readOnly }
  *         POST /api/hosts/{id}/actions/run {token, action, target, typed} -> 202 { job } ; GET /api/hosts/{id}/actions/{job} -> { state, progress, done, total, result?, error? }
  * ===================================================================== */
-import { t, tk } from './i18n.js';
+import { t, tk, tp } from './i18n.js';
 import { when, hostSupport } from './hostinfo.js';
-import { dl, noteP, callout, listBlock, card } from './hostui.js';
+import { dl, noteP, callout, listBlock, card, icon, button } from './hostui.js';
 
 export const RIGHTS = ['updates', 'reboot', 'services', 'docker', 'logs'];
 export const LEVELS = ['read', 'updates', 'full'];
@@ -18,7 +18,7 @@ const LEVEL_RIGHTS = { read: [], updates: ['updates', 'logs'], full: RIGHTS };
 export const MIN_ACTION_VERSION = [0, 6, 0];
 
 export const ACTION_LABEL = {
-  'updates.refresh': tk('hostact.a.updatesRefresh'), 'updates.install': tk('hostact.a.updatesInstall'),
+  'updates.refresh': tk('hostact.a.updatesRefresh'), 'updates.install': tk('hostact.a.updatesInstall'), 'updates.repair': tk('hostact.a.updatesRepair'),
   'power.reboot': tk('hostact.a.reboot'), 'power.poweroff': tk('hostact.a.poweroff'),
   'service.start': tk('hostact.a.serviceStart'), 'service.stop': tk('hostact.a.serviceStop'), 'service.restart': tk('hostact.a.serviceRestart'),
   'docker.start': tk('hostact.a.dockerStart'), 'docker.stop': tk('hostact.a.dockerStop'), 'docker.restart': tk('hostact.a.dockerRestart'), 'docker.pull': tk('hostact.a.dockerPull'),
@@ -78,7 +78,7 @@ export const typedName = (conf) => (conf && typeof conf.typeToConfirm === 'strin
 /** Stimmt der getippte Text (Gross/Klein und Leerraum am Rand zaehlen nicht; der Server prueft es noch einmal)? */
 export const typedOk = (conf, text) => { const need = typedName(conf); return !need || String(text || '').trim().toLowerCase() === need.toLowerCase(); };
 
-const WARN = { julos_group: tk('hostact.warn.julosGroup'), kept_back: tk('hostact.warn.keptBack') };
+const WARN = { julos_group: tk('hostact.warn.julosGroup'), kept_back: tk('hostact.warn.keptBack'), proxmox_full: tk('hostact.warn.proxmoxFull') };
 /** Alles, was die Bestaetigung zeigt: Satz, Zeilen, Warnungen, Tippaufforderung */
 export function confirmModel(conf) {
   const target = targetText(conf);
@@ -90,14 +90,27 @@ export function confirmModel(conf) {
     typed: typedName(conf),
     danger: isDanger(conf.action, conf.target),
     expiresIn: conf.expiresIn,
+    options: confirmOptions(conf),
   };
+}
+
+/** Die Wahl "alle Updates": Proxmox wird immer vollstaendig aktualisiert (kein Haken), sonst darf der Benutzer "full-upgrade" ausdruecklich waehlen (Standard aus). null ohne diese Wahl. */
+export function confirmOptions(conf) {
+  const o = conf && conf.options;
+  if (!o || typeof o !== 'object') return null;
+  return { proxmox: !!o.proxmox, fullChoice: !!o.fullChoice, full: !!o.full, keptBack: Array.isArray(o.keptBack) ? o.keptBack : [], removals: Number(o.removals) > 0 ? Number(o.removals) : 0 };
 }
 
 export function confirmHtml(conf, esc) {
   const m = confirmModel(conf);
   const warn = m.warnings.map((w) => callout(w, esc, 'warn')).join('');
+  const o = m.options;
+  const full = o && o.fullChoice
+    ? `<label class="hu-check"><input type="checkbox" id="hostActFull"><span class="hu-cb" aria-hidden="true"></span><span>${esc(t('hostact.fullLabel'))}</span></label>${noteP(t('hostact.fullHint', { list: o.keptBack.join(', ') }), esc)}`
+    : '';
+  const removals = o && o.removals > 0 && (o.proxmox || o.fullChoice) ? `<div id="hostActRemovals"${o.proxmox ? '' : ' hidden'}>${callout(tp('hostact.removals', o.removals), esc, 'warn')}</div>` : '';
   const typed = m.typed ? `<label class="hu-field hact-typed"><span>${esc(t('hostact.typePrompt', { name: m.typed }))}</span><input id="hostActTyped" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="${esc(t('hostact.typeLabel'))}"></label>` : '';
-  return callout(m.sentence, esc, m.danger ? 'bad' : 'info') + dl(m.rows, esc) + warn + typed + noteP(t('hostact.expires', { n: m.expiresIn }), esc);
+  return callout(m.sentence, esc, m.danger ? 'bad' : 'info') + dl(m.rows, esc) + warn + full + removals + typed + noteP(t('hostact.expires', { n: m.expiresIn }), esc);
 }
 
 /* ---------- Fehler ---------- */
@@ -108,7 +121,7 @@ const ERR = {
   list_unavailable: tk('hostact.err.list_unavailable'), protected_unit: tk('hostact.err.protected_unit'), too_many: tk('hostact.err.too_many'), confirmation_invalid: tk('hostact.err.confirmation_invalid'),
   confirmation_expired: tk('hostact.err.confirmation_expired'), confirmation_mismatch: tk('hostact.err.confirmation_mismatch'), typed_mismatch: tk('hostact.err.typed_mismatch'),
   audit_failed: tk('hostact.err.audit_failed'), invalid_level: tk('hostact.err.invalid_level'), rate_limited: tk('hostact.err.rate_limited'), job_not_found: tk('hostact.err.job_not_found'),
-  apt_locked: tk('hostact.err.apt_locked'), apt_failed: tk('hostact.err.apt_failed'), systemctl_failed: tk('hostact.err.systemctl_failed'), journal_failed: tk('hostact.err.journal_failed'),
+  apt_locked: tk('hostact.err.apt_locked'), apt_failed: tk('hostact.err.apt_failed'), dpkg_failed: tk('hostact.err.dpkg_failed'), dpkg_broken: tk('hostact.err.dpkg_broken'), proxmox_whole: tk('hostact.err.proxmox_whole'), systemctl_failed: tk('hostact.err.systemctl_failed'), journal_failed: tk('hostact.err.journal_failed'),
   docker_denied: tk('hostact.err.docker_denied'), docker_unavailable: tk('hostact.err.docker_unavailable'), docker_failed: tk('hostact.err.docker_failed'), pull_failed: tk('hostact.err.pull_failed'),
   no_registry_image: tk('hostact.err.no_registry_image'), helper_unavailable: tk('hostact.err.helper_unavailable'), helper_closed: tk('hostact.err.helper_closed'), not_implemented: tk('hostact.err.not_implemented'),
   interrupted: tk('hostact.err.interrupted'), duplicate_job: tk('hostact.err.duplicate_job'), not_installed: tk('hostact.err.not_installed'), update_check_failed: tk('hostact.err.update_check_failed'),
@@ -126,26 +139,56 @@ export const jobPercent = (job) => (job && job.total > 0 && Number.isFinite(job.
 /** Ausgabe und Logs: als Text, jede Zeile fuer sich (CSS: pre-wrap), nie als HTML */
 const pre = (text, esc) => `<pre class="hu-pre">${esc(text)}</pre>`;
 
-/** Der Stand eines Auftrags als HTML: laufend (Text und Balken), verloren, angenommen, fertig, fehlgeschlagen; Ausgabe und Logs nur als Text */
-export function jobHtml(job, esc) {
+/** Das Protokoll eines Laufs aufklappbar (Text, nie HTML); ohne Protokoll die letzten Zeilen der Ausgabe */
+function logHtml(r, esc) {
+  if (Array.isArray(r.log) && r.log.length) {
+    return `<details class="hu-fold hu-log"><summary>${icon('chevron', 'chev')}<span>${esc(tp('hostact.logLines', r.log.length))}</span></summary><pre class="hu-pre" tabindex="0">${esc(r.log.join('\n'))}</pre></details>`;
+  }
+  return r.output ? pre(r.output, esc) : '';
+}
+
+/** Die Fehlerzusammenfassung eines apt-Laufs: betroffene Pakete, zurueckgehaltene Pakete, E:-Zeilen, offene Fragen, Sperre. '' ohne etwas Auffaelliges. */
+export function summaryHtml(r, esc) {
+  const s = r && r.summary;
+  if (!s) return '';
+  const rows = [];
+  if ((s.failedPackages || []).length) rows.push([t('hostact.sum.failed'), s.failedPackages.join(', '), 'warn']);
+  if ((s.keptBack || []).length) rows.push([t('hostact.sum.kept'), s.keptBack.join(', ')]);
+  if ((s.errors || []).length) rows.push([t('hostact.sum.errors'), s.errors.join('\n'), 'warn']);
+  const flags = [];
+  if (s.locked) flags.push(noteP(t('hostact.sum.locked'), esc, true));
+  if (s.configQuestion) flags.push(noteP(t('hostact.sum.question'), esc, true));
+  return dl(rows, esc) + flags.join('');
+}
+
+/**
+ * Der Stand eines Auftrags als HTML: laufend (Text, Balken, Live-Ausgabe), verloren, angenommen, fertig, fehlgeschlagen (Zusammenfassung oben, Protokoll aufklappbar, Angebot zu reparieren);
+ * Ausgabe und Logs nur als Text. opts.repair: die Taste "Reparieren" darf gezeigt werden (Stufe und Wort erlauben es).
+ */
+export function jobHtml(job, esc, opts = {}) {
   if (!job) return '';
   const label = actionLabel(job.action);
   if (job.state === 'running' || job.state === 'lost') {
     const pct = jobPercent(job);
     const bar = pct === null ? '<progress></progress>' : `<progress max="100" value="${pct}"></progress>`;
+    const live = Array.isArray(job.tail) && job.tail.length ? `<pre class="hu-pre hu-live" data-live tabindex="0">${esc(job.tail.slice(-60).join('\n'))}</pre>` : '';
     return callout(job.state === 'lost' ? t('hostact.stLost', { action: label }) : t('hostact.stRunning', { action: label }), esc, job.state === 'lost' ? 'warn' : 'info') + `<div class="hu-prog">${bar}</div>`
-      + (job.progress ? noteP(job.progress + (pct !== null ? ` (${job.done}/${job.total})` : ''), esc) : '');
+      + (job.progress ? noteP(job.progress + (pct !== null ? ` (${job.done}/${job.total})` : ''), esc) : '') + live;
   }
   const r = job.result || {};
-  if (job.state === 'failed') return callout(t('hostact.stFailed', { action: label }), esc, 'bad', errText(job.error)) + (r.output ? pre(r.output, esc) : '');
+  if (job.state === 'failed') {
+    const repair = r.needsRepair ? callout(t('hostact.repairOffer'), esc, 'warn') + (opts.repair ? `<div class="hu-acts">${button(t('hostact.a.updatesRepair'), esc, { tone: 'filled', icon: 'gear', data: { 'task-act': 'repair' } })}</div>` : '') : '';
+    return callout(t('hostact.stFailed', { action: label }), esc, 'bad', errText(job.error)) + summaryHtml(r, esc) + repair + logHtml(r, esc);
+  }
   const parts = [];
   if (job.state === 'accepted') parts.push(callout(job.action === 'power.poweroff' ? t('hostact.stPoweroff') : t('hostact.stReboot'), esc, 'ok'));
   else parts.push(callout(t('hostact.stDone', { action: label }), esc, 'ok'));
   if (r.already) parts.push(noteP(t('hostact.already'), esc));
   if (job.action === 'docker.pull') parts.push(noteP(r.updated ? t('hostact.pullUpdated') : t('hostact.pullCurrent'), esc, !!r.updated));
   if (r.rebootRequired) parts.push(callout(t('hostact.rebootHint'), esc, 'warn'));
+  if (r.summary && (r.summary.keptBack || []).length && !r.full) parts.push(noteP(t('hostact.sum.keptAfter', { list: r.summary.keptBack.join(', ') }), esc));
   if (Array.isArray(r.lines)) parts.push(r.lines.length ? pre(r.lines.join('\n'), esc) : noteP(t('hostact.noLogs'), esc));
-  else if (r.output) parts.push(pre(r.output, esc));
+  else parts.push(logHtml(r, esc));
   return parts.join('');
 }
 
@@ -215,9 +258,10 @@ export function unitsHtml(resp, esc, act) {
 
 /* ---------- Aufrufe ---------- */
 export const prepareAction = (api, hostId, action, target = null, lines = null) => api(`/api/hosts/${hostId}/actions/prepare`, { method: 'POST', body: { action, target, lines } });
-export const runAction = (api, hostId, conf, typed = null) => api(`/api/hosts/${hostId}/actions/run`, { method: 'POST', body: { token: conf.token, action: conf.action, target: conf.target || null, typed } });
+export const runAction = (api, hostId, conf, typed = null, full = null) => api(`/api/hosts/${hostId}/actions/run`, { method: 'POST', body: { token: conf.token, action: conf.action, target: conf.target || null, typed, ...(full === true ? { full: true } : {}) } });
 export const fetchJob = (api, hostId, job) => api(`/api/hosts/${hostId}/actions/${job}`);
 export const fetchAudit = (api, hostId, limit = 30) => api(`/api/hosts/${hostId}/audit?limit=${limit}`);
 export const fetchUnits = (api, hostId, fresh = false) => api(`/api/hosts/${hostId}/units${fresh ? '?fresh=1' : ''}`);
 export const setControl = (api, hostId, level) => api(`/api/hosts/${hostId}/agent/control`, { method: 'PUT', body: { level } });
 export const setPause = (api, paused) => api('/api/host-actions/pause', { method: 'PUT', body: { paused } });
+export const fetchJobs = (api) => api('/api/host-jobs');

@@ -6,7 +6,7 @@
  * Jeder Wert vom Agenten (Namen, Pakete, Adressen, Ausgaben) geht durch esc; Markup entsteht nur hier.
  * ===================================================================== */
 import { t, tp, tk, fmtNumber } from './i18n.js';
-import { hostSupport, fmtBytes, fmtUptime, fmtAge, fmtPercent, loadText, when, ramPercent, mainDisk, healthIssues, MD_STATE, SMART_STATE, SMART_WHY, rateText, wantsInfo, stateNote, agentModeText } from './hostinfo.js';
+import { zfsState, zfsLines, hostSupport, fmtBytes, fmtUptime, fmtAge, fmtPercent, loadText, when, ramPercent, mainDisk, healthIssues, MD_STATE, SMART_STATE, SMART_WHY, rateText, wantsInfo, stateNote, agentModeText } from './hostinfo.js';
 import { stateText, dotClass, hostDetail, serviceState } from './hosts.js';
 import { agentPanel } from './hostagent.js';
 import { icon, dl, noteP, callout, subH, chip, bar, meter, card, listBlock, empty, button } from './hostui.js';
@@ -159,8 +159,9 @@ export function attention(data, host) {
   const out = [];
   const i = data.status && data.status.info;
   const u = data.updates && data.updates.updates;
+  if (u && (u.broken || []).length) out.push({ id: 'broken', panel: 'updates', tone: 'bad', text: tp('hostview.brokenPackages', u.broken.length), detail: u.broken.join(', ') });
   if (u && u.count > 0) out.push({ id: 'updates', panel: 'updates', tone: u.security > 0 ? 'bad' : 'warn', text: tp('hostview.flagUpdates', u.count), detail: u.securityKnown && u.security > 0 ? t('hostview.flagSecurity', { n: u.security }) : '' });
-  if (i && i.rebootRequired) out.push({ id: 'reboot', panel: 'actions', tone: 'warn', text: t('hostinfo.rebootNeeded'), detail: i.rebootPackages && i.rebootPackages.length ? i.rebootPackages.join(', ') : '' });
+  if (i && i.rebootRequired) out.push({ id: 'reboot', panel: 'actions', tone: 'warn', text: t('hostinfo.rebootNeeded'), detail: i.newKernel ? t('hostinfo.rebootKernel', { v: i.newKernel }) : i.rebootPackages && i.rebootPackages.length ? i.rebootPackages.join(', ') : '' });
   const s = data.services && data.services.services;
   if (s && s.count > 0) out.push({ id: 'services', panel: 'services', tone: 'bad', text: tp('hostinfo.failedUnits', s.count) });
   const d = data.docker && data.docker.docker;
@@ -194,7 +195,7 @@ function overviewPanel(c) {
     [t('hostinfo.hostname'), i.hostname || ''],
     [t('hostinfo.virt'), [virt, prox].filter(Boolean).join(' · ')],
     [t('hostinfo.uptimeLabel'), fmtUptime(i.uptimeSeconds)],
-    [t('hostinfo.reboot'), i.rebootRequired ? t('hostinfo.rebootYes') : t('hostinfo.rebootNo'), i.rebootRequired ? 'warn' : ''],
+    [t('hostinfo.reboot'), i.rebootRequired ? t('hostinfo.rebootYes') + (i.newKernel ? ' · ' + t('hostinfo.rebootKernel', { v: i.newKernel }) : '') : t('hostinfo.rebootNo'), i.rebootRequired ? 'warn' : ''],
   ], esc), esc, { icon: 'server' });
   return note(resp, esc) + `<div class="hu-cols">${attHtml}${glance}${machine}</div>`;
 }
@@ -232,12 +233,16 @@ export function healthCard(h, info, esc) {
   if (h.pending) return card(title, noteP(t('hostinfo.stLoading'), esc), esc, { icon: 'shield' });
   const rows = [];
   const sm = h.smart;
-  if (sm && sm.available) rows.push([t('hostinfo.smart'), (sm.devices || []).map((d) => `${d.name}: ${t(SMART_STATE[d.health] || SMART_STATE.unknown)}`).join('\n'), (sm.devices || []).some((d) => d.health === 'failing') ? 'warn' : '']);
+  if (sm && sm.available) rows.push([t('hostinfo.smart'), (sm.devices || []).map((d) => `${d.name}: ${t(SMART_STATE[d.health] || SMART_STATE.unknown)}${Number.isFinite(d.temp) ? ` · ${d.temp} °C` : ''}`).join('\n'), (sm.devices || []).some((d) => d.health === 'failing') ? 'warn' : '']);
   else if (sm) rows.push([t('hostinfo.smart'), t(SMART_WHY[sm.reason] || SMART_WHY.no_access)]);
   if ((h.md || []).length) rows.push([t('hostinfo.raid'), h.md.map((a) => `${a.name}${a.level ? ' (' + a.level + ')' : ''}: ${t(MD_STATE[a.state] || MD_STATE.inactive)} · ${a.active}/${a.total}${a.syncPercent != null ? ' · ' + fmtNumber(a.syncPercent, 1) + ' %' : ''}`).join('\n'), h.md.some((a) => a.state !== 'ok') ? 'warn' : '']);
-  if (h.zfs) rows.push([t('hostinfo.zfs'), h.zfs.healthy ? t('hostinfo.zfsOk') : (h.zfs.pools.length ? h.zfs.pools.map((p) => `${p.name}: ${p.state}`).join('\n') : t('hostinfo.zfsBad')), h.zfs.healthy ? '' : 'warn']);
+  const zs = zfsState(h.zfs);
+  if (zs === 'healthy') rows.push([t('hostinfo.zfs'), t('hostinfo.zfsOk')]);
+  else if (zs === 'problem') rows.push([t('hostinfo.zfs'), zfsLines(h.zfs).join('\n'), 'warn']);
+  else if (zs === 'unknown') rows.push([t('hostinfo.zfs'), t('hostinfo.zfsUnreadable', { why: h.zfs.message || t('hostinfo.zfsNoMessage') })]);       // nicht lesbar: ehrlich sagen, aber kein Problem melden
+  // zs === 'none': keine Pools, es gibt nichts zu zeigen
   const issues = healthIssues(info);
-  const readable = (sm && sm.available) || (h.md && h.md.length) || h.zfs;
+  const readable = (sm && sm.available) || (h.md && h.md.length) || zs === 'healthy' || zs === 'problem';
   const head = issues.length ? callout(t('hostview.healthProblem'), esc, 'bad', issues.join(' · ')) : readable ? callout(t('hostview.healthOk'), esc, 'ok') : callout(t('hostview.healthUnread'), esc, 'info');
   return card(title, head + dl(rows, esc), esc, { icon: 'shield' });
 }
@@ -279,12 +284,16 @@ function updatesPanel(c) {
   if (!u) return note(resp, esc);
   const canRefresh = !!(act && act.can('updates'));
   const security = (u.packages || []).filter((p) => p.security), rest = (u.packages || []).filter((p) => !p.security);
-  const row = (p) => ({ name: p.name, detail: p.from ? `${p.from} → ${p.to}` : t('hostinfo.newPackage', { v: p.to }), badge: p.security ? t('hostinfo.security') : '', actions: act ? act.bar(act.btn('updates.install', p.name, t('hostact.bInstall'))) : '' });
-  const head = u.count > 0
+  const row = (p) => ({ name: p.name, detail: p.from ? `${p.from} → ${p.to}` : t('hostinfo.newPackage', { v: p.to }), badge: p.security ? t('hostinfo.security') : '', actions: act && !u.proxmox ? act.bar(act.btn('updates.install', p.name, t('hostact.bInstall'))) : '' });          // Proxmox nur als Ganzes: kein Knopf je Paket
+  const broken = (u.broken || []).length
+    ? callout(tp('hostview.brokenPackages', u.broken.length), esc, 'bad', u.broken.join(', ')) + (u.unreadable ? noteP(t('hostview.brokenUnreadable'), esc) : '')
+    : '';
+  const head = u.unreadable ? '' : u.count > 0
     ? callout(tp('hostview.updatesCount', u.count), esc, u.security > 0 ? 'bad' : 'warn', u.securityKnown && u.security > 0 ? t('hostview.flagSecurity', { n: u.security }) : '')
     : callout(t('hostinfo.updatesNone'), esc, 'ok');
-  const bar0 = canRefresh ? act.bar(act.btn('updates.refresh', '', t('hostact.a.updatesRefresh')) + (u.count > 0 ? act.btn('updates.install', 'all', t('hostact.bInstallAll')) : '')) : '';
+  const bar0 = canRefresh ? act.bar(act.btn('updates.refresh', '', t('hostact.a.updatesRefresh')) + (u.count > 0 ? act.btn('updates.install', 'all', t('hostact.bInstallAll')) : '') + act.btn('updates.repair', '', t('hostact.bRepair'))) : '';
   const extra = [];
+  if (u.proxmox) extra.push(callout(t('hostview.proxmoxWhole'), esc, 'info'));
   if (u.keptBack && u.keptBack.length) extra.push(noteP(t('hostinfo.keptBack', { list: u.keptBack.join(', ') }), esc));
   if (u.held && u.held.length) extra.push(noteP(t('hostinfo.held', { list: u.held.join(', ') }), esc));
   if (u.removals > 0) extra.push(noteP(tp('hostinfo.removals', u.removals), esc));
@@ -292,7 +301,7 @@ function updatesPanel(c) {
   // Der Hinweis auf "sudo apt update" nur, wenn der Knopf fehlt (Stufe aus, Wort fehlt, Pause); sonst reicht das Alter der Listen
   const age = u.listsAgeSeconds != null ? noteP(`${t('hostinfo.listsAge', { age: fmtAge(u.listsAgeSeconds) })}${canRefresh ? '' : ' ' + t('hostinfo.listsHint')}`, esc, u.listsAgeSeconds > 7 * 86400) : (canRefresh ? '' : noteP(t('hostinfo.listsHint'), esc));
   const lists = (security.length ? subH(t('hostview.securityUpdates'), esc) + listBlock(security.map(row), esc) : '') + (rest.length ? (security.length ? subH(t('hostview.otherUpdates'), esc) : '') + listBlock(rest.map(row), esc) : '');
-  return note(resp, esc) + head + bar0 + (lists ? card('', lists, esc) : '') + extra.join('') + age;
+  return note(resp, esc) + broken + head + bar0 + (lists ? card('', lists, esc) : '') + extra.join('') + age;
 }
 
 function servicesPanel(c) {

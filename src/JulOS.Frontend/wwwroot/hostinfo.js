@@ -45,7 +45,18 @@ export function mainDisk(disks) {
 /* ---------- Gesundheit der Platten und Netzwerk ---------- */
 export const MD_STATE = { ok: tk('hostinfo.mdOk'), degraded: tk('hostinfo.mdDegraded'), recovering: tk('hostinfo.mdRecovering'), inactive: tk('hostinfo.mdInactive') };
 export const SMART_STATE = { ok: tk('hostinfo.smartOk'), failing: tk('hostinfo.smartFailing'), unknown: tk('hostinfo.smartUnknown') };
-export const SMART_WHY = { no_smartctl: tk('hostinfo.smartNoTool'), no_access: tk('hostinfo.smartNoAccess'), no_devices: tk('hostinfo.smartNoDevices') };
+export const SMART_WHY = { no_smartctl: tk('hostinfo.smartNoTool'), no_access: tk('hostinfo.smartNoAccess'), no_devices: tk('hostinfo.smartNoDevices'), helper_unavailable: tk('hostinfo.smartNoHelper'), read_failed: tk('hostinfo.smartReadFailed') };
+
+/** Zustand von ZFS: healthy, none (keine Pools), problem, unknown (nicht lesbar), null (ZFS nicht da). Aeltere Antworten ohne state: aus healthy und den Pools abgeleitet. */
+export function zfsState(z) {
+  if (!z) return null;
+  if (['healthy', 'none', 'problem', 'unknown'].includes(z.state)) return z.state;
+  return z.healthy ? 'healthy' : (z.pools || []).length ? 'problem' : 'unknown';
+}
+/** Die Zeilen einer ZFS-Aussage: je Pool "name: ZUSTAND", dazu scan und errors, wenn vorhanden. */
+export function zfsLines(z) {
+  return (z.pools || []).map((p) => [`${p.name}: ${p.state}`, p.errors ? t('hostinfo.zfsErrors', { v: p.errors }) : '', p.scan ? t('hostinfo.zfsScan', { v: p.scan }) : ''].filter(Boolean).join(' · '));
+}
 
 /** Probleme der Platten als Texte: SMART "failing", RAID nicht "ok", ZFS nicht gesund. Leer = nichts Auffaelliges (oder nichts lesbar: das steht dann im Dialog). */
 export function healthIssues(info) {
@@ -54,7 +65,8 @@ export function healthIssues(info) {
   const out = [];
   for (const d of (h.smart && h.smart.devices) || []) if (d.health === 'failing') out.push(t('hostinfo.issueSmart', { name: d.name }));
   for (const a of h.md || []) if (a.state !== 'ok') out.push(t('hostinfo.issueMd', { name: a.name, state: t(MD_STATE[a.state] || MD_STATE.inactive) }));
-  if (h.zfs && !h.zfs.healthy) out.push(...(h.zfs.pools.length ? h.zfs.pools.map((p) => t('hostinfo.issueZfs', { name: p.name, state: p.state })) : [t('hostinfo.issueZfs', { name: '', state: '?' }).trim()]));
+  // Nur ein Pool, den zpool nennt, ist ein Problem. "Nicht lesbar" (Module nicht geladen, Fehlermeldung) und "keine Pools" sind keins und nie ein Pool namens "?"
+  if (zfsState(h.zfs) === 'problem') out.push(...h.zfs.pools.map((p) => t('hostinfo.issueZfs', { name: p.name, state: p.state })));
   return out;
 }
 /** Summe der Zaehler aller Schnittstellen (Bytes seit dem Start) */
@@ -196,7 +208,7 @@ export function installCommand(origin, code, opts = {}) {
   const allow = ALLOW_WORDS.filter((w) => (opts.allow || []).includes(w));
   return `curl -fsSL ${origin}/agent-files/${AGENT_INSTALLER} -o ${INSTALLER_FILE} && sudo sh ${INSTALLER_FILE} --server ${origin} --code ${code}${allow.length ? ` --allow ${allow.join(',')}` : ''}${opts.dockerGroup && allow.includes('docker') ? ' --docker-group' : ''}${http ? ' --allow-http' : ''}`;
 }
-const ALLOW_WORDS = ['updates', 'logs', 'services', 'docker', 'reboot', 'files-root'];
+const ALLOW_WORDS = ['updates', 'logs', 'services', 'docker', 'disks', 'reboot', 'files-root'];
 
 /**
  * Die Terminal-Verbindung, in der der Befehl landen soll: eine SSH-Verbindung dieses Hosts mit der blanken Shell (nie eine Claude- oder Codex-Kachel: dort ginge

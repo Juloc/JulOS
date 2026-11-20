@@ -10,6 +10,8 @@ import { t, tk, fmtNumber, fmtDate, fmtTime, fmtDay, getPref, LANG_CHOICES } fro
 import { serverMsg } from './i18n-errors.js';
 import { tileKind } from './terminal-programs.js';
 import { hostCardHtml, menuOpen } from './hostview.js';
+import { barText, barPercent, barTone, chipText, panelHtml, finishNotice } from './hosttasks.js';
+import { jobFinal } from './hostactions.js';
 
 /* =====================================================================
  * Desktop-Oberflaeche (breite Bildschirme mit Maus): Menueleiste, Dock, Launcher, Home-Fenster und ein Fenster
@@ -120,10 +122,13 @@ const btn = (cls, html, label) => { const b = el('button', 'dk-b ' + (cls || '')
 
 let dockHinted = false;
 let toastTimer = null;
-function notify(msg, ms = 3200) {
+function notify(msg, ms = 3200, action = null) {
   if (!msg) return;
   $('.dk-toast', root)?.remove();
-  const t = el('div', 'dk-toast'); t.textContent = msg; t.setAttribute('role', 'status'); root.appendChild(t);
+  const t = el('div', 'dk-toast'); t.setAttribute('role', 'status');
+  const span = el('span'); span.textContent = msg; t.appendChild(span);
+  if (action) { const b = btn('dk-btn dk-toast-act', '', action.label); b.textContent = action.label; b.addEventListener('click', () => { t.remove(); action.run(); }); t.append(b); t.classList.add('act'); }
+  root.appendChild(t);
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.remove(), ms);
 }
 
@@ -424,9 +429,81 @@ function buildBar() {
     { label: t('desktop.signOut'), icon: 'power', run: () => ctx.signOut() },
   ]));
   const keys = el('div', 'dk-keys', ic('keyboard') + '<span></span>'); keys.id = 'dkKeys'; keys.hidden = true;
-  bar.append(keys, sess, search, clock, user);
+  // Hintergrund-Aufgaben (hosttasks.js): ein dezenter Eintrag mit Fortschrittsbalken; ein Klick oeffnet das Panel (eine Aufgabe) oder eine Liste (mehrere)
+  const tasks = btn('dk-ic dk-tasks', '<span class="dk-tt"></span><span class="dk-tbar"><i></i></span>'); tasks.hidden = true; tasks.id = 'dkTasks';
+  tasks.addEventListener('click', () => tasksMenu(tasks));
+  bar.append(keys, tasks, sess, search, clock, user);
   return bar;
 }
+
+/* ---------- Hintergrund-Aufgaben (hosttasks.js) ----------
+ * Eine laufende Aktion sperrt nichts: der Eintrag in der Leiste zeigt Text und Balken, das Panel ist ein ganz normales verschiebbares Fenster (nicht modal), das man schliessen darf,
+ * ohne dass die Aktion endet. Mehrere Aufgaben (auch auf verschiedenen Hosts) haben je ihr Fenster. */
+const taskWins = new Map();           // Auftrag -> Fenster
+const hostOfTask = (task) => ctx.state.hosts.find((h) => h.id === task.host.id) || null;
+function renderTaskChip() {
+  const b = $('#dkTasks', root); if (!b) return;
+  const list = ctx.tasks ? ctx.tasks.list() : [];
+  b.hidden = !list.length;
+  if (!list.length) return;
+  const pct = barPercent(list), running = list.some((x) => !jobFinal(x));
+  b.dataset.tone = barTone(list);
+  b.title = list.map(chipText).join('\n');
+  b.querySelector('.dk-tt').textContent = barText(list);
+  const bar = b.querySelector('.dk-tbar');
+  bar.hidden = !running; bar.classList.toggle('ind', pct === null);
+  bar.firstElementChild.style.width = pct === null ? '' : pct + '%';
+}
+function tasksMenu(anchor) {
+  const list = ctx.tasks.list();
+  if (list.length === 1) { openTask(list[0]); return; }
+  showMenu(anchor, [{ cap: t('hosttask.menuTitle') }, ...list.map((task) => ({ label: chipText(task), icon: jobFinal(task) ? (task.state === 'failed' ? 'x' : 'check') : 'refresh', run: () => openTask(task) })),
+    { sep: true }, { label: t('hosttask.clearDone'), icon: 'check', disabled: !list.some(jobFinal), run: () => ctx.tasks.dismissFinished() }]);
+}
+/** Das Fortschritts-Panel einer Aufgabe: ein Fenster (nicht modal) mit Live-Ausgabe, Fehlerzusammenfassung und aufklappbarem Protokoll */
+export function openTask(task) {
+  let w = taskWins.get(task.job);
+  if (w) { w.minimized ? restoreWin(w) : focusWin(w); return; }
+  w = createWindow({ id: 'task-' + task.job, rectKey: 'task', title: chipText(task), rect: defaultRect('task', 520, 460), minW: 360, minH: 260, cascade: 26 * taskWins.size, cls: 'dk-taskwin',
+    onClose: () => taskWins.delete(task.job) });
+  taskWins.set(task.job, w);
+  w.body.innerHTML = '<div class="dk-tpb"></div>';
+  w.body.addEventListener('click', (e) => {
+    const a = e.target.closest('[data-task-act]'); if (!a) return;
+    const cur = ctx.tasks.get(task.job), host = cur && hostOfTask(cur);
+    if (a.dataset.taskAct === 'repair' && host) ctx.hostAction(host, 'updates.repair', null, { onDone: () => ctx.info.load(host, { fresh: true }) });
+  });
+  renderTaskWin(w, task);
+  ctx.tasks.markSeen(task.job);
+}
+function renderTaskWin(w, task) {
+  const sig = [task.state, task.progress, task.done, task.total, task.tail.length, task.tail[task.tail.length - 1] || '', task.error, task.result ? 1 : 0].join('|');
+  if (w.sig === sig) return;
+  w.sig = sig;
+  w.el.setAttribute('aria-label', chipText(task));
+  w.head.querySelector('.dk-wt span').textContent = chipText(task);
+  const box = w.body.querySelector('.dk-tpb');
+  const open = [...box.querySelectorAll('details')].map((d) => d.open), top = box.scrollTop;
+  const live = box.querySelector('[data-live]'), atEnd = !live || live.scrollTop + live.clientHeight >= live.scrollHeight - 8;
+  box.innerHTML = panelHtml(task, ctx.esc, hostOfTask(task));
+  box.querySelectorAll('details').forEach((d, i) => { d.open = !!open[i]; });
+  box.scrollTop = top;
+  const nl = box.querySelector('[data-live]'); if (nl && atEnd) nl.scrollTop = nl.scrollHeight;
+}
+/** Zustand der Aufgaben hat sich geaendert (shell.js): Leiste und offene Panels nachziehen */
+export function tasksChanged() {
+  if (!root) return;
+  renderTaskChip();
+  for (const [job, w] of taskWins) { const task = ctx.tasks.get(job); if (task) renderTaskWin(w, task); else closeWin(w); }
+}
+/** Eine Aufgabe ist fertig: Hinweis mit Ergebnis und Weg zum Panel (bleibt laenger stehen als ein gewoehnlicher Hinweis) */
+export function taskFinished(task) {
+  if (!root) return;
+  const n = finishNotice(task);
+  notify(n.detail ? `${n.text} – ${n.detail}` : n.text, 12000, { label: t('hosttask.show'), run: () => openTask(task) });
+}
+/** Eine Aufgabe wurde gestartet: ein kurzer Hinweis, dass sie im Hintergrund laeuft */
+export function taskStarted(task) { if (root) notify(t('hosttask.started', { action: chipText(task) }), 4200, { label: t('hosttask.show'), run: () => openTask(task) }); }
 
 /* ---------- Tastatur: wer bekommt die Tasten? ----------
  * Solange ein Fernfenster das aktive Fenster ist (und kein Menue oder Launcher offen), gehen alle Tasten in die Fernsteuerung: app.js nimmt dazu das
@@ -1210,7 +1287,7 @@ export function reset() {
   if (!root) return;
   closeMenu(); closeLauncher();
   for (const w of [...wins.values()]) { w.opts.onClose = null; closeWin(w); }
-  sessWins.clear();
+  sessWins.clear(); taskWins.clear(); renderTaskChip();
   modules = { caddy: false, ddns: false, services: false }; applyModules();
   heimCtl?.destroy(); heimCtl = null; import('./heimnetz.js').then((h) => h.resetHeimnetz());
   nav.view = 'start'; nav.back = []; nav.fwd = [];

@@ -604,7 +604,7 @@ def apply_update(server, message, script=None, allow_http=False, opener=None, cu
 # Lesen: Systemwerte, Update-Liste, fehlgeschlagene Dienste, Docker-Container. Schreiben (Stufe 3, Abschnitt "Schreib-Aktionen" weiter unten): nur feste Pfade,
 # nur mit lokaler Erlaubnis je Aktionsart, nur ein Auftrag zugleich.
 HOST_CAPS_ALL = ("sysinfo", "updates", "services", "docker")
-CONTROL_RIGHTS = ("updates", "reboot", "services", "docker", "logs", "files-root")
+CONTROL_RIGHTS = ("updates", "reboot", "services", "docker", "logs", "disks", "files-root")
 PERMISSIONS_FILE = os.environ.get("JULOS_AGENT_PERMISSIONS") or "/etc/julos-agent/permissions"
 DOCKER_SOCKET = os.environ.get("JULOS_AGENT_DOCKER_SOCKET") or "/var/run/docker.sock"
 CMD_TIMEOUT = 30
@@ -612,6 +612,7 @@ MAX_OUTPUT = 8 * 1024 * 1024
 MAX_PACKAGES = 500           # die Antwort bleibt weit unter den 600 kB, die der Server annimmt
 MAX_CONTAINERS = 100
 MAX_ITEMS = 64               # Platten, Adressen, Dienste
+DEVICE_NAME_RE = re.compile(r"^[a-z][a-z0-9]{1,15}\Z")      # Plattenname aus der Antwort des Helfers (/dev/<name>)
 RUN_MODE = "desktop"         # was dieser Prozess ist: "desktop" oder "host" (fuer Statusdatei und hello)
 
 def clean(text, limit=200):
@@ -639,7 +640,7 @@ def read_text(path, limit=1024 * 1024):
 
 # ---- Rechte (Stufe 3): am Server nach Stufe 'control' geprueft, hier noch einmal lokal
 def parse_permissions(text):
-    """Die Datei /etc/julos-agent/permissions: je Zeile ein Recht (updates, reboot, services, docker, logs, files-root), '#' beginnt einen Kommentar. Unbekanntes wird ignoriert."""
+    """Die Datei /etc/julos-agent/permissions: je Zeile ein Recht (updates, reboot, services, docker, logs, disks, files-root), '#' beginnt einen Kommentar. Unbekanntes wird ignoriert."""
     out = set()
     for line in text.splitlines():
         word = line.split("#", 1)[0].strip().lower()
@@ -860,21 +861,37 @@ def parse_mdstat(text):
     return arrays[:MAX_ITEMS]
 
 
-def parse_zpool_status(text):
-    """`zpool status -x`: 'all pools are healthy' oder je Pool 'pool: name' und 'state: DEGRADED'."""
-    if "all pools are healthy" in text:
-        return {"healthy": True, "pools": []}
-    pools, name = [], None
+def parse_zpool_status(text, rc=0):
+    """`zpool status -x` (Text und Rueckgabewert). Ergebnis {state, healthy, pools, message?}:
+      healthy  'all pools are healthy'
+      none     'no pools available' (es gibt keine Pools: kein Problem)
+      problem  mindestens ein Pool wird gelistet (-x nennt nur Pools mit Problem): je Pool name, state (DEGRADED, FAULTED, UNAVAIL, auch ONLINE mit Fehlern), scan, errors, status
+      unknown  alles andere (ZFS-Module nicht geladen, Version passt nicht, Fehlermeldung): KEIN Pool '?', nur eine kurze bereinigte Meldung."""
+    text = str(text or "")
+    low = text.lower()
+    pools, cur = [], None
     for line in text.splitlines():
         m = re.match(r"^\s*pool:\s*(\S+)", line)
         if m:
-            name = m.group(1)
+            cur = {"name": clean(m.group(1), 40), "state": ""}
+            pools.append(cur)
             continue
-        m = re.match(r"^\s*state:\s*(\w+)", line)
-        if m and name:
-            pools.append({"name": clean(name, 40), "state": clean(m.group(1), 16)})
-            name = None
-    return {"healthy": False, "pools": pools[:MAX_ITEMS]}
+        m = re.match(r"^\s*(state|scan|errors|status):\s*(.*)$", line)
+        if m and cur is not None:
+            key, val = m.group(1), clean(m.group(2), 100)
+            if key == "state":
+                cur["state"] = clean(val.split()[0] if val else "", 16)
+            elif val and key not in cur:
+                cur[key] = val
+    pools = [p for p in pools if p["state"]]
+    if pools and rc == 0:
+        return {"state": "problem", "healthy": False, "pools": pools[:MAX_ITEMS]}
+    if rc == 0 and "all pools are healthy" in low:
+        return {"state": "healthy", "healthy": True, "pools": []}
+    if rc == 0 and "no pools available" in low:
+        return {"state": "none", "healthy": True, "pools": []}
+    first = next((l for l in (clean(x, 120) for x in text.splitlines()) if l), "")
+    return {"state": "unknown", "healthy": False, "pools": [], "message": first or ("zpool rc %s" % rc)}
 
 
 def parse_smart_health(text):
@@ -890,7 +907,22 @@ def parse_smart_health(text):
 
 
 def collect_smart():
-    """SMART-Kurzstatus je Platte ueber smartctl, wenn es das Programm gibt und der Dienst-Benutzer die Platten lesen darf; sonst {'available': False, 'reason': ...}."""
+    """SMART-Kurzstatus je Platte. Mit dem Wort `disks` fragt der Agent den root-Helfer (Verb smart.health, nur lesend, die Plattenliste bildet der Helfer selbst);
+    ohne das Wort versucht er es als Dienst-Benutzer (meist kein Zugriff, dann bleibt die ehrliche Meldung). {'available': False, 'reason': ...} sagt, warum nichts zu lesen war."""
+    if "disks" in permissions():
+        r = helper_call({"verb": "smart.health"}, None, 600)
+        if r is None:
+            return {"available": False, "reason": "helper_unavailable"}
+        if not r.get("ok"):
+            return {"available": False, "reason": "no_smartctl" if r.get("code") == "not_installed" else "read_failed"}
+        devices = []
+        for d in (r.get("devices") if isinstance(r.get("devices"), list) else [])[:16]:
+            if isinstance(d, dict) and isinstance(d.get("name"), str) and DEVICE_NAME_RE.match(d["name"]):
+                e = {"name": "/dev/" + d["name"], "health": d.get("health") if d.get("health") in ("ok", "failing") else "unknown"}
+                if isinstance(d.get("temp"), int) and not isinstance(d.get("temp"), bool) and -50 <= d["temp"] <= 150:
+                    e["temp"] = d["temp"]
+                devices.append(e)
+        return {"available": True, "devices": devices} if devices else {"available": False, "reason": "no_devices"}
     if not shutil.which("smartctl"):
         return {"available": False, "reason": "no_smartctl"}
     scan = run_cmd(["smartctl", "--scan"], 10)
@@ -917,7 +949,9 @@ def collect_zfs():
     if not shutil.which("zpool"):
         return None
     r = run_cmd(["zpool", "status", "-x"], 10)
-    return parse_zpool_status(r[1]) if r and r[0] == 0 else None
+    if r is None:
+        return {"state": "unknown", "healthy": False, "pools": [], "message": "zpool antwortet nicht"}
+    return parse_zpool_status((r[1] + "\n" + r[2]) if r[0] != 0 else r[1], r[0])
 
 
 def compute_health(proc="/proc"):
@@ -948,11 +982,48 @@ def health_snapshot(compute=None, now=None):
     return HEALTH["data"] or {"pending": True}
 
 
+def kernel_key(version):
+    """Ein Kernel-Versionstext als vergleichbarer Schluessel: '6.12.57+deb13-amd64' -> ((6, 12, 57, 13), 'amd64'). Die Zahlen werden verglichen, die Art (amd64, pve, generic) bestimmt, was vergleichbar ist."""
+    nums = tuple(int(n) for n in re.findall(r"\d+", version.rsplit("-", 1)[0] if "-" in version else version))
+    flavour = version.rsplit("-", 1)[1] if "-" in version else ""
+    return nums, flavour if not flavour[:1].isdigit() else ""
+
+
+def kernel_pending(running, installed):
+    """Ist ein neuerer Kernel der gleichen Art installiert als der laufende? installed: Versionstexte aus /boot/vmlinuz-*. Gibt die neueste installierte Version zurueck, wenn sie neuer ist, sonst None.
+    Das braucht auch Proxmox (proxmox-kernel): dort setzt apt keine Datei /var/run/reboot-required."""
+    run_nums, run_flavour = kernel_key(running)
+    best = None
+    for v in installed:
+        nums, flavour = kernel_key(v)
+        if flavour == run_flavour and nums > run_nums and (best is None or nums > kernel_key(best)[0]):
+            best = v
+    return best
+
+
+def read_installed_kernels(boot="/boot"):
+    """Die Versionen der installierten Kernel: Namen 'vmlinuz-<version>' im Ordner /boot (nur der Ordner wird gelesen, nie eine Datei)."""
+    try:
+        return [clean(n[len("vmlinuz-"):], 64) for n in os.listdir(boot) if n.startswith("vmlinuz-") and re.match(r"^vmlinuz-\d[\w.+~\-]*\Z", n)][:64]
+    except OSError:
+        return []
+
+
+def is_proxmox(exists=os.path.exists, run=None):
+    """Ist das ein Proxmox-Rechner (Paket pve-manager installiert oder /etc/pve, auch Backup Server und Mail Gateway)? Dort darf nur `apt-get dist-upgrade` aktualisieren."""
+    if any(exists(m) for m in ("/etc/pve", "/etc/proxmox-backup", "/etc/pmg")):
+        return True
+    r = (run or run_cmd)(["dpkg-query", "-W", "-f=${Status}", "pve-manager"], 10)
+    return bool(r and r[0] == 0 and "install ok installed" in r[1])
+
+
 def collect_sysinfo(proc="/proc", etc="/etc", var_run="/var/run", statvfs=os.statvfs, exists=os.path.exists):
     osr = read_os_release(os.path.join(etc, "os-release"))
     un = os.uname()
-    reboot = exists(os.path.join(var_run, "reboot-required"))
-    pkgs = [clean(l, 80) for l in read_text(os.path.join(var_run, "reboot-required.pkgs"), 8192).split() if l][:20] if reboot else []
+    flag = exists(os.path.join(var_run, "reboot-required"))
+    pkgs = [clean(l, 80) for l in read_text(os.path.join(var_run, "reboot-required.pkgs"), 8192).split() if l][:20] if flag else []
+    new_kernel = kernel_pending(un.release, read_installed_kernels())      # neuer Kernel installiert, laeuft noch nicht: Neustart noetig, auch ohne die Datei
+    reboot = flag or bool(new_kernel)
     return {
         "hostname": clean(socket.gethostname(), 64),
         "os": clean(osr.get("PRETTY_NAME") or osr.get("NAME"), 64), "osId": clean(osr.get("ID"), 24), "osVersion": clean(osr.get("VERSION_ID"), 24),
@@ -960,7 +1031,7 @@ def collect_sysinfo(proc="/proc", etc="/etc", var_run="/var/run", statvfs=os.sta
         "uptimeSeconds": read_uptime(proc), "load": read_load(proc), "cpuCount": os.cpu_count() or 0,
         "memory": read_meminfo(proc), "disks": read_disks(proc, statvfs), "addresses": read_addresses(proc), "network": read_netdev(proc),
         "health": health_snapshot(),
-        "rebootRequired": reboot, "rebootPackages": pkgs,
+        "rebootRequired": reboot, "rebootPackages": pkgs, "newKernel": new_kernel,
         "virt": detect_virt(proc, exists), "proxmox": detect_proxmox(exists),
         "collectedAt": int(time.time()),
     }
@@ -1018,17 +1089,34 @@ def apt_lists_checked(lists="/var/lib/apt/lists", stamp="/var/lib/apt/periodic/u
     return int(max(times)) if times else None
 
 
+def broken_packages():
+    """Pakete, die halb eingerichtet sind (`dpkg --audit`, lesend, ohne Root): leere Liste, wenn alles in Ordnung ist oder dpkg nicht antwortet."""
+    r = run_cmd(["dpkg", "--audit"], 15)
+    if not r or r[0] != 0 or not r[1].strip():
+        return []
+    return summarize_apt(r[1].splitlines())["failedPackages"]
+
+
 def collect_updates_apt():
     sim = run_cmd(["apt-get", "-s", "-q", "-o", "Debug::NoLocking=true", "dist-upgrade"], 60)
     if sim is None:
         return 500, {"error": "apt_failed", "detail": "apt-get startet nicht oder braucht zu lange"}
+    broken = broken_packages()
     rc, out, err = sim
     if rc != 0:
+        if broken:       # die Simulation scheitert oft gerade an halb eingerichteten Paketen: dann nicht "Fehler", sondern der Weg zur Reparatur (die Liste der Updates ist dann unbekannt)
+            return 200, finish_updates("apt", [], [], [], apt_lists_checked(), 0, proxmox=is_proxmox(), broken=broken, unreadable=True)
         return 500, {"error": "apt_failed", "detail": clean(" ".join((err or out).split())[-200:], 200)}
     parsed = parse_apt_simulation(out)
+    kept = list(parsed["keptBack"])
+    if parsed["packages"]:
+        # was `apt-get upgrade` (nicht dist-upgrade) zurueckhaelt: Pakete mit neuen Abhaengigkeiten, zum Beispiel ein neuer Kernel
+        up = run_cmd(["apt-get", "-s", "-q", "-o", "Debug::NoLocking=true", "upgrade"], 60)
+        if up and up[0] == 0:
+            kept += [k for k in parse_apt_simulation(up[1])["keptBack"] if k not in kept]
     hold = run_cmd(["apt-mark", "showhold"], 10)
     held = [clean(x, 80) for x in hold[1].split()] if hold and hold[0] == 0 else []
-    return 200, finish_updates("apt", parsed["packages"], parsed["keptBack"], held, apt_lists_checked(), parsed["removals"])
+    return 200, finish_updates("apt", parsed["packages"], kept, held, apt_lists_checked(), parsed["removals"], proxmox=is_proxmox(), broken=broken)
 
 
 def parse_dnf_check_update(text):
@@ -1058,7 +1146,7 @@ def parse_checkupdates(text):
     return out
 
 
-def finish_updates(manager, packages, kept, held, lists_checked, removals=0):
+def finish_updates(manager, packages, kept, held, lists_checked, removals=0, proxmox=False, broken=(), unreadable=False):
     """Die Antwort des Agenten: Sicherheitsupdates zuerst, die Liste bei MAX_PACKAGES abgeschnitten. security ist null, wo der Paketmanager es nicht sagt."""
     now = int(time.time())
     known = manager == "apt"
@@ -1067,7 +1155,7 @@ def finish_updates(manager, packages, kept, held, lists_checked, removals=0):
     return {
         "manager": manager, "count": total, "security": sum(1 for p in packages if p["security"]) if known else None,
         "securityKnown": known, "truncated": total > MAX_PACKAGES, "packages": ordered[:MAX_PACKAGES],
-        "keptBack": kept[:MAX_ITEMS], "held": held[:MAX_ITEMS], "removals": removals,
+        "keptBack": kept[:MAX_ITEMS], "held": held[:MAX_ITEMS], "removals": removals, "proxmox": bool(proxmox), "broken": list(broken)[:MAX_ITEMS], "unreadable": bool(unreadable), "newPackages": sum(1 for p in packages if p.get("new")),
         "listsCheckedAt": lists_checked, "listsAgeSeconds": max(0, now - lists_checked) if lists_checked else None, "checkedAt": now,
     }
 
@@ -1223,6 +1311,7 @@ POWER_DELAY = 5              # Sekunden zwischen "angenommen" und dem Neustart: 
 WRITE_ROUTES = {
     "/v1/host/updates/refresh": ("updates", "updates.refresh"),
     "/v1/host/updates/install": ("updates", "updates.install"),
+    "/v1/host/updates/repair": ("updates", "updates.repair"),
     "/v1/host/reboot": ("reboot", "power.reboot"),
     "/v1/host/poweroff": ("reboot", "power.poweroff"),
     "/v1/host/service/start": ("services", "service.start"),
@@ -1335,7 +1424,7 @@ def helper_call(request, on_line=None, timeout=3600, path=None):
         f = s.makefile("rb")
         end = time.time() + timeout
         while time.time() < end:
-            raw = f.readline(262144)
+            raw = f.readline(1048576)
             if not raw:
                 return {"ok": False, "code": "helper_closed"}
             try:
@@ -1382,20 +1471,86 @@ class Ctx:
     def __init__(self, job, emit):
         self.job, self.emit = job, emit
         self.last = 0.0
+        self.pending = []
 
     def line(self, text, done=None, total=None):
         job_store().progress(self.job, text, done, total)
+        self.pending = (self.pending + [clean(text, 200)])[-20:]
         now = time.time()
-        if now - self.last >= 0.4:          # nicht jede Zeile von apt schicken
-            self.last = now
+        if now - self.last >= 0.4:          # nicht jede Zeile von apt einzeln schicken: die Zeilen seit der letzten Meldung gehen gebuendelt mit
+            self.last, lines, self.pending = now, self.pending, []
             try:
-                self.emit(clean(text, 160), done, total)
+                self.emit(clean(text, 160), done, total, lines)
+            except TypeError:
+                try:
+                    self.emit(clean(text, 160), done, total)       # ein Empfaenger ohne Zeilen (aelterer Aufrufer)
+                except Exception:  # noqa: BLE001
+                    pass
             except Exception:  # noqa: BLE001  # ein Fortschritt darf nie die Aktion stoeren
                 pass
 
 
 def err(status, code, **extra):
     return status, {"error": code, **extra}
+
+
+LOG_STORE_LINES = 200        # so viele Zeilen des Protokolls bleiben in der Auftragsdatei (das ganze Protokoll geht nur an den Server, nie auf die Platte)
+LOG_KEEP_LINES = 2000
+LOG_KEEP_WIDTH = 240
+LOG_KEEP_BYTES = 200 * 1024
+_BROKEN_HEAD = ("half configured", "half installed", "in a mess", "awaiting trigger", "triggers", "unpacked but")
+
+
+def clean_log(text, limit=LOG_KEEP_WIDTH):
+    """Eine Protokollzeile: nur druckbare Zeichen, Einrueckung bleibt (apt rueckt Paketlisten ein), hoechstens limit Zeichen."""
+    return "".join(c for c in str(text if text is not None else "") if c.isprintable()).rstrip()[:limit]
+
+
+def summarize_apt(lines):
+    """Die Fehlerzusammenfassung eines apt- oder dpkg-Laufs aus seinem Protokoll (Zeilen mit Einrueckung). Gibt zurueck:
+      errors          die 'E:'-Zeilen (hoechstens 8)
+      failedPackages  Pakete aus 'Errors were encountered while processing:', 'dpkg: error processing package X' und der Liste von `dpkg --audit` (halb eingerichtet)
+      keptBack        Pakete unter 'The following packages have been kept back:'
+      configQuestion  dpkg wollte eine Frage zu einer Konfigurationsdatei stellen (der Lauf kann sie nicht beantworten)
+      locked          die Paketverwaltung war gesperrt
+      installed       wie viele Pakete 'Setting up' meldeten
+    Nur Text aus dem Protokoll, bereinigt und begrenzt; nichts davon wird ausgefuehrt."""
+    errors, failed, kept, mode, waiting = [], [], [], None, False
+    installed, question, locked = 0, False, False
+    for raw in lines:
+        line = clean_log(raw)
+        text = line.strip()
+        low = text.lower()
+        if mode and line[:1] in (" ", "\t") and text:
+            tokens = text.split()
+            (kept if mode == "kept" else failed).extend(tokens if mode == "kept" else tokens[:1])
+            waiting = False
+            continue
+        if mode and waiting and text:
+            continue                                              # die Einleitung von `dpkg --audit` geht ueber mehrere Zeilen, erst danach kommt die Liste
+        mode = None
+        if text.startswith("E: ") and len(errors) < 8 and text not in errors:
+            errors.append(text[:200])
+        if "could not get lock" in low or "unable to acquire the dpkg" in low:
+            locked = True
+        head, sep, rest = text.partition(":")
+        if low.startswith("errors were encountered while processing"):
+            mode = "failed"
+            failed.extend(rest.split())                           # steht die Liste in derselben Zeile
+        elif low.startswith("the following packages have been kept back"):
+            mode = "kept"
+            kept.extend(rest.split())
+        elif low.startswith("the following packages") and any(w in low for w in _BROKEN_HEAD):
+            mode, waiting = "failed", True
+        m = re.match(r"^dpkg: error processing package (\S+)", text)
+        if m:
+            failed.append(m.group(1))
+        if low.startswith("setting up "):
+            installed += 1
+        if "configuration file '" in low or "install the package maintainer's version" in low or "y or i  :" in low:
+            question = True
+    uniq = lambda xs: [x for i, x in enumerate(xs) if x not in xs[:i] and PKG_RE.match(x)][:MAX_ITEMS]
+    return {"errors": errors, "failedPackages": uniq(failed), "keptBack": uniq(kept), "configQuestion": question, "locked": locked, "installed": installed}
 
 
 def from_helper(r, **extra):
@@ -1410,12 +1565,29 @@ def from_helper(r, **extra):
             out["lines"] = [clean(l, LOG_LINE_WIDTH) for l in r["lines"][:LOG_LINES_MAX] if isinstance(l, str)]
         if isinstance(r.get("output"), str):
             out["output"] = tail_text(clean_lines(r["output"], 40))
+        add_log(out, r)
         return 200, out
     code = r.get("code") if isinstance(r.get("code"), str) and re.match(r"^[a-z_]{1,32}$", r["code"]) else "action_failed"
     out = {"error": code, **extra}
     if isinstance(r.get("output"), str):
         out["output"] = tail_text(clean_lines(r["output"], 40))
+    add_log(out, r, failed=code)
     return (403 if code == "not_permitted" else 500), out
+
+
+def add_log(out, r, failed=None):
+    """Das Protokoll (alle Zeilen, die der Helfer mitgibt, begrenzt) und seine Zusammenfassung ins Ergebnis; bei einem Fehler auch 'needsRepair', wenn Pakete halb eingerichtet blieben."""
+    log_lines = r.get("log") if isinstance(r.get("log"), list) else None
+    if log_lines is None:
+        return
+    log_lines = [clean_log(l) for l in log_lines[-LOG_KEEP_LINES:] if isinstance(l, str)]
+    total = sum(len(l) + 1 for l in log_lines)
+    while log_lines and total > LOG_KEEP_BYTES:                  # die Antwort an den Server bleibt klein (Grenze 600 kB): die aeltesten Zeilen fallen zuerst weg
+        total -= len(log_lines.pop(0)) + 1
+    summary = summarize_apt(log_lines)
+    out["log"], out["summary"] = log_lines, summary
+    if failed in ("dpkg_failed", "dpkg_broken") or (failed and summary["failedPackages"]):
+        out["needsRepair"] = True
 
 
 def int_in(value, low, high, default):
@@ -1466,6 +1638,11 @@ def reboot_required(exists=os.path.exists):
     return exists("/var/run/reboot-required")
 
 
+def reboot_needed():
+    """Neustart noetig: die Datei von apt oder ein neuerer Kernel als der laufende."""
+    return reboot_required() or bool(kernel_pending(os.uname().release, read_installed_kernels()))
+
+
 def apt_progress(ctx, total):
     state = {"done": 0}
 
@@ -1489,11 +1666,17 @@ def act_updates_install(body, ctx):
     everything = body.get("all") is True
     if everything == (packages is not None):
         return err(400, "invalid_request", field="packages")            # genau eins von beiden
+    if body.get("full") not in (None, True, False) or (body.get("full") is True and not everything):
+        return err(400, "invalid_request", field="full")
     if update_manager() != "apt":
         return err(501, "not_implemented", detail="nur apt")
     status, upd = collect_updates()
     if status != 200:
         return err(500, "update_check_failed")
+    proxmox = bool(upd.get("proxmox"))
+    if proxmox and not everything:
+        return err(409, "proxmox_whole")                               # Proxmox wird nur als Ganzes aktualisiert (dist-upgrade); einzelne Pakete lassen es halb aktualisiert zurueck
+    full = everything and (proxmox or body.get("full") is True)         # auf Proxmox immer dist-upgrade, sonst nur auf ausdruecklichen Wunsch
     listed = {p["name"] for p in upd.get("packages", [])}
     if not everything:
         if not isinstance(packages, list) or not 1 <= len(packages) <= MAX_PACKAGES_PER_ACTION or not all(isinstance(p, str) and PKG_RE.match(p) for p in packages):
@@ -1502,12 +1685,22 @@ def act_updates_install(body, ctx):
             return err(404, "unknown_target")                          # nur Pakete der Update-Liste
         packages = list(dict.fromkeys(packages))
     total = len(packages) if not everything else int(upd.get("count") or 0)
-    ctx.line("apt-get " + ("upgrade" if everything else "install --only-upgrade"), 0, total or None)
+    ctx.line("apt-get " + ("dist-upgrade" if full else "upgrade" if everything else "install --only-upgrade"), 0, total or None)
     req = {"verb": "apt.upgrade"}
     if not everything:
         req["packages"] = packages
+    elif full:
+        req["full"] = True
     r = helper_call(req, apt_progress(ctx, total), 3600)
-    return from_helper(r, rebootRequired=reboot_required(), count=total)
+    return from_helper(r, rebootRequired=reboot_needed(), count=total, **({"full": True} if full else {}))
+
+
+def act_updates_repair(body, ctx):
+    """Halb eingerichtete Pakete reparieren (der Helfer fuehrt dpkg --configure -a und danach apt-get -f install aus)."""
+    if update_manager() != "apt":
+        return err(501, "not_implemented", detail="nur apt")
+    ctx.line("dpkg --configure -a")
+    return from_helper(helper_call({"verb": "apt.repair"}, apt_progress(ctx, 0), 3700), rebootRequired=reboot_needed())
 
 
 def act_power(op):
@@ -1663,6 +1856,7 @@ def act_docker_pull(body, ctx):
 ACTIONS = {
     "updates.refresh": act_updates_refresh,
     "updates.install": act_updates_install,
+    "updates.repair": act_updates_repair,
     "power.reboot": act_power("reboot"),
     "power.poweroff": act_power("poweroff"),
     "service.start": act_service("start"),
@@ -1708,6 +1902,8 @@ def perform(action, body, emit=None):
             status, res = err(500, "failed")
         res = dict(res, job=job, action=action)
         stored = {k: v for k, v in res.items() if k != "lines"}         # der Inhalt von Logs wird nicht gespeichert
+        if isinstance(stored.get("log"), list):
+            stored["log"] = stored["log"][-LOG_STORE_LINES:]            # vom Protokoll eines apt-Laufs bleibt in der Datei nur das Ende (die Zusammenfassung bleibt ganz)
         jobs.finish(job, status, stored, state="accepted" if status == 200 and res.get("accepted") else None)
         release = not (status == 200 and action in KEEP_BUSY_AFTER)
         return status, res
@@ -2464,9 +2660,12 @@ class Link:
         except OSError:
             pass
 
-    def progress(self, id, text, done=None, total=None):
-        """Eine Fortschrittsmeldung zu einer laufenden Anfrage (lange Aktionen); geht die Verbindung gerade nicht, ist sie verloren, die Aktion laeuft trotzdem weiter."""
+    def progress(self, id, text, done=None, total=None, lines=None):
+        """Eine Fortschrittsmeldung zu einer laufenden Anfrage (lange Aktionen); geht die Verbindung gerade nicht, ist sie verloren, die Aktion laeuft trotzdem weiter.
+        lines: die Ausgabezeilen seit der letzten Meldung (fuer die Live-Ansicht), hoechstens 20 zu je 200 Zeichen."""
         msg = {"t": "progress", "id": id, "text": str(text)[:160]}
+        if lines:
+            msg["lines"] = [str(l)[:200] for l in lines[-20:]]
         if done is not None:
             msg["done"], msg["total"] = int(done), int(total or 0)
         try:
@@ -2500,7 +2699,7 @@ class Link:
             method, path, body = m.get("method"), m.get("path"), m.get("body")
             if method in ("GET", "POST") and isinstance(path, str) and path.startswith("/v1/"):
                 if self.progress_ok:
-                    self.background(id, lambda: self.reply(id, *self.handler(method, path, body, lambda text, done=None, total=None: self.progress(id, text, done, total))))
+                    self.background(id, lambda: self.reply(id, *self.handler(method, path, body, lambda text, done=None, total=None, lines=None: self.progress(id, text, done, total, lines))))
                 else:
                     self.background(id, lambda: self.reply(id, *(self.handler or api)(method, path, body)))
             else:

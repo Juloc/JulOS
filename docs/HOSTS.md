@@ -94,3 +94,9 @@ A Windows agent, groups or tenants, roles, and sharing a host between users. The
 server runs on: a host without an agent uses it, as before, so several hosts on different machines each need their own agent.
 
 Every SSH connection of a host is also a place in the **Files app**: browse, view, download and (with `JULOS_FILES_WRITE=on`) change the files of the SSH user over SFTP, with the saved credentials; see [FILES.md](FILES.md).
+
+## Updates and background tasks
+
+Actions on a host (updates, repair, restart, Docker pull) run as **background tasks**: the confirmation is a small sheet, then the action runs without blocking anything. The desktop shows an entry in the menu bar with progress ("Updates installieren auf pve: 12 von 63"), the phone a bar under the header; a click opens the panel with the live output, the error summary and the folded log. `GET /api/host-jobs` brings running and just finished tasks back after a reload; the details are in [HOST-AGENT.md](HOST-AGENT.md#background-tasks).
+
+A **Proxmox** host is updated as a whole (`dist-upgrade`, no single packages); other hosts get a plain `upgrade` with the explicit option "full-upgrade" for packages that `upgrade` holds back. Half configured packages (`dpkg --audit`) show in the section Updates with the button **Reparieren**. The disk health card shows SMART (with the word `disks`), software RAID and ZFS; "ZFS not readable" is said as such and is not a problem.

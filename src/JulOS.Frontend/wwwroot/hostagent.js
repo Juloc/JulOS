@@ -10,7 +10,7 @@ import { icon, card, callout, noteP, button } from './hostui.js';
 /** Die Haken der Einrichtung: Wort fuer --allow, Text. Reihenfolge wie auf dem Bildschirm; nie ein Standard (alles beginnt aus). */
 export const ALLOW_CHOICES = [
   { word: 'updates', label: tk('app.allowUpdates') }, { word: 'logs', label: tk('app.allowLogs') }, { word: 'services', label: tk('app.allowServices') },
-  { word: 'docker', label: tk('app.allowDocker') }, { word: 'reboot', label: tk('app.allowReboot') },
+  { word: 'docker', label: tk('app.allowDocker') }, { word: 'disks', label: tk('app.allowDisks') }, { word: 'reboot', label: tk('app.allowReboot') },
   { word: 'files-root', label: tk('app.allowFilesRoot') },
 ];
 
@@ -46,7 +46,7 @@ export function agentPanel(ctx) {
   const group = `<label class="hu-check" data-hag-grouprow${setup.allow.includes('docker') ? '' : ' hidden'}><input type="checkbox" data-hag-group="1"${setup.dockerGroup ? ' checked' : ''}><span class="hu-cb" aria-hidden="true"></span><span>${esc(t('app.allowDockerGroup'))}</span></label>`;
   const cmd = setup.command ? `<div class="hu-cmd">${noteP(setup.note, esc)}<pre class="hu-pre" id="hostAgentCmd">${esc(setup.command)}</pre></div>` : '';
   const setupCard = card(a ? t('hostview.setupAgain') : t('hostview.setupTitle'), noteP(t('app.hostAgentHint'), esc)
-    + `<div class="hu-checks"><h5 class="hu-sub">${esc(t('app.allowTitle'))}</h5>${noteP(t('app.allowHint'), esc)}${ticks.slice(0, 4).join('')}${group}${ticks[4]}${ticks[5]}</div>`
+    + `<div class="hu-checks"><h5 class="hu-sub">${esc(t('app.allowTitle'))}</h5>${noteP(t('app.allowHint'), esc)}${ticks.slice(0, 4).join('')}${group}${ticks.slice(4).join('')}</div>`
     + noteP(terminal ? t('shell.sshTarget', { name: terminal.name }) : t('shell.sshNoTerminal'), esc)
     + `<div class="hu-acts">${terminal ? button(t('app.hostSshInstall'), esc, { tone: 'filled', icon: 'terminal', data: { 'hag-ssh': '1' } }) : ''}${button(t('app.hostSshCopy'), esc, { tone: terminal ? 'tonal' : 'filled', icon: 'download', data: { 'hag-copy': '1' } })}</div>${cmd}`, esc, { icon: 'download' });
   return `<div class="hu-cols">${status}${setupCard}</div>`;

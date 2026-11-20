@@ -371,8 +371,9 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(agent.parse_mdstat(text)[0]["state"], "ok")
 
     def test_zpool_status(self):
-        self.assertEqual(agent.parse_zpool_status("all pools are healthy\n"), {"healthy": True, "pools": []})
-        self.assertEqual(agent.parse_zpool_status(ZPOOL_BAD), {"healthy": False, "pools": [{"name": "tank", "state": "DEGRADED"}]})
+        self.assertEqual(agent.parse_zpool_status("all pools are healthy\n"), {"state": "healthy", "healthy": True, "pools": []})
+        r = agent.parse_zpool_status(ZPOOL_BAD)
+        self.assertEqual((r["state"], r["healthy"], [(p["name"], p["state"]) for p in r["pools"]]), ("problem", False, [("tank", "DEGRADED")]))
 
     def test_smart_summary_per_disk(self):
         self.assertEqual(agent.parse_smart_health("SMART overall-health self-assessment test result: PASSED"), "ok")

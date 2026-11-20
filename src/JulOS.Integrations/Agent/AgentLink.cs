@@ -182,7 +182,9 @@ public sealed class AgentLink
                 var text = root.TryGetProperty("text", out var tx) && tx.ValueKind == JsonValueKind.String ? AgentLabels.Printable(tx.GetString(), 160) : "";
                 int? done = root.TryGetProperty("done", out var dn) && dn.ValueKind == JsonValueKind.Number && dn.TryGetInt32(out var d) ? Math.Clamp(d, 0, 100000) : null;
                 int? total = root.TryGetProperty("total", out var tt) && tt.ValueKind == JsonValueKind.Number && tt.TryGetInt32(out var n) ? Math.Clamp(n, 0, 100000) : null;
-                try { cb(new AgentProgress(text, done, total)); } catch (Exception e) when (e is not OutOfMemoryException) { _log.LogDebug("Fortschritt nicht verarbeitet ({Type})", e.GetType().Name); }
+                string[]? lines = root.TryGetProperty("lines", out var ln) && ln.ValueKind == JsonValueKind.Array
+                    ? [.. ln.EnumerateArray().Take(20).Where(x => x.ValueKind == JsonValueKind.String).Select(x => AgentLabels.PrintableIndented(x.GetString(), 200))] : null;
+                try { cb(new AgentProgress(text, done, total, lines)); } catch (Exception e) when (e is not OutOfMemoryException) { _log.LogDebug("Fortschritt nicht verarbeitet ({Type})", e.GetType().Name); }
                 return;
             }
             case "blob":
@@ -380,7 +382,8 @@ public sealed class AgentLink
 }
 
 /// <summary>Eine Fortschrittsmeldung des Agenten zu einer laufenden Aktion: Text (bereinigt), erledigt und gesamt (wenn bekannt).</summary>
-public sealed record AgentProgress(string Text, int? Done, int? Total);
+/// <summary>Fortschritt einer langen Aktion: letzte Zeile, Zaehler und die Ausgabezeilen seit der letzten Meldung (Live-Ansicht).</summary>
+public sealed record AgentProgress(string Text, int? Done, int? Total, string[]? Lines = null);
 
 /// <summary>Was ein Agent von sich meldet (reine Anzeigewerte, jeder darf fehlen).</summary>
 public sealed record AgentInfo(string? Version, string? Platform, string? Hostname = null, string? Os = null, IReadOnlyList<string>? Caps = null);
@@ -426,7 +429,7 @@ public static class AgentLabels
     }
 
     /// <summary>Die lokalen Rechte (Aktionsarten), die ein Agent melden darf (dieselben Woerter wie AgentControl.Rights).</summary>
-    public static readonly string[] Rights = ["updates", "reboot", "services", "docker", "logs", "files-root"];
+    public static readonly string[] Rights = ["updates", "reboot", "services", "docker", "logs", "disks", "files-root"];
 
     /// <summary>Anzeigetext des Agenten: nur druckbare Zeichen, hoechstens <paramref name="max"/> lang (Steuerzeichen und Umbrueche fallen weg).</summary>
     public static string Printable(string? s, int max)
@@ -441,6 +444,15 @@ public static class AgentLabels
             sb.Append(rune.ToString());
         }
         return sb.ToString().Trim();
+    }
+
+    /// <summary>Eine Zeile der Ausgabe eines Programms: wie <see cref="Printable"/>, aber die Einrueckung am Anfang bleibt (apt rueckt Paketlisten ein).</summary>
+    public static string PrintableIndented(string? s, int max)
+    {
+        var lead = 0;
+        while (s is not null && lead < s.Length && lead < 8 && s[lead] == ' ') lead++;
+        var text = Printable(s, max);
+        return text.Length == 0 ? "" : new string(' ', lead) + text;
     }
 
     /// <summary>Ausgabe eines Programms auf dem Host (zum Beispiel apt): wie <see cref="Printable"/>, aber Zeilenumbrueche bleiben (CRLF wird LF, ein Tabulator ein Leerzeichen, nie mehr als eine Leerzeile hintereinander), damit der Dialog sie als Text mit Umbruch zeigen kann.</summary>

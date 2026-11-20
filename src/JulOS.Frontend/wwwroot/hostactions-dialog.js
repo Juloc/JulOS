@@ -4,16 +4,18 @@ import { confirmHtml, confirmModel, typedOk, typedName, prepareAction, runAction
 /* =====================================================================
  * Der Bestaetigungsdialog fuer Aktionen auf Hosts (docs/HOST-AGENT.md, Stufe 3). Jede Aktion geht durch ihn: erst nennt der Server, was genau geschehen wuerde (Host, Aktion, Ziel;
  * bei Neustart, Ausschalten und "alle Updates" muss der Rechnername getippt werden), dann fuehrt ein zweiter Aufruf aus. Danach zeigt der Dialog Fortschritt und Ergebnis.
- * Das Schliessen des Dialogs bricht eine laufende Aktion nicht ab; der Server haelt das Ergebnis. Markup: index.html (#hostActDlg). Die Logik des Textes steht in hostactions.js.
+ * Der Dialog ist nur die Bestaetigung (ein kleines Blatt). Nach "Ausfuehren" schliesst er sich und die Aktion laeuft als Hintergrund-Aufgabe (hosttasks.js): nichts bleibt gesperrt,
+ * Fortschritt und Ergebnis stehen im Panel der Aufgabe. Nur Aktionen, die lesen (Logs), zeigen ihr Ergebnis hier im Dialog (kurz, und das Ergebnis ist der Zweck).
+ * Das Schliessen bricht eine laufende Aktion nie ab; der Server haelt das Ergebnis. Markup: index.html (#hostActDlg). Die Logik des Textes steht in hostactions.js.
  * ===================================================================== */
 const $ = (s) => document.querySelector(s);
 const POLL_MS = 1500;
 
 /**
- * @param {{api: Function, esc: Function}} o
+ * @param {{api: Function, esc: Function, tasks?: object, onStarted?: Function}} o   tasks: der Speicher der Hintergrund-Aufgaben (hosttasks.js); ohne ihn laeuft alles im Dialog wie frueher; onStarted(task): eine Aufgabe wurde gestartet
  * @returns {(host: object, action: string, target?: string|null, opts?: {lines?: number, onDone?: Function}) => Promise<void>} oeffnet den Dialog; das Versprechen endet, wenn der Dialog geschlossen wird
  */
-export function initHostActionDialog({ api, esc }) {
+export function initHostActionDialog({ api, esc, tasks = null, onStarted = null }) {
   let session = 0;                 // jede Oeffnung hat eine Nummer: ein alter Abruf zeichnet nichts mehr in einen neuen Dialog
   let timers = [];
   const clear = () => { for (const x of timers) clearTimeout(x); timers = []; };
@@ -56,14 +58,26 @@ export function initHostActionDialog({ api, esc }) {
         // Die Bestaetigung gilt nur kurz; danach muss der Dialog neu geoeffnet werden (der Server lehnt sie ohnehin ab)
         timers.push(setTimeout(() => { if (alive() && !btn.hidden) { btn.disabled = true; msg(errText('confirmation_expired')); } }, Math.max(5, conf.expiresIn) * 1000));
 
+        // "full-upgrade" ist eine ausdrueckliche Wahl (Standard aus); sie zeigt, was ein vollstaendiges Upgrade entfernen wuerde
+        const fullBox = $('#hostActFull');
+        if (fullBox) fullBox.addEventListener('change', () => { const r = $('#hostActRemovals'); if (r) r.hidden = !fullBox.checked; });
+
         btn.onclick = async () => {
           if (!typedOk(conf, input ? input.value : '')) return;
           btn.disabled = true; msg('');
           let started;
-          try { started = await runAction(api, host.id, conf, typedName(conf) ? input.value : null); }
+          const full = !!(fullBox && fullBox.checked);
+          try { started = await runAction(api, host.id, conf, typedName(conf) ? input.value : null, full); }
           catch (e) { if (alive()) { msg(e.code ? errText(e.code) : e.message); if (e.code === 'typed_mismatch') btn.disabled = false; else $('#hostActClose').textContent = t('common.close'); } return; }
           if (!alive()) return;
           clear();
+          if (tasks && !conf.readOnly) {           // Hintergrund-Aufgabe: der Dialog schliesst sich, nichts bleibt gesperrt
+            const task = tasks.add(host, started, conf, { onDone: opts.onDone });
+            if (onStarted) onStarted(task);
+            if (opts.onStarted) opts.onStarted(task);
+            dlg.close();
+            return;
+          }
           btn.hidden = true;
           $('#hostActClose').textContent = t('common.close');
           msg(t('hostact.closeHint'));

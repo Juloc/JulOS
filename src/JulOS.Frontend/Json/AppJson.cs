@@ -87,6 +87,7 @@ namespace JulOS.Frontend;
 [JsonSerializable(typeof(ActionConfirmationResponse))]
 [JsonSerializable(typeof(ActionStarted))]
 [JsonSerializable(typeof(ActionJobResponse))]
+[JsonSerializable(typeof(HostJobsResponse))]
 [JsonSerializable(typeof(ActionError))]
 [JsonSerializable(typeof(AuditResponse))]
 [JsonSerializable(typeof(ControlRequest))]

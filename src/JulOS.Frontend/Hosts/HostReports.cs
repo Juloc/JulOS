@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using JulOS.Backend.Logic;
 
 namespace JulOS.Frontend.Hosts;
 
@@ -28,9 +29,9 @@ internal sealed record HostSysinfo(string? Hostname, string? Os, string? OsId, s
     HostNet[]? Network = null, HostHealth? Health = null, string? NewKernel = null);
 
 internal sealed record HostPackage(string Name, string? From, string To, bool? Security, bool New);
-/// <summary>Proxmox: der Rechner darf nur als Ganzes aktualisiert werden (dist-upgrade). NewPackages: wie viele der Pakete neu hinzukommen (neue Abhaengigkeiten, zum Beispiel ein Kernel).</summary>
+/// <summary>Broken: Pakete, die halb eingerichtet sind (dpkg --audit); dann ist Reparieren der Weg. Unreadable: die Liste der Updates war deswegen nicht zu lesen. Proxmox: der Rechner darf nur als Ganzes aktualisiert werden (dist-upgrade). NewPackages: wie viele der Pakete neu hinzukommen (neue Abhaengigkeiten, zum Beispiel ein Kernel).</summary>
 internal sealed record HostUpdates(string Manager, int Count, int? Security, bool SecurityKnown, bool Truncated, HostPackage[] Packages, string[] KeptBack, string[] Held, int Removals,
-    DateTimeOffset? ListsCheckedAt, long? ListsAgeSeconds, bool Proxmox = false, int NewPackages = 0);
+    DateTimeOffset? ListsCheckedAt, long? ListsAgeSeconds, bool Proxmox = false, int NewPackages = 0, string[]? Broken = null, bool Unreadable = false);
 
 internal sealed record HostFailedUnit(string Unit, string Sub, string? Description);
 internal sealed record HostServices(string State, int Count, HostFailedUnit[] Failed);
@@ -128,7 +129,7 @@ internal static class HostReportParser
         var s = Obj(h, "smart");
         if (s.ValueKind == JsonValueKind.Object)
         {
-            var reason = Text(s, "reason", 16);
+            var reason = Text(s, "reason", 24);
             smart = new HostSmart(Bool(s, "available"), reason is "no_smartctl" or "no_access" or "no_devices" or "helper_unavailable" or "read_failed" ? reason : null,
                 [.. Items(s, "devices", 16).Where(d => d.ValueKind == JsonValueKind.Object && Text(d, "name", 40) is not null).Select(d =>
                     new HostSmartDevice(Text(d, "name", 40)!, Text(d, "health", 8) is "ok" or "failing" ? Text(d, "health", 8)! : "unknown",
@@ -170,7 +171,8 @@ internal static class HostReportParser
         var age = LongOrNull(root, "listsAgeSeconds", 100L * 365 * 86400);
         return new HostUpdates(manager, count, known ? (int)Math.Min(Long(root, "security", 1_000_000), count) : null, known, Bool(root, "truncated") || count > packages.Length, packages,
             Strings(root, "keptBack", MaxItems), Strings(root, "held", MaxItems), (int)Long(root, "removals", 100000),
-            checkedAt is > 0 ? DateTimeOffset.FromUnixTimeSeconds(checkedAt.Value) : null, age, Bool(root, "proxmox"), (int)Long(root, "newPackages", 100000));
+            checkedAt is > 0 ? DateTimeOffset.FromUnixTimeSeconds(checkedAt.Value) : null, age, Bool(root, "proxmox"), (int)Long(root, "newPackages", 100000),
+            [.. Strings(root, "broken", MaxItems).Where(HostActions.IsPackageName)], Bool(root, "unreadable"));
     }
 
     public static HostServices? Services(JsonElement root)

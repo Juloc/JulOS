@@ -47,7 +47,7 @@ LOG_MAX = 200
 SMART_MAX_DEVICES = 16
 DEVICE_RE = re.compile(r"^[a-z][a-z0-9]{1,15}\Z")      # Plattenname fuer /dev/<name>; der Helfer bildet die Liste selbst, nie vom Agenten
 ENV = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C", "LANG": "C", "DEBIAN_FRONTEND": "noninteractive",
-       "APT_LISTCHANGES_FRONTEND": "none", "NEEDRESTART_MODE": "l", "NEEDRESTART_SUSPEND": "1"}      # needrestart nur melden, nie Dienste von selbst neu starten
+       "APT_LISTCHANGES_FRONTEND": "none", "NEEDRESTART_MODE": "l", "NEEDRESTART_SUSPEND": "1", "UCF_FORCE_CONFFOLD": "1"}      # needrestart nur melden, nie Dienste von selbst neu starten
 
 
 def clean(text, limit=MAX_LINE):

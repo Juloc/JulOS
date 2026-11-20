@@ -146,3 +146,18 @@ test('Neustart nach neuem Kernel: Hinweis nennt die Version', () => {
   const a = attention(data, host()).find((x) => x.id === 'reboot');
   assert.match(a.detail, /Neuer Kernel installiert: 6\.17\.2-1-pve/);
 });
+
+test('Halb eingerichtete Pakete: Warnung mit Namen und Reparieren, Updates unbekannt statt "keine"; in der Uebersicht als Hinweis', () => {
+  const upd = (over) => ({ state: 'ok', updates: { manager: 'apt', count: 0, security: 0, securityKnown: true, listsAgeSeconds: 60, keptBack: [], held: [], removals: 0, truncated: false, packages: [], ...over } });
+  const html = (over) => PANELS.find((p) => p.id === 'updates').html({ esc, host: host(), paused: false, data: { updates: upd(over) }, act: makeAct(host(), false, esc) });
+  const h = html({ broken: ['pve-manager', 'proxmox-mail-forward'], unreadable: true });
+  assert.match(h, /2 Pakete sind halb eingerichtet/);
+  assert.match(h, /pve-manager, proxmox-mail-forward/);
+  assert.match(h, /data-hact="updates.repair"/);
+  assert.doesNotMatch(h, /Updates: keine/);                                                     // unbekannt ist nicht "keine"
+  assert.match(html({ broken: ['pve-manager'] }), /1 Paket ist halb eingerichtet/);
+  assert.doesNotMatch(html({ broken: [] }), /halb eingerichtet/);
+  const a = attention({ updates: upd({ broken: ['pve-manager'], unreadable: true }) }, host()).find((x) => x.id === 'broken');
+  assert.equal(a.panel, 'updates');
+  assert.equal(a.tone, 'bad');
+});

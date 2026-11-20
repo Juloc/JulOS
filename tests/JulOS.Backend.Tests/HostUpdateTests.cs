@@ -140,6 +140,20 @@ public sealed partial class AgentLinkTests
         Assert.DoesNotContain("full", Body(r.Agent, "/v1/host/updates/install"));
     }
 
+    [Fact]
+    public async Task Half_configured_packages_come_with_the_updates_and_only_real_package_names_count()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db);
+        await using var r = await ActionRigAsync(db, app);
+        r.Agent.HostReplies["/v1/host/updates"] = (200, ProxmoxUpdates.Replace("\"proxmox\":true", "\"proxmox\":true,\"broken\":[\"pve-manager\",\"x; rm -rf /\",\"proxmox-mail-forward\"],\"unreadable\":true"));
+        var (_, u) = await GetInfo(r, "updates");
+        var updates = u.GetProperty("updates");
+        Assert.Equal(["pve-manager", "proxmox-mail-forward"], StrList(updates.GetProperty("broken")));
+        Assert.True(updates.GetProperty("unreadable").GetBoolean());
+        Assert.True(updates.GetProperty("proxmox").GetBoolean());
+    }
+
     // ------------------------------------------------------------------ Fehlerzusammenfassung und Protokoll
 
     [Fact]
@@ -268,17 +282,19 @@ public sealed partial class AgentLinkTests
         {
             r.Agent.HostReplies["/v1/host/sysinfo"] = (200, $$"""{"hostname":"srv-01","memory":{},"health":{"smart":{{smart}},"md":[],"zfs":null},"rebootRequired":true,"newKernel":"6.17.2-1-pve\u0007"}""");
             ((ManualTime)app.Services.GetRequiredService<TimeProvider>()).Advance(TimeSpan.FromSeconds(120));
-            return (await GetInfo(r, "status", "?fresh=1")).Body.GetProperty("info");
+            var body = (await GetInfo(r, "status", "?fresh=1")).Body;
+            Assert.True(body.TryGetProperty("info", out var inf), body.GetRawText());
+            return inf;
         }
         var info = await Info("""{"available":true,"devices":[{"name":"/dev/sda","health":"ok","temp":34},{"name":"/dev/sdb","health":"failing","temp":9999},{"name":"/dev/sdc","health":"weird"}]}""");
         var devices = info.GetProperty("health").GetProperty("smart").GetProperty("devices").EnumerateArray().ToArray();
         Assert.Equal(34, devices[0].GetProperty("temp").GetInt32());
-        Assert.Equal(JsonValueKind.Null, devices[1].GetProperty("temp").ValueKind);                         // unmoegliche Werte fallen weg
+        Assert.False(devices[1].TryGetProperty("temp", out var bad) && bad.ValueKind == JsonValueKind.Number);          // unmoegliche Werte fallen weg
         Assert.Equal("unknown", devices[2].GetProperty("health").GetString());
         Assert.Equal("6.17.2-1-pve", info.GetProperty("newKernel").GetString());
         foreach (var reason in new[] { "helper_unavailable", "read_failed", "no_smartctl", "no_access" })
             Assert.Equal(reason, (await Info($$"""{"available":false,"reason":"{{reason}}"}""")).GetProperty("health").GetProperty("smart").GetProperty("reason").GetString());
-        Assert.Equal(JsonValueKind.Null, (await Info("""{"available":false,"reason":"rm -rf"}""")).GetProperty("health").GetProperty("smart").GetProperty("reason").ValueKind);
+        Assert.False((await Info("""{"available":false,"reason":"rm -rf"}""")).GetProperty("health").GetProperty("smart").TryGetProperty("reason", out var odd) && odd.ValueKind == JsonValueKind.String);
     }
 
     [Fact]

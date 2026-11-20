@@ -1089,12 +1089,23 @@ def apt_lists_checked(lists="/var/lib/apt/lists", stamp="/var/lib/apt/periodic/u
     return int(max(times)) if times else None
 
 
+def broken_packages():
+    """Pakete, die halb eingerichtet sind (`dpkg --audit`, lesend, ohne Root): leere Liste, wenn alles in Ordnung ist oder dpkg nicht antwortet."""
+    r = run_cmd(["dpkg", "--audit"], 15)
+    if not r or r[0] != 0 or not r[1].strip():
+        return []
+    return summarize_apt(r[1].splitlines())["failedPackages"]
+
+
 def collect_updates_apt():
     sim = run_cmd(["apt-get", "-s", "-q", "-o", "Debug::NoLocking=true", "dist-upgrade"], 60)
     if sim is None:
         return 500, {"error": "apt_failed", "detail": "apt-get startet nicht oder braucht zu lange"}
+    broken = broken_packages()
     rc, out, err = sim
     if rc != 0:
+        if broken:       # die Simulation scheitert oft gerade an halb eingerichteten Paketen: dann nicht "Fehler", sondern der Weg zur Reparatur (die Liste der Updates ist dann unbekannt)
+            return 200, finish_updates("apt", [], [], [], apt_lists_checked(), 0, proxmox=is_proxmox(), broken=broken, unreadable=True)
         return 500, {"error": "apt_failed", "detail": clean(" ".join((err or out).split())[-200:], 200)}
     parsed = parse_apt_simulation(out)
     kept = list(parsed["keptBack"])
@@ -1105,7 +1116,7 @@ def collect_updates_apt():
             kept += [k for k in parse_apt_simulation(up[1])["keptBack"] if k not in kept]
     hold = run_cmd(["apt-mark", "showhold"], 10)
     held = [clean(x, 80) for x in hold[1].split()] if hold and hold[0] == 0 else []
-    return 200, finish_updates("apt", parsed["packages"], kept, held, apt_lists_checked(), parsed["removals"], proxmox=is_proxmox())
+    return 200, finish_updates("apt", parsed["packages"], kept, held, apt_lists_checked(), parsed["removals"], proxmox=is_proxmox(), broken=broken)
 
 
 def parse_dnf_check_update(text):
@@ -1135,7 +1146,7 @@ def parse_checkupdates(text):
     return out
 
 
-def finish_updates(manager, packages, kept, held, lists_checked, removals=0, proxmox=False):
+def finish_updates(manager, packages, kept, held, lists_checked, removals=0, proxmox=False, broken=(), unreadable=False):
     """Die Antwort des Agenten: Sicherheitsupdates zuerst, die Liste bei MAX_PACKAGES abgeschnitten. security ist null, wo der Paketmanager es nicht sagt."""
     now = int(time.time())
     known = manager == "apt"
@@ -1144,7 +1155,7 @@ def finish_updates(manager, packages, kept, held, lists_checked, removals=0, pro
     return {
         "manager": manager, "count": total, "security": sum(1 for p in packages if p["security"]) if known else None,
         "securityKnown": known, "truncated": total > MAX_PACKAGES, "packages": ordered[:MAX_PACKAGES],
-        "keptBack": kept[:MAX_ITEMS], "held": held[:MAX_ITEMS], "removals": removals, "proxmox": bool(proxmox), "newPackages": sum(1 for p in packages if p.get("new")),
+        "keptBack": kept[:MAX_ITEMS], "held": held[:MAX_ITEMS], "removals": removals, "proxmox": bool(proxmox), "broken": list(broken)[:MAX_ITEMS], "unreadable": bool(unreadable), "newPackages": sum(1 for p in packages if p.get("new")),
         "listsCheckedAt": lists_checked, "listsAgeSeconds": max(0, now - lists_checked) if lists_checked else None, "checkedAt": now,
     }
 

@@ -159,6 +159,7 @@ export function attention(data, host) {
   const out = [];
   const i = data.status && data.status.info;
   const u = data.updates && data.updates.updates;
+  if (u && (u.broken || []).length) out.push({ id: 'broken', panel: 'updates', tone: 'bad', text: tp('hostview.brokenPackages', u.broken.length), detail: u.broken.join(', ') });
   if (u && u.count > 0) out.push({ id: 'updates', panel: 'updates', tone: u.security > 0 ? 'bad' : 'warn', text: tp('hostview.flagUpdates', u.count), detail: u.securityKnown && u.security > 0 ? t('hostview.flagSecurity', { n: u.security }) : '' });
   if (i && i.rebootRequired) out.push({ id: 'reboot', panel: 'actions', tone: 'warn', text: t('hostinfo.rebootNeeded'), detail: i.newKernel ? t('hostinfo.rebootKernel', { v: i.newKernel }) : i.rebootPackages && i.rebootPackages.length ? i.rebootPackages.join(', ') : '' });
   const s = data.services && data.services.services;
@@ -284,7 +285,10 @@ function updatesPanel(c) {
   const canRefresh = !!(act && act.can('updates'));
   const security = (u.packages || []).filter((p) => p.security), rest = (u.packages || []).filter((p) => !p.security);
   const row = (p) => ({ name: p.name, detail: p.from ? `${p.from} → ${p.to}` : t('hostinfo.newPackage', { v: p.to }), badge: p.security ? t('hostinfo.security') : '', actions: act && !u.proxmox ? act.bar(act.btn('updates.install', p.name, t('hostact.bInstall'))) : '' });          // Proxmox nur als Ganzes: kein Knopf je Paket
-  const head = u.count > 0
+  const broken = (u.broken || []).length
+    ? callout(tp('hostview.brokenPackages', u.broken.length), esc, 'bad', u.broken.join(', ')) + (u.unreadable ? noteP(t('hostview.brokenUnreadable'), esc) : '')
+    : '';
+  const head = u.unreadable ? '' : u.count > 0
     ? callout(tp('hostview.updatesCount', u.count), esc, u.security > 0 ? 'bad' : 'warn', u.securityKnown && u.security > 0 ? t('hostview.flagSecurity', { n: u.security }) : '')
     : callout(t('hostinfo.updatesNone'), esc, 'ok');
   const bar0 = canRefresh ? act.bar(act.btn('updates.refresh', '', t('hostact.a.updatesRefresh')) + (u.count > 0 ? act.btn('updates.install', 'all', t('hostact.bInstallAll')) : '') + act.btn('updates.repair', '', t('hostact.bRepair'))) : '';
@@ -297,7 +301,7 @@ function updatesPanel(c) {
   // Der Hinweis auf "sudo apt update" nur, wenn der Knopf fehlt (Stufe aus, Wort fehlt, Pause); sonst reicht das Alter der Listen
   const age = u.listsAgeSeconds != null ? noteP(`${t('hostinfo.listsAge', { age: fmtAge(u.listsAgeSeconds) })}${canRefresh ? '' : ' ' + t('hostinfo.listsHint')}`, esc, u.listsAgeSeconds > 7 * 86400) : (canRefresh ? '' : noteP(t('hostinfo.listsHint'), esc));
   const lists = (security.length ? subH(t('hostview.securityUpdates'), esc) + listBlock(security.map(row), esc) : '') + (rest.length ? (security.length ? subH(t('hostview.otherUpdates'), esc) : '') + listBlock(rest.map(row), esc) : '');
-  return note(resp, esc) + head + bar0 + (lists ? card('', lists, esc) : '') + extra.join('') + age;
+  return note(resp, esc) + broken + head + bar0 + (lists ? card('', lists, esc) : '') + extra.join('') + age;
 }
 
 function servicesPanel(c) {

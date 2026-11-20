@@ -2125,4 +2125,7 @@ export default {
   "hosttask.panelHead": "Host: {host}",
   "hosttask.panelHeadTarget": "Host: {host} · {target}",
   "app.allowDisks": "Read SMART health of the disks",
+  "hostview.brokenPackages.one": "{n} package is half configured",
+  "hostview.brokenPackages.other": "{n} packages are half configured",
+  "hostview.brokenUnreadable": "While this is so, the list of updates cannot be read and updates are refused. \"Repair\" puts the packages in order.",
 };

@@ -169,6 +169,47 @@ class KernelAndProxmoxTests(unittest.TestCase):
         self.assertEqual((status, r["keptBack"], r["proxmox"], r["newPackages"]), (200, ["linux-image-amd64"], True, 1))
 
 
+class BrokenDatabaseTests(unittest.TestCase):
+    """dpkg --audit (lesend, ohne Root) zeigt halb eingerichtete Pakete schon in der Update-Liste: so findet der Benutzer den Weg zur Reparatur, auch wenn apt-get -s daran scheitert."""
+
+    def run_cmd(self, audit, sim_rc=0):
+        def fake(argv, timeout=30):
+            if argv[:2] == ["dpkg", "--audit"]:
+                return audit
+            if "dist-upgrade" in argv:
+                return (sim_rc, "Inst bash [1] (2 Debian [amd64])\n" if sim_rc == 0 else "", "" if sim_rc == 0 else "E: Unmet dependencies. Try 'apt --fix-broken install'")
+            if "upgrade" in argv:
+                return 0, "", ""
+            if argv[0] == "apt-mark":
+                return 0, "", ""
+        return mock.patch.object(agent, "run_cmd", fake)
+
+    def test_a_healthy_database_reports_nothing(self):
+        with self.run_cmd((0, "", "")), mock.patch.object(agent, "is_proxmox", lambda *a, **k: False):
+            status, r = agent.collect_updates_apt()
+        self.assertEqual((status, r["broken"], r["unreadable"], r["count"]), (200, [], False, 1))
+
+    def test_half_configured_packages_are_listed(self):
+        with self.run_cmd((0, "\n".join(AUDIT_BROKEN), "")), mock.patch.object(agent, "is_proxmox", lambda *a, **k: False):
+            status, r = agent.collect_updates_apt()
+        self.assertEqual((status, r["broken"], r["unreadable"], r["count"]), (200, ["pve-manager", "proxmox-mail-forward"], False, 1))
+
+    def test_when_the_simulation_fails_because_of_them_the_answer_is_the_way_to_repair_not_an_error(self):
+        with self.run_cmd((0, "\n".join(AUDIT_BROKEN), ""), sim_rc=100), mock.patch.object(agent, "is_proxmox", lambda *a, **k: True):
+            status, r = agent.collect_updates_apt()
+        self.assertEqual((status, r["broken"], r["unreadable"], r["count"], r["packages"], r["proxmox"]), (200, ["pve-manager", "proxmox-mail-forward"], True, 0, [], True))
+
+    def test_a_failing_simulation_without_broken_packages_stays_an_error(self):
+        with self.run_cmd((0, "", ""), sim_rc=100):
+            status, r = agent.collect_updates_apt()
+        self.assertEqual((status, r["error"]), (500, "apt_failed"))
+
+    def test_dpkg_missing_or_failing_means_nothing_to_report(self):
+        for audit in (None, (1, "boom", ""), (0, "  \n", "")):
+            with self.run_cmd(audit), mock.patch.object(agent, "is_proxmox", lambda *a, **k: False):
+                self.assertEqual(agent.collect_updates_apt()[1].get("broken"), [])
+
+
 class HelperRunner:
     """Ein einsetzbarer Runner fuer den Helfer: merkt jeden Argumentvektor, antwortet aus einer Tabelle (Praefix -> (rc, Zeilen)); sonst (0, [])."""
 

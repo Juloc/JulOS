@@ -2125,4 +2125,7 @@ export default {
   "hosttask.panelHead": "Host: {host}",
   "hosttask.panelHeadTarget": "Host: {host} · {target}",
   "app.allowDisks": "SMART der Platten lesen",
+  "hostview.brokenPackages.one": "{n} Paket ist halb eingerichtet",
+  "hostview.brokenPackages.other": "{n} Pakete sind halb eingerichtet",
+  "hostview.brokenUnreadable": "Solange das so ist, lässt sich die Liste der Updates nicht lesen und Updates werden abgelehnt. »Reparieren« bringt die Pakete in Ordnung.",
 };

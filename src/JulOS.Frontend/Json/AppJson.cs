@@ -77,6 +77,8 @@ namespace JulOS.Frontend;
 [JsonSerializable(typeof(HostDto))]
 [JsonSerializable(typeof(HostsResponse))]
 [JsonSerializable(typeof(HostRequest))]
+[JsonSerializable(typeof(HostLoginDto))]
+[JsonSerializable(typeof(HostLoginRequest))]
 [JsonSerializable(typeof(HostStatusResponse))]
 [JsonSerializable(typeof(HostUpdatesResponse))]
 [JsonSerializable(typeof(HostServicesResponse))]

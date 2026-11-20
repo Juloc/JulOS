@@ -41,7 +41,7 @@ internal static class RemoteFileEndpoints
         var body = e switch
         {
             HostKeyProblem h => new FileErrorBody(text, code, h.Presented.Fingerprint, h.Presented.Algorithm, h.Known),
-            PasswordRequiredException p => new FileErrorBody(text, code, Connection: p.Connection),
+            PasswordRequiredException p => new FileErrorBody(text, code, Connection: p.Connection, User: p.HostLoginUser, CanSave: p.HostLoginUser is null ? null : true),
             _ => new FileErrorBody(text, code),
         };
         return Results.Text(JsonSerializer.Serialize(body, AppJson.Default.FileErrorBody), "application/json", Encoding.UTF8, status);
@@ -85,13 +85,14 @@ internal static class RemoteFileEndpoints
         if (pool.TryAcquire(x.Id.UserId, x.Connection.Id) is { } open) return open;
         var c = x.Connection;
         var password = typedPassword;
-        if (string.IsNullOrEmpty(password) && c.HasPassword)
+        // Die Zugangsdaten dieser Verbindung: ihr eigener Login, sonst der Login ihres Hosts (dann kommt keine Frage mehr), sonst wie bisher (docs/HOSTS.md)
+        var login = await connections.ResolveLoginAsync(x.Id.UserId, c, box, ct);
+        if (string.IsNullOrEmpty(password))
         {
-            var sealedValue = await connections.GetSecretAsync(x.Id.UserId, c.Id, ct);
-            password = sealedValue is null ? null : box.Decrypt(sealedValue, c.Id);
-            if (password is null) throw new PasswordRequiredException(c.Id);          // das gespeicherte Passwort ist nicht lesbar: neu eingeben
+            if (login.Unreadable) throw new PasswordRequiredException(c.Id);          // das gespeicherte Passwort ist nicht lesbar: neu eingeben
+            password = login.Password;
         }
-        if (string.IsNullOrEmpty(password)) throw new PasswordRequiredException(c.Id);
+        if (string.IsNullOrEmpty(password)) throw new PasswordRequiredException(c.Id, login.HostLoginWithoutPassword ? login.Username : null);
         return await pool.AcquireAsync(x.Id.UserId, c.Id, async _ =>
         {
             var session = factory.Create();
@@ -100,7 +101,7 @@ internal static class RemoteFileEndpoints
             try
             {
                 // Strenger als beim Terminal: auch der ERSTE Schluessel gilt erst nach ausdruecklicher Bestaetigung (acceptHostKey = genau dieser Schluessel)
-                await session.ConnectAsync(new SftpConnectOptions(c.Host, c.Port, c.Username, password, null, null) { ConnectTimeout = TimeSpan.FromSeconds(15) }, key =>
+                await session.ConnectAsync(new SftpConnectOptions(c.Host, c.Port, login.Username, password, null, null) { ConnectTimeout = TimeSpan.FromSeconds(15) }, key =>
                 {
                     presented = key;
                     decision = HostKeyPolicy.Decide(c.HostKey, acceptHostKey, key);
@@ -123,6 +124,17 @@ internal static class RemoteFileEndpoints
         }, ct);
     }
 
+    /// <summary>Legt das eben erfolgreich benutzte Passwort als Passwort des Host-Logins ab (verschluesselt, gebunden an die Adresse dieser Verbindung). Der Eintrag im Verlauf steht davor; ohne ihn wird nichts gespeichert.</summary>
+    private static async Task<bool> SaveHostPasswordAsync(Ctx x, string password, ConnectionStore connections, HostStore hosts, HostLoginStore hostLogins, HostAuditStore hostAudit, SecretBox box, ILogger log, CancellationToken ct)
+    {
+        var c = x.Connection;
+        var login = await connections.ResolveLoginAsync(x.Id.UserId, c, box, ct);
+        if (!login.HostLoginWithoutPassword || await hosts.GetAsync(x.Id.UserId, c.HostId, ct) is not { } host) return false;
+        try { await hostAudit.AddAsync(x.Id.UserId, host.Id, host.Name, "login.set", null, "ok", "password (files)", ct: CancellationToken.None); }
+        catch (Exception e) { log.LogError(e, "Verlauf des Host-Logins konnte nicht geschrieben werden"); return false; }
+        return await hostLogins.SetPasswordAsync(x.Id.UserId, host.Id, login.Username, box.Encrypt(password, host.Id), [LoginResolver.Address(c.Host)], ct);
+    }
+
     private static string HostName(ConnectionRecord c) => c.Name;
 
     private static async Task AuditAsync(FileAuditStore audit, ILogger log, Guid user, ConnectionRecord c, string action, string? path, string result, string? detail = null, int? items = null, string? host = null)
@@ -140,7 +152,8 @@ internal static class RemoteFileEndpoints
             Results.Json(new FilesInfoDto(local.Enabled, options.Write, options.MaxBytes), AppJson.Default.FilesInfoDto));
 
         // Oeffnet (oder haelt offen) die SFTP-Sitzung einer Verbindung. Mit "password" wird getippt (nie gespeichert, nie geloggt), mit "acceptHostKey" ein neuer oder geaenderter Schluessel bestaetigt.
-        app.MapPost("/api/files/remote/open", async (OpenRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, ILogger<FileAuditStore> log) =>
+        app.MapPost("/api/files/remote/open", async (OpenRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, ILogger<FileAuditStore> log,
+            HostStore hosts, HostLoginStore hostLogins, HostAuditStore hostAudit) =>
         {
             if (RateLimited(ctx, hits, "open", 20)) return Fail("rate_limited");
             if (body.Password is { Length: > 256 }) return Fail("invalid_request");
@@ -154,7 +167,10 @@ internal static class RemoteFileEndpoints
                 if (x.Root is not null) return Results.Json(new OpenResponse(lease.Session.HomeDirectory, "root", null, null), AppJson.Default.OpenResponse);
                 var key = lease.Session.PresentedHostKey;
                 var state = wasOpen || key is null ? "known" : known is null ? "remembered" : key.Id != known ? "replaced" : "known";
-                return Results.Json(new OpenResponse(lease.Session.HomeDirectory, state, key?.Fingerprint, key?.Algorithm), AppJson.Default.OpenResponse);
+                // "Fuer diesen Host speichern": erst nach gelungener Anmeldung mit genau diesem Passwort, und nur wenn der Host schon einen Login mit Benutzer, aber ohne Passwort hat (nie ein neuer Benutzer von hier)
+                var saved = !wasOpen && body.SaveForHost == true && !string.IsNullOrEmpty(body.Password) && box.Enabled
+                    && await SaveHostPasswordAsync(x, body.Password, connections, hosts, hostLogins, hostAudit, box, log, ctx.RequestAborted);
+                return Results.Json(new OpenResponse(lease.Session.HomeDirectory, state, key?.Fingerprint, key?.Algorithm, saved ? true : null), AppJson.Default.OpenResponse);
             }
             catch (Exception e) when (e is not OperationCanceledException)
             {

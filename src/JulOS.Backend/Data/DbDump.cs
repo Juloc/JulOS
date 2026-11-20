@@ -121,7 +121,8 @@ public static partial class DbDump
     public static async Task<(int Total, int Unreadable)> CheckSecretsAsync(NpgsqlDataSource db, SecretBox box, CancellationToken ct = default)
     {
         int total = 0, bad = 0;
-        await using var cmd = db.CreateCommand("select id, secret from connections where secret is not null");
+        // Passwoerter der Verbindungen und der Host-Logins (beide mit ihrer Kennung als zugehoerigen Daten verschluesselt)
+        await using var cmd = db.CreateCommand("select id, secret from connections where secret is not null union all select id, login_secret from hosts where login_secret is not null");
         await using var r = await cmd.ExecuteReaderAsync(ct);
         while (await r.ReadAsync(ct))
         {

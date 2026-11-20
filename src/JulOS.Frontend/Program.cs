@@ -51,6 +51,8 @@ builder.Services.AddSingleton(dataSourceBuilder.Build());
 builder.Services.AddSingleton<Migrator>();
 builder.Services.AddSingleton<UserStore>();
 builder.Services.AddSingleton<HostStore>();
+builder.Services.AddSingleton<HostLoginStore>();
+builder.Services.AddSingleton<HostLoginMigration>();
 builder.Services.AddSingleton<ConnectionStore>();
 builder.Services.AddSingleton<FolderStore>();
 builder.Services.AddSingleton<SettingsStore>();
@@ -147,6 +149,9 @@ var log = app.Logger;
 app.UseForwardedHeaders();
 
 await MigrateWithRetryAsync(app.Services.GetRequiredService<Migrator>(), log);
+// Die bisherigen Zugangsdaten der Verbindungen werden zu einem Login je Host (nichts wird geloescht, docs/HOSTS.md); ein Fehler hier darf den Start nicht verhindern
+try { var made = await app.Services.GetRequiredService<HostLoginMigration>().RunAsync(); if (made > 0) log.LogInformation("Host-Login aus den Verbindungen übernommen: {Count} Host(s)", made); }
+catch (Exception e) { log.LogWarning(e, "Übernahme der Zugangsdaten in den Host-Login fehlgeschlagen; sie wird beim nächsten Start wiederholt"); }
 
 // Ohne JULOS_TRUSTED_PROXIES glaubt der Server X-Forwarded-* von jedem privaten Netz: ein Geraet im eigenen LAN, das den Port direkt erreicht, kann die Client-Adresse
 // (Sperre pro Adresse, Sitzungsliste) und das Protokoll faelschen (docs/SECURITY-REVIEW.md, F-06). Deshalb eine laute Warnung, solange es nicht eingeschraenkt ist.
@@ -202,6 +207,7 @@ app.MapAuth();
 app.MapAbout(info);
 app.MapRemote();
 app.MapHosts();
+app.MapHostLogin();
 app.MapHostInfo();
 app.MapHostActions();
 app.MapConnections();

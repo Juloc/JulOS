@@ -15,7 +15,11 @@ internal static class ConnectionEndpoints
     private static IResult Error(int status, string message) =>
         Results.Text(JsonSerializer.Serialize(new ErrorBody(message), AppJson.Default.ErrorBody), "application/json", Encoding.UTF8, status);
 
-    private static ConnectionDto ToDto(ConnectionRecord c) => new(c.Id, c.Name, c.Kind, c.Host, c.Port, c.Username, c.HasPassword, c.HostId, c.DriveShare, c.DriveWrite, c.Domain, c.Notes, c.KeyboardLayout, c.Program, c.WorkDir, c.KeepAlive, c.CustomCommand);
+    /// <summary>Die Verbindung mit dem, was beim Verbinden gilt (Host-Login oder eigener Login, ohne ein Passwort zu nennen).</summary>
+    private static ConnectionDto ToDto(ConnectionRecord c, LoginChoice choice) => new(c.Id, c.Name, c.Kind, c.Host, c.Port, c.Username, c.HasPassword, c.HostId, c.DriveShare, c.DriveWrite, c.Domain, c.Notes, c.KeyboardLayout, c.Program, c.WorkDir, c.KeepAlive, c.CustomCommand,
+        c.OwnLogin, choice.Source == LoginSource.Host ? "host" : "own", choice.Username, choice.PasswordStored, choice.AddressNotTrusted);
+
+    private static async Task<ConnectionDto> ToDtoAsync(ConnectionRecord c, Guid userId, ConnectionStore store, CancellationToken ct) => ToDto(c, (await store.ChoicesAsync(userId, [c], ct))[c.Id]);
 
     private static string? CheckPassword(string? password, SecretBox box)
     {
@@ -35,7 +39,9 @@ internal static class ConnectionEndpoints
         app.MapGet("/api/connections", async (HttpContext ctx, ConnectionStore store, SecretBox box, DriveRoot drives) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
-            return new ConnectionsResponse([.. (await store.ListAsync(id.UserId, ctx.RequestAborted)).Select(ToDto)], box.Enabled, drives.Available);
+            var list = await store.ListAsync(id.UserId, ctx.RequestAborted);
+            var choices = await store.ChoicesAsync(id.UserId, list, ctx.RequestAborted);
+            return new ConnectionsResponse([.. list.Select(c => ToDto(c, choices[c.Id]))], box.Enabled, drives.Available);
         });
 
         app.MapPost("/api/connections", async (ConnectionRequest body, HttpContext ctx, ConnectionStore store, HostStore hosts, HostPolicy policy, SecretBox box, DriveRoot drives) =>
@@ -52,13 +58,13 @@ internal static class ConnectionEndpoints
             if (await store.CountAsync(id.UserId, ctx.RequestAborted) >= ConnectionRules.MaxPerUser) return Error(400, "Zu viele Verbindungen.");
             // Der Host muss dem Benutzer gehoeren; ohne Angabe kommt die Verbindung auf seinen ersten Host
             if (body.HostId is { } wanted && await hosts.GetAsync(id.UserId, wanted, ctx.RequestAborted) is null) return Error(404, "Host nicht gefunden.");
-            var c = await store.CreateAsync(id.UserId, v.Name, v.Kind, v.Host, v.Port, v.Username, body.HostId, ctx.RequestAborted, v.DriveShare, v.DriveWrite, v.Domain, v.Notes, v.Layout, Stored(launch));
+            var c = await store.CreateAsync(id.UserId, v.Name, v.Kind, v.Host, v.Port, v.Username, body.HostId, ctx.RequestAborted, v.DriveShare, v.DriveWrite, v.Domain, v.Notes, v.Layout, Stored(launch), body.OwnLogin == true);
             if (!string.IsNullOrEmpty(body.Password))
             {
                 await store.SetSecretAsync(id.UserId, c.Id, box.Encrypt(body.Password, c.Id), ctx.RequestAborted);
                 c = c with { HasPassword = true };
             }
-            return Results.Json(ToDto(c), AppJson.Default.ConnectionDto);
+            return Results.Json(await ToDtoAsync(c, id.UserId, store, ctx.RequestAborted), AppJson.Default.ConnectionDto);
         });
 
         app.MapPut("/api/connections/{connection:guid}", async (Guid connection, ConnectionRequest body, HttpContext ctx, ConnectionStore store, HostStore hosts, HostPolicy policy, SecretBox box, DriveRoot drives, SftpPool pool) =>
@@ -76,7 +82,7 @@ internal static class ConnectionEndpoints
             var passwordError = CheckPassword(body.Password, box);
             if (passwordError is not null) return Error(400, passwordError);
             if (body.HostId is { } moveTo && await hosts.GetAsync(id.UserId, moveTo, ctx.RequestAborted) is null) return Error(404, "Host nicht gefunden.");
-            var c = await store.UpdateAsync(id.UserId, connection, v.Name, v.Kind, v.Host, v.Port, v.Username, body.HostId, ctx.RequestAborted, v.DriveShare, v.DriveWrite, v.Domain, v.Notes, v.Layout, Stored(launch));
+            var c = await store.UpdateAsync(id.UserId, connection, v.Name, v.Kind, v.Host, v.Port, v.Username, body.HostId, ctx.RequestAborted, v.DriveShare, v.DriveWrite, v.Domain, v.Notes, v.Layout, Stored(launch), body.OwnLogin);
             if (c is null) return Error(404, "Verbindung nicht gefunden.");
 
             // Ein gespeichertes Passwort gehoert zu genau diesem Ziel: wer Adresse, Port, Art oder Benutzer aendert, schickt es sonst an ein anderes Ziel
@@ -102,7 +108,7 @@ internal static class ConnectionEndpoints
                 await store.SetCertFingerprintAsync(id.UserId, connection, null, ctx.RequestAborted);
             }
             await pool.InvalidateAsync(id.UserId, connection);          // die Dateien-App nutzt danach nur noch die neuen Zugangsdaten und den neuen Host-Schluessel
-            return Results.Json(ToDto(c), AppJson.Default.ConnectionDto);
+            return Results.Json(await ToDtoAsync(c, id.UserId, store, ctx.RequestAborted), AppJson.Default.ConnectionDto);
         });
 
         // Kachel "Claude auf <Host>" oder "Codex auf <Host>" aus einer vorhandenen Terminal-Verbindung: gleiches Ziel (Host, Port, Benutzer, gespeichertes Passwort,
@@ -125,7 +131,7 @@ internal static class ConnectionEndpoints
             if (string.IsNullOrEmpty(title)) title = (program == "claude" ? "Claude auf " : "Codex auf ") + (host?.Name ?? source.Name);
             if (title.Length > 60) title = title[..60].TrimEnd();
             if (title.Any(char.IsControl)) return Error(400, "Der Name muss 1 bis 60 Zeichen haben.");
-            var c = await store.CreateAsync(id.UserId, title, "terminal", source.Host, source.Port, source.Username, source.HostId, ctx.RequestAborted, program: Stored(launch));
+            var c = await store.CreateAsync(id.UserId, title, "terminal", source.Host, source.Port, source.Username, source.HostId, ctx.RequestAborted, program: Stored(launch), ownLogin: source.OwnLogin);
             if (source.HasPassword)
             {
                 // Das Passwort gehoert zu einer Verbindung (die Kennung steckt in der Verschluesselung): auf dem Server umschluesseln, es geht nie zum Browser
@@ -141,7 +147,7 @@ internal static class ConnectionEndpoints
             {
                 await store.SetHostKeyAsync(id.UserId, c.Id, source.HostKey, ctx.RequestAborted);        // dasselbe Ziel: der Schluessel ist schon bekannt
             }
-            return Results.Json(ToDto(c), AppJson.Default.ConnectionDto);
+            return Results.Json(await ToDtoAsync(c, id.UserId, store, ctx.RequestAborted), AppJson.Default.ConnectionDto);
         });
 
         app.MapDelete("/api/connections/{connection:guid}", async (Guid connection, HttpContext ctx, ConnectionStore store, SftpPool pool) =>

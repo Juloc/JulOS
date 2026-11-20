@@ -1,16 +1,16 @@
 namespace JulOS.Frontend.Files;
 
 // Alle Typen der Dateien-App fuer SFTP (Anfragen und Antworten); die JSON-Namen sind camelCase, siehe docs/FILES.md.
-internal sealed record FileErrorBody(string Error, string Code, string? Fingerprint = null, string? Algorithm = null, string? Known = null, Guid? Connection = null);
+internal sealed record FileErrorBody(string Error, string Code, string? Fingerprint = null, string? Algorithm = null, string? Known = null, Guid? Connection = null, string? User = null, bool? CanSave = null);
 /// <summary>Local: gibt es den Ort "Gemeinsamer Ordner"; Write: JULOS_FILES_WRITE=on; MaxBytes: Obergrenze je Datei und Operation.</summary>
 internal sealed record FilesInfoDto(bool Local, bool Write, long MaxBytes);
 /// <summary>Kind: file, directory, link, other. Resolved: wohin ein Link zeigt (file, directory, other; leer bei kaputtem oder ungeprueftem Link). Openable: Ordner oder Link auf einen Ordner.</summary>
 internal sealed record RemoteEntryDto(string Name, string Path, string Kind, long Size, DateTimeOffset Modified, string Mode, string? Resolved, bool Openable);
 internal sealed record RemoteListingDto(string Path, RemoteEntryDto[] Entries, bool Truncated, int Hidden);
 internal sealed record TextDto(string Path, string Text, bool Truncated, long Size);
-internal sealed record OpenRequest(Guid? Connection, string? Password, string? AcceptHostKey);
-/// <summary>HostKey: known (wie gemerkt), remembered (erstmals bestaetigt und gemerkt), replaced (geaenderten Schluessel bestaetigt).</summary>
-internal sealed record OpenResponse(string Home, string HostKey, string? Fingerprint, string? Algorithm);
+internal sealed record OpenRequest(Guid? Connection, string? Password, string? AcceptHostKey, bool? SaveForHost = null);
+/// <summary>HostKey: known (wie gemerkt), remembered (erstmals bestaetigt und gemerkt), replaced (geaenderten Schluessel bestaetigt). HostLoginSaved: das getippte Passwort wurde als Passwort des Host-Logins gespeichert.</summary>
+internal sealed record OpenResponse(string Home, string HostKey, string? Fingerprint, string? Algorithm, bool? HostLoginSaved = null);
 internal sealed record CloseRequest(Guid? Connection);
 internal sealed record MkdirRequest(Guid? Connection, string? Dir, string? Name, string? Token);
 internal sealed record RenameRequest(Guid? Connection, string? Path, string? Name, bool? Overwrite, string? Token);

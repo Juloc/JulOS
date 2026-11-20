@@ -12,9 +12,11 @@ internal sealed class HostKeyProblem(bool changed, SshHostKey presented, string?
 }
 
 /// <summary>Fuer die Verbindung gibt es kein gespeichertes Passwort und keine offene Sitzung: die Seite muss es abfragen.</summary>
-internal sealed class PasswordRequiredException(Guid connection) : Exception("Passwort fehlt.")
+internal sealed class PasswordRequiredException(Guid connection, string? hostLoginUser = null) : Exception("Passwort fehlt.")
 {
     public Guid Connection { get; } = connection;
+    /// <summary>Der Host hat einen Login nur mit Benutzer: die Seite fragt dann nur nach dem Passwort und kann es "fuer diesen Host speichern".</summary>
+    public string? HostLoginUser { get; } = hostLoginUser;
 }
 
 /// <summary>Die festen Fehlercodes der Dateien-App und ihre Status und deutschen Rueckfalltexte (die Seite uebersetzt den Code; der Text steht nur fuer Programme ohne Uebersetzung).</summary>

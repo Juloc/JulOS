@@ -21,9 +21,10 @@ internal sealed record FileTarget(Guid? Connection, string? Dir);
 /// </summary>
 internal sealed record PrepareRequest(string? Action, Guid? Connection, string[]? Paths, string? Dir, string? Name, string[]? Names, FileTarget? Target);
 /// <summary>
+/// Root: einer der Orte ist ein Root-Ort (der Agent des Hosts arbeitet als root; die Seite warnt auffaellig).
 /// Die Bestaetigung: Token (60 s, einmal; im Server nur sein SHA-256) und was genau geschaehe (so wie der Server es geprueft hat: Host, Ziel-Host, Pfade, Anzahl, Groesse, Namen, die ersetzt wuerden, ein Ordner mit Inhalt).
 /// </summary>
-internal sealed record PrepareResponse(string Token, int ExpiresIn, string Action, string Host, string? TargetHost, string[] Paths, string? Dir, string? Name, string[]? Names, int Files, int Directories, int Links, long Bytes, string[] Conflicts, bool NonEmpty);
+internal sealed record PrepareResponse(string Token, int ExpiresIn, string Action, string Host, string? TargetHost, string[] Paths, string? Dir, string? Name, string[]? Names, int Files, int Directories, int Links, long Bytes, string[] Conflicts, bool NonEmpty, bool Root = false);
 internal sealed record DeleteRequest(Guid? Connection, string[]? Paths, bool? Recursive, string? Token);
 internal sealed record CopyRequest(Guid? Connection, string[]? Paths, FileTarget? Target, bool? Move, bool? Overwrite, string? Token);
 internal sealed record JobStartedDto(Guid Job);

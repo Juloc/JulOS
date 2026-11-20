@@ -48,6 +48,8 @@ public sealed class HostLoginTests
     {
         var c = LoginResolver.Choose("x", "srv-b", false, true, Login("hostuser", false));
         Assert.Equal(new LoginChoice(LoginSource.Host, "hostuser", false), c);
+        // Hat die Verbindung fuer genau diesen Benutzer schon ein eigenes Passwort, geht weiter, was bisher ging
+        Assert.Equal(new LoginChoice(LoginSource.Host, "hostuser", true, PasswordFromOwn: true), LoginResolver.Choose("hostuser", "srv-b", false, true, Login("hostuser", false)));
     }
 
     [Fact]

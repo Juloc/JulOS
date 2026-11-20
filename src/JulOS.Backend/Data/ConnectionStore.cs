@@ -124,7 +124,7 @@ public sealed class ConnectionStore(NpgsqlDataSource db)
         var unreadable = false;
         if (choice.PasswordStored)
         {
-            var (sealedValue, id) = choice.Source == LoginSource.Host
+            var (sealedValue, id) = choice.Source == LoginSource.Host && !choice.PasswordFromOwn
                 ? (await _logins.GetSecretAsync(userId, c.HostId, ct), c.HostId)
                 : (await GetSecretAsync(userId, c.Id, ct), c.Id);
             password = sealedValue is null ? null : box.Decrypt(sealedValue, id);

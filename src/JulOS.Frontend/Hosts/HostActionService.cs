@@ -247,6 +247,8 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
             return (null, new(500, "audit_failed"));
         }
         if (_jobs.Count >= MaxJobs) foreach (var (k, j) in _jobs) if (j.Final && j.Finished < time.GetUtcNow() - TimeSpan.FromHours(1)) _jobs.TryRemove(k, out _);
+        // Harte Grenze: ein Auftrag kann bis zu 200 kB Protokoll halten, also nie mehr als MaxJobs Auftraege im Speicher (die aeltesten beendeten fallen zuerst weg)
+        if (_jobs.Count >= MaxJobs) foreach (var (k, _) in _jobs.Where(x => x.Value.Final).OrderBy(x => x.Value.Finished).Take(_jobs.Count - MaxJobs + 1).ToList()) _jobs.TryRemove(k, out _);
         _jobs[id] = job;
         log.LogInformation("Aktion {Action} auf Host {Host} gestartet, Benutzer {User}, Auftrag {Job}", gate.Def.Name, hostId, who.UserName, id);
         _ = Task.Run(() => ExecuteAsync(gate, job, p.Lines));
@@ -361,8 +363,16 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
 
     /// <summary>Das Protokoll eines apt-Laufs aus der Antwort: hoechstens 2000 Zeilen zu je 240 Zeichen, die Einrueckung bleibt, Steuerzeichen fallen weg.</summary>
     private static string[]? ParseLog(JsonElement o)
-        => o.TryGetProperty("log", out var l) && l.ValueKind == JsonValueKind.Array
-            ? [.. l.EnumerateArray().Take(MaxLogLines).Where(x => x.ValueKind == JsonValueKind.String).Select(x => AgentLabels.PrintableIndented(x.GetString(), 240))] : null;
+    {
+        if (!o.TryGetProperty("log", out var l) || l.ValueKind != JsonValueKind.Array) return null;
+        var lines = l.EnumerateArray().Take(MaxLogLines).Where(x => x.ValueKind == JsonValueKind.String).Select(x => AgentLabels.PrintableIndented(x.GetString(), 240)).ToList();
+        var total = lines.Sum(x => x.Length + 1);
+        var drop = 0;
+        while (total > MaxLogChars && drop < lines.Count) total -= lines[drop++].Length + 1;       // auch insgesamt begrenzt: die aeltesten Zeilen fallen zuerst weg
+        return [.. lines.Skip(drop)];
+    }
+
+    public const int MaxLogChars = 200 * 1024;
 
     /// <summary>Die Fehlerzusammenfassung des Agenten, Feld fuer Feld: Paketnamen nur, wenn sie wie Debian-Paketnamen aussehen.</summary>
     private static ActionSummary? ParseSummary(JsonElement o)

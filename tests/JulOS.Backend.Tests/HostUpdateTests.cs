@@ -190,7 +190,8 @@ public sealed partial class AgentLinkTests
         r.Agent.OnHost = (m, path, body, progress) => Task.FromResult((200, JsonSerializer.Serialize(new { ok = true, log = many, summary = new { errors = new[] { "E: <script>alert(1)</script>" }, failedPackages = Array.Empty<string>(), keptBack = Array.Empty<string>(), configQuestion = false, locked = false, installed = 1 } })));
         var job = await Confirmed(r, "updates.refresh");
         var log = StrList(job.GetProperty("result").GetProperty("log"));
-        Assert.Equal(2000, log.Length);                                                                     // die ersten 2000 Zeilen
+        Assert.InRange(log.Length, 1, 2000);
+        Assert.InRange(log.Sum(l => l.Length + 1), 1, 200 * 1024);                                          // auch insgesamt begrenzt (die aeltesten Zeilen fallen zuerst weg)
         Assert.All(log, l => { Assert.True(l.Length <= 240); Assert.DoesNotContain('\u0007', l); });
         Assert.Equal("E: <script>alert(1)</script>", StrList(job.GetProperty("result").GetProperty("summary").GetProperty("errors")).Single());      // als Text: der Browser maskiert
     }

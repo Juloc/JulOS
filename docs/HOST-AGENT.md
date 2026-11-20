@@ -9,9 +9,9 @@ What you get per host, at a glance (host card on the desktop and on the phone, p
 
 | Area | Shown |
 | --- | --- |
-| Load | CPU load (1, 5, 15 minutes), memory, swap, disks with fill level, uptime, network counters and rate, "reboot required" |
-| Updates | number of available updates, how many are security updates, kept-back and held packages, age of the package lists |
-| Disk health | SMART short status (when `smartctl` exists and the service may read the disks), software RAID from `/proc/mdstat`, ZFS from `zpool status -x`, full disks |
+| Load | CPU load (1, 5, 15 minutes), memory, swap, disks with fill level, uptime, network counters and rate, "reboot required" (the flag file of apt **or a newer installed kernel than the running one**, also on Proxmox) |
+| Updates | number of available updates, how many are security updates, kept-back and held packages (what `apt-get upgrade` would hold back, for example a new kernel), half configured packages (`dpkg --audit`), Proxmox detected, age of the package lists |
+| Disk health | SMART short status with temperature (needs the word `disks`, see below, or a service that may read the disks), software RAID from `/proc/mdstat`, ZFS from `zpool status -x` (a pool with a problem by name, state, scan and errors; **"not readable: reason" or no pools is never a problem and never a pool called `?`**), full disks |
 | Services and containers | failed systemd units, Docker containers (running, total, restarting) |
 | Identity | host name, operating system, kernel, addresses, virtualised or not, Proxmox host detected |
 
@@ -76,13 +76,13 @@ A desktop agent differs from a host agent in one honest way: it is **your user's
 
 ## Install: one installer for every machine
 
-In the app: open the host page at the section **Agent** (**Agent verwalten** in the card menu, or **Agent einrichten** on a host without one). **One flow for every machine**, no separate "desktop agent" and "host agent" any more: choose what the agent may do with the ticks (**Updates installieren, Logs lesen, Dienste, Container, Neu starten und ausschalten**; none is ticked by default, see [Actions](#actions-stage-3)), then **Agent per SSH installieren** or **Befehl kopieren**. The ticks become `--allow a,b` (always in the order updates, logs, services, docker, reboot; only these words ever reach the command) and, only with Docker ticked and the extra tick "Docker-Zugriff geben (Gruppe docker: entspricht root auf dem Rechner)", `--docker-group`. JulOS creates a one-time code, opens the SSH connection of this host in the terminal and **puts the finished command into the input bar without sending it**. You read it, press Enter, and type your `sudo` password **in the terminal yourself**. JulOS never stores, sees or sends the sudo password.
+In the app: open the host page at the section **Agent** (**Agent verwalten** in the card menu, or **Agent einrichten** on a host without one). **One flow for every machine**, no separate "desktop agent" and "host agent" any more: choose what the agent may do with the ticks (**Updates installieren, Logs lesen, Dienste, Container, SMART der Platten lesen, Neu starten und ausschalten**; none is ticked by default, see [Actions](#actions-stage-3)), then **Agent per SSH installieren** or **Befehl kopieren**. The ticks become `--allow a,b` (always in the order updates, logs, services, docker, disks, reboot; only these words ever reach the command) and, only with Docker ticked and the extra tick "Docker-Zugriff geben (Gruppe docker: entspricht root auf dem Rechner)", `--docker-group`. JulOS creates a one-time code, opens the SSH connection of this host in the terminal and **puts the finished command into the input bar without sending it**. You read it, press Enter, and type your `sudo` password **in the terminal yourself**. JulOS never stores, sees or sends the sudo password.
 If the host has no terminal connection, the page shows the command to copy and you run it on the host.
 
 The command downloads the installer into a file (so you can look at it) and runs it with sudo. It is the same line on every machine; the installer finds out what the machine is:
 
 ```sh
-curl -fsSL https://SERVER/agent-files/install-agent.sh -o julos-install-agent.sh && sudo sh julos-install-agent.sh --server https://SERVER --code ABCDE-FGHIJ [--allow updates,logs,services,docker,reboot] [--docker-group] [--allow-http] [--dry-run] [--uninstall]
+curl -fsSL https://SERVER/agent-files/install-agent.sh -o julos-install-agent.sh && sudo sh julos-install-agent.sh --server https://SERVER --code ABCDE-FGHIJ [--allow updates,logs,services,docker,disks,reboot] [--docker-group] [--allow-http] [--dry-run] [--uninstall]
 ```
 
 `tools/install-agent.sh` (POSIX `sh`, `shellcheck`-clean, idempotent) decides:
@@ -94,7 +94,7 @@ curl -fsSL https://SERVER/agent-files/install-agent.sh -o julos-install-agent.sh
 - An **installation that exists decides first** (a host agent as a system service stays a host agent, an autostart entry or user service of the user stays a desktop agent), so updating needs no new code and never switches the kind by accident. A graphical session without the desktop stack is **not** guessed to be a host: the installer says what to install (or you add `--host`).
 - `--desktop` and `--host` force the kind. **One machine, one agent**: forcing `--desktop` while a host agent is installed is refused with the way out (remove the host agent, enrol with a new code), and the other way round it only warns.
 
-In both kinds the same rules hold: the permission file is root's and **empty of words unless you name some with `--allow`**, the root helper is installed **only** if one of `updates`, `reboot`, `services`, `logs` was chosen (its socket is reachable only by the agent's user: the service account's own group for a host, the user's own socket with mode 0600 for a desktop), the downloads come only from your server and are checked, and a password is never read or typed.
+In both kinds the same rules hold: the permission file is root's and **empty of words unless you name some with `--allow`**, the root helper is installed **only** if one of `updates`, `reboot`, `services`, `logs`, `disks` was chosen (its socket is reachable only by the agent's user: the service account's own group for a host, the user's own socket with mode 0600 for a desktop), the downloads come only from your server and are checked, and a password is never read or typed.
 The old commands keep working: `install-host-agent.sh` and `install-linux-agent.sh` are thin callers that print a note and forward to `install-agent.sh` (with `--host` and `--desktop` in front); when the new script is not next to them they fetch it from `--server` the same checked way.
 
 The host installation, step by step:
@@ -104,10 +104,10 @@ The host installation, step by step:
 3. creates `/etc/julos-agent/permissions` (owned by root, see [Security](#security)); it is **empty of words** unless you named some with `--allow`,
 4. enrols the agent with the code (as `julos-agent`; the token lands in `/var/lib/julos-agent/.config/julos/agent.json`, mode 0600),
 5. installs and starts the systemd service `julos-agent` (`Restart=on-failure`, `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=read-only`, `PrivateTmp`, no capabilities, only `/var/lib/julos-agent` and `/opt/julos-agent` writable),
-6. **only if you allowed something that needs root** (`updates`, `reboot`, `services`, `logs`): downloads `julos-agent-helper.py` the same way (own server, checksum), installs it as root in `/usr/local/libexec/julos-agent/` and sets up
+6. **only if you allowed something that needs root** (`updates`, `reboot`, `services`, `logs`, `disks`): downloads `julos-agent-helper.py` the same way (own server, checksum), installs it as root in `/usr/local/libexec/julos-agent/` and sets up
    the socket-activated services `julos-agent-helper.socket` and `julos-agent-helper@.service` (see [The root helper](#the-root-helper)). Re-running the installer updates the helper; the agent's self-update never touches it.
 
-Options: `--dry-run` (shows every step and the unit files, changes and downloads nothing, needs no root), `--desktop` / `--host`, `--user NAME` (host: the service account; desktop: the user), `--allow WORDS` (comma separated from `updates reboot services docker logs`, written to the
+Options: `--dry-run` (shows every step and the unit files, changes and downloads nothing, needs no root), `--desktop` / `--host`, `--user NAME` (host: the service account; desktop: the user), `--allow WORDS` (comma separated from `updates reboot services docker logs disks`, written to the
 permission file; **never a default**, see [Actions](#actions-stage-3); `--allow-updates` is the same as `--allow updates`), `--docker-group` (host: see below; desktop: it only checks whether your user is in the group `docker` and tells you, the installer **never changes your groups**), `--systemd` (desktop: user service instead of autostart), `--allow-http` (test instance only), `--no-start`, `--uninstall`.
 Without systemd the files are installed and the command to start the agent by hand is printed.
 The checksum protects against a damaged or truncated download; it does **not** protect against a hostile server (both come from the same server). That is the same trust as the existing desktop agent update.
@@ -155,9 +155,9 @@ Only fixed requests, answered with JSON, never a file or a log. Each capability 
 **Updates.** Security updates are the ones whose origin carries `security` (Debian `Debian-Security`, Ubuntu `-security` and ESM). The agent never refreshes the package lists: that needs
 root. It shows their **age** instead ("package lists were updated 3 days ago: `sudo apt update` on the host"), so "no updates" is never a silent lie. Most systems refresh them by a timer (`apt-daily`).
 
-**Disk health.** SMART needs `smartctl` and permission to read the disks; a plain service user usually has none, then the card says "not read" and why. Giving the service access to the raw disks
-(group `disk`) is a decision you make on the host (it lets the service read every disk); the installer does not do it. RAID state comes from `/proc/mdstat` (degraded, rebuilding with percent, inactive),
-ZFS from `zpool status -x`. Disk fill level is part of the disks list; a disk at 90 % or more is marked. The first read of the SMART data runs in the background (it can take seconds); later reads use a
+**Disk health.** SMART needs `smartctl` and permission to read the disks; a plain service user has none, then the card says "not read" and why, **and how to allow it**. Two ways: the word **`disks`** (`--allow disks`, tick "SMART der Platten lesen"): the agent then asks the root helper's **read-only** verb `smart.health` (below), which finds the disks itself and runs `smartctl -H -A -j /dev/<name>` for each (status ok, failing or unknown, and the temperature when smartctl gives one; the agent never names a disk, and without the word the helper is never asked); or giving the service access to the raw disks
+(group `disk`), a decision you make on the host (it lets the service read every disk); the installer does not do it. When `smartctl` is missing the card says so. RAID state comes from `/proc/mdstat` (degraded, rebuilding with percent, inactive),
+ZFS from `zpool status -x`, read with its return code: *all pools are healthy* is fine, *no pools available* means no pools (nothing shown), a listed pool is a problem and shows name, state (DEGRADED, FAULTED, UNAVAIL, or ONLINE with errors), the `scan:` and `errors:` lines and the first `status:` line; anything else (ZFS modules not loaded, userland and kernel module out of step after a half finished upgrade, a failed call) is **"ZFS: not readable: <short cleaned message>"**, never an alarm and never a pool called `?`. Disk fill level is part of the disks list; a disk at 90 % or more is marked. The first read of the SMART data runs in the background (it can take seconds); later reads use a
 ten-minute memory. Btrfs and LVM are not read yet (see the roadmap).
 
 **Docker.** For reading the agent only sends `GET /containers/json?all=1`, but **access to the Docker socket is access to root on that machine**: the `docker` group is root-equivalent. So the
@@ -177,7 +177,8 @@ the proxy must allow `POST /containers/<id>/start|stop|restart`, `GET /container
 | GET | `/api/hosts/{id}/units` | loaded systemd services (targets of actions); only when the server level of the host allows `services`, else `403 control_off` |
 | POST | `/api/hosts/{id}/actions/prepare` | step 1 of an action: checks everything and returns the one-time confirmation (below) |
 | POST | `/api/hosts/{id}/actions/run` | step 2: runs the confirmed action, answers `202` with the job id at once |
-| GET | `/api/hosts/{id}/actions/{job}` | state, progress and result of a job (also fetches a lost result from the agent) |
+| GET | `/api/hosts/{id}/actions/{job}` | state, progress, live `tail` and result of a job (also fetches a lost result from the agent) |
+| GET | `/api/host-jobs` | the user's running and last-hour writing jobs with host, for the task bar after a reload |
 | GET | `/api/hosts/{id}/audit?limit=` | the history (audit) of this host, newest first, at most 200 |
 | PUT | `/api/hosts/{id}/agent/control` | `{level}`: `read` (default, no actions), `updates` (updates and logs) or `full` |
 | PUT | `/api/host-actions/pause` | `{paused}`: the pause switch (below) |
@@ -205,7 +206,7 @@ The design follows [INTEGRATIONS.md](INTEGRATIONS.md) section 3. For this agent 
 - **Own user, no shell, locked down.** `julos-agent` has no login shell and no password; the unit has `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=read-only`, `PrivateTmp`, an empty capability set, and writes only to its own two folders.
 - **No shell, no free command.** Programs are fixed argument lists (`subprocess` with a list, never a shell string); names are checked against patterns **and** against the lists the agent itself reported; the agent never gets `sudo` and keeps `NoNewPrivileges`.
   Reading uses only `apt-get -s` (simulate); everything that writes is in the [Actions](#actions-stage-3) section below and behind the keys described there.
-- **The agent can't give itself rights.** `/etc/julos-agent/permissions` counts only when **root owns it and it is not writable by group or others** (otherwise it is ignored and a warning is logged). The words are `updates`, `reboot`, `services`, `docker`, `logs`; the file is empty of words after the installation.
+- **The agent can't give itself rights.** `/etc/julos-agent/permissions` counts only when **root owns it and it is not writable by group or others** (otherwise it is ignored and a warning is logged). The words are `updates`, `reboot`, `services`, `docker`, `logs`, `disks`; the file is empty of words after the installation. `disks` is the only word that grants a **read**: the SMART health of the disks through the root helper (never a default).
   (The command-line flags `--allow-updates` / `--allow-reboot` still add to the **agent's** answer, but the root helper reads only the file.)
 - **Two keys, plus your confirmation.** An action needs the server (`agents.control`, session, rate limit, pause switch) **and** the agent (the local file) to agree, **and** a one-time confirmation from you. The agent reports its local words in `hello` (`allow`) so the app can show why an action is not offered.
 - **The agent is not the server.** Its answers are untrusted input (see "Limits" above). It cannot ask the server for anything: the server only sends fixed requests.
@@ -220,7 +221,8 @@ Actions are the first thing in JulOS that changes a machine, so they are built t
 | Action (id) | Right | What the agent does | Target |
 | --- | --- | --- | --- |
 | `updates.refresh` | `updates` | `apt-get update` (root helper) | none |
-| `updates.install` | `updates` | one package: `apt-get install --only-upgrade --no-remove`; all: `apt-get upgrade` (never removes or adds packages; kept-back packages stay for manual work) | `all` or one package **of the update list** |
+| `updates.install` | `updates` | one package: `apt-get install --only-upgrade --no-remove`; all: `apt-get upgrade` (never removes or adds packages). **On Proxmox, and elsewhere only if you tick "full-upgrade" in the confirmation:** `apt-get dist-upgrade`. Before it the helper checks `dpkg --audit` and refuses with `dpkg_broken` when packages are half configured | `all` or one package **of the update list** (not on Proxmox: it is updated as a whole) |
+| `updates.repair` | `updates` | `dpkg --configure -a`, then `apt-get -f install` (root helper, fixed argument lists); offered when a run left packages half configured, when `dpkg --audit` shows some, or when an update is refused with `dpkg_broken` | none |
 | `power.reboot`, `power.poweroff` | `reboot` | answers "accepted" first, then `systemctl reboot` / `poweroff` after a short delay (root helper) | none |
 | `service.start`, `service.stop`, `service.restart` | `services` | `systemctl <verb> -- <unit>` (root helper); never the agent or its helper | a service **of the reported list** (`GET /v1/host/units`) |
 | `docker.start`, `docker.stop`, `docker.restart` | `docker` | one `POST /containers/<id>/<verb>` on the Docker socket the read functions already use | a container **of the container list** |
@@ -242,16 +244,18 @@ Paths are fixed: `POST /v1/host/updates/refresh|install`, `/reboot`, `/poweroff`
 
 1. `POST .../actions/prepare {action, target}` checks everything (below) and answers with a confirmation: a random token of 256 bits (the server keeps **only its SHA-256, in memory**, for **60 seconds**) and the exact content: host, action, target (with the container's name),
    warnings, and `typeToConfirm` for **reboot, power off and "all updates"**: the machine name (the name the agent reports) that you must type. Nothing has happened yet.
-2. `POST .../actions/run {token, action, target, typed}` runs it. The confirmation is **single use** (it is removed on first sight, also when something does not match), bound to **your session, this host, this action and this target**, and expires. A wrong typed name does not burn it
+2. `POST .../actions/run {token, action, target, typed, full?}` runs it (`full: true` is the tick "full-upgrade", only meaningful for all updates). The confirmation is **single use** (it is removed on first sight, also when something does not match), bound to **your session, this host, this action and this target**, and expires. A wrong typed name does not burn it
    (the server checks the name too, not only the page). Before running, **every check is repeated**: between the steps the pause switch, the level or the connection may have changed.
 
 The page shows a small sheet with host, action and target (and the typing field where required); after "Ausführen" it shows progress and result. Closing the dialog does not cancel a running action.
+
+**Updates and Proxmox in the confirmation.** `prepare` for all updates adds `options`: `proxmox` (the machine is a Proxmox VE, Backup Server or Mail Gateway: package `pve-manager` installed, or `/etc/pve`, `/etc/proxmox-backup`, `/etc/pmg` present), `fullChoice`, `full`, `keptBack` and `removals`. **On Proxmox** all updates always run `apt-get dist-upgrade` (Proxmox needs it; `apt-get upgrade` leaves it half configured), the sheet says "Proxmox wird vollständig aktualisiert. Laufende VMs laufen weiter. Bei neuem Kernel ist danach ein Neustart nötig (dann laufen die VMs für kurze Zeit nicht)." and installing a single package is refused (`409 proxmox_whole`, the page shows no per-package button). **Elsewhere** the default stays `apt-get upgrade`; when it would hold packages back (`keptBack`, read from a second simulation `apt-get -s upgrade`, for example `linux-image-amd64`) the sheet shows them and offers the explicit tick "Auch Pakete mit neuen Abhängigkeiten installieren (full-upgrade)", **off by default**, and shows how many packages a full upgrade would remove. The history records such a run as target `all (full)`. Typing the machine name stays required for all updates.
 
 ### Who must agree (the keys)
 
 Server: the **pause switch** (`JULOS_HOST_ACTIONS=off` in the environment, or "Alle Aktionen pausieren" on the page; the environment wins), the **level** per host (`agents.control`, default `read` = no action; `updates` = updates and logs; `full` = everything), your **session**,
 the **rate limit** (30 requests per minute and user, at most 20 open confirmations), an **agent of version 0.6.0 or later that is connected and announced the capability**, and the agent's **`allow`** from its hello. Agent: the **local word** in `/etc/julos-agent/permissions`
-(`updates`, `reboot`, `services`, `docker`, `logs`), checked again for every request (`403 not_permitted`). The root helper checks the file **a third time**. Missing any one: refused, and the refusal is written to the history.
+(`updates`, `reboot`, `services`, `docker`, `logs`, `disks`), checked again for every request (`403 not_permitted`). The root helper checks the file **a third time**. Missing any one: refused, and the refusal is written to the history.
 
 ### One action at a time
 
@@ -259,10 +263,22 @@ Per host only one writing action runs (`409 busy`), on the server **and** in the
 
 ### Progress and the way back
 
-Long actions send `{"t":"progress","id":N,"text":"...","done":k,"total":n}` messages over the link (rate limited to about two per second; for updates `done` counts "Setting up" lines against the number of packages). The page polls `GET .../actions/{job}` every 1.5 s.
+Long actions send `{"t":"progress","id":N,"text":"...","done":k,"total":n}` messages over the link (rate limited to about two per second; for updates `done` counts "Setting up" lines against the number of packages). The app polls `GET .../actions/{job}` every 1.5 s (see [Background tasks](#background-tasks)); while a job runs the answer also carries `tail`, the last output lines the agent sent (the progress messages bundle the lines since the last one, at most 20 of 200 characters).
 A lost link **does not abort the action**: the agent keeps working and stores the result (last 20 jobs in `~/.local/state/julos/jobs.json`, mode 0600, never the content of logs). The server marks the job `lost`, and as soon as the agent is back (or when the page asks) fetches `GET /v1/host/jobs`
 and completes the job and the history entry. A job that was still running when the agent process died is reported as `interrupted`, never as success. Reboot and power off report **"accepted"** to the server first and run after a delay of five seconds, so the answer still arrives.
-After updates the result says `rebootRequired` when `reboot-required` is set, and the page shows a hint.
+After updates the result says `rebootRequired` when `reboot-required` is set **or a newer kernel than the running one is installed** (the flag file does not exist on Proxmox), and the page shows a hint.
+
+#### Error summary and log of an update
+
+The root helper keeps the **whole output** of an apt or dpkg run, bounded (last 2000 lines, 240 characters per line, 200 kB in all; the indentation stays, because apt lists packages indented) and the agent sends it with the result (`log`) together with a **summary** it reads from it (`summary`): the `E:` lines, the packages named by `Errors were encountered while processing:` / `dpkg: error processing package ...` / the `dpkg --audit` list, the packages `apt` keeps back, whether dpkg wanted to ask about a configuration file, whether the package manager was locked, and how many packages said `Setting up`. The page shows the summary on top in plain words and the full log folded under it (as text, never HTML). The agent's job file keeps only the **last 200 lines** of the log and all of the summary (the log is not secret, but it is not the agent's to keep in bulk); a result fetched after a lost link therefore has the end of the log, not all of it. The server cuts everything once more (2000 lines, 240 characters, only valid Debian package names in the lists).
+The result also says `needsRepair` when packages stayed half configured, and the page then offers **Pakete reparieren** (`updates.repair`, its own confirmation).
+
+Return codes of the update actions: `apt_failed` (apt stopped for another reason), **`dpkg_failed`** (dpkg could not finish setting up packages, for example `Errors were encountered while processing: ...`), `apt_locked` (another apt or dpkg runs), **`dpkg_broken`** (refused before anything ran: `dpkg --audit` lists half configured packages; repair first), `timeout`, `not_installed`, `helper_unavailable`. Nothing asks a question: no terminal input (`stdin` is closed), `DEBIAN_FRONTEND=noninteractive`, `--force-confold --force-confdef`, `UCF_FORCE_CONFFOLD`, `needrestart` only reports and never restarts a service by itself. Time limits: lists 10 minutes, install 60 minutes, repair 30 minutes per step, a held lock waits 60 seconds. There is **no cancel**: stopping `apt` or `dpkg` in the middle is what leaves a machine half updated, so closing the window only closes the window and the action runs to the end, also when the agent or the page goes away.
+
+#### Background tasks
+
+An action does not block the app. The confirmation stays a small sheet; after "Ausführen" it closes and the action runs as a **background task**: on the desktop a discreet entry in the menu bar (text such as "Updates installieren auf pve: 12 von 63" and a progress bar; with several tasks "2 Aufgaben laufen" and a list), on the phone a bar under the header; a click opens the **panel** (a movable window on the desktop, a page with a back arrow on the phone) with the live output, the error summary and the folded log. Several tasks (on different hosts) are visible at once; per host still only one writing action runs (`409 busy`). When a task ends, a notice with the result and a "Ansehen" button appears. Read-only actions (logs) still show their result in the sheet, which is the point of them.
+After a reload of the page the app finds running and recently finished tasks again: `GET /api/host-jobs` lists the signed-in user's writing jobs that run or ended within the last hour (newest first, with host id and name, state, progress, live `tail`; a finished one carries its result). The server keeps these in memory (a restart of the server forgets them; the agent still has its last 20 results and the history has the entries). Removed tasks (a button in the list) stay away after a reload, per browser.
 
 ### The history (audit)
 
@@ -275,18 +291,19 @@ The entry `started` is written **before** the action is sent; if it cannot be wr
 `tools/julos-agent-helper.py` is a small program (standard library only, about 200 lines) that runs **as root, one request per connection**, started by systemd's socket activation (`julos-agent-helper.socket`, `/run/julos-agent-helper.sock`, mode 0660, group = the service account; for a desktop agent the socket belongs to the user with mode 0600; `Accept=yes`).
 It exists because the agent is deliberately an unprivileged user with `NoNewPrivileges` and a read-only file system: it cannot run `apt-get` itself, and `sudo` would not work under that sandbox (and would be a much bigger door). The helper:
 
-- reads **one JSON line**, accepts only five verbs (`apt.refresh`, `apt.upgrade`, `power`, `service`, `journal`), checks the matching word in `/etc/julos-agent/permissions` (root-owned, not writable by others), validates every value (package pattern **without a trailing `-`**,
-  which would mean "remove" to apt; unit pattern; never `julos-agent*`) and runs **exactly one fixed program as an argument list**: no shell, no `sudo`, no environment from the caller (`DEBIAN_FRONTEND=noninteractive`, `needrestart` only reports);
+- reads **one JSON line**, accepts only seven verbs (`apt.refresh`, `apt.upgrade` (with `full` for `dist-upgrade`), `apt.repair`, `power`, `service`, `journal`, and the read-only `smart.health` with the word `disks`), checks the matching word in `/etc/julos-agent/permissions` (root-owned, not writable by others), validates every value (package pattern **without a trailing `-`**,
+  which would mean "remove" to apt; unit pattern; never `julos-agent*`) and runs **exactly one fixed program as an argument list**: no shell, no `sudo`, no environment from the caller (`DEBIAN_FRONTEND=noninteractive`, `needrestart` only reports); before every upgrade it runs `dpkg --audit` and refuses with `dpkg_broken` when the package database is not in order; `smart.health` takes no argument from the agent at all: it finds the disks with `lsblk -dn -o NAME,TYPE` (type `disk` only, names checked against a pattern) and runs `smartctl -H -A -j /dev/<name>` for each, 25 seconds at most per disk;
 - streams the program's output lines back as progress and ends with a short result code; when the agent hangs up, the action **runs to the end** (a half-finished `apt` is worse than an unread result);
-- is **not replaced by the agent's self-update**: it is installed and updated only by re-running `install-agent.sh` as root. The installer installs it only when you allow `updates`, `reboot`, `services` or `logs`. Without systemd it is not installed and those actions answer `helper_unavailable`.
+- is **not replaced by the agent's self-update**: it is installed and updated only by re-running `install-agent.sh` as root. The installer installs it only when you allow `updates`, `reboot`, `services`, `logs` or `disks`. Without systemd it is not installed and those actions answer `helper_unavailable`.
 
 Honest limit: the permission file is the access control for the helper, and anyone who can write to the agent's user (or to the helper's socket group) can ask for **exactly the actions the file allows, with values the helper validates**, without your confirmation in the app. That is why the user stays
 unprivileged, the words are never a default, and `reboot`/`services` should be allowed only on machines where this is acceptable.
 
 ### Limits
 
-- Installing updates and refreshing lists: **apt only**. `dpkg` may stop with a question the helper cannot answer (it keeps the existing configuration files, `--force-confold`); a held package or a broken state shows up as `apt_failed` with the output tail.
-- `apt-get upgrade` does what `upgrade` does: packages that need new dependencies or removals stay "kept back" and need a manual `dist-upgrade`.
+- Installing updates, refreshing lists and repairing: **apt only**. `dpkg` never gets a terminal (it keeps the existing configuration files, `--force-confold`); a held package or a broken state shows up as `apt_failed`, `dpkg_failed` or `dpkg_broken` with the summary and the log (see above).
+- `apt-get upgrade` does what `upgrade` does: packages that need new dependencies or removals stay "kept back"; they are shown, and "full-upgrade" in the confirmation (always on Proxmox) installs them with `dist-upgrade`, which may also remove packages (the sheet says how many).
+- The repair verb cannot fix everything: it runs `dpkg --configure -a` and `apt-get -f install`, then checks `dpkg --audit` again; if packages are still broken the result says `dpkg_broken` and the log says why. What needs a decision (a package that cannot be configured) stays manual work on the host.
 - Stopping a service that your SSH or network depends on is possible (and only a confirmation away); the agent's own units are protected.
 - The JulOS server's own containers (Compose project `julos` or an image with `julos` in its name) show a **warning** in the confirmation when you stop or restart them; they are not blocked.
 - The server keeps confirmations and job states **in memory**: a restart of the server forgets open confirmations (harmless) and job states (the history entry `started` then has no result entry; the agent still has it).
@@ -295,7 +312,9 @@ unprivileged, the words are never a default, and `reboot`/`services` should be a
 ## Proxmox
 
 A Proxmox VE (or Backup Server, Mail Gateway) host is a **Debian machine**: the host agent installs and runs there like anywhere else and shows load, memory, disks, **ZFS state** (`zpool status -x`),
-RAID, the Debian updates of the node, failed units and the reboot flag. The agent detects Proxmox (`pveversion`, `/etc/pve`) and the card names it ("Proxmox VE 8.x"). Use SSH once to install, as above.
+RAID, the Debian updates of the node, failed units and the reboot need (the flag file **or a newer `proxmox-kernel` than the running one**). The agent detects Proxmox (`pveversion`, `/etc/pve`) and the card names it ("Proxmox VE 9.x"). Use SSH once to install, as above.
+
+**Updating Proxmox:** a Proxmox node must be updated as a whole with `apt-get dist-upgrade`; `apt-get upgrade` installs the new packages but leaves some half configured (typically `pve-manager` and `proxmox-mail-forward`: `Errors were encountered while processing`). So on Proxmox "Alle Updates installieren" runs `dist-upgrade` and single packages are not offered. Running VMs and containers keep running during the update; a new kernel only takes effect after a reboot, and the VMs are down for a short time then (the page says "Neuer Kernel installiert" and offers the reboot with its own confirmation, **JulOS never reboots by itself**). A host that an earlier `upgrade` left half configured shows "N Pakete sind halb eingerichtet" in the section Updates with the button **Reparieren**.
 
 What the agent cannot give you is the Proxmox view: guests, cluster state, storage pools by name, backup jobs, tasks. That comes **in addition, later**, from the Proxmox API with a read-only token (milestone M2 in
 [INTEGRATIONS.md](INTEGRATIONS.md) 2.2) and links guests to hosts (M6a). The two do not replace each other: the agent tells you the *node* is fine, the API tells you what runs on it.
@@ -360,6 +379,9 @@ Effort: as listed there (M to L).
 - `tests/JulOS.Backend.Tests/HostActionTests.cs`: the two-step confirmation (expired, reused, wrong session, wrong host, changed action or target, typed name), the keys (level, local permission, version, offline, pause switch from the setting and from the environment), rate limit, history entries and ownership, target checks, one action per host, progress, failure codes,
   lost connection and fetching the result, failing closed when the history cannot be written.
 - `tests/frontend/hostactions.test.mjs`: when buttons appear, the confirmation text, typing the machine name, progress and result, error texts, the history, HTML escaping, and that the browser knows no other way than prepare then run.
+- `tests/agent/test_updates.py`: the error summary with the real Proxmox failure (`Errors were encountered while processing: proxmox-mail-forward pve-manager`, `E: Sub-process /usr/bin/dpkg returned an error code (1)`), kept back, `dpkg --audit` text, lock and conffile question, hostile text; the helper with an injectable runner (argument vectors of upgrade, dist-upgrade and repair, the audit refusal, failure codes, bounded log, `smart.health` with names from `lsblk` only); the agent side (Proxmox dist-upgrade, single packages refused, `full` only on request, repair, bounded stored log, progress lines); ZFS parser fixtures for every case; kernel comparison; SMART through the helper. No real apt, dpkg, smartctl, lsblk or zpool is ever started.
+- `tests/JulOS.Backend.Tests/HostUpdateTests.cs`: repair as its own confirmed action, Proxmox options and `proxmox_whole`, `full` only with the tick, summary and log in results, bounded and hostile output, live lines and the job list after a reload, ZFS and SMART fields, the word `disks`.
+- `tests/frontend/hosttasks.test.mjs`, `hostupdates.test.mjs`: the task store (polling, several hosts, reload, dismiss, vanished job), bar and panel texts, confirmation with Proxmox and full-upgrade, summary, repair offer, ZFS and SMART display.
 - `tests/JulOS.Backend.Tests/HostInfoTests.cs`: endpoints with a fake agent: all four reads, cache and refresh limits, simultaneous requests, offline and stale, no agent, unsupported, error codes, hostile data, session and ownership, migration 017 and the control check.
 - `tests/frontend/hostinfo.test.mjs`, `hosts.test.mjs`: formatters, card lines, HTML escaping, the store, the install command, the choice of the terminal connection.
 - `tests/JulOS.Backend.Tests/UnifiedAgentTests.cs`: a desktop agent with `caps` host shows values and allows actions with the same keys; an old desktop agent (0.5.x/0.6.0) stays valid, gets no host request and shows `hostSupport: update`; the support rule; the installer is served with a checksum.

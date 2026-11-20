@@ -10,7 +10,7 @@ import { healthCard, PANELS, attention } from '../../src/JulOS.Frontend/wwwroot/
 setPref('de', null);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const host = (agent = {}) => ({ id: 'h1', name: 'pve', online: true, agent: { online: true, kind: 'host', version: '0.6.0', control: 'full', allow: ['updates', 'reboot', 'services', 'docker', 'logs'], caps: ['host', 'sysinfo', 'updates', 'services'], hostSupport: 'yes', ...agent } });
-const conf = (over = {}) => ({ token: 'T', expiresIn: 60, action: 'updates.install', target: 'all', targetName: 'all', host: 'pve', typeToConfirm: 'pve-cubi', warnings: [], readOnly: false, ...over });
+const conf = (over = {}) => ({ token: 'T', expiresIn: 60, action: 'updates.install', target: 'all', targetName: 'all', host: 'pve', typeToConfirm: 'pve-01', warnings: [], readOnly: false, ...over });
 
 test('Bestaetigung "alle Updates" auf Proxmox: Hinweis, kein Haken, Entfernungen sichtbar', () => {
   const c = conf({ warnings: ['proxmox_full'], options: { proxmox: true, fullChoice: false, full: true, keptBack: ['proxmox-ve'], removals: 2 } });
@@ -42,10 +42,10 @@ test('Bestaetigung ohne Proxmox: "full-upgrade" ist eine ausdrueckliche Wahl, St
 test('Ausfuehren: full geht nur mit ausdruecklichem true mit, sonst bleibt der Koerper wie frueher', async () => {
   const bodies = [];
   const api = async (path, o) => { bodies.push(o.body); return { job: 'J' }; };
-  await runAction(api, 'h1', conf(), 'pve-cubi');
-  await runAction(api, 'h1', conf(), 'pve-cubi', false);
-  await runAction(api, 'h1', conf(), 'pve-cubi', true);
-  assert.deepEqual(bodies[0], { token: 'T', action: 'updates.install', target: 'all', typed: 'pve-cubi' });
+  await runAction(api, 'h1', conf(), 'pve-01');
+  await runAction(api, 'h1', conf(), 'pve-01', false);
+  await runAction(api, 'h1', conf(), 'pve-01', true);
+  assert.deepEqual(bodies[0], { token: 'T', action: 'updates.install', target: 'all', typed: 'pve-01' });
   assert.deepEqual(bodies[1], bodies[0]);
   assert.deepEqual(bodies[2], { ...bodies[0], full: true });
 });

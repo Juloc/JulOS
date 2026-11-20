@@ -292,10 +292,13 @@ export function initHostPage({ state, api, esc, store, openAction, reloadHosts, 
   const detach = () => { if (root && root.removeEventListener) for (const [n, f] of [['click', onClick], ['keydown', onKey], ['change', onChange]]) root.removeEventListener(n, f); };
   return {
     mount(el, host, panel = null, opts = {}) {
+      // Dieselbe Seite wird neu gebaut (die Verbindungen oder Hosts wurden neu geladen, zum Beispiel nach dem Speichern des Logins): Abschnitt und Daten bleiben, die Seite springt nicht zurueck zum Ueberblick
+      const again = !!root && hostId === host.id, keep = again ? current : null;
       detach(); root = el; hostId = host.id;
       root.addEventListener('click', onClick); root.addEventListener('keydown', onKey); root.addEventListener('change', onChange); onBack = opts.onBack || null;
-      data = {}; prev = null; units = null; history = null; login = { resp: null, error: '' }; current = null; setup = newSetup(); token++;
-      render(host, panel);
+      if (!again) { data = {}; prev = null; units = null; history = null; login = { resp: null, error: '' }; setup = newSetup(); }
+      current = null; token++;
+      render(host, panel || keep);
     },
     unmount() { token++; detach(); root = null; },
   };

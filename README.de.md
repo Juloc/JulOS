@@ -37,6 +37,7 @@ Stand: erst Linux (X11, XFCE getestet). Windows ist eingeplant, die Agent-API is
 - **Statusleiste, Bildrate und Pop-out** (Desktop und Handy): je Stream-Sitzung eine optionale Statusleiste (Bilder pro Sekunde, Reaktionszeit, Datenrate, Auflösung, Kodierer), eine Bildrate je Sitzung (automatisch, 60, 30, sparsam) und am großen Bildschirm lässt sich eine Sitzung ohne zweiten Login in ein eigenes Browserfenster lösen. Siehe [docs/STATUSBAR.md](docs/STATUSBAR.md) und [docs/SESSIONS.md](docs/SESSIONS.md).
 - **PWA**: installierbar (braucht HTTPS), Standalone/Vollbild, Offline-Huelle. Material-You-Palette aus Grundfarbe oder Bild.
 - **Neu verbinden** mit Animation, Auto-Tastatur bei Textfeldern, Layout folgt dem sichtbaren Viewport.
+- **Dateien auf jedem Host** (Desktop-Fenster und Handy-Seite "Dateien"): der gemeinsame Ordner des Servers und jeder Host mit SSH-Verbindung, per SFTP mit den Zugangsdaten, die du an der Verbindung gespeichert hast (kein Root, kein Agent). Text ansehen, herunterladen, hochladen (auswaehlen oder hineinziehen), neuer Ordner, umbenennen, kopieren, verschieben (auch von Host zu Host ueber den Server) und loeschen; jede Aenderung wird in der App bestaetigt und in einem Verlauf festgehalten. Lesen geht sofort; **Schreiben ist aus, bis du `JULOS_FILES_WRITE=on` setzt**. Der Host-Schluessel muss bestaetigt werden, Links werden nie verfolgt, nichts liegt im Speicher, Downloads erscheinen nie als Seite. Siehe [docs/FILES.md](docs/FILES.md) (englisch).
 
 ## Schnellstart
 

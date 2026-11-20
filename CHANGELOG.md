@@ -4,6 +4,21 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Neu
+- **Dateien für alle Hosts über SFTP** ([docs/FILES.md](docs/FILES.md)): die Dateien-App (Desktop-Fenster und Handy-Seite „Dateien“) zeigt neben dem gemeinsamen Ordner des Servers jeden Host mit SSH-Verbindung. Mit den an der Verbindung gespeicherten Zugangsdaten (oder einem im Dialog getippten Passwort, das nie gespeichert und nie geloggt wird; kein Root, keine Änderung am Agenten): ansehen (Text), herunterladen, hochladen (auswählen oder hineinziehen), neuer Ordner, umbenennen, kopieren, verschieben (auch von Host zu Host über den Server, im Strom, erst unter vorläufigem Namen, dann umbenannt) und löschen, mit Mehrfachauswahl, Zielauswahl, Fortschritt und Abbrechen. Hosts mit mehreren SSH-Verbindungen bieten eine Auswahl, RDP und VNC sind kein Dateiort.
+- **Sicherheit**: alles hinter der Sitzung (POST mit `X-JulOS` und Origin-Prüfung), Rate-Limits je Benutzer, Pfade absolut und auf dem Server normalisiert, Listen höchstens 2000 Einträge, Kopieren und Löschen höchstens 10 000 Einträge und 20 Ebenen (vorher gezählt), Up- und Download im Strom mit Größenlimit (`JULOS_FILES_MAX_MB`, Standard 2048), Textvorschau höchstens 1 MiB, Downloads immer `attachment` und `application/octet-stream`. Links werden angezeigt und nie verfolgt (die SFTP-Bibliothek folgt Links bei Pfad-Aufrufen; die App benutzt deshalb Handles aus der Ordnerliste, ein Link wird als Link gelöscht oder umbenannt und nie ersetzt). Der Host-Schlüssel gilt nie still: auch der erste wird bestätigt (strenger als beim Terminal, gleiche Spalte), ein geänderter bricht mit Warnung ab. SFTP-Sitzungen sind kurzlebig und gepoolt (je Benutzer und Verbindung, 60 s Leerlauf, `JULOS_FILES_MAX_SESSIONS`, Standard 4).
+- **Schreiben ist standardmäßig aus** (`JULOS_FILES_WRITE=off`; `on` schaltet es ein, Lesen bleibt an). Jede schreibende Aktion verlangt die Bestätigung in der Oberfläche (Host, Pfad, Anzahl; Ersetzen und Ordner samt Inhalt löschen nur mit ausdrücklichem Haken; kein Papierkorb) und `confirm` in der Anfrage.
+- **Verlauf**: neue Tabelle `files_audit` (Migration `019`): Benutzer, Host, Aktion, Pfad (gekürzt), Ergebnis, Zeit, nie Inhalte oder Passwörter; `GET /api/files/audit` und die Taste „Verlauf“ in der App.
+- Neue Dateien: `FileTransfer`, `ISftpFileSession`/`SshNetFileSession` (Integrations), `SftpPool`, `FileJobs`, `RemoteFileEndpoints` (Frontend), `files-core.js`, `files-app.js`, `files.css`; neue Tests (Logik gegen ein Dateisystem im Speicher, Pool, HTTP, ein echtes SFTP-Ziel des Dev-Stacks, Node).
+
+### Sicherheit
+- **Review der Dateien über SFTP** ([docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md), Abschnitt „Files over SFTP“, F-24 bis F-32). **Behoben:** Dateinamen, die ein Ziel in einer Ordnerliste meldet, werden nie als Pfad benutzt (`../../x`, `a/b`): ein gekaperter Host konnte sonst beim Kopieren auf einen anderen Host außerhalb des gewählten Ordners schreiben; die Summe der wirklich empfangenen Bytes ist je Kopie begrenzt. Offen und zu entscheiden: eine vom Server ausgegebene, einmalige Bestätigung für schreibende Aktionen (heute nur ein Merker der Seite; Schreiben bleibt standardmäßig aus), Verlauf vor dem Schreiben.
+
+### Geändert
+- Der Fensterinhalt von „Dateien“ am Desktop ist jetzt die gemeinsame App (Orte links); der gemeinsame Ordner (`JULOS_FILES_ROOT`, nur lesen) bleibt als eigener Ort unverändert. Die Fehlerantwort der Seite (`ApiError`) trägt jetzt die ganze Antwort (`data`).
+
 ## [0.14.0] - 2026-11-20
 
 ### Neu

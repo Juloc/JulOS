@@ -50,7 +50,7 @@ const show = (name) => {
 };
 
 class ApiError extends Error {
-  constructor(status, message, retryAfter, code) { super(message); this.status = status; this.retryAfter = retryAfter; this.code = code; }   // code: kurzer Fehlercode mancher Wege (Aktionen auf Hosts), den die Oberflaeche uebersetzt
+  constructor(status, message, retryAfter, code, data) { super(message); this.status = status; this.retryAfter = retryAfter; this.code = code; this.data = data; }   // code: kurzer Fehlercode mancher Wege (Aktionen auf Hosts, Dateien), den die Oberflaeche uebersetzt; data: die ganze Antwort (zum Beispiel der Fingerabdruck eines Host-Schluessels)
 }
 
 /** Fragt den Server. Aenderungen tragen die Sonderkopfzeile, mit der der Server sie als von der eigenen Seite erkennt. */
@@ -65,7 +65,7 @@ async function api(path, { method = 'GET', body } = {}) {
   if (r.status !== 204) { try { data = await r.json(); } catch { /* kein JSON */ } }
   if (!r.ok) {
     const wait = data && data.retryAfter ? ' ' + t('shell.waitSeconds', { n: data.retryAfter }) : '';
-    throw new ApiError(r.status, ((data && data.error ? serverMsg(data.error) : '') || t('shell.errorStatus', { status: r.status })) + (r.status === 429 ? wait : ''), data && data.retryAfter, data && data.code);
+    throw new ApiError(r.status, ((data && data.error ? serverMsg(data.error) : '') || t('shell.errorStatus', { status: r.status })) + (r.status === 429 ? wait : ''), data && data.retryAfter, data && data.code, data);
   }
   return data;
 }

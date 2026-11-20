@@ -4,7 +4,7 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
-## [Unveröffentlicht]
+## [0.20.0] - 2026-11-20
 
 ### Geändert
 - **Weniger eingeben bei Bestätigungen** ([docs/HOST-AGENT.md](docs/HOST-AGENT.md), „The confirmation“): Jede Aktion hat feste **drei Stufen**. **Alltägliches** (Paketlisten, Updates installieren auch alle, Dienste, Docker, Logs, einzelne Datei-Aktionen) braucht nur noch den Klick auf **Ausführen**, kein Rechnername mehr. **Gefährliches** (Neustart, Ausschalten, mehrere Dateien oder einen Ordner mit Inhalt löschen, alles Löschen und Ersetzen als root) zeigt eine gelbe Warnung in Klartext und ein Häkchen „Ich habe die Warnung gelesen“. **Sehr Gefährliches** (einen Host ausschalten, auf dem JulOS läuft, JulOS selbst stoppen, einen Pfad direkt unter `/` löschen oder verschieben) zeigt dazu eine rote Zeile.

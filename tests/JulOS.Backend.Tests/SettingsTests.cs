@@ -59,6 +59,20 @@ public sealed class SettingsTests
     }
 
     [Fact]
+    public void The_files_setting_keeps_only_known_fields_and_limits_sizes()
+    {
+        var good = """{"view":{"mode":"tiles","density":"comfy","sortCol":"size","sortDir":"desc","showHidden":false,"cols":{"name":10,"date":9999,"type":150,"evil":1},"x":1},"pins":[{"place":"3f2b1c9e-1111-4222-8333-444455556666","path":"/home/a","name":"A","extra":1},{"place":"local","path":"docs"},{"place":"local","path":"docs"},{"place":"bad id!","path":"/x"}],"closed":["host:1","local"],"evil":true}""";
+        var (json, error) = SettingsRules.Validate("files", J(good));
+        Assert.Null(error);
+        Assert.Equal("""{"view":{"mode":"tiles","density":"comfy","sortCol":"size","sortDir":"desc","showHidden":false,"cols":{"name":60,"date":800,"type":150}},"pins":[{"place":"3f2b1c9e-1111-4222-8333-444455556666","path":"/home/a","name":"A"},{"place":"local","path":"docs","name":""}],"closed":["host:1","local"]}""", json);
+        Assert.Equal("""{"view":{"mode":"list","density":"compact","sortCol":"name","sortDir":"asc","showHidden":true}}""", SettingsRules.Validate("files", J("""{"view":{"mode":"x","sortCol":"y","showHidden":"nein"}}""")).Json);
+
+        var many = string.Join(",", Enumerable.Range(0, SettingsRules.MaxPins + 1).Select(i => $$"""{"place":"local","path":"/{{i}}"}"""));
+        var bad = new[] { "[1]", "\"x\"", $$"""{"pins":[{{many}}]}""", """{"pins":[1]}""", $$"""{"pins":[{"place":"local","path":"{{new string('x', 4097)}}"}]}""", """{"pins":[{"place":"local","path":"a\u0000b"}]}""", """{"closed":[1]}""", $$"""{"closed":["{{new string('x', 81)}}"]}""" };
+        foreach (var b in bad) Assert.NotNull(SettingsRules.Validate("files", J(b)).Error);
+    }
+
+    [Fact]
     public async Task The_settings_table_comes_with_the_migration_and_old_data_is_untouched()
     {
         await using var db = await FolderTests.CreateBeforeFoldersAsync();

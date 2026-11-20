@@ -14,7 +14,10 @@ public static partial class SettingsRules
     public const string Keybar = "keybar";
     public const string Theme = "theme";
     public const string Lang = "lang";
-    public static readonly IReadOnlyList<string> Keys = [Keybar, Theme, Lang];
+    public const string Files = "files";
+    public static readonly IReadOnlyList<string> Keys = [Keybar, Theme, Lang, Files];
+
+    public const int MaxPins = 100, MaxClosed = 200;
 
     public const int MaxRows = 12, MaxItemsPerRow = 60;
 
@@ -28,6 +31,7 @@ public static partial class SettingsRules
 
     [GeneratedRegex(@"^#[0-9a-fA-F]{6}$")] private static partial Regex HexColor();
     [GeneratedRegex(@"^[a-z0-9_\-]{1,30}$")] private static partial Regex Token();
+    [GeneratedRegex(@"^[0-9A-Za-z_\-]{1,64}$")] private static partial Regex PlaceId();                  // eine Verbindungskennung (UUID) oder "local"
 
     /// <returns>Der Wert in der Form, in der er gespeichert wird, oder eine Fehlermeldung.</returns>
     public static (string? Json, string? Error) Validate(string key, JsonElement value)
@@ -39,6 +43,7 @@ public static partial class SettingsRules
                 Keybar => (WriteKeybar(value), null),
                 Theme => (WriteTheme(value), null),
                 Lang => (WriteLang(value), null),
+                Files => (WriteFiles(value), null),
                 _ => (null, "Unbekannte Einstellung."),
             };
         }
@@ -66,6 +71,70 @@ public static partial class SettingsRules
             w.WriteStartObject(); w.WriteString("seed", seed.ToLowerInvariant()); w.WriteString("scheme", scheme); w.WriteEndObject();
         }
         return Encoding.UTF8.GetString(ms.ToArray());
+    }
+
+    private static readonly string[] FileModes = ["list", "tiles"], FileDensities = ["compact", "comfy"], FileSorts = ["name", "date", "type", "size"], FileDirs = ["asc", "desc"], FileCols = ["name", "date", "type", "size"];
+
+    /// <summary>
+    /// Die Ansicht der Dateien-App (Liste oder Kacheln, Dichte, Sortierung, versteckte Dateien, Spaltenbreiten), die angehefteten Ordner und die zugeklappten Knoten der Seitenleiste (docs/FILES-EXPLORER.md).
+    /// Ein Pin ist nur ein Ort (Verbindungskennung) und ein Pfad: er gibt keinen Zugriff, jede Anfrage wird wie sonst geprueft.
+    /// </summary>
+    private static string WriteFiles(JsonElement v)
+    {
+        if (v.ValueKind != JsonValueKind.Object) throw new FormatException("Dateien erwartet ein Objekt.");
+        using var ms = new MemoryStream();
+        using (var w = new Utf8JsonWriter(ms, Plain))
+        {
+            w.WriteStartObject();
+            if (v.TryGetProperty("view", out var view) && view.ValueKind == JsonValueKind.Object)
+            {
+                w.WritePropertyName("view"); w.WriteStartObject();
+                w.WriteString("mode", OneOf(view, "mode", FileModes)); w.WriteString("density", OneOf(view, "density", FileDensities));
+                w.WriteString("sortCol", OneOf(view, "sortCol", FileSorts)); w.WriteString("sortDir", OneOf(view, "sortDir", FileDirs));
+                w.WriteBoolean("showHidden", !view.TryGetProperty("showHidden", out var sh) || sh.ValueKind != JsonValueKind.False);
+                if (view.TryGetProperty("cols", out var cols) && cols.ValueKind == JsonValueKind.Object)
+                {
+                    w.WritePropertyName("cols"); w.WriteStartObject();
+                    foreach (var c in FileCols)
+                        if (cols.TryGetProperty(c, out var n) && n.ValueKind == JsonValueKind.Number && n.TryGetInt32(out var px)) w.WriteNumber(c, Math.Clamp(px, 60, 800));
+                    w.WriteEndObject();
+                }
+                w.WriteEndObject();
+            }
+            if (v.TryGetProperty("pins", out var pins) && pins.ValueKind == JsonValueKind.Array)
+            {
+                if (pins.GetArrayLength() > MaxPins) throw new FormatException("Zu viele angeheftete Ordner.");
+                w.WritePropertyName("pins"); w.WriteStartArray();
+                var seen = new HashSet<string>();
+                foreach (var pin in pins.EnumerateArray())
+                {
+                    if (pin.ValueKind != JsonValueKind.Object) throw new FormatException("Pin ungültig.");
+                    var place = Text(pin, "place", 64); var path = Text(pin, "path", 4096); var name = Text(pin, "name", 255, required: false);
+                    if (!PlaceId().IsMatch(place) || path.Length == 0 || !seen.Add(place + "\0" + path)) continue;
+                    w.WriteStartObject(); w.WriteString("place", place); w.WriteString("path", path); w.WriteString("name", name); w.WriteEndObject();
+                }
+                w.WriteEndArray();
+            }
+            if (v.TryGetProperty("closed", out var closed) && closed.ValueKind == JsonValueKind.Array)
+            {
+                if (closed.GetArrayLength() > MaxClosed) throw new FormatException("Zu viele Knoten.");
+                w.WritePropertyName("closed"); w.WriteStartArray();
+                foreach (var id in closed.EnumerateArray())
+                {
+                    if (id.ValueKind != JsonValueKind.String || id.GetString() is not { Length: > 0 and <= 80 } s || s.Any(char.IsControl)) throw new FormatException("Knoten ungültig.");
+                    w.WriteStringValue(s);
+                }
+                w.WriteEndArray();
+            }
+            w.WriteEndObject();
+        }
+        return Encoding.UTF8.GetString(ms.ToArray());
+    }
+
+    private static string OneOf(JsonElement o, string name, string[] allowed)
+    {
+        var s = Text(o, name, 12, required: false);
+        return allowed.Contains(s) ? s : allowed[0];
     }
 
     private static string WriteLang(JsonElement v)

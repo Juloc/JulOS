@@ -4,7 +4,7 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
-## [Unveröffentlicht]
+## [0.14.0] - 2026-11-20
 
 ### Neu
 - **Ein Agent pro Rechner, der alles kann** (Agent 0.7.0, [docs/HOST-AGENT.md](docs/HOST-AGENT.md), Abschnitt „One agent per machine“): der Desktop-Agent beantwortet jetzt zusätzlich alle `/v1/host/*`-Anfragen des Host-Modus (Systemwerte, Updates, Festplatten, Dienste, Docker, bestätigte Aktionen, Jobs) mit denselben Prüfungen und demselben Code wie der Host-Modus (lokale Rechte-Datei `/etc/julos-agent/permissions`, Root-Helfer, Pfade, Validierung). Eine Maschine mit Desktop (zum Beispiel die Dev-VM) zeigt damit Updates und erlaubt Aktionen, ohne zweiten Agenten. Der Agent läuft dort weiter als Benutzerprozess in der Sitzung: kein root, kein sudo. Der Host-Modus für Server ohne Desktop bleibt unverändert.

@@ -36,3 +36,5 @@ The phone keeps its own layout (list with long-press for the context menu and mu
 ## Notes on credentials (decision of 2026-11-20)
 
 A host has **one login (user name and password)** that every app of that host uses: terminal, files over SFTP, the desktop connections unless one of them sets its own. Root is **not** a second stored password: root actions and root files go through the agent (`files-root`, host actions), which needs no password. A root terminal is `sudo -i` or `su` typed by the owner in the terminal.
+
+Status: built in the branch `claude/host-login` (see [HOSTS.md](HOSTS.md#login-one-user-and-password-per-host)): the host login, the tick "Eigenen Benutzer verwenden" per connection, and the Files question that asks only for a missing password.

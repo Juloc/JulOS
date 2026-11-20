@@ -21,7 +21,7 @@ internal sealed class FakeFileSession : ISftpFileSession
     public bool Connected { get; set; } = true;
     public string? LogonPassword { get; set; }                      // null: jedes Passwort gilt
     public int Disposed, Connects;
-    public string? ConnectedPassword;
+    public string? ConnectedPassword, ConnectedUser;
     public readonly HashSet<string> Denied = [];                    // Pfade (und alles darunter), auf die der Benutzer nicht darf
     public long? FailWriteAfter;                                     // ein Schreibstrom wirft nach so vielen Bytes
     public readonly List<string> Log = [];                           // "stat /x", "create /x" ... fuer Pruefungen
@@ -54,7 +54,7 @@ internal sealed class FakeFileSession : ISftpFileSession
         PresentedHostKey = Key;
         if (!trustHostKey(Key)) throw new SshException(SshFailure.HostKeyRejected, "Host-Schlüssel nicht vertraut.");
         if (LogonPassword is not null && options.Password != LogonPassword) throw new SshException(SshFailure.LogonFailed, "Anmeldung abgelehnt.");
-        ConnectedPassword = options.Password;
+        ConnectedPassword = options.Password; ConnectedUser = options.User;
         Connected = true;
         return Task.CompletedTask;
     }

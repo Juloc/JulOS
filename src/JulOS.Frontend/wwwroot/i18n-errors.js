@@ -66,6 +66,8 @@ export const SERVER_TEXTS = {
   "Ungültige Verbindung.": "err.invalidConnection",
   "Der Host hat noch Verbindungen: erst verschieben oder löschen.": "err.hostHasConnections",
   "Zu viele Hosts.": "err.tooManyHosts",
+  "Der Verlauf lässt sich nicht schreiben: nichts wurde geändert.": "err.historyWriteFailed",
+  "Der Benutzername muss 1 bis 64 Zeichen haben.": "err.loginUserInvalid",
   "Zu viele Verbindungen.": "err.tooManyConnections",
   "Die Laufwerksfreigabe ist am Server nicht eingerichtet (JULOS_DRIVE_ROOT).": "err.drivesNotSet",
   "Passwörter speichern ist nicht eingerichtet (JULOS_SECRET_KEY fehlt).": "err.passwordStoreOff",

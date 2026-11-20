@@ -21,11 +21,13 @@ internal sealed record ActivateRequest(bool? Maximize);
 internal sealed record LaunchRequest(string? Id);
 internal sealed record ModeRequest(string? Mode);
 internal sealed record UploadResponse(bool Ok);
+/// <summary>Eine gespeicherte Verbindung. HasPassword: sie hat ein eigenes Passwort. OwnLogin: sie verlangt ihren eigenen Login. LoginSource (host oder own), LoginUser, LoginPassword (liegt ein Passwort bereit, ohne zu fragen) und LoginAddressNew (der Host-Login gilt nicht fuer diese Adresse) sagen, was beim Verbinden gilt; nie ein Passwort.</summary>
 internal sealed record ConnectionDto(Guid Id, string Name, string Kind, string Host, int Port, string Username, bool HasPassword, Guid HostId, bool DriveShare = false, bool DriveWrite = false, string Domain = "", string Notes = "", string Layout = "de",
-    string Program = "shell", string WorkDir = "", bool KeepAlive = false, string CustomCommand = "");
+    string Program = "shell", string WorkDir = "", bool KeepAlive = false, string CustomCommand = "",
+    bool OwnLogin = false, string LoginSource = "own", string LoginUser = "", bool LoginPassword = false, bool LoginAddressNew = false);
 internal sealed record ConnectionsResponse(ConnectionDto[] Connections, bool CanStorePasswords, bool DriveAvailable = false);
 internal sealed record ConnectionRequest(string? Name, string? Kind, string? Host, int? Port, string? Username, string? Password = null, bool? ForgetPassword = null, bool? DriveShare = null, bool? DriveWrite = null, Guid? HostId = null, string? Domain = null, string? Notes = null, string? Layout = null,
-    string? Program = null, string? WorkDir = null, bool? KeepAlive = null, string? CustomCommand = null);
+    string? Program = null, string? WorkDir = null, bool? KeepAlive = null, string? CustomCommand = null, bool? OwnLogin = null);
 /// <summary>Eine Kachel "Claude auf ..." oder "Codex auf ..." aus einer vorhandenen Terminal-Verbindung (POST /api/connections/{id}/program): Programm, Arbeitsverzeichnis, tmux und ein Name (ohne Name: "Claude auf <Host>").</summary>
 internal sealed record ProgramTileRequest(string? Program, string? WorkDir = null, bool? KeepAlive = null, string? Name = null);
 /// <summary>Username und Domain: Anmeldedaten fuer genau diesen Verbindungsversuch (Anmeldedialog in der Sitzung); sie ersetzen die der Verbindung und werden nicht gespeichert.</summary>

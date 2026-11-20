@@ -598,3 +598,94 @@ test('15 Mikrofon verweigert: der Browser lehnt die Freigabe ab, die Sitzung nen
     await context.close();
   } finally { await browser.close(); }
 });
+
+test('16 Host-Login: einmal am Host setzen, die Dateien öffnen ohne Passwortfrage, eine Verbindung mit eigenem Benutzer bleibt davon unberührt', async ({ browser }) => {
+  test.setTimeout(180_000);
+  const { context, page, errors } = await signedIn(browser);
+  const wrong = 'falsch-' + newPassword();
+  // Ein eigener Host mit einer Terminal-Verbindung ohne Benutzer und Passwort (Wegwerf-Ziel des Stacks); die Verbindungen der anderen Abläufe bleiben unberührt
+  const host = await (await page.request.post('/api/hosts', { headers: API, data: { name: 'E2E Login-Host' } })).json();
+  const conn = await (await page.request.post('/api/connections', { headers: API, data: { name: 'E2E Login-Terminal', kind: 'terminal', host: SSH.host, port: Number(SSH.port), username: '', hostId: host.id } })).json();
+  const open = (data) => page.request.post('/api/files/remote/open', { headers: API, data });
+  try {
+    // Ohne Login fragt die Dateien-App nach dem Passwort
+    const before = await open({ connection: conn.id });
+    expect(before.status()).toBe(409);
+    expect((await before.json()).code).toBe('password_required');
+
+    // Der Login entsteht auf der Host-Seite (Karte "Login"): Benutzer und Passwort, das Passwortfeld ist leer und bleibt es
+    await page.goto('/');
+    await page.locator('.dk-nav', { hasText: 'Hosts' }).click();
+    await page.locator('.hu-card', { hasText: 'E2E Login-Host' }).getByRole('button', { name: 'Details' }).click();
+    await page.locator('#hit-login').click();
+    await expect(page.locator('#hostLoginPw')).toHaveValue('');
+    await expect(page.locator('#hostLoginState')).toContainText('noch keinen Login');
+    await expect(page.locator('.hu-note', { hasText: 'sudo -i' })).toBeVisible();                       // Root: der Agent erledigt es, ein Root-Terminal ist sudo -i
+    await page.fill('#hostLoginUser', SSH.user);
+    await page.fill('#hostLoginPw', SSH.password);
+    await page.click('[data-hl-save]');
+    await expect(page.locator('#hostLoginState')).toContainText('Passwort gespeichert');
+    await expect(page.locator('#hostLoginPw')).toHaveValue('');
+    expect(await page.content()).not.toContain(SSH.password);                                              // nirgends in der Seite
+    await expect(page.locator('#hip-login')).toContainText('nutzt den Host-Login');
+    await page.screenshot({ path: '/out/host-login-card.png' });
+
+    // Jetzt öffnet die Dateien-App ohne Frage: nur der Host-Schlüssel wird (wie immer) ausdrücklich bestätigt
+    const key = await open({ connection: conn.id });
+    expect((await key.json()).code).toBe('host_key_new');
+    const k = await (await open({ connection: conn.id })).json();
+    const opened = await open({ connection: conn.id, acceptHostKey: `${k.algorithm} ${k.fingerprint}` });
+    expect(opened.status()).toBe(200);
+    const list = await page.request.get(`/api/files/remote/list?c=${conn.id}`);
+    expect(list.status()).toBe(200);
+    expect((await list.json()).path).toContain('/');
+
+    // Das Passwort kommt in keiner Antwort vor
+    const bodies = [await (await page.request.get(`/api/hosts/${host.id}/login`)).text(), await (await page.request.get('/api/connections')).text(), await (await page.request.get('/api/hosts')).text()];
+    for (const b of bodies) expect(b).not.toContain(SSH.password);
+    const mine = (await (await page.request.get('/api/connections')).json()).connections.find((c) => c.id === conn.id);
+    expect([mine.loginSource, mine.loginUser, mine.loginPassword]).toEqual(['host', SSH.user, true]);
+
+    // Eine Verbindung mit eigenem Benutzer (und falschem Passwort) benutzt den Host-Login nicht: die Anmeldung scheitert dort
+    const own = await (await page.request.post('/api/connections', { headers: API, data: { name: 'E2E Eigener Login', kind: 'terminal', host: SSH.host, port: Number(SSH.port), username: SSH.user, password: wrong, ownLogin: true, hostId: host.id } })).json();
+    expect(own.loginSource).toBe('own');
+    const k2 = await (await open({ connection: own.id })).json();
+    const refused = await open({ connection: own.id, acceptHostKey: `${k2.algorithm} ${k2.fingerprint}` });
+    expect(refused.status()).not.toBe(200);
+    expect((await refused.json()).code).toMatch(/logon_failed|password_required/);
+
+    // Den Login ändern beendet die gepoolte Sitzung, entfernen bringt die Frage zurück
+    await page.click('[data-hl-remove]');
+    await page.click('[data-hl-remove]');
+    await expect(page.locator('#hostLoginState')).toContainText('noch keinen Login');
+    const again = await open({ connection: conn.id });
+    expect(again.status()).toBe(409);
+    expect((await again.json()).code).toBe('password_required');
+    expect(errors.filter((e) => !/401|403|409/.test(e))).toEqual([]);
+  } finally {
+    for (const c of (await (await page.request.get('/api/connections')).json()).connections.filter((x) => x.hostId === host.id)) await page.request.delete('/api/connections/' + c.id, { headers: API });
+    await page.request.delete('/api/hosts/' + host.id, { headers: API });
+    await context.close();
+  }
+});
+
+test('17 Host-Login gilt auch für den Desktop: eine RDP-Verbindung ohne Benutzer und Passwort verbindet ohne Frage mit dem Login des Hosts', async ({ browser }) => {
+  test.setTimeout(120_000);
+  const { context, page, errors } = await signedIn(browser);
+  const sockets = watchSockets(page);
+  const host = await (await page.request.post('/api/hosts', { headers: API, data: { name: 'E2E Login-Desktop' } })).json();
+  const conn = await (await page.request.post('/api/connections', { headers: API, data: { name: 'E2E Login-Desktop', kind: 'desktop', host: RDP.host, username: '', hostId: host.id } })).json();
+  try {
+    const login = await page.request.put(`/api/hosts/${host.id}/login`, { headers: API, data: { user: RDP.user, password: RDP.password } });
+    expect(login.status()).toBe(200);
+    await page.goto('/');
+    await tile(page, conn.name).click();                                                                   // ohne Passwortdialog: der Server nimmt den Login des Hosts
+    await expect(page.locator('#startDlg')).toBeHidden();
+    await waitForPicture(page, sockets);
+    expect(errors).toEqual([]);
+  } finally {
+    await page.request.delete('/api/connections/' + conn.id, { headers: API });
+    await page.request.delete('/api/hosts/' + host.id, { headers: API });
+    await context.close();
+  }
+});

@@ -44,6 +44,7 @@ internal static class RemoteEndpoints
             if (!ValidLoginPart(body.Username) || !ValidLoginPart(body.Domain)) return Error(400, "Benutzer oder Domäne ist ungültig.");
             ConnectionRecord c;
             string? password = body.Password;
+            string loginUser;                     // der Benutzer, der gilt: der des Host-Logins, der eigene der Verbindung oder (Quick Connect) der getippte
             Func<string, CancellationToken, Task> saveHostKey, saveCert;
             var owner = id.UserId;
             if (body.Quick is { } q)
@@ -58,6 +59,7 @@ internal static class RemoteEndpoints
                 var known = quickTrust.Get(owner, v.Kind, v.Host, v.Port);
                 c = new ConnectionRecord(QuickConnect.IdOf(v.Kind, v.Host, v.Port, v.Username), v.Host, v.Kind, v.Host, v.Port, v.Username, false, Guid.Empty,
                     HostKey: v.Kind == "terminal" ? known : null, CertFingerprint: v.Kind is "desktop" or "vnc" ? known : null);
+                loginUser = v.Username;
                 saveHostKey = saveCert = (value, _) => { quickTrust.Set(owner, v.Kind, v.Host, v.Port, value); return Task.CompletedTask; };
             }
             else
@@ -70,12 +72,14 @@ internal static class RemoteEndpoints
                 saveHostKey = (key, ct) => connections.SetHostKeyAsync(owner, connectionId, key, ct);
                 saveCert = (fingerprint, ct) => connections.SetCertFingerprintAsync(owner, connectionId, fingerprint, ct);
 
+                // Die Zugangsdaten dieser Verbindung (docs/HOSTS.md): ihr eigener Login, wenn sie ihn verlangt, sonst der Login ihres Hosts, sonst ihr eigener wie bisher.
                 // Ein getipptes Passwort gilt immer; sonst das gespeicherte (nur auf dem Server entschluesselt, es geht nie zum Browser)
-                if (string.IsNullOrEmpty(password) && c.HasPassword)
+                var login = await connections.ResolveLoginAsync(owner, c, box, ctx.RequestAborted);
+                loginUser = login.Username;
+                if (string.IsNullOrEmpty(password))
                 {
-                    var sealedValue = await connections.GetSecretAsync(owner, connectionId, ctx.RequestAborted);
-                    password = sealedValue is null ? null : box.Decrypt(sealedValue, connectionId);
-                    if (password is null) return Error(409, "Das gespeicherte Passwort lässt sich nicht lesen. Bitte neu eingeben und speichern.");
+                    if (login.Unreadable) return Error(409, "Das gespeicherte Passwort lässt sich nicht lesen. Bitte neu eingeben und speichern.");
+                    password = login.Password;
                 }
                 if (string.IsNullOrEmpty(password) && c.Kind != "vnc") return Error(400, "Passwort fehlt.");
             }
@@ -85,7 +89,7 @@ internal static class RemoteEndpoints
             // Terminal: eigener SSH-Client im Server, der Browser zeichnet den Text selbst (xterm.js). Spalten und Zeilen kommen vom Browser.
             if (c.Kind == "terminal")
             {
-                var options = new SshConnectOptions(c.Host, c.Port, c.Username, password,
+                var options = new SshConnectOptions(c.Host, c.Port, loginUser, password,
                     SshProtocol.Clamp(body.Cols ?? 80, SshProtocol.MinCols, SshProtocol.MaxCols), SshProtocol.Clamp(body.Rows ?? 24, SshProtocol.MinRows, SshProtocol.MaxRows));
                 // Was startet (Shell, Claude Code, Codex, eigener Befehl), kommt nur aus der gespeicherten Verbindung, nie aus dieser Anfrage; Quick Connect startet immer die Shell
                 var launch = body.Quick is null ? new SshLaunch(c.Program, c.WorkDir, c.KeepAlive, c.CustomCommand) : SshLaunch.Shell;
@@ -98,7 +102,7 @@ internal static class RemoteEndpoints
             {
                 if (!ScreenStream.IsAvailable) return Error(503, "Die Bildübertragung ist auf diesem Server nicht verfügbar: " + ScreenStream.UnavailableReason);
                 var vncTrust = new CertificateTrust(c.CertFingerprint, body.AcceptCert, saveCert);
-                var vnc = new VncOptions { Host = c.Host, Port = c.Port, Password = password, UserName = string.IsNullOrWhiteSpace(body.Username) ? c.Username : body.Username.Trim(), CertificateCheck = vncTrust.Check };
+                var vnc = new VncOptions { Host = c.Host, Port = c.Port, Password = password, UserName = string.IsNullOrWhiteSpace(body.Username) ? loginUser : body.Username.Trim(), CertificateCheck = vncTrust.Check };
                 var vncTicket = screenTickets.Create(id.UserId, ScreenTarget.ForVnc(vnc, SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid), trust: vncTrust));
                 var vw = Math.Clamp(body.Width ?? 900, 400, 4096) & ~1;
                 var vh = Math.Clamp(body.Height ?? 1600, 300, 4096) & ~1;
@@ -114,7 +118,7 @@ internal static class RemoteEndpoints
             var trust = new CertificateTrust(c.CertFingerprint, body.AcceptCert, saveCert);
             var rdp = new RdpOptions
             {
-                Host = c.Host, Port = c.Port, UserName = string.IsNullOrWhiteSpace(body.Username) ? c.Username : body.Username.Trim(), Password = password, Width = w & ~1, Height = h & ~1,
+                Host = c.Host, Port = c.Port, UserName = string.IsNullOrWhiteSpace(body.Username) ? loginUser : body.Username.Trim(), Password = password, Width = w & ~1, Height = h & ~1,
                 Domain = body.Domain is null ? c.Domain : body.Domain.Trim(), KeyboardLayout = KeyboardLayouts.WindowsId(c.KeyboardLayout), CertificateCheck = trust.Check, Sound = true,
             };
             // Laufwerk: nur, wenn die Verbindung es verlangt (beide Schalter standardmaessig aus) und der Server eine Wurzel hat; die Wurzel kommt nur aus der Server-Einstellung

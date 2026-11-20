@@ -23,7 +23,10 @@ export const ACTION_LABEL = {
   'service.start': tk('hostact.a.serviceStart'), 'service.stop': tk('hostact.a.serviceStop'), 'service.restart': tk('hostact.a.serviceRestart'),
   'docker.start': tk('hostact.a.dockerStart'), 'docker.stop': tk('hostact.a.dockerStop'), 'docker.restart': tk('hostact.a.dockerRestart'), 'docker.pull': tk('hostact.a.dockerPull'),
   'logs.unit': tk('hostact.a.logsUnit'), 'logs.container': tk('hostact.a.logsContainer'),
+  'login.set': tk('hostact.a.loginSet'), 'login.remove': tk('hostact.a.loginRemove'),          // Host-Login geaendert oder entfernt (im Verlauf, nie mit einem Wert)
 };
+/** Was am Login geaendert wurde (der Server schreibt nur diese Codes, nie einen Wert) */
+const LOGIN_DETAIL = { 'user+password': tk('hostact.login.userPassword'), password: tk('hostact.login.password'), user: tk('hostact.login.user'), 'password removed': tk('hostact.login.passwordRemoved'), unchanged: tk('hostact.login.unchanged'), 'password (files)': tk('hostact.login.passwordFiles') };
 export const actionLabel = (a) => t(ACTION_LABEL[a] || tk('hostact.a.unknown'));
 /** Aktionen, die etwas anhalten oder abschalten: die Taste wird rot */
 export const isDanger = (action, target) => action === 'power.reboot' || action === 'power.poweroff' || action === 'service.stop' || action === 'docker.stop' || (action === 'updates.install' && target === 'all');
@@ -204,7 +207,7 @@ export function auditLine(e) {
   const detail = e.detail ? (e.event === 'denied' || e.event === 'failed' ? errText(e.detail) : e.detail === 'reboot_required' ? t('hostact.rebootHintShort') : e.detail === 'already' ? t('hostact.already') : levelOrDetail(e)) : '';
   return { when: when(e.at), who: e.user, text: [action, e.action === 'control.set' ? levelText(e.target) : e.target].filter(Boolean).join(' · '), event: e.action === 'control.set' ? eventText('ok') : eventText(e.event), detail };
 }
-const levelOrDetail = (e) => (e.detail === 'no_answer' ? t('hostact.noAnswer') : e.detail);
+const levelOrDetail = (e) => (e.detail === 'no_answer' ? t('hostact.noAnswer') : e.action.startsWith('login.') && LOGIN_DETAIL[e.detail] ? t(LOGIN_DETAIL[e.detail]) : e.detail);
 
 export function auditHtml(resp, esc) {
   const list = (resp && resp.entries) || [];

@@ -194,7 +194,9 @@
         </div>
         <label data-i18n="app.address">Adresse <input id="connHost" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Name oder IP-Adresse" data-i18n-placeholder="app.addressPh" required></label>
         <label>Port <input id="connPort" type="text" inputmode="numeric" autocomplete="off" placeholder="3389"></label>
-        <label data-i18n="app.userOnTarget">Benutzername auf dem Ziel <input id="connUser" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
+        <label id="connOwnRow" class="check" hidden data-i18n="app.ownLogin"><input id="connOwn" type="checkbox"> Eigenen Benutzer verwenden</label>
+        <p id="connOwnHint" class="hint" hidden></p>
+        <label id="connUserRow" data-i18n="app.userOnTarget">Benutzername auf dem Ziel <input id="connUser" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
         <div id="connProgRow" hidden>
           <label><span data-i18n="app.progLabel">Startprogramm</span>
             <select id="connProgram">
@@ -219,7 +221,7 @@
             <option value="fr" data-i18n="app.layoutFr">Französisch</option><option value="es" data-i18n="app.layoutEs">Spanisch</option><option value="it" data-i18n="app.layoutIt">Italienisch</option>
           </select>
         </label>
-        <label><span data-i18n="app.password">Passwort <span class="opt" data-i18n="app.optional">(optional)</span></span>
+        <label id="connPwRow"><span data-i18n="app.password">Passwort <span class="opt" data-i18n="app.optional">(optional)</span></span>
           <input id="connPw" type="password" autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="leer = bei jeder Verbindung tippen" data-i18n-placeholder="app.connPwPh">
         </label>
         <label id="connForgetRow" class="check" hidden data-i18n="app.forgetPassword"><input id="connForget" type="checkbox"> Gespeichertes Passwort löschen</label>

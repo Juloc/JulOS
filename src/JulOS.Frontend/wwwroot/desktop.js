@@ -12,6 +12,7 @@ import { tileKind } from './terminal-programs.js';
 import { hostCardHtml, menuOpen } from './hostview.js';
 import { barText, barPercent, barTone, chipText, panelHtml, finishNotice } from './hosttasks.js';
 import { jobFinal } from './hostactions.js';
+import { loginUser, loginSaved } from './hostlogin.js';
 
 /* =====================================================================
  * Desktop-Oberflaeche (breite Bildschirme mit Maus): Menueleiste, Dock, Launcher, Home-Fenster und ein Fenster
@@ -964,7 +965,7 @@ function renderSystem(m) {
 const hostFilter = { id: '' };      // leer = alle Hosts (Auswahl in der Dienste-Ansicht, nur solange das Fenster lebt)
 const serviceRow = (c) => {
   const a = appOf(c), n = Sessions.find(c.id).length, open = n > 0, st = connectionState(ctx.state.hosts, c);
-  return `<div class="dk-row">${tile(a.g, a.ic)}<span class="dk-tt"><b><span class="dk-sd ${dotClass(st)}" title="${stateText(st)}"></span>${ctx.esc(c.name)}${open ? ` <span class="dk-tag">${n > 1 ? t('desktop.sessionsN', { n }) : t('desktop.sessionOpen')}</span>` : ''}</b><i>${isProg(c) ? appOf(c).name + ' (SSH)' : c.kind === 'terminal' ? t('desktop.terminalSsh') : c.kind === 'vnc' ? t('desktop.desktopVnc') : t('desktop.desktopRdp')} · ${ctx.esc(c.username ? c.username + '@' : '')}${ctx.esc(c.host)}:${c.port}${folderName(ctx.state.folders || [], c) ? ' · ' + ctx.esc(folderName(ctx.state.folders, c)) : ''}${c.hasPassword ? ' · ' + t('desktop.passwordSaved') : ''}</i></span>
+  return `<div class="dk-row">${tile(a.g, a.ic)}<span class="dk-tt"><b><span class="dk-sd ${dotClass(st)}" title="${stateText(st)}"></span>${ctx.esc(c.name)}${open ? ` <span class="dk-tag">${n > 1 ? t('desktop.sessionsN', { n }) : t('desktop.sessionOpen')}</span>` : ''}</b><i>${isProg(c) ? appOf(c).name + ' (SSH)' : c.kind === 'terminal' ? t('desktop.terminalSsh') : c.kind === 'vnc' ? t('desktop.desktopVnc') : t('desktop.desktopRdp')} · ${ctx.esc(loginUser(c) ? loginUser(c) + '@' : '')}${ctx.esc(c.host)}:${c.port}${folderName(ctx.state.folders || [], c) ? ' · ' + ctx.esc(folderName(ctx.state.folders, c)) : ''}${loginSaved(c) ? ' · ' + t('desktop.passwordSaved') : ''}</i></span>
     <button type="button" class="dk-b dk-btn sq dk-star${c.favorite ? ' on' : ''}" data-fav="${ctx.esc(c.id)}" aria-pressed="${!!c.favorite}" aria-label="${c.favorite ? t('desktop.unfavorite') : t('desktop.pinFavorite')}" title="${c.favorite ? t('desktop.favoriteEverywhere') : t('desktop.pinFavorite')}">${ic('star')}</button>
     <button type="button" class="dk-b dk-btn pri" data-conn="${ctx.esc(c.id)}">${ic('play')}${open ? t('desktop.open') : t('desktop.connect')}</button>
     ${open ? `<button type="button" class="dk-b dk-btn sq" data-extra="${ctx.esc(c.id)}" aria-label="${t('desktop.anotherSession')}" title="${t('desktop.anotherSessionTarget')}">${ic('plus')}</button>` : ''}

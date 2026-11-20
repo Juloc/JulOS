@@ -235,13 +235,13 @@ test('Aktionen: Stufe, Pause, Erlaubnis; Neustart nur mit Erlaubnis', () => {
 });
 
 test('Abschnitte je Host: jeder Host zeigt dieselben; was der Agent nicht liefert, erklaert der Abschnitt mit dem naechsten Schritt', () => {
-  const ALL = ['overview', 'load', 'disks', 'network', 'updates', 'services', 'docker', 'logs', 'actions', 'history', 'agent'];
+  const ALL = ['overview', 'load', 'disks', 'network', 'updates', 'services', 'docker', 'logs', 'actions', 'history', 'login', 'agent'];
   for (const h of [host(), host({}, { caps: ['updates'] }), host({}, { kind: 'desktop', caps: [] }), host({ agent: undefined })]) assert.deepEqual(panelsFor(h).map((p) => p.id), ALL);
   const P = (id) => PANELS.find((p) => p.id === id);
   assert.equal(unavailable(host(), P('updates'), esc), '');                                                   // Daten da: keine Erklaerung
   assert.equal(unavailable(host(), P('logs'), esc), '');
   const bare = host({}, { kind: 'desktop', caps: [], allow: [] });
-  for (const p of PANELS) { const u = unavailable(bare, p, esc); if (p.id !== 'agent') { assert.match(u, /liefert noch keine Systemwerte/, p.id); assert.match(u, /data-hgoto="agent"/, p.id); } else assert.equal(u, ''); }
+  for (const p of PANELS) { const u = unavailable(bare, p, esc); if (p.id !== 'agent' && p.id !== 'login') { assert.match(u, /liefert noch keine Systemwerte/, p.id); assert.match(u, /data-hgoto="agent"/, p.id); } else assert.equal(u, ''); }
   assert.match(unavailable(host({}, { caps: ['updates'] }), P('disks'), esc), /liefert noch keine Systemwerte/);
   assert.equal(unavailable(host({ agent: undefined }), P('agent'), esc), '');                                 // der Abschnitt Agent ist der Weg aus jedem leeren Zustand   // nach den gemeldeten Faehigkeiten, nicht nach der Plattform
   assert.equal(unavailable(host({}, { kind: 'desktop', caps: ['sysinfo', 'updates'] }), P('updates'), esc), '');
@@ -294,7 +294,7 @@ test('hostSupport des Servers: alter Desktop-Agent (update) erklaert sich mit Ak
   assert.equal(hostSupport(old.agent), 'update'); assert.equal(wantsInfo(old), false);                 // "desktop" allein ist keine Lese-Faehigkeit
   assert.match(hostCardHtml(old, null, O), /liefert noch keine Systemwerte/);
   assert.match(hostCardHtml(old, null, O), /Agent aktualisieren \/ einrichten/);
-  for (const p of PANELS) if (p.id !== 'agent') assert.match(unavailable(old, p, esc), /Agent aktualisieren \/ einrichten/, p.id);
+  for (const p of PANELS) if (p.id !== 'agent' && p.id !== 'login') assert.match(unavailable(old, p, esc), /Agent aktualisieren \/ einrichten/, p.id);
   assert.match(hostCardHtml(old, null, { ...O }), /Dieser Agent kann das noch nicht/);                   // Menue: gesperrt mit Grund
   // none: neu genug, aber nichts davon (kein Linux): Erklaerung ohne Aktualisieren
   const none = host({}, { kind: 'desktop', version: '0.7.0', caps: ['desktop'], hostSupport: 'none', allow: [] });

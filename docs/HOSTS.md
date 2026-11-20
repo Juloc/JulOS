@@ -10,6 +10,7 @@ saw one machine; now the desktop interface and the phone shell list several, eac
 | Host (`hosts`) | one user | name (1 to 60 characters), at most 20 per user |
 | Connection (`connections.host_id`) | one host | RDP, SSH and so on; a connection is a **service** of its host |
 | Agent (`agents.host_id`) | one host | one per host, serves all its connections; enrolment code and token are per host |
+| Login (`hosts.login_*`) | one host | optional **one user and one password** for every app of the host: terminal, Files over SFTP, desktop connections (see [Login](#login-one-user-and-password-per-host)) |
 
 - A user always has a host: the first connection (or the first `GET /api/hosts`) creates **Mein Rechner** when there is none.
   A new connection without a host goes to the user's first host.
@@ -42,6 +43,48 @@ saw one machine; now the desktop interface and the phone shell list several, eac
 
 The status dot is **green** (online) or **grey** (offline or unknown), per host and per service.
 
+## Login (one user and password per host)
+
+Before 0.16 every connection kept its own user name and password, so the terminal, the Files app and the desktop of the same machine each asked for the same thing. Now a host can have **one login**
+(user name and optional password); every connection of the host uses it, unless that connection says otherwise. Root is **not** a second stored login: root actions and root files go through the agent
+([HOST-AGENT.md](HOST-AGENT.md), word `files-root`) and need no password, a root terminal is `sudo -i` typed by you (decision of 2026-11-20, [FILES-EXPLORER.md](FILES-EXPLORER.md)).
+
+**Which login a connection uses** (`LoginResolver`, one place for terminal, Files and desktop, tested):
+
+1. the connection's **own login**, when it has the tick **Eigenen Benutzer verwenden** (`own_login`, default off): its own user and its own saved password, as before;
+2. otherwise the **host login**, when the host has one: its user, and its password if one is saved. A password typed for a single attempt (the dialog, the Files question) always wins over a saved one;
+3. otherwise what the connection itself holds, as before (its user, its saved password, or the question).
+
+For a desktop (RDP, VNC) connection the host login gives the user name; the **domain** stays at the connection. The user of the connection's login dialog during a session still overrides for that attempt.
+
+**The password belongs to the addresses of the host** (`login_targets`): it is bound to the addresses (lower case, without the port) of the connections the host had when the password was saved. A connection with
+another address does **not** get it and falls back to rule 3 (the host page marks it "neue Adresse: Passwort hier neu speichern"). Without this, anyone with a session could add a connection to a foreign address
+on a host and let JulOS send the host password there. Saving the password again (on the host page) binds it to the addresses of that moment; saving it from the Files question binds it to the address of that one connection.
+
+**Changing the login:**
+- A new password replaces the old one. The same user without a password in the request keeps the saved one; `forgetPassword` ("Passwort nicht speichern") keeps only the user. **Changing the user drops the
+  saved password** (it belonged to the old user, as with a connection). The password is never returned: the API says `hasPassword`.
+- The **first** time a host gets a login, connections with a *different* saved user name keep their own login (`own_login` is set; the answer says how many: `pinned`), so nothing that works today stops working
+  by the side. Later changes of the login do not touch connections.
+- Changing or removing the login **closes the pooled SFTP sessions** of that host's connections (the Files app then uses the new data). Running terminals and desktops are not closed. The **host key** pins
+  are untouched (the check is not reset). Deleting the host deletes its login.
+- Every change is written to the **history** (`host_audit`, action `login.set` or `login.remove`, detail only what changed: `user+password`, `password`, `user`, `password removed`, never a value) **before** it is made;
+  if the entry cannot be written, nothing changes (`503`). The key `JULOS_SECRET_KEY` / `secret.key` is the same as for connection passwords; there is no key rotation here.
+
+**Storage:** the password is encrypted exactly like a connection password (AES-256-GCM, `SecretBox`), with the **host id** as associated data (a ciphertext cannot be moved to another host). `hosts.login_user`,
+`hosts.login_secret`, `hosts.login_targets`, `hosts.login_checked`, `connections.own_login` (migration `020`). Backups hold them like connection passwords (the dump carries the ciphertext, the key copy decrypts it: [SECURITY-REVIEW.md](SECURITY-REVIEW.md) F-01).
+
+**Takeover of existing data (`HostLoginMigration`, at server start, idempotent, nothing is deleted or re-encrypted):** for every host not yet checked (`login_checked`): if all connections with a saved password and a user
+name have **the same user**, that user becomes the host login, with the password of the first of them (a copy encrypted for the host). Connections with the same user and password now show "nutzt den Host-Login";
+every other connection keeps its own login (`own_login`): same user but another password, another user, no user name. A connection with the same user and **no** saved password (it asked every time) now uses the host password.
+With **several users** (or no saved password) nothing is set: the host page shows the **suggestion** of the most frequent user (terminal first) and sets nothing by itself. A password that cannot be decrypted (wrong or missing key)
+leaves the host unchecked and it is tried again at the next start. The connection passwords stay valid as they were, so removing the host login brings back the old behaviour exactly.
+
+**In the app:** a section **Login** on the host page (phone and desktop, no agent needed): user, password field (**never pre-filled**), "Passwort nicht speichern", **Speichern**, **Login entfernen** (second tap), the
+suggestion, the root note ("Für Root-Aktionen brauchst du hier kein Passwort: Der Agent erledigt sie. Ein Root-Terminal öffnest du mit sudo -i."), and a list of the host's connections with what each uses.
+In the **connection dialog** a host with a login shows the tick **Eigenen Benutzer verwenden** (off by default); off: user and password fields are hidden and a line says the host login applies.
+`GET /api/hosts` carries `loginUser` and `loginPassword`, `GET /api/connections` carries `ownLogin`, `loginSource` (`host`/`own`), `loginUser`, `loginPassword` (a password is ready, nothing will be asked), `loginAddressNew`.
+
 ## Endpoints
 
 All need the session, the `X-JulOS` header for changes, and only ever show the signed-in user's own hosts (a foreign id is `404`).
@@ -51,7 +94,10 @@ All need the session, the `X-JulOS` header for changes, and only ever show the s
 | GET | `/api/hosts` | list with state, see above |
 | POST | `/api/hosts` `{name}` | new host |
 | PUT | `/api/hosts/{id}` `{name}` | rename |
-| DELETE | `/api/hosts/{id}` | `409` while it has connections |
+| DELETE | `/api/hosts/{id}` | `409` while it has connections; the login goes with the host |
+| GET | `/api/hosts/{id}/login` | the host login (never the password) and what each connection of the host uses; 60 a minute |
+| PUT | `/api/hosts/{id}/login` `{user, password?, forgetPassword?}` | set or change the login, 20 a minute |
+| DELETE | `/api/hosts/{id}/login` | remove the login (the connections keep their own data) |
 | POST | `/api/hosts/{id}/agent/code` | one-time enrolment code (10 minutes, once) for this host's agent |
 | DELETE | `/api/hosts/{id}/agent` | remove the agent, close its link |
 | GET | `/api/agent/*`, `POST /api/upload*`, `POST /api/clipboard/pull` | `?c=<connection id>` (its host's agent) or `?h=<host id>` |
@@ -93,7 +139,7 @@ The host abilities: `GET /api/hosts/{id}/status`, `/updates`, `/services`, `/doc
 A Windows agent, groups or tenants, roles, and sharing a host between users. The agent's Unix-socket mode still serves the machine the
 server runs on: a host without an agent uses it, as before, so several hosts on different machines each need their own agent.
 
-Every SSH connection of a host is also a place in the **Files app**: browse, view, download and (with `JULOS_FILES_WRITE=on`) change the files of the SSH user over SFTP, with the saved credentials; see [FILES.md](FILES.md).
+Every SSH connection of a host is also a place in the **Files app**: browse, view, download and (with `JULOS_FILES_WRITE=on`) change the files of the SSH user over SFTP, with the host login (or the connection's own); see [FILES.md](FILES.md).
 
 ## Updates and background tasks
 

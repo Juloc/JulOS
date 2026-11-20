@@ -9,6 +9,7 @@
  * Alles, was vom Server oder Ziel kommt (Namen, Pfade, Text), wird nie als HTML eingesetzt: die Oberflaeche setzt es mit textContent.
  * ===================================================================== */
 import { t, tp, tk, fmtNumber, fmtDate } from './i18n.js';
+import { loginUser, loginSaved } from './hostlogin.js';
 
 export const LOCAL_ID = 'local';
 export const MAX_NAME_BYTES = 255;
@@ -75,7 +76,7 @@ export function buildPlaces({ connections = [], hosts = [], info = {} } = {}) {
     if (!g.places.length && !g.root) continue;
     const many = g.places.length > 1;
     const places = g.places.map((c) => ({
-      id: c.id, kind: 'ssh', name: c.name, host: g.name, hasPassword: !!c.hasPassword, address: `${c.username ? c.username + '@' : ''}${c.host}`,
+      id: c.id, kind: 'ssh', name: c.name, host: g.name, hasPassword: loginSaved(c), address: `${loginUser(c) ? loginUser(c) + '@' : ''}${c.host}`,
       label: many ? `${g.name} · ${c.name}` : g.name,
     }));
     if (g.root) places.push({ id: g.id, kind: 'root', name: g.name, host: `${g.name} (Root)`, hasPassword: true, address: t('files.rootAddress'), label: `${g.name} (Root)` });
@@ -157,7 +158,7 @@ export function makeFilesApi(api, { createXhr = () => new XMLHttpRequest() } = {
   const local = (p) => isLocal(p);
   return {
     info: () => api('/api/files/info'),
-    open: (conn, opts = {}) => api('/api/files/remote/open', body({ connection: conn, password: opts.password || undefined, acceptHostKey: opts.acceptHostKey || undefined })),
+    open: (conn, opts = {}) => api('/api/files/remote/open', body({ connection: conn, password: opts.password || undefined, acceptHostKey: opts.acceptHostKey || undefined, saveForHost: opts.saveForHost || undefined })),
     close: (conn) => api('/api/files/remote/close', body({ connection: conn })).catch(() => {}),
     list: (place, path) => (local(place) ? api('/api/files/list?path=' + q(path || '')) : api(`/api/files/remote/list?c=${place.id}&path=${q(path || '')}`)).then((d) => normalizeListing(place, d)),
     search: (path, text) => api('/api/files/search?path=' + q(path || '') + '&q=' + q(text)),
@@ -204,19 +205,24 @@ export function makeFilesApi(api, { createXhr = () => new XMLHttpRequest() } = {
 export const keyId = (data) => `${data.algorithm} ${data.fingerprint}`;
 
 /**
- * Oeffnet einen SSH-Ort. ask.password(place, retry) -> Text | null (null: abgebrochen), ask.hostKey(place, data, changed) -> true|false. Ein neuer oder geaenderter Schluessel
- * wird nie still angenommen; ein getipptes Passwort geht nur an diesen einen Aufruf und wird nicht gemerkt. Gibt { home, hostKey } zurueck oder wirft den Fehler (code 'cancelled' bei Abbruch).
+ * Oeffnet einen SSH-Ort. ask.password(place, retry, host) -> Text | { password, save } | null (null: abgebrochen), ask.hostKey(place, data, changed) -> true|false. Ein neuer oder geaenderter Schluessel
+ * wird nie still angenommen; ein getipptes Passwort geht nur an diesen einen Aufruf und wird nicht gemerkt, ausser der Benutzer hakt "Fuer diesen Host speichern" an (nur wenn der Host schon einen
+ * Benutzer hat, aber kein Passwort: host = { user, canSave }; der Server speichert es erst nach gelungener Anmeldung). Hat der Host einen Login mit Passwort, kommt die Frage gar nicht erst.
+ * Gibt { home, hostKey } zurueck oder wirft den Fehler (code 'cancelled' bei Abbruch).
  */
 export async function openPlace(filesApi, place, ask) {
-  let password = null, accept = null, wrong = false;
+  let password = null, accept = null, wrong = false, save = false, host = null;
   for (let round = 0; round < 5; round++) {
     try {
-      return await filesApi.open(place.id, { password, acceptHostKey: accept });
+      return await filesApi.open(place.id, save ? { password, acceptHostKey: accept, saveForHost: true } : { password, acceptHostKey: accept });
     } catch (e) {
       if (e.code === 'password_required' || e.code === 'password_unreadable' || e.code === 'logon_failed') {
         wrong = e.code === 'logon_failed';
-        password = await ask.password(place, wrong);
-        if (password === null || password === undefined) throw cancelled();
+        if (e.code === 'password_required' && e.data && e.data.user) host = { user: e.data.user, canSave: !!e.data.canSave };
+        const answer = await ask.password(place, wrong, host);
+        const typed = answer && typeof answer === 'object' ? answer.password : answer;
+        if (typed === null || typed === undefined) throw cancelled();
+        password = typed; save = !!(host && host.canSave && answer && typeof answer === 'object' && answer.save);
         continue;
       }
       if ((e.code === 'host_key_new' || e.code === 'host_key_changed') && e.data && e.data.fingerprint) {

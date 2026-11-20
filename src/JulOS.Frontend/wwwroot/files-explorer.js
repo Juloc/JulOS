@@ -225,7 +225,7 @@ export function actionForKey(e) {
 }
 
 /* ---------- Ansicht und Pins (Einstellung "files" auf dem Server) ---------- */
-export const DEFAULT_COLS = { name: 320, date: 150, type: 130, size: 90 };
+export const DEFAULT_COLS = { name: 240, date: 140, type: 110, size: 80 };
 export const COL_MIN = 60, COL_MAX = 800;
 export const MAX_PINS = 100;
 export const DEFAULT_VIEW = { mode: 'list', density: 'compact', sortCol: 'name', sortDir: 'asc', showHidden: true, cols: { ...DEFAULT_COLS } };

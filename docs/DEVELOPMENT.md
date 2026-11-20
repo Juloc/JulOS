@@ -245,3 +245,7 @@ The image is built for amd64 and arm64 by one workflow. The SDK stage is `--plat
 
 See [ARCHITECTURE.md](ARCHITECTURE.md). SQL migrations are numbered files in `database/`; they are embedded into the backend and applied at start-up, each once, in a transaction.
 - Shift+arrows did not select on a PC, Ctrl+V pasted an old remote clipboard: not the VM, the browser client. Named keys (arrows, Home, End ...) were sent as a bare press and release, so a held Shift/Ctrl never reached the remote (check: key log shows `ff51` without `ffe1`). Ctrl+V was forwarded at once, so the local clipboard never left the browser. Now keys with held modifiers go as a chord (AltGr excluded, it produces characters), Ctrl+V / Shift+Insert wait for the `paste` event, put the text on the remote clipboard and then send the key, and the remote clipboard (Ctrl+C / Ctrl+X) is written to the local one. Test in the Browser pane with `?debug&hwkb`; the pane denies clipboard access, so the paste was tested with a synthetic `paste` event.
+
+## How much to test
+
+`deploy/dev/e2e.sh` runs the **core** flows (1 to 7: setup and sign-in, connections, picture, input, terminal, load without console errors, language). The others (clipboard, VNC, programs, sound, microphone, host login) carry the tag `@full` and run only with `E2E_FULL=1 deploy/dev/e2e.sh`, before big changes in those areas. Known flaky tests are deleted rather than retried; write new tests only for security-critical or pure logic.

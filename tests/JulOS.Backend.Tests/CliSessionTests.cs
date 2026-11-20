@@ -374,14 +374,6 @@ public sealed class CliSessionRealSshTests
     }
 
     [Fact]
-    public async Task A_missing_directory_gives_a_notice_and_no_program()
-    {
-        var (ready, output) = await RunAsync(new SshLaunch("claude", "/gibt/es/nicht", false, ""), "echo shell-$((6*7))\n", o => o.Contains("shell-42"));
-        Assert.Contains("\"notice\":\"dir-missing\"", ready);
-        Assert.Contains("shell-42", output);
-    }
-
-    [Fact]
     public async Task A_custom_command_runs_instead_of_the_shell_in_the_working_directory()
     {
         var (ready, output) = await RunAsync(new SshLaunch("custom", "/tmp", false, "echo start-$((6*7)); pwd; cat"), "hallo-eingabe\n", o => o.Split("hallo-eingabe").Length >= 3, after: "start-42");

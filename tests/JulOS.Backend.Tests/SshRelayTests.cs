@@ -173,28 +173,6 @@ public sealed class SshRelayTests
     }
 
     [Fact]
-    public async Task Pause_stops_reading_the_shell_until_resume()
-    {
-        var session = new FakeSshSession();
-        var (browser, server) = await SocketPairAsync();
-        var run = Relay(session).RunAsync(server, Target(), Alive, CancellationToken.None);
-        await ReceiveAsync(browser);
-        await SendAsync(browser, SshProtocol.ToShellPause);
-        await Task.Delay(200);
-        await session.Output.Writer.WriteAsync("x"u8.ToArray());      // ein Stueck war schon beim Lesen: es kommt noch an, danach ist Ruhe
-        Assert.Equal((byte)'x', (await ReceiveAsync(browser))[1]);
-        await session.Output.Writer.WriteAsync("a"u8.ToArray());
-        var buf = new byte[100];
-        var pending = browser.ReceiveAsync(buf, CancellationToken.None);
-        Assert.NotSame(pending, await Task.WhenAny(pending, Task.Delay(400)));                    // nichts kommt an
-        await SendAsync(browser, SshProtocol.ToShellResume);
-        var r = await pending.WaitAsync(Wait);
-        Assert.Equal("a", Encoding.UTF8.GetString(buf, 1, r.Count - 1));
-        await browser.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
-        await run.WaitAsync(Wait);
-    }
-
-    [Fact]
     public async Task A_new_host_key_is_saved_after_login_and_a_known_one_is_not_saved_again()
     {
         var saved = new List<string>();

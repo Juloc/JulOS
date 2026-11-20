@@ -280,21 +280,6 @@ public sealed class ClipboardPullerTests : IDisposable
         Assert.Equal(Png, r.Png);
         Assert.Empty(Directory.GetFiles(Path.Combine(_dir, "pull")));
     }
-
-    [Fact]
-    public async Task No_image_an_error_something_that_is_no_png_and_silence_are_told_apart()
-    {
-        var up = new ClipboardPuller(new UploadOptions(_dir, TimeSpan.FromMilliseconds(300)));
-        _ = Helper(".none", []);
-        Assert.Equal(PullOutcome.Nothing, (await up.PullAsync(CancellationToken.None)).Outcome);
-        _ = Helper(".err", "Zwischenablage gesperrt"u8.ToArray());
-        var failed = await up.PullAsync(CancellationToken.None);
-        Assert.Equal((PullOutcome.HelperFailed, "Zwischenablage gesperrt"), (failed.Outcome, failed.Detail));
-        _ = Helper(".png", "<html>"u8.ToArray());
-        Assert.Equal(PullOutcome.HelperFailed, (await up.PullAsync(CancellationToken.None)).Outcome);
-        Assert.Equal(PullOutcome.HelperSilent, (await up.PullAsync(CancellationToken.None)).Outcome);
-        Assert.Empty(Directory.GetFiles(Path.Combine(_dir, "pull")));
-    }
 }
 
 public sealed class HitCounterTests

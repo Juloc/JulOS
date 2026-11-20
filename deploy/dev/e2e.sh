@@ -39,6 +39,8 @@ done
 [ -n "$code" ] || { echo "Kein Setup-Code im Log: der Server ist nicht hochgekommen. Log: deploy/dev/e2e.sh down; dann docker compose -p julos-e2e logs julos" >&2; exit 2; }
 echo "Stack bereit nach $((SECONDS - start)) s, starte die Tests ..."
 
+# Standard: nur der Kern (Abläufe 1 bis 7). Alles: E2E_FULL=1 deploy/dev/e2e.sh (vor grossen Aenderungen an Bild, Ton, Zwischenablage, Programmen)
+if [ "${E2E_FULL:-}" != 1 ] && [ $# -eq 0 ]; then set -- --grep-invert @full; fi
 rc=0
 dc run --rm --no-deps -e E2E_SETUP_CODE="$code" e2e "$@" 2>&1 | grep -v '^ Container ' || rc=${PIPESTATUS[0]}
 [ "$rc" = 0 ] && echo "Browser-Tests bestanden (gesamt $((SECONDS - start)) s)." || echo "Browser-Tests fehlgeschlagen (Bilder und Traces: $E2E_OUT/results)." >&2

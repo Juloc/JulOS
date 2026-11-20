@@ -238,7 +238,7 @@ test('7 Sprache: auf Englisch umschalten, Überschrift und Kachel sind englisch,
 /** Die Zwischenablage der VM setzen und lesen: der kleine Dienst in der Sitzung des Ziels (deploy/dev/rdp-target/clip-probe.py, xclip). */
 const probe = (path, init) => fetch(`http://${RDP.host}:9777${path}`, init);
 
-test('8 Zwischenablage: Text aus der VM im Browser, Markieren mit Umschalt+Pfeilen und Strg+C in einem echten Fenster, Strg+V mit Zeilenumbruch in die VM, Diagnose', async ({ browser }) => {
+test('8 Zwischenablage: Text aus der VM im Browser, Markieren mit Umschalt+Pfeilen und Strg+C in einem echten Fenster, Strg+V mit Zeilenumbruch in die VM, Diagnose @full', async ({ browser }) => {
   test.setTimeout(100_000);
   const { context, page, errors } = await signedIn(browser);
   await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://127.0.0.1:8080' });
@@ -293,7 +293,7 @@ test('8 Zwischenablage: Text aus der VM im Browser, Markieren mit Umschalt+Pfeil
   await context.close();
 });
 
-test('9 VNC: verbinden (Passwort im Dialog der Sitzung), Bild, Klick und Taste erreichen das Ziel', async ({ browser }) => {
+test('9 VNC: verbinden (Passwort im Dialog der Sitzung), Bild, Klick und Taste erreichen das Ziel @full', async ({ browser }) => {
   const { context, page, errors } = await signedIn(browser);
   const sockets = watchSockets(page);
   const conn = { name: 'E2E VNC', kind: 'vnc', host: VNC.host, user: '' };
@@ -345,7 +345,7 @@ async function dropProgramConnections(page) {
   for (const c of list.filter((x) => /^E2E (Claude|Codex)/.test(x.name))) await page.request.delete(`/api/connections/${c.id}`, { headers: API });
 }
 
-test('10 Programm-Sitzungen: Claude startet im Arbeitsverzeichnis, die Eingabeleiste sendet, Codex zeigt den Hinweis (nicht installiert)', async ({ browser }) => {
+test('10 Programm-Sitzungen: Claude startet im Arbeitsverzeichnis, die Eingabeleiste sendet, Codex zeigt den Hinweis (nicht installiert) @full', async ({ browser }) => {
   const { context, page, errors } = await signedIn(browser);
   await context.addInitScript(() => localStorage.setItem('pd.termGl', 'false'));   // Text im DOM statt auf der WebGL-Fläche
   await dropProgramConnections(page);
@@ -415,7 +415,7 @@ test('10 Programm-Sitzungen: Claude startet im Arbeitsverzeichnis, die Eingabele
   await context.close();
 });
 
-test('11 Programm-Kacheln am Handy: Symbol in den Verbindungen, Schnellstart "Claude" auf der Start-Seite', async ({ browser }) => {
+test('11 Programm-Kacheln am Handy: Symbol in den Verbindungen, Schnellstart "Claude" auf der Start-Seite @full', async ({ browser }) => {
   const { context, page, errors } = await signedIn(browser, PHONE);
   await page.goto('/?phone');
   await expect(page.locator('#mobile')).toBeVisible();
@@ -431,7 +431,7 @@ test('11 Programm-Kacheln am Handy: Symbol in den Verbindungen, Schnellstart "Cl
   await context.close();
 });
 
-test('12 Programm-Sitzung mit tmux: ohne tmux auf dem Ziel läuft eine normale Sitzung mit sichtbarem Hinweis', async ({ browser }) => {
+test('12 Programm-Sitzung mit tmux: ohne tmux auf dem Ziel läuft eine normale Sitzung mit sichtbarem Hinweis @full', async ({ browser }) => {
   const { context, page, errors } = await signedIn(browser);
   await context.addInitScript(() => localStorage.setItem('pd.termGl', 'false'));
   await dropProgramConnections(page);
@@ -476,7 +476,7 @@ async function openDesktopSession(browser, { microphone = false } = {}) {
   return s;
 }
 
-test('13 Ton: ein Ton im Desktop erreicht den Browser, der Worklet spielt ihn (Pegel, Proben), die Diagnose sagt es; die Sitzung im Hintergrund bekommt nichts', async () => {
+test('13 Ton: ein Ton im Desktop erreicht den Browser, der Worklet spielt ihn (Pegel, Proben), die Diagnose sagt es; die Sitzung im Hintergrund bekommt nichts @full', async () => {
   test.setTimeout(120_000);
   const browser = await chromium.launch({ args: FAKE_MEDIA });
   try {
@@ -532,7 +532,7 @@ test('13 Ton: ein Ton im Desktop erreicht den Browser, der Worklet spielt ihn (P
   } finally { await browser.close(); }
 });
 
-test('14 Mikrofon: im Menü einschalten, Chromium liefert den Testton, im Desktop nimmt ein Programm auf und hört ihn; ausschalten beendet es', async () => {
+test('14 Mikrofon: im Menü einschalten, Chromium liefert den Testton, im Desktop nimmt ein Programm auf und hört ihn; ausschalten beendet es @full', async () => {
   test.setTimeout(120_000);
   const browser = await chromium.launch({ args: FAKE_MEDIA });
   try {
@@ -572,7 +572,7 @@ test('14 Mikrofon: im Menü einschalten, Chromium liefert den Testton, im Deskto
   } finally { await browser.close(); }
 });
 
-test('15 Mikrofon verweigert: der Browser lehnt die Freigabe ab, die Sitzung nennt eine Anleitung für den Browser, das Mikrofon bleibt aus', async () => {
+test('15 Mikrofon verweigert: der Browser lehnt die Freigabe ab, die Sitzung nennt eine Anleitung für den Browser, das Mikrofon bleibt aus @full', async () => {
   test.setTimeout(120_000);
   const browser = await chromium.launch({ args: ['--use-fake-device-for-media-stream'] });
   try {
@@ -599,7 +599,7 @@ test('15 Mikrofon verweigert: der Browser lehnt die Freigabe ab, die Sitzung nen
   } finally { await browser.close(); }
 });
 
-test('16 Host-Login: einmal am Host setzen, die Dateien öffnen ohne Passwortfrage, eine Verbindung mit eigenem Benutzer bleibt davon unberührt', async ({ browser }) => {
+test('16 Host-Login: einmal am Host setzen, die Dateien öffnen ohne Passwortfrage, eine Verbindung mit eigenem Benutzer bleibt davon unberührt @full', async ({ browser }) => {
   test.setTimeout(180_000);
   const { context, page, errors } = await signedIn(browser);
   const wrong = 'falsch-' + newPassword();
@@ -669,7 +669,7 @@ test('16 Host-Login: einmal am Host setzen, die Dateien öffnen ohne Passwortfra
   }
 });
 
-test('17 Host-Login gilt auch für den Desktop: eine RDP-Verbindung ohne Benutzer und Passwort verbindet ohne Frage mit dem Login des Hosts', async ({ browser }) => {
+test('17 Host-Login gilt auch für den Desktop: eine RDP-Verbindung ohne Benutzer und Passwort verbindet ohne Frage mit dem Login des Hosts @full', async ({ browser }) => {
   test.setTimeout(120_000);
   const { context, page, errors } = await signedIn(browser);
   const sockets = watchSockets(page);

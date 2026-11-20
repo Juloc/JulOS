@@ -499,7 +499,7 @@ public sealed partial class AgentLinkTests
         await Eventually(() => !app.Services.GetRequiredService<AgentLinks>().IsOnline(r.Host));
         var lost = await WaitJob(r, job);
         Assert.Equal("lost", lost.GetProperty("state").GetString());
-        Assert.Contains("updates.install lost no_answer", await Audit(db));
+        await Eventually(async () => (await Audit(db)).Contains("updates.install lost no_answer"));            // der Eintrag folgt dem Zustand um einen Wimpernschlag (unter Last sichtbar)
 
         // Der Agent ist zurueck und hat die Aktion zu Ende gefuehrt: er kennt den Auftrag mit seinem Ergebnis
         await using var back = await FakeLinkAgent.ConnectAsync(app.Server, r.Token, version: "0.6.0", platform: "linux-host", hostname: "srv-01", caps: ActionCaps, allow: AllRights);

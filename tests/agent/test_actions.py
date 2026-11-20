@@ -439,6 +439,8 @@ class HelperTests(unittest.TestCase):
 
         def run(argv, on_line, timeout):
             self.calls.append(argv)
+            if argv[:2] == ["dpkg", "--audit"]:
+                return 0, []                                         # die Paketdatenbank ist in Ordnung
             for key, (rc, lines) in results.items():
                 if key in argv:
                     for l in lines:
@@ -456,6 +458,7 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(self.calls[-1][:2], ["apt-get", "update"])
         self.assertTrue(self.handle(h, {"verb": "apt.upgrade"})["ok"])
         self.assertEqual(self.calls[-1][:2], ["apt-get", "upgrade"])
+        self.assertEqual(self.calls[-2], ["dpkg", "--audit"])                                   # vor jedem Upgrade: ist die Paketdatenbank in Ordnung?
         self.assertTrue(self.handle(h, {"verb": "apt.upgrade", "packages": ["libc6", "bash", "libc6"]})["ok"])
         self.assertEqual(self.calls[-1][:4], ["apt-get", "install", "--only-upgrade", "--no-remove"])
         self.assertEqual(self.calls[-1][-2:], ["libc6", "bash"])
@@ -602,16 +605,18 @@ class AgentToHelperTests(unittest.TestCase):
 
         def run(argv, on_line, timeout):
             ran.append(argv)
+            if argv[0] == "dpkg":
+                return 0, []
             on_line("Setting up libc6 ...")
             return 0, ["Setting up libc6 ..."]
         path = self.serve(helper.Helper(run=run, sleep=lambda s: None, permissions=lambda: {"updates"}))
         seen = []
         r = agent.helper_call({"verb": "apt.upgrade", "packages": ["libc6"]}, seen.append, 10, path)
         self.assertEqual((r["ok"], seen), (True, ["Setting up libc6 ..."]))
-        self.assertEqual(ran[0][:3], ["apt-get", "install", "--only-upgrade"])
+        self.assertEqual(ran[1][:3], ["apt-get", "install", "--only-upgrade"])
         r = agent.helper_call({"verb": "service", "op": "stop", "unit": "nginx.service"}, None, 10, path)         # Wort fehlt: der Helfer lehnt ab
         self.assertEqual(r, {"ok": False, "code": "not_permitted"})
-        self.assertEqual(len(ran), 1)
+        self.assertEqual(len(ran), 2)                                                          # dpkg --audit und apt-get; die abgelehnte Anfrage startete nichts
 
     def test_accepted_comes_back_before_the_delay_runs_out(self):
         gate = threading.Event()

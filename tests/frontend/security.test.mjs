@@ -30,6 +30,7 @@ test('Texte: woher der Wert kommt, wie der Zugriff gerade kommt, wie lange eine 
   assert.deepEqual(MINUTES.filter((m) => m < 1 || m > 60), [0]);          // "immer fragen" und 1 bis 60 Minuten
   assert.equal(minutesText(0), 'Bei jeder Aktion fragen');
   assert.equal(minutesText(10), '10 Minuten');
+  assert.equal(minutesText(1), '1 Minute');
 });
 
 test('Schluessel im Backup und Wiederherstellungsschluessel: ein Satz mit Ton und naechstem Schritt', () => {

@@ -1,4 +1,4 @@
-import { t, tk, fmtDate } from './i18n.js';
+import { t, tp, tk, fmtDate } from './i18n.js';
 
 /* =====================================================================
  * Einstellungen, Sicherheit (docs/SECURITY-REVIEW.md, F-01 bis F-04): vertraute Proxy-Adressen, erlaubte Zielhosts, zweiter Faktor fuer Aktionen, Schluessel im Backup
@@ -16,7 +16,7 @@ export const sourceText = (source) => t(SOURCES[source] || SOURCES.default);
 
 /** Die Auswahl der Dauer: 0 heisst "bei jeder Aktion fragen", sonst Minuten (1 bis 60). */
 export const MINUTES = [0, 1, 5, 10, 15, 30, 60];
-export const minutesText = (m) => (m === 0 ? t('sec.always') : t('sec.minutes', { n: m }));
+export const minutesText = (m) => (m === 0 ? t('sec.always') : tp('sec.minutes', m));
 
 /** Der Zugriff gerade: "von Adresse X ueber Proxy Y" oder direkt. */
 export function clientText(c) {

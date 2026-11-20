@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="widgets.css">
   <link rel="stylesheet" href="hostui.css">
   <link rel="stylesheet" href="files.css">
+  <link rel="stylesheet" href="alerts.css">
   <title>JulOS</title>
 </head>
 <body>
@@ -388,6 +389,14 @@
         <div class="dlg-btns"><button id="acctCopy" type="button" class="ghost" data-i18n="app.copyCodes">Codes kopieren</button></div>
         <p id="totpDoneMsg" class="msg" role="alert"></p>
       </div>
+      <div class="row"><button class="ghost close" data-act="close" type="button" data-i18n="common.close">Schließen</button></div>
+    </dialog>
+
+    <!-- Meldungen: Push-Nachrichten ohne KI, Geraete, Regeln, Ruhezeit, letzte Meldungen (alerts.js) -->
+    <dialog id="alertsDlg">
+      <h2 data-i18n="alerts.title">Meldungen</h2>
+      <p id="alertsMsg" class="msg" role="alert"></p>
+      <div id="alertsBody" class="al"></div>
       <div class="row"><button class="ghost close" data-act="close" type="button" data-i18n="common.close">Schließen</button></div>
     </dialog>
 

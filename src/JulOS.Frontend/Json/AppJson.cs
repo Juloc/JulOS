@@ -9,6 +9,7 @@ using JulOS.Frontend.Folders;
 using JulOS.Frontend.Hosts;
 using JulOS.Frontend.Modules;
 using JulOS.Frontend.Security;
+using JulOS.Frontend.Push;
 using JulOS.Frontend.Settings;
 using JulOS.Frontend.Tools;
 using JulOS.Integrations.Reachability;
@@ -19,6 +20,12 @@ namespace JulOS.Frontend;
 /// <summary>JSON ohne Reflection: alle Typen, die die API sendet oder empfaengt, stehen hier.</summary>
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(Health))]
+[JsonSerializable(typeof(JulOS.Backend.Logic.AlertSettings))]
+[JsonSerializable(typeof(PushStateResponse))]
+[JsonSerializable(typeof(PushKeyResponse))]
+[JsonSerializable(typeof(PushSubscribeRequest))]
+[JsonSerializable(typeof(PushSubscribeResponse))]
+[JsonSerializable(typeof(PushTestResponse))]
 [JsonSerializable(typeof(AboutResponse))]
 [JsonSerializable(typeof(BackupStatus))]
 [JsonSerializable(typeof(CopyStatus))]

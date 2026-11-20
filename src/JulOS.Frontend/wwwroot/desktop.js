@@ -23,7 +23,7 @@ import { loginUser, loginSaved } from './hostlogin.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const BAR_H = 34;
-let ctx = null;            // von shell.js: { state, esc, api, connect, edit, add, quick, folders, editHost, addHost, hostInfo, info, devices, account, nettools, signOut }
+let ctx = null;            // von shell.js: { state, esc, api, connect, edit, add, quick, folders, editHost, addHost, hostInfo, info, devices, account, nettools, alerts, signOut }
 let root = null;
 const wins = new Map();    // id -> Fenster
 let zTop = 10;
@@ -1087,6 +1087,7 @@ function onMainClick(e) {
   else if (t.dataset.act === 'quick') ctx.quick();
   else if (t.dataset.act === 'devices') ctx.devices();
   else if (t.dataset.act === 'nettools') ctx.nettools();
+  else if (t.dataset.act === 'alerts') ctx.alerts();
   else if (t.dataset.act === 'account') ctx.account();
   else if (t.dataset.act === 'security') ctx.security();
   else if (t.dataset.act === 'signout') ctx.signOut();

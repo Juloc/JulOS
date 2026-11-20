@@ -1,0 +1,15 @@
+/* Meldungen (alerts.js): Dialog #alertsDlg, gemeinsam fuer Handy und Desktop */
+#alertsDlg { width: min(94vw, 520px); }
+#alertsDlg .al-state { margin: 0 0 8px; }
+#alertsDlg label.check { flex-direction: row; align-items: center; gap: 10px; margin-bottom: 0; }
+#alertsDlg label.check input[type=checkbox] { width: 20px; height: 20px; flex: none; }
+#alertsDlg .al-sub { padding-left: 30px; color: var(--muted, inherit); font-size: .9em; }
+#alertsDlg .al-num { margin-left: 30px; }
+#alertsDlg .al-hours { display: flex; gap: 14px; flex-wrap: wrap; }
+#alertsDlg .dev { position: relative; padding-right: 96px; }
+#alertsDlg .al-x { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); min-height: 34px; padding: 0 12px; }
+#alertsDlg .al-logs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+#alertsDlg .al-log { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; text-align: left; padding: 8px 12px; border-radius: 12px; background: var(--md-surface-high, rgba(128,128,128,.15)); color: inherit; border: 0; font: inherit; cursor: pointer; }
+#alertsDlg .al-log:disabled { cursor: default; }
+#alertsDlg .al-log span { font-size: .92em; }
+#alertsDlg .al-log i { font-style: normal; font-size: .8em; opacity: .7; }

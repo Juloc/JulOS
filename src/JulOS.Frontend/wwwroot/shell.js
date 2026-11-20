@@ -14,6 +14,7 @@ import { initAccount } from './account.js';
 import { initSecurity } from './security.js';
 import { initStepUp, withStepUp } from './stepup.js';
 import { initNetTools } from './nettools.js';
+import { initAlerts, parseHostLink } from './alerts.js';
 import { qrSvg } from './qr.js';
 import { t, tp, tk, relativeTime, getPref, isPref } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
@@ -175,6 +176,7 @@ async function showHome(user, message = '') {
   await loadConnections();
   if (D) D.userChanged(user, message);
   if (securityUi) securityUi.check();
+  openLinkedHost();
 }
 
 /** Tastenleiste und Themenfarbe vom Server holen (er hat Vorrang; hat er nichts, geht das Lokale hinaus). Ohne Server bleibt die lokale Kopie. */
@@ -606,8 +608,19 @@ const openAccount = initAccount({ api, setMsg });
 securityUi = initSecurity({ api, esc });
 const openSecurity = () => securityUi.open();
 const openNetTools = initNetTools({ api, setMsg, connections: () => state.connections });
-if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), hostInfo: openHostInfo, hostPage, hostAction: openHostAction, info: hostInfo, tasks, signOut, home: goHome, account: openAccount, security: openSecurity, devices: openDevices, nettools: openNetTools });
-if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), hostInfo: openHostInfo, hostPage, hostAction: openHostAction, info: hostInfo, tasks, devices: openDevices, account: openAccount, security: openSecurity, nettools: openNetTools, signOut });
+const openAlerts = initAlerts({ api, setMsg, esc, deviceLabel: () => describeAgent(navigator.userAgent), openHost: (id) => { const h = state.hosts.find((x) => x.id === id); if (h) openHostInfo(h); } });
+// Ein Tipp auf eine Push-Meldung oeffnet die App auf der Seite des Hosts (/#host=<Kennung>): beim Start, bei offener App ueber hashchange und die Nachricht des Service Workers
+function openLinkedHost() {
+  const id = parseHostLink(location.hash);
+  if (!id || !state.user) return;
+  history.replaceState(history.state, '', location.pathname + location.search);
+  const h = state.hosts.find((x) => x.id === id);
+  if (h) openHostInfo(h);
+}
+window.addEventListener('hashchange', openLinkedHost);
+if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', (e) => { if (e.data && e.data.julos === 'open' && typeof e.data.hash === 'string' && e.data.hash) location.hash = e.data.hash; });
+if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), hostInfo: openHostInfo, hostPage, hostAction: openHostAction, info: hostInfo, tasks, signOut, home: goHome, account: openAccount, security: openSecurity, devices: openDevices, nettools: openNetTools, alerts: openAlerts });
+if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), hostInfo: openHostInfo, hostPage, hostAction: openHostAction, info: hostInfo, tasks, devices: openDevices, account: openAccount, security: openSecurity, nettools: openNetTools, alerts: openAlerts, signOut });
 
 /* ---------- Geraete und Sitzungen ---------- */
 function describeAgent(ua) {

@@ -21,7 +21,7 @@ test('jede Gruppe hat Titel und eine Zeile Hilfe, jede Zeile Beschriftung, Erkla
 });
 
 test('die Gruppen stehen in der festen Reihenfolge, Gefaehrliches steht allein am Ende', () => {
-  assert.deepEqual(GROUPS.map((g) => g.id), ['account', 'security', 'appearance', 'connections', 'programs', 'sync', 'backup', 'about', 'danger']);
+  assert.deepEqual(GROUPS.map((g) => g.id), ['account', 'security', 'appearance', 'connections', 'programs', 'alerts', 'sync', 'backup', 'about', 'danger']);
   assert.deepEqual(GROUPS.filter((g) => g.danger).map((g) => g.id), ['danger']);
   assert.equal(GROUPS.at(-1).danger, true);
 });

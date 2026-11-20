@@ -363,14 +363,14 @@ export function mountFiles(box, deps) {
   function renderSelbar() {
     const sel = selEntries();
     const show = kit && sel.length > 0;
-    selbar.hidden = !show; selbar.replaceChildren();
+    selbar.hidden = !show; selbar.replaceChildren(); root.classList.toggle('f-selecting', show);
     if (!show) { if (kit) st.multi = false; return; }
     const one = sel.length === 1 ? sel[0] : null, w = canWrite();
     const act = (name, text, fn, cls = '', off = false) => h('button', { type: 'button', class: `f-act-btn m3-btn tonal sm mb m3-state ${cls}`.trim(), title: text, 'aria-label': text, disabled: off, onclick: fn }, icon(name), h('span', { class: 'f-act-t', text }));
     selbar.append(h('span', { class: 'f-count', text: t('files.selected', { n: sel.length }) }));
     if (one && C.isFileLike(one)) selbar.append(act('download', t('desktopFiles.download'), () => download(one)));
     selbar.append(act('copy', t('files.menu.copy'), () => doClip('copy'), '', !w), act('cut', t('files.menu.cut'), () => doClip('cut'), '', !w), act('delete', t('files.delete.action'), () => remove(sel), 'danger', !w),
-      act('more', t('files.menu.more'), (e) => { const r = e.currentTarget.getBoundingClientRect(); contextMenu({ clientX: r.left, clientY: r.top, preventDefault() {} }, true); }),
+      act('dots', t('files.menu.more'), (e) => { const r = e.currentTarget.getBoundingClientRect(); contextMenu({ clientX: r.left, clientY: r.top, preventDefault() {} }, true); }),
       act('close', t('files.clearSelection'), () => { st.sel.clear(); st.multi = false; paint(); }));
   }
 

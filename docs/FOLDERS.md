@@ -49,7 +49,7 @@ Before, the phone kept favourites and use counts only in `localStorage` of that 
 
 The button layout of the remote view, the theme colour and the interface language are saved per user, so a second device looks the same.
 
-- Table `user_settings (user_id, key, value jsonb)`; the keys are `keybar`, `theme` and `lang` only (`SettingsRules`). `GET /api/settings`, `PUT /api/settings/{key}` with
+- Table `user_settings (user_id, key, value jsonb)`; the keys are `keybar`, `theme`, `lang` and `files` only (`SettingsRules`); `files` is the Files app's view, pinned folders and collapsed sidebar nodes ([FILES-EXPLORER.md](FILES-EXPLORER.md)). `GET /api/settings`, `PUT /api/settings/{key}` with
   `{ value }`, `DELETE /api/settings/{key}` (reset to the defaults). The server **checks and rewrites** every value: unknown fields are dropped, lengths and counts are limited
   (12 rows, 60 keys per row, label 24, value 200 characters), colours must be `system` or `#rrggbb`.
 - **keybar:** the rows with their keys (selection and order). Each key has an optional `scope`: `both` (default), `desktop` or `terminal`; a session only shows the keys of its

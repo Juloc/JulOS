@@ -50,6 +50,7 @@ const ICONS = {
   code: 'M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z',
   archive: 'M20.54 5.23l-1.39-1.68C18.88 3.21 18.47 3 18 3H6c-.47 0-.88.21-1.16.55L3.46 5.23C3.17 5.57 3 6.02 3 6.5V19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6.5c0-.48-.17-.93-.46-1.27zM12 17.5L6.5 12H10v-2h4v2h3.5L12 17.5zM5.12 5l.81-1h12l.94 1H5.12z',
   sel: 'M3 5h2V3c-1.1 0-2 .9-2 2zm0 8h2v-2H3v2zm4 8h2v-2H7v2zM3 9h2V7H3v2zm10-6h-2v2h2V3zm6 0v2h2c0-1.1-.9-2-2-2zM5 21v-2H3c0 1.1.9 2 2 2zm-2-4h2v-2H3v2zM9 3H7v2h2V3zm2 18h2v-2h-2v2zm8-8h2v-2h-2v2zm0 8c1.1 0 2-.9 2-2h-2v2zm0-12h2V7h-2v2zm0 8h2v-2h-2v2zm-4 4h2v-2h-2v2zm0-16h2V3h-2v2z',
+  dots: 'M6 10c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm12 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm-6 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z',
   lock: 'M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM9 8V6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9z',
 };
 const SVG = 'http://www.w3.org/2000/svg';
@@ -89,15 +90,15 @@ export function modal({ title, content = [], actions = [], kit = false, id = '' 
   const bar = h('div', { class: 'row dlg-btns f-dlg-btns' });
   let done;
   const promise = new Promise((r) => { done = r; });
-  const close = (result = null) => { if (dlg.open) dlg.close(); dlg.dispatchEvent(new CustomEvent('f-result', { detail: result })); };
+  let finished = false, result = null;
+  const finish = () => { if (finished) return; finished = true; dlg.remove(); done(result); };       // einmal, egal ob "close" oder close() zuerst kommt (ein verdecktes Fenster liefert das Ereignis spaet)
+  const close = (r = null) => { result = r; if (dlg.open) dlg.close(); finish(); };
   for (const a of actions) {
     const b = h('button', { type: 'button', class: `${a.kind === 'primary' ? 'primary ' : a.kind === 'danger' ? 'primary danger ' : 'ghost '}${kit ? 'mb ' : ''}f-act`.trim(), 'data-act': a.id, disabled: !!a.disabled, onclick: () => { if (a.onclick) a.onclick(b); if (!a.keepOpen) close(a.id); } }, a.label);
     buttons.set(a.id, b); bar.append(b);
   }
   dlg.append(h('h2', { id: 'fdlgT' + (id || ''), text: title }), ...content, bar);
-  let result = null;
-  dlg.addEventListener('f-result', (e) => { result = e.detail; });
-  dlg.addEventListener('close', () => { dlg.remove(); done(result); });
+  dlg.addEventListener('close', finish);                                                            // Escape schliesst ohne unser close(): Ergebnis bleibt null
   dlg.addEventListener('click', (e) => { if (e.target === dlg) { const r = dlg.getBoundingClientRect(); if (e.clientY < r.top || e.clientY > r.bottom || e.clientX < r.left || e.clientX > r.right) close(null); } });
   document.body.appendChild(dlg);
   dlg.showModal();

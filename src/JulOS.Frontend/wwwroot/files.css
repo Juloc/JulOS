@@ -134,14 +134,15 @@
 .f-drop svg.f-ic { width: 40px; height: 40px; }
 
 /* Handy: eigene Liste, untere Aktionsleiste */
-.fkit .f-bar { padding: 8px 0; }
+.fkit .f-bar { padding: 8px 0; row-gap: 6px; }
 .fkit .f-top { position: sticky; top: 0; z-index: 3; background: var(--m3-surface, var(--f-surface)); }
-.fkit .f-addr { order: 5; flex: 1 0 100%; }
-.fkit .f-search { order: 6; flex: 1 0 100%; }
-.fkit .f-acts { margin-left: 0; }
-.fkit .f-nav { order: 0; }
-.fkit .f-place { order: 1; max-width: 55%; height: 36px; padding: 0 12px; display: inline-flex; align-items: center; gap: 8px; }
-.f-place-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 12em; font-weight: 550; }
+.fkit .f-place { order: 1; flex: 1 1 0; min-width: 0; justify-content: flex-start; height: 40px; padding: 0 14px; display: inline-flex; align-items: center; gap: 8px; }
+.fkit .f-nav { order: 2; }
+.fkit .f-addr { order: 3; flex: 1 0 100%; }
+.fkit .f-search { order: 4; flex: 1 1 120px; min-width: 0; }
+.fkit .f-acts { order: 5; margin-left: 0; }
+.fkit:not(.f-has-place) :is(.f-nav, .f-acts, .f-addr, .f-search) { display: none !important; }
+.f-place-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 12em; font-weight: 550; flex: 1; text-align: left; }
 .fkit .f-banner { padding: 0; }
 .fkit .f-view { overflow: visible; }
 .fkit .f-list { min-height: 0; min-width: 0; }
@@ -153,8 +154,11 @@
 .fkit .f-meta { font-size: 12px; color: var(--f-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fkit .f-stat { border-top: 0; padding: 8px 4px 0; }
 .f-selbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 8px; border-radius: 16px; background: var(--f-sel); }
-.fkit .f-selbar { position: sticky; bottom: 8px; z-index: 4; margin: 8px 0 0; background: var(--m3-surface-high, var(--f-sel)); box-shadow: 0 2px 10px rgba(0, 0, 0, .25); }
-.fkit .f-act-btn { min-width: 0 !important; padding: 0 12px !important; }
+.fkit .f-selbar { position: fixed; left: 12px; right: 12px; bottom: calc(var(--m3-nav-h, 56px) + 10px + env(safe-area-inset-bottom)); z-index: 4; background: var(--m3-surface-high, var(--f-sel)); box-shadow: 0 2px 12px rgba(0, 0, 0, .3); }
+.fkit.f-selecting .f-stat { padding-bottom: 84px; }
+.fkit .f-act-btn { min-width: 0 !important; width: 40px; height: 40px; padding: 0 !important; justify-content: center; }
+.fkit .f-selbar { flex-wrap: nowrap; gap: 2px; }
+.fkit .f-count { flex: 1; white-space: nowrap; }
 .fkit .f-act-t { display: none; }
 .f-count { font-weight: 650; margin: 0 6px 0 4px; }
 .f-act-btn { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }

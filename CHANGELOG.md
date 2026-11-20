@@ -4,6 +4,16 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Neu
+- **Dateien als Explorer** ([docs/FILES-EXPLORER.md](docs/FILES-EXPLORER.md)): Einfachklick wählt, Doppelklick öffnet (Ordner, Textdatei im Editor, sonst Download); Auswahl wie im Windows-Explorer (`Shift`, `Strg`, `Strg+A`, Rahmen aufziehen, `Esc`); Tastatur (Pfeile, `Enter`, `Backspace`, `Alt+←/→`, `F2`, `Entf`, `F5`, `Strg+C/X/V`, `Strg+L`) und **Buchstabensprung**; **Rechtsklick-Menü** auf Datei, Auswahl, Ordner und leerer Fläche (Öffnen, Herunterladen, Ausschneiden, Kopieren, Einfügen, Umbenennen, Löschen, Neuer Ordner, Neue Textdatei, Hochladen, Pfad kopieren, An Seitenleiste anheften, Eigenschaften); **Ziehen** zwischen Ordnern, Pfadteilen und Seitenleiste (innerhalb eines Orts verschieben, zwischen Orten kopieren), Dateien vom Rechner hochladen auf einen Ordner. Jede schreibende Aktion bleibt **eine** Bestätigung (nie je Datei).
+- **Aussehen:** eine Werkzeugleiste (Zurück, Vor, Hoch, Adressleiste mit klickbaren Pfadteilen und Textfeld, Suche, Menü Ansicht, Neu, Hochladen; nur SVG-Symbole), **kompakte Liste** mit den Spalten Name, Datum, Typ, Größe (sortierbar, Breite ziehbar), **Endungen immer sichtbar**, **versteckte Dateien sichtbar aber ausgegraut** (im Menü Ansicht ausblendbar), Kachelansicht, Statusleiste (Anzahl, Größe der Auswahl, Ort und Benutzer). Namen mit Steuer- oder Richtungszeichen werden sichtbar als `<U+202E>` gezeigt.
+- **Seitenleiste als Baum:** Hosts klappen zu ihren Orten (Home, Root) und **angehefteten Ordnern** auf; Anheften, Lösen und Umordnen; Pins, Ansicht und Auf-/Zuklappzustand pro Benutzer **auf dem Server** (neuer Einstellungsschlüssel `files`, geprüft in `SettingsRules`, Rückfall im Browser).
+- **Einfacher Editor** für Textdateien bis 1 MiB (Zeilennummern, `Strg+S` über die bestätigte Schreib-Aktion, Markierung „geändert“, Warnung wenn die Datei sich auf dem Host geändert hat, Rückfrage beim Schließen); Binärdateien öffnen nie im Editor.
+- **Handy:** eigenes Layout bleibt; langes Drücken wählt, schaltet die Mehrfachauswahl ein und zeigt dasselbe Menü als Blatt, dazu eine untere Aktionsleiste; der Ort-Knopf öffnet denselben Baum (mit Pins).
+- Neue Dateien: `files-explorer.js` (reine Logik), `files-ui.js`, `files-menu.js`, `files-editor.js`, `files-tree.js`; Tests `tests/frontend/files-explorer.test.mjs` und einer für den Schlüssel `files`. Der Dialog „Kopieren nach … / Verschieben nach …“ entfällt (Ausschneiden, Kopieren, Einfügen und Ziehen leisten dasselbe). Keine neuen Endpunkte, keine neuen Rechte.
+
 ## [0.17.0] - 2026-11-20
 
 ### Neu

@@ -1,6 +1,6 @@
 # Files: the shared folder and every host over SFTP
 
-The Files app (desktop window and phone page "Dateien") shows **places**:
+The Files app (desktop window and phone page "Dateien") works like an explorer (selection, keys, context menu, drag and drop, a tree of hosts with pinned folders, a simple editor): see [FILES-EXPLORER.md](FILES-EXPLORER.md). It shows **places**:
 
 - **Gemeinsamer Ordner** (shared folder): the one folder of the JulOS server (`JULOS_FILES_ROOT`, default `JULOS_UPLOAD_DIR`). Read only: view the list, search by name, download. This is the old behaviour, unchanged; see [ARCHITECTURE.md](ARCHITECTURE.md) for its guarantees.
 - **Every host with an SSH connection**: the files of the SSH user, over **SFTP**, with the **login of the host** (or, if the connection asks for its own, the credentials saved at the connection). List, view text, download, upload (pick or drag and drop), new folder, rename, copy, move (also from host to host through the server) and delete.
@@ -103,19 +103,19 @@ The place appears in the app only when 1 to 4 hold at that moment (the page know
 
 - Copy does not keep permissions, owner or modification time; links and special files are skipped (and counted in the result).
 - Rename onto an existing file uses `posix-rename`; a server without it falls back to delete and rename (not atomic). Existence checks before a write are not atomic either; they are a courtesy, the server of the host stays the judge.
-- A text file larger than 1 MiB shows its beginning. Nothing is edited in the app.
+- A text file larger than 1 MiB shows its beginning and is not editable. Text up to 1 MiB opens in the simple editor ([FILES-EXPLORER.md](FILES-EXPLORER.md#4-editor)); saving is the confirmed upload of the whole file (`prepare upload`, then `remote/upload` with the token, overwrite shown in the sheet), so the editor adds no endpoint and no new right.
 - The target path of a link is not shown (no `readlink` in the SFTP library).
 - Listing a directory with more than 2000 entries shows the first 2000.
 
 ## Not built, and decisions
 
-- **Root access** is built as its own place (see above). Not built there: editing text, permissions and owner changes, symbolic links, a view of the target of a link.
+- **Root access** is built as its own place (see above), also with the editor (reading and saving go through the usual root confirmations). Not built there: permissions and owner changes, symbolic links, a view of the target of a link.
 - **Key authentication** for the files is not offered; the logins hold passwords. Decision: use the same credentials as the terminal (the host login), add nothing new. Root is not a second stored login (see [HOSTS.md](HOSTS.md#login-one-user-and-password-per-host)).
-- **Recycle bin, editing, thumbnails, sorting by size and date, search on hosts**: see [IDEAS.md](IDEAS.md).
+- **Recycle bin, thumbnails, search on hosts** (the explorer filters the current folder by name), **a zip of a selection**: see [IDEAS.md](IDEAS.md). Sorting by name, date, type and size is built on the page (the server order of the list is only the default).
 - Decision: the first host key must be confirmed (stricter than the terminal) because a file manager moves more data than a shell you watch.
 - Decision: a typed password is held only for the one connection attempt; the pool keeps the authenticated session, never the password.
 
 ## Tests
 
-`tests/JulOS.Backend.Tests`: `FileTransferTests` (the logic against an in-memory file system: paths, counting, atomic write, copy, move, delete, links, limits, preview), `SftpPoolTests` (sharing, idle, limits, leaks), `RemoteFilesHttpTests` (the whole server: session, header and origin, host key flow, passwords, listing, text, download, prepare and the bound confirmation, upload, rename, jobs, cancel, history, fail-closed audit, pool closing, write switch), `RealSftpFilesTests` (a real SFTP target of the dev stack: list, read, write, rename, delete, links, errors, a large folder, copy between two sessions, cancel, a changed host key). `tests/frontend/files.test.mjs` covers the page logic.
+`tests/JulOS.Backend.Tests`: `FileTransferTests` (the logic against an in-memory file system: paths, counting, atomic write, copy, move, delete, links, limits, preview), `SftpPoolTests` (sharing, idle, limits, leaks), `RemoteFilesHttpTests` (the whole server: session, header and origin, host key flow, passwords, listing, text, download, prepare and the bound confirmation, upload, rename, jobs, cancel, history, fail-closed audit, pool closing, write switch), `RealSftpFilesTests` (a real SFTP target of the dev stack: list, read, write, rename, delete, links, errors, a large folder, copy between two sessions, cancel, a changed host key). `tests/frontend/files.test.mjs` covers the page logic, `tests/frontend/files-explorer.test.mjs` the explorer logic (selection, type to jump, sort, names, pins).
 - Root access: `tests/agent/test_files_root.py` (the real helper code on a throw-away directory: every verb, blocks, temp file and rename, links, protected paths, wrong offsets, the word checked again; the agent routes `/v1/host/files/*` and refuses without the word), `tests/JulOS.Backend.Tests/RootFilesTests.cs` (the whole server with the **real agent and helper** on a throw-away root: the keys, upload in blocks, replace keeping the mode, rename, copy, delete, read and text only with a confirmation, history, fail-closed history, a key that closes during a transfer, hostile replies, copy between root and an SSH place), `tests/frontend/files.test.mjs` (the places, the root notice in every dialog, the token calls).

@@ -141,6 +141,10 @@ def os_code(e):
     return "failed"
 
 
+class ProtectedPath(Exception):
+    """Der Ordner (nach dem Aufloesen aller Links) oder der Name gehoert dem Agenten."""
+
+
 class FileOps:
     """Die Dateiverben. root: das Wurzelverzeichnis, unter dem alle Pfade liegen ("/" im Betrieb; Tests setzen ein anderes). Jeder Pfad ist absolut; der Ordner davor wird einmal aufgeloest und
     als Dateideskriptor geoeffnet, der Name dahinter nie als Link verfolgt (O_NOFOLLOW, dir_fd): ein Link wird als Link geloescht, umbenannt oder ersetzt, nie sein Ziel."""
@@ -159,8 +163,19 @@ class FileOps:
             return None, None, {"ok": False, "code": "protected_path" if path != "/" else "root_forbidden"}
         return path, os.path.dirname(path), None
 
-    def _dirfd(self, parent):
-        return os.open(os.path.realpath(self.real(parent)), os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    def _dirfd(self, parent, name=None):
+        """Der Ordner als Dateideskriptor. Mit name (jede schreibende Anfrage) wird der Ordner NACH dem Aufloesen aller Links nochmals gegen die geschuetzten Pfade geprueft: ein Link
+        irgendwo, der in /etc/julos-agent zeigt, darf den Schutz nicht umgehen."""
+        real = os.path.realpath(self.real(parent))
+        if name is not None:
+            if self.root == "/":
+                logical = real
+            else:
+                rel = os.path.relpath(real, os.path.realpath(self.root))
+                logical = "/" if rel == "." else "/" + rel
+            if protected(logical) or protected(logical.rstrip("/") + "/" + name):
+                raise ProtectedPath()
+        return os.open(real, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
 
     @staticmethod
     def _entry(name, st, resolved=None):
@@ -252,7 +267,7 @@ class FileOps:
         if not TEMP_RE.match(os.path.basename(path)):
             return {"ok": False, "code": "invalid_name"}
         try:
-            dfd = self._dirfd(parent)
+            dfd = self._dirfd(parent, os.path.basename(path))
         except OSError as e:
             return {"ok": False, "code": os_code(e)}
         try:
@@ -280,7 +295,7 @@ class FileOps:
         if len(raw) > FILE_BLOCK:
             return {"ok": False, "code": "invalid_request"}
         try:
-            dfd = self._dirfd(parent)
+            dfd = self._dirfd(parent, os.path.basename(path))
         except OSError as e:
             return {"ok": False, "code": os_code(e)}
         try:
@@ -309,12 +324,12 @@ class FileOps:
             return bad
         overwrite = req.get("overwrite") is True
         try:
-            sfd = self._dirfd(sparent)
+            sfd = self._dirfd(sparent, os.path.basename(src))
         except OSError as e:
             return {"ok": False, "code": os_code(e)}
         dfd = None
         try:
-            dfd = self._dirfd(dparent)
+            dfd = self._dirfd(dparent, os.path.basename(dst))
             sname, dname = os.path.basename(src), os.path.basename(dst)
             sst = os.lstat(sname, dir_fd=sfd)
             try:
@@ -352,7 +367,7 @@ class FileOps:
         if bad:
             return bad
         try:
-            dfd = self._dirfd(parent)
+            dfd = self._dirfd(parent, os.path.basename(path))
         except OSError as e:
             return {"ok": False, "code": os_code(e)}
         try:
@@ -394,7 +409,10 @@ class Helper:
         if VERB_RIGHT[verb] not in self.permissions():
             return {"ok": False, "code": "not_permitted"}
         if verb.startswith("files."):
-            return getattr(self.files, verb[6:])(req)
+            try:
+                return getattr(self.files, verb[6:])(req)
+            except ProtectedPath:
+                return {"ok": False, "code": "protected_path"}
         handler = getattr(self, "verb_" + verb.replace(".", "_"))
         return handler(req, send)
 

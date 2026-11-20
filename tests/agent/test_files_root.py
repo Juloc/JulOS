@@ -196,6 +196,32 @@ class FileOpsTests(unittest.TestCase):
                 self.assertIn(r.get("code"), ("protected_path", "root_forbidden"), (verb, path))
         self.assertEqual(self.ops.delete({"path": "/etc/julos-agentx"})["code"], "not_found")          # nur genau diese Pfade, nicht alles mit gleichem Anfang
 
+    def test_a_link_to_the_agents_files_does_not_get_around_the_protection(self):
+        os.makedirs(self.p("etc/julos-agent"))
+        with open(self.p("etc/julos-agent/permissions"), "w") as f:
+            f.write("files-root\n")
+        os.makedirs(self.p("srv"))
+        os.symlink(self.p("etc/julos-agent"), self.p("srv/rein"))               # ein Link ausserhalb, der in den geschuetzten Ordner zeigt (absolut)
+        os.symlink("../etc", self.p("srv/etc"))                                  # und einer auf den Ordner davor (relativ): der Name julos-agent darunter bleibt geschuetzt
+        self.put("zz", b"z")
+        def run(verb, req):
+            try:
+                return getattr(self.ops, verb)(req)
+            except helper.ProtectedPath:
+                return {"ok": False, "code": "protected_path"}
+        for base in ("/srv/rein", "/srv/etc/julos-agent"):
+            for verb, req in (("delete", {"path": base + "/permissions"}), ("mkdir", {"path": base + "/x"}), ("create", {"path": base + "/.julos-0123456789ab.part"}),
+                              ("write", {"path": base + "/.julos-0123456789ab.part", "offset": 0, "data": "eA=="}), ("rename", {"from": base + "/permissions", "to": "/zz2"}),
+                              ("rename", {"from": "/zz", "to": base + "/permissions", "overwrite": True})):
+                self.assertEqual(run(verb, req).get("code"), "protected_path", (verb, base))
+        self.assertEqual(run("rmdir", {"path": "/srv/rein"})["code"], "not_a_directory")                   # der Link selbst ist kein Ordner; sein Ziel bleibt in jedem Fall
+        self.assertTrue(os.path.isdir(self.p("etc/julos-agent")))
+        self.assertEqual(open(self.p("etc/julos-agent/permissions")).read(), "files-root\n")
+        self.assertEqual(os.listdir(self.p("etc/julos-agent")), ["permissions"])
+        self.assertEqual(self.ops.list({"path": "/srv/rein"})["entries"][0]["name"], "permissions")      # ansehen und lesen darf man, nur nicht veraendern
+        self.assertTrue(self.ops.read({"path": "/srv/rein/permissions", "offset": 0, "length": 100})["ok"])
+        self.assertEqual(run("mkdir", {"path": "/srv/frei"}), {"ok": True})                                # alles andere ist unberuehrt
+
     def test_an_error_text_of_the_system_never_reaches_the_answer(self):
         self.assertEqual(helper.os_code(PermissionError()), "denied")
         self.assertEqual(helper.os_code(OSError(18, "Invalid cross-device link")), "cross_device")

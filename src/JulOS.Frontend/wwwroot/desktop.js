@@ -1088,6 +1088,7 @@ function onMainClick(e) {
   else if (t.dataset.act === 'devices') ctx.devices();
   else if (t.dataset.act === 'nettools') ctx.nettools();
   else if (t.dataset.act === 'account') ctx.account();
+  else if (t.dataset.act === 'security') ctx.security();
   else if (t.dataset.act === 'signout') ctx.signOut();
   else if (t.dataset.act === 'settings') goto('einstellungen');
   else if (t.dataset.act === 'desktop' || t.dataset.act === 'terminal' || t.dataset.act === 'vnc') pickConnection(t.dataset.act, t);

@@ -2,7 +2,7 @@
 
 JulOS keeps accounts, connections and stored target passwords in PostgreSQL. Stored passwords are encrypted (AES-256-GCM) with the key in
 `/data/secret.key` (or `JULOS_SECRET_KEY`). **Lose either one and the stored passwords are gone**; lose the database and so are accounts and connections.
-So JulOS backs up both, every day, into a folder you choose. No extra container: the server does it itself.
+So JulOS backs up the database every day into a folder you choose. **Since 0.18 the key is not copied next to the dump any more** (a stolen backup alone must not open the passwords): you keep a **recovery key** instead, see "The recovery key". No extra container: the server does it itself.
 
 ## What is written
 
@@ -11,7 +11,8 @@ Into the backup folder (inside the container `/backup`), as **separate files**:
 | File | What | When |
 | --- | --- | --- |
 | `julos-db-20261119T030000Z.sql.gz` | all tables, compressed text (UTC time in the name) | daily |
-| `secret.key` | copy of `/data/secret.key` | when new or changed |
+| `secret.key.wrapped` | the key, **wrapped** with your recovery key (useless without it) | when new or changed, once a recovery key is confirmed |
+| `secret.key` | plain copy of `/data/secret.key` | **only** if you chose it (see "Settings") or an older version left one |
 
 Old dumps are deleted after `JULOS_BACKUP_KEEP_DAYS` days; the newest one is never deleted, and files that are not dumps are never touched.
 A dump is written as `.tmp` and renamed at the end, so a crash leaves no dump that only looks complete.
@@ -28,7 +29,7 @@ It holds the data only: the schema comes from the migrations, so a dump from an 
 | `JULOS_BACKUP_DIR` | `/backup` | Folder inside the container. Must exist and be writable by the server user (it is never created). |
 | `JULOS_BACKUP_TIME` | `03:00` | Time of day, `HH:MM`, in the server's time zone (UTC in the container unless `TZ` is set). |
 | `JULOS_BACKUP_KEEP_DAYS` | `14` | How long dumps are kept. |
-| `JULOS_BACKUP_KEY` | `copy` | `off`: do not copy `secret.key` (keep it elsewhere, see below). |
+| `JULOS_BACKUP_KEY` | empty | Only the fallback; the setting "Put the key in the backup" in the app (Settings, Security) wins. `copy`: put a plain copy of `secret.key` next to the dump (**weak**: whoever reads the backup reads every stored password). `off`: never. Empty and nothing set in the app: **no plain copy**, except when the backup folder already holds one from an older version (it keeps being refreshed, so nothing is lost on update; the page says "so it was before", and switching it off in the app removes it). |
 
 If the server was off at the usual time (or this is a new install), a dump is made two minutes after the next start. After a failure it tries again after an hour.
 A manual dump: `docker compose exec julos dotnet JulOS.dll backup create`.
@@ -48,12 +49,12 @@ If Docker creates it for you it belongs to root and the server cannot write: the
 By default the backup folder lives on the same machine (in the Compose stacks a folder on the same disk). If that machine dies, the backup dies with it. So JulOS can
 **copy every new backup to a second place outside the machine**, right after the local backup succeeded. It is **off by default**; the local backup works exactly as before without it.
 
-What is copied: the new dump(s) and the key copy `secret.key`, as the same **separate files** as locally (dump and key are never packed together). A file is written under a
+What is copied: the new dump(s) and, if one exists, the wrapped key `secret.key.wrapped` (and a plain `secret.key` only where it is switched on), as the same **separate files** as locally (dump and key are never packed together). A file is written under a
 temporary name (`name.tmp`) and renamed at the end, so a cut connection never leaves a file at the target that only looks complete. Retention is the same as locally
 (`JULOS_BACKUP_KEEP_DAYS`, the newest dump at the target is never deleted, files that are not JulOS dumps are never touched). The target folder is never created by the server.
 
 A problem at the second target never damages the local backup: it is a warning in the log and in "Über JulOS" ("Zweites Ziel: Fehler ..."), and the next run
-copies whatever is missing (also the dumps of the days in between, as long as they are inside the retention time). With `JULOS_BACKUP_KEY=off` the key is copied to neither place.
+copies whatever is missing (also the dumps of the days in between, as long as they are inside the retention time). Without a plain key copy nothing but the wrapped file leaves the machine; switching the copy off in the app also removes an old copy at the second target.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -79,10 +80,10 @@ connection. **If it changes, nothing is transferred**: the log (as an error) and
 
 ### Access rights
 
-Make the target **yours alone**: the dump holds password hashes and authenticator secrets, and `secret.key` opens the stored target passwords. The folder should belong to the user
+Make the target **yours alone**: the dump holds password hashes, sealed authenticator secrets and the encrypted target passwords. The folder should belong to the user
 JulOS writes as and have mode **0700**; JulOS creates the files with **0600** (over SFTP it asks the server for 0600 after the upload; a server that refuses keeps its default, so rely on the folder mode; on a share that does not know Unix modes, set the same restriction on the share: only your account may read it).
 For SFTP use an account of its own that can reach only this folder (a chroot or a plain user with a home folder nobody else can read) and a key that is used for nothing else.
-The same advice as for the local folder applies: if the second target is a place others can read, use `JULOS_BACKUP_KEY=off` and keep `secret.key` separately.
+Keep the plain key copy off (the default) for a place others can read.
 
 ### Example: a NAS mounted on the Docker host
 
@@ -133,14 +134,14 @@ Test it with `docker compose exec julos dotnet JulOS.dll backup create`: it prin
 
 ### Restore from the second target
 
-The files at the target are the same as in the local folder. Fetch the dump you want and `secret.key` (`scp`, `sftp`, or copy from the share) into a folder the container can read, then restore as above:
+The files at the target are the same as in the local folder. Fetch the dump you want and `secret.key.wrapped` (`scp`, `sftp`, or copy from the share) into a folder the container can read (the wrapped file must lie **next to the dump**), then restore with the recovery key from your password manager:
 
 ```bash
 mkdir -m 700 ~/restore && sftp julos@nas.example.org:julos-backup/julos-db-20261119T030000Z.sql.gz ~/restore/
-sftp julos@nas.example.org:julos-backup/secret.key ~/restore/
+sftp julos@nas.example.org:julos-backup/secret.key.wrapped ~/restore/
 docker compose stop julos
 docker compose up -d postgres
-docker compose run --rm -v ~/restore:/restore:ro julos backup restore /restore/julos-db-20261119T030000Z.sql.gz --key /restore/secret.key
+docker compose run --rm -it -v ~/restore:/restore:ro julos backup restore /restore/julos-db-20261119T030000Z.sql.gz --recovery-key
 docker compose up -d julos
 rm -r ~/restore                                                          # the copy of dump and key has done its job
 ```
@@ -148,35 +149,47 @@ rm -r ~/restore                                                          # the c
 For a share mounted at `/mnt/nas/julos-backup` just use `-v /mnt/nas/julos-backup:/restore:ro`. If the whole machine is gone: install JulOS on a new machine, get the files from the second target as above,
 and restore before the first start of the server. The host key remembered at the target is not part of the backup: on the new machine JulOS remembers it again at first use.
 
-## The key and the dump
+## The recovery key
 
-- The dump contains **password hashes, authenticator secrets and recovery code hashes**; it is as sensitive as the database. The backup folder must belong to you alone (mode 0700, files 0600, which the server sets).
-- Stored target passwords are in the dump only in encrypted form, and the key is a **separate file**, never inside the dump. A stolen dump alone shows no target password.
-- If the backup folder is shared or goes to a place others can read, set `JULOS_BACKUP_KEY=off` and keep `secret.key` somewhere else (for example in your password manager). Then the folder alone is of no use for target passwords. Whoever has dump **and** key can read them, so do not put both in the same unprotected place.
-- With `JULOS_SECRET_KEY` in `.env` there is no `secret.key`; back up `.env` yourself.
+The key in `/data/secret.key` (or `JULOS_SECRET_KEY`) opens the stored target passwords **and** the authenticator secrets in the database. It lives only on the server. To be able to restore after the server is gone you keep a **recovery key**:
+
+1. Settings, Security, "Create recovery key". The page shows it **once**, as 52 characters in groups of four (copy, or download as a file). The server does not keep it.
+2. Put it in your password manager (not next to the backup), then press "I have saved it". Only then does it count; until then nothing changes. A new one can be created any time; the old one stays valid until the new one is confirmed.
+3. From the next backup on, the folder (and the second target) holds `secret.key.wrapped`: the key wrapped with the recovery key (AES-256-GCM, key by HKDF-SHA256 from 256 random bits). It is useless without the recovery key, so it may lie next to the dump.
+
+Restoring needs: the dump, `secret.key.wrapped` next to it, and the recovery key (see "Restore"). Without a recovery key and without a plain key copy, **a lost server also loses the stored passwords and the authenticator** (`tools/julos-user.sh` makes a new authenticator, passwords are typed again). Try it once on a spare database.
+
+**Plain key copy (not recommended):** the setting "Put the key in the backup" (or `JULOS_BACKUP_KEY=copy`) writes `secret.key` next to the dump again. Whoever can read the backup can then open every stored password. Only for a folder that is readable by you alone. An installation that already had such a copy keeps it until you switch it off in the app; switching off removes the old copies in the folder and at the second target.
+
+## The dump
+
+- The dump contains **password hashes, sealed authenticator secrets and recovery code hashes**; it is as sensitive as the database. The backup folder must belong to you alone (mode 0700, files 0600, which the server sets).
+- Stored target passwords and authenticator secrets are in the dump only in encrypted form (AES-256-GCM, 0.18 for the authenticator secrets), and the key is a **separate thing**, never inside the dump and by default not in the folder. A stolen dump alone shows no target password and no authenticator secret.
+- With `JULOS_SECRET_KEY` in `.env` there is no `secret.key` file; the recovery key still wraps it, and `.env` is yours to back up.
 
 ## Restore
 
-Pick the dump and make sure you have the matching `secret.key`. On the Docker host, in the stack folder:
+Pick the dump and make sure you have the recovery key (and `secret.key.wrapped` next to the dump) or a matching `secret.key`. On the Docker host, in the stack folder:
 
 ```bash
 docker compose stop julos                         # the server must not run during a restore
 docker compose up -d postgres                     # an empty database is enough, the restore creates the schema
-docker compose run --rm julos backup restore /backup/julos-db-20261119T030000Z.sql.gz --key /backup/secret.key
+docker compose run --rm -it julos backup restore /backup/julos-db-20261119T030000Z.sql.gz --recovery-key
 docker compose up -d julos
 ```
 
-- `--key FILE` copies the key into `/data/secret.key` (mode 0600). Without it the key already there is used. A different key already in place is only replaced with `--force`.
+- `--recovery-key` asks for the recovery key (input hidden; or `--recovery-key-file FILE` with the text in it), unwraps `secret.key.wrapped` from the folder of the dump and installs the key into `/data/secret.key` (mode 0600). Without any key in place and in a terminal the command asks by itself when the wrapped file is there. A wrong recovery key changes nothing (it is checked before the database is touched).
+- `--key FILE` copies a plain key file into `/data/secret.key` (mode 0600), for backups that have one. Without it the key already there is used. A different key already in place is only replaced with `--force`.
   If `JULOS_SECRET_KEY` is set it wins over the file: put the old key there instead.
 - The database must be empty (a fresh PostgreSQL volume). With `--force` an existing database is replaced completely. It is all or nothing: a damaged or cut-off dump changes nothing.
-- At the end the command tries to decrypt every stored password with the key and says how many work. If it says some do not (exit code 3), the key is the wrong one.
+- At the end the command tries to decrypt every stored password and every authenticator secret with the key and says how many work. If it says some do not (exit code 3), the key is the wrong one.
 - Without the command: `gunzip -c julos-db-....sql.gz | psql ...` also works once the server has created the schema (start it once against the empty database), but it does not check anything.
 
 Then sign in as before (same password and authenticator): accounts, sessions, connections and stored passwords are back. Agents keep their tokens and reconnect.
 
 ## Check that it works
 
-`deploy/dev/test.sh` runs `BackupTests`: dump, a fresh database, restore, login with password and authenticator code, and decrypting a stored password with the backed-up key.
+`deploy/dev/test.sh` runs `BackupTests`: dump, a fresh database, restore, login with password and authenticator code, and decrypting a stored password with the backed-up key. `BackupKeyTests` covers the recovery key: no key in the folder by default, the wrapped file, restore with the recovery key (and a wrong one changes nothing), an old key copy kept until switched off, and the sealed authenticator secret.
 `BackupCopyTests` covers the second target: folder copy (atomic, retention, failure and catch-up) and SFTP against the throw-away SSH target of the test stack (password and key login, host key remembered and checked).
 Do the same by hand once on a spare PostgreSQL before you need it. A backup nobody has restored is only a hope.
 

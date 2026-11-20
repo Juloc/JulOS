@@ -11,6 +11,8 @@ import { initFolderDialog } from './folder-dialog.js';
 import { parseQuickTarget, quickConnection, DEFAULT_PORT as QUICK_PORT } from './quick.js';
 import { launchTarget, validWorkDir, validCustom, programOf } from './terminal-programs.js';
 import { initAccount } from './account.js';
+import { initSecurity } from './security.js';
+import { initStepUp, withStepUp } from './stepup.js';
 import { initNetTools } from './nettools.js';
 import { qrSvg } from './qr.js';
 import { t, tp, tk, relativeTime, getPref, isPref } from './i18n.js';
@@ -35,6 +37,7 @@ const D = WIDE ? await import('./desktop.js').catch(() => null) : null;
 const M = !D && !FORCE.has('classic') ? await import('./mobile.js').catch(() => null) : null;
 
 const show = (name) => {
+  if (securityUi) securityUi.setHomeShown(name === 'home');     // der Hinweis zu den Proxy-Adressen nur auf dem Start-Bildschirm
   if (D) {   // Desktop: Startseite und Fernsteuerung sind Fenster in #desktop (die Fernsteuerung zeigt und versteckt app.js selbst)
     const desk = name === 'home' || name === 'remote';
     for (const n of ['boot', 'setup', 'login', 'home']) $('#' + n).hidden = n !== name;
@@ -55,8 +58,11 @@ class ApiError extends Error {
   constructor(status, message, retryAfter, code, data) { super(message); this.status = status; this.retryAfter = retryAfter; this.code = code; this.data = data; }   // code: kurzer Fehlercode mancher Wege (Aktionen auf Hosts, Dateien), den die Oberflaeche uebersetzt; data: die ganze Antwort (zum Beispiel der Fingerabdruck eines Host-Schluessels)
 }
 
+/** Fragt den Server und wiederholt die Aktion einmal, wenn er dafuer eine frische Freigabe mit dem zweiten Faktor verlangt (stepup.js). */
+function api(path, options) { return withStepUp(() => rawApi(path, options), askStepUp); }
+
 /** Fragt den Server. Aenderungen tragen die Sonderkopfzeile, mit der der Server sie als von der eigenen Seite erkennt. */
-async function api(path, { method = 'GET', body } = {}) {
+async function rawApi(path, { method = 'GET', body } = {}) {
   const headers = {};
   if (method !== 'GET') headers['X-JulOS'] = '1';
   if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -73,6 +79,8 @@ async function api(path, { method = 'GET', body } = {}) {
 }
 
 const setMsg = (el, text, ok = false) => { el.textContent = text || ''; el.classList.toggle('ok', ok && !!text); };
+const askStepUp = initStepUp({ api: rawApi, setMsg });      // das Sheet fuer den zweiten Faktor (stepup.js)
+let securityUi = null;                                      // Einstellungen, Sicherheit (security.js), unten angelegt
 const busy = (form, on) => { for (const b of form.querySelectorAll('button[type=submit]')) b.disabled = on; };
 
 const state = { user: null, connections: [], folders: [], hosts: [], actionsPaused: false, canStore: false, driveAvailable: false, editing: null, editingHost: null, starting: null };
@@ -166,6 +174,7 @@ async function showHome(user, message = '') {
   syncPrefs(true);
   await loadConnections();
   if (D) D.userChanged(user, message);
+  if (securityUi) securityUi.check();
 }
 
 /** Tastenleiste und Themenfarbe vom Server holen (er hat Vorrang; hat er nichts, geht das Lokale hinaus). Ohne Server bleibt die lokale Kopie. */
@@ -594,9 +603,11 @@ const hostPage = initHostPage({ state, api, esc, store: hostInfo, openAction: op
 // Die Seite eines Hosts (Abschnitt panel): am Desktop eine Ansicht im Start-Fenster, am Handy eine eigene Seite
 const openHostInfo = (h, panel) => (D ? D.openHost(h, panel) : M && M.openHost(h, panel));
 const openAccount = initAccount({ api, setMsg });
+securityUi = initSecurity({ api, esc });
+const openSecurity = () => securityUi.open();
 const openNetTools = initNetTools({ api, setMsg, connections: () => state.connections });
-if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), hostInfo: openHostInfo, hostPage, hostAction: openHostAction, info: hostInfo, tasks, signOut, home: goHome, account: openAccount, devices: openDevices, nettools: openNetTools });
-if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), hostInfo: openHostInfo, hostPage, hostAction: openHostAction, info: hostInfo, tasks, devices: openDevices, account: openAccount, nettools: openNetTools, signOut });
+if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), hostInfo: openHostInfo, hostPage, hostAction: openHostAction, info: hostInfo, tasks, signOut, home: goHome, account: openAccount, security: openSecurity, devices: openDevices, nettools: openNetTools });
+if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), hostInfo: openHostInfo, hostPage, hostAction: openHostAction, info: hostInfo, tasks, devices: openDevices, account: openAccount, security: openSecurity, nettools: openNetTools, signOut });
 
 /* ---------- Geraete und Sitzungen ---------- */
 function describeAgent(ua) {

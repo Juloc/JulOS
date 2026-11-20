@@ -1,6 +1,6 @@
 import { test, expect, chromium } from '@playwright/test';
 import { existsSync } from 'node:fs';
-import { AUTH_FILE, RDP, SSH, VNC, STATE_FILE, loadState, newPassword, saveState, totp } from './helpers.mjs';
+import { AUTH_FILE, RDP, SSH, VNC, STATE_FILE, loadState, markStep, newPassword, nextCode, saveState, totp } from './helpers.mjs';
 
 const DESKTOP = { viewport: { width: 1280, height: 800 } };
 const PHONE = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
@@ -56,7 +56,8 @@ test.describe('Ersteinrichtung', () => {
     await expect(page.locator('#desktop')).toBeVisible();
     await expect(page.locator('#loginForm')).toBeHidden();
     await context.storageState({ path: AUTH_FILE });
-    saveState({ user, password });
+    saveState({ user, password, secret });
+    markStep(Math.floor(Date.now() / 30000) + 1);                       // verbraucht: der Schritt der Anmeldung (und alle davor)
     expect(errors.filter((e) => !/401|403/.test(e))).toEqual([]);
   });
 });
@@ -64,6 +65,12 @@ test.describe('Ersteinrichtung', () => {
 const API = { 'X-JulOS': '1', Origin: 'http://127.0.0.1:8080' };   // so erkennt der Server Aufrufe der eigenen Seite (Fremd-Ursprung wird abgelehnt)
 const DESKTOP_CONN = { name: 'E2E Desktop', kind: 'desktop', host: RDP.host, user: RDP.user };
 const SSH_CONN = { name: 'E2E Terminal', kind: 'terminal', host: SSH.host, port: SSH.port, user: SSH.user };
+
+/** Gibt die Sitzung der Seite fuer Aktionen frei (zweiter Faktor): ein Code im naechsten freien Zeitschritt. Die Anmeldung aus Test 1 gilt nur 10 Minuten. */
+async function approve(page) {
+  const r = await page.request.post('/api/auth/step-up', { headers: API, data: { code: await nextCode(loadState().secret) } });
+  expect(r.status()).toBe(200);
+}
 
 const tile = (page, name) => page.locator('#desktop .dk-tile', { hasText: name }).first(); // die Kachel steht auch unter "Zuletzt benutzt"
 
@@ -602,6 +609,7 @@ test('15 Mikrofon verweigert: der Browser lehnt die Freigabe ab, die Sitzung nen
 test('16 Host-Login: einmal am Host setzen, die Dateien öffnen ohne Passwortfrage, eine Verbindung mit eigenem Benutzer bleibt davon unberührt @full', async ({ browser }) => {
   test.setTimeout(180_000);
   const { context, page, errors } = await signedIn(browser);
+  await approve(page);                                                   // der Host-Login ist eine Aktion mit zweitem Faktor
   const wrong = 'falsch-' + newPassword();
   // Ein eigener Host mit einer Terminal-Verbindung ohne Benutzer und Passwort (Wegwerf-Ziel des Stacks); die Verbindungen der anderen Abläufe bleiben unberührt
   const host = await (await page.request.post('/api/hosts', { headers: API, data: { name: 'E2E Login-Host' } })).json();
@@ -673,6 +681,7 @@ test('17 Host-Login gilt auch für den Desktop: eine RDP-Verbindung ohne Benutze
   test.setTimeout(120_000);
   const { context, page, errors } = await signedIn(browser);
   const sockets = watchSockets(page);
+  await approve(page);
   const host = await (await page.request.post('/api/hosts', { headers: API, data: { name: 'E2E Login-Desktop' } })).json();
   const conn = await (await page.request.post('/api/connections', { headers: API, data: { name: 'E2E Login-Desktop', kind: 'desktop', host: RDP.host, username: '', hostId: host.id } })).json();
   try {
@@ -688,4 +697,42 @@ test('17 Host-Login gilt auch für den Desktop: eine RDP-Verbindung ohne Benutze
     await page.request.delete('/api/hosts/' + host.id, { headers: API });
     await context.close();
   }
+});
+
+test('18 Zweiter Faktor: bei "immer fragen" öffnet eine Aktion das Sheet, ein falscher Code bleibt davor stehen, der richtige führt die Aktion aus', async ({ browser }) => {
+  test.setTimeout(180_000);
+  const { context, page, errors } = await signedIn(browser);
+  await approve(page);
+  const set = await page.request.put('/api/security/step-up', { headers: API, data: { enabled: true, minutes: 0 } });     // gilt sofort, auch fuer die eben erteilte Freigabe
+  expect(set.status()).toBe(200);
+  try {
+    // ohne Freigabe verweigert der Server den Weg mit einem festen Code
+    const refused = await page.request.put('/api/security/hosts', { headers: API, data: { entries: [] } });
+    expect(refused.status()).toBe(403);
+    expect((await refused.json()).code).toBe('step_up_required');
+
+    await page.goto('/?desktop');
+    await page.locator('#desktop [data-go="einstellungen"], #desktop [data-nav="einstellungen"]').first().click();
+    await page.locator('#desktop [data-act="security"]').click();
+    await expect(page.locator('#securityDlg')).toBeVisible();
+    await expect(page.locator('#securityDlg h3', { hasText: 'Vertraute Proxy-Adressen' })).toBeVisible();
+    await expect(page.locator('#securityDlg h3', { hasText: 'Zweiter Faktor für Aktionen' })).toBeVisible();
+    await page.screenshot({ path: '/out/security-page.png' });
+
+    await page.click('#secBody [data-sec="save-step"]');                    // die Aktion kommt zurueck mit 403, das Sheet fragt nach dem Code
+    await expect(page.locator('#stepUpDlg')).toBeVisible();
+    await page.fill('#suCode', '000000');
+    await page.click('#suForm button[type=submit]');
+    await expect(page.locator('#suMsg')).not.toBeEmpty();                  // falscher Code: bleibt offen
+    await expect(page.locator('#stepUpDlg')).toBeVisible();
+    await page.screenshot({ path: '/out/step-up-sheet.png' });
+    await page.fill('#suCode', await nextCode(loadState().secret));
+    await page.click('#suForm button[type=submit]');
+    await expect(page.locator('#stepUpDlg')).toBeHidden();
+    await expect(page.locator('#secBody .msg.ok', { hasText: 'Gespeichert' })).toBeVisible();   // die Aktion wurde danach wiederholt
+    await page.locator('#securityDlg [data-act="close"]').click();
+  } finally {
+    await context.close();                                                // der Stack ist wegwerf: "immer fragen" bleibt bis zum naechsten frischen Lauf
+  }
+  expect(errors.filter((e) => !/401|403/.test(e))).toEqual([]);          // der falsche Code (401) und die Aufforderung (403) stehen als Konsolenmeldung des Browsers
 });

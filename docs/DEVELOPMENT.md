@@ -198,7 +198,7 @@ dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj    # 
 | Variable | Meaning |
 | --- | --- |
 | `JULOS_DB` | PostgreSQL connection string (required) |
-| `JULOS_ALLOWED_HOSTS` | optional comma-separated list of hosts the signed-in user may connect to; empty means any host the server can reach |
+| `JULOS_ALLOWED_HOSTS` | **fallback** (since 0.18 the list lives in the app, Settings, Security): comma-separated hosts the signed-in user may connect to; empty means any host the server can reach |
 | `JULOS_AGENT_SOCKET` | Unix socket of the agent on the same machine, default `/uploads/.agent/agent.sock` (agents on other machines connect outbound, no setting needed; see AGENT_API.md) |
 | `JULOS_UPLOAD_DIR` | shared folder for photo uploads, default `/uploads`; its disk is the one the system overview shows |
 | `JULOS_FILES_ROOT` | the one folder the read-only shared-folder place of the Files app shows, default `JULOS_UPLOAD_DIR`; `off` disables that place |
@@ -213,7 +213,7 @@ dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj    # 
 | `JULOS_STREAM_KEEP_SECONDS` | how long a stream (RDP) session lives on without a browser after the connection dropped, default `300`, `0` = off, at most `3600`; see SESSIONS.md |
 | `JULOS_CLIP_MAX_MB` | biggest file, and biggest paste in all, the browser may send into the clipboard of the remote desktop (megabytes), default `2048`, at most `65536`; the files lie on the server's disk until pasted; see CLIPBOARD.md |
 | `JULOS_CLIP_DIR` | folder for these files, default `julos-clip` in the server's temp folder (give it a disk with room: up to the limit per open session) |
-| `JULOS_TRUSTED_PROXIES` | networks whose `X-Forwarded-*` headers are trusted (default: private networks) |
+| `JULOS_TRUSTED_PROXIES` | **fallback** (since 0.18 the list lives in the app, Settings, Security): networks whose `X-Forwarded-*` headers are trusted (default: private networks, with a warning) |
 
 ## Container hardening and health
 

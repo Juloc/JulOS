@@ -210,7 +210,7 @@ public sealed class BackupTests : IDisposable
     public void Options_have_safe_defaults_and_reject_nonsense()
     {
         var o = BackupOptions.Parse(null, null, null, null, null, "/data");
-        Assert.False(o.Off); Assert.False(o.Required); Assert.Equal("/backup", o.Dir); Assert.Equal(new TimeOnly(3, 0), o.Time); Assert.Equal(14, o.KeepDays); Assert.True(o.CopyKey);
+        Assert.False(o.Off); Assert.False(o.Required); Assert.Equal("/backup", o.Dir); Assert.Equal(new TimeOnly(3, 0), o.Time); Assert.Equal(14, o.KeepDays); Assert.Null(o.CopyKey);          // nicht gesetzt: BackupKeys entscheidet (kein Schluessel neben dem Auszug, ausser eine alte Kopie liegt schon da)
         var p = BackupOptions.Parse("on", "/x", "4:30", "30", "off", null);
         Assert.True(p.Required); Assert.Equal(new TimeOnly(4, 30), p.Time); Assert.Equal(30, p.KeepDays); Assert.False(p.CopyKey);
         Assert.True(BackupOptions.Parse("OFF", null, null, null, null, null).Off);
@@ -218,6 +218,7 @@ public sealed class BackupTests : IDisposable
         Assert.Throws<InvalidOperationException>(() => BackupOptions.Parse(null, null, "25:00", null, null, null));
         Assert.Throws<InvalidOperationException>(() => BackupOptions.Parse(null, null, null, "0", null, null));
         Assert.Throws<InvalidOperationException>(() => BackupOptions.Parse(null, null, null, "x", null, null));
+        Assert.True(BackupOptions.Parse(null, null, null, null, "copy", null).CopyKey);
         Assert.Throws<InvalidOperationException>(() => BackupOptions.Parse(null, null, null, null, "alle", null));
     }
 

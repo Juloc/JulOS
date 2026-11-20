@@ -82,6 +82,13 @@ internal static class AuthEndpoints
             return r.Ok ? Results.NoContent() : Fail(ctx, r.Status, r.Error!, r.RetryAfter);
         });
 
+        // Zweiter Faktor fuer Aktionen: ein frischer Code gibt die Sitzung fuer das eingestellte Zeitfenster frei (StepUpPolicy nennt die Wege, die sie verlangen)
+        app.MapPost("/api/auth/step-up", async (StepUpRequest body, HttpContext ctx, AuthService auth) =>
+        {
+            var r = await auth.ConfirmStepUpAsync((SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!, body.Code, Ip(ctx), ctx.RequestAborted);
+            return r.Ok ? Results.Json(new StepUpResponse(r.Until, r.Minutes), AppJson.Default.StepUpResponse) : Fail(ctx, r.Status, r.Error!, r.RetryAfter);
+        });
+
         app.MapPost("/api/auth/totp/begin", async (TotpBeginRequest body, HttpContext ctx, AuthService auth) =>
         {
             var r = await auth.BeginTotpChangeAsync((SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!, body.Current, Ip(ctx), ctx.RequestAborted);

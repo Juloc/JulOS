@@ -652,7 +652,7 @@ function renderProfile() {
   pg.querySelectorAll('[data-set]').forEach((b) => b.addEventListener('click', () => settingAction(b.dataset.set)));
   if (current === 'profile' && !about) loadAbout();
 }
-const SETTING_ACTIONS = { password: () => ctx.account(), devices: () => ctx.devices(), folders: () => ctx.folders(), nettools: () => ctx.nettools(), signout: () => ctx.signOut(),
+const SETTING_ACTIONS = { password: () => ctx.account(), security: () => ctx.security(), devices: () => ctx.devices(), folders: () => ctx.folders(), nettools: () => ctx.nettools(), signout: () => ctx.signOut(),
   claude: () => launchProgram('claude'), codex: () => launchProgram('codex') };
 function settingAction(id) { const f = SETTING_ACTIONS[id]; if (f) f(); }
 /** Claude oder Codex starten (wie der Schnellstart auf der Verbindungen-Seite) */
@@ -735,7 +735,7 @@ function wireSheet(dlg) {
   dlg.addEventListener('pointerup', end); dlg.addEventListener('pointercancel', end);
 }
 function enhanceSheets() {
-  for (const id of ['connDlg', 'hostDlg', 'hostActDlg', 'startDlg', 'quickDlg', 'folderDlg', 'devicesDlg', 'accountDlg', 'netDlg']) { const d = $('#' + id); if (!d) continue; d.classList.add('m3sheet'); wireSheet(d); }
+  for (const id of ['connDlg', 'hostDlg', 'hostActDlg', 'startDlg', 'quickDlg', 'folderDlg', 'devicesDlg', 'accountDlg', 'securityDlg', 'stepUpDlg', 'netDlg']) { const d = $('#' + id); if (!d) continue; d.classList.add('m3sheet'); wireSheet(d); }
   // Art und Bildübertragung: segmentierte Tasten statt Auswahlliste; das select bleibt als Wertspeicher bestehen (shell.js liest und setzt es)
   const segFor = (sel) => {
     const label = sel.closest('label'), box = document.createElement('div');

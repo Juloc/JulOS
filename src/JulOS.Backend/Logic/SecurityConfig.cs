@@ -1,0 +1,91 @@
+using System.Net;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using JulOS.Backend.Data;
+
+namespace JulOS.Backend.Logic;
+
+/// <summary>Eine Liste aus den Einstellungen. Source: <c>app</c> (in der App gesetzt), <c>env</c> (aus der Umgebungsvariable) oder <c>default</c> (nichts gesetzt, der eingebaute Wert gilt).</summary>
+public sealed record ListSetting(string[] Entries, string Source);
+
+/// <summary>Zweiter Faktor fuer Aktionen: ob verlangt, wie lange eine Freigabe gilt (Minuten; 0 = bei jeder Aktion neu fragen).</summary>
+public sealed record StepUpConfig(bool Enabled, int Minutes)
+{
+    public const int DefaultMinutes = 10, MaxMinutes = 60;
+
+    /// <summary>Bei "immer fragen" gilt eine Freigabe nur fuer die naechste Aktion und hoechstens so lange.</summary>
+    public static readonly TimeSpan OnceLifetime = TimeSpan.FromMinutes(2);
+}
+
+/// <summary>
+/// Die Sicherheits-Einstellungen der Instanz (Tabelle instance_settings): vertraute Proxy-Adressen, erlaubte Zielhosts, zweiter Faktor fuer Aktionen.
+/// Der Wert aus der App gilt vor der Umgebungsvariable (JULOS_TRUSTED_PROXIES, JULOS_ALLOWED_HOSTS), die nur der Rueckfall ist; ohne beides gilt der eingebaute Wert.
+/// Leser (<see cref="HostPolicy"/>, der Proxy-Filter) fragen bei jeder Anfrage nach, eine Aenderung gilt also ohne Neustart.
+/// </summary>
+public sealed class SecurityConfig
+{
+    public const string ProxiesKey = "security.trustedProxies", HostsKey = "security.allowedHosts", StepUpKey = "security.stepUp";
+
+    /// <summary>Ohne Einstellung glaubt der Server X-Forwarded-* von jedem privaten Netz (wie vor 0.18): bequem, aber schwach, darum die Warnung (F-03).</summary>
+    public static readonly string[] DefaultProxies = ["127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"];
+
+    private readonly InstanceSettings _settings;
+    private readonly string? _envProxies, _envHosts;
+    private volatile ListSetting _proxies = new(DefaultProxies, "default");
+    private volatile ListSetting _hosts = new([], "default");
+    private volatile StepUpConfig _stepUp = new(true, StepUpConfig.DefaultMinutes);
+
+    public SecurityConfig(InstanceSettings settings, Func<string, string?> env)
+    {
+        _settings = settings;
+        _envProxies = env("JULOS_TRUSTED_PROXIES");
+        _envHosts = env("JULOS_ALLOWED_HOSTS");
+        if (!string.IsNullOrWhiteSpace(_envProxies) && AddressList.Validate(Split(_envProxies), names: false) is { Error: { } error })
+            throw new InvalidOperationException("JULOS_TRUSTED_PROXIES: " + error);
+        Reload();
+        settings.Changed += Reload;
+    }
+
+    private static string[] Split(string? s) => (s ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private void Reload()
+    {
+        _proxies = Pick(ProxiesKey, _envProxies, DefaultProxies, names: false);
+        _hosts = Pick(HostsKey, _envHosts, [], names: true);
+        _stepUp = ReadStepUp() ?? new StepUpConfig(true, StepUpConfig.DefaultMinutes);
+    }
+
+    private StepUpConfig? ReadStepUp() =>
+        _settings.GetElement(StepUpKey) is { ValueKind: JsonValueKind.Object } o && o.TryGetProperty("enabled", out var e) && e.ValueKind is JsonValueKind.True or JsonValueKind.False
+            && o.TryGetProperty("minutes", out var m) && m.TryGetInt32(out var minutes) && minutes is >= 0 and <= StepUpConfig.MaxMinutes ? new StepUpConfig(e.GetBoolean(), minutes) : null;
+
+    private static string Json(string[] entries) => new JsonArray([.. entries.Select(e => (JsonNode?)JsonValue.Create(e))]).ToJsonString();
+
+    private ListSetting Pick(string key, string? env, string[] fallback, bool names)
+    {
+        if (_settings.GetStrings(key) is { } app) return new ListSetting(app, "app");
+        if (!string.IsNullOrWhiteSpace(env)) return new ListSetting(names ? Split(env) : AddressList.Validate(Split(env), false).Entries!, "env");
+        return new ListSetting(fallback, "default");
+    }
+
+    public ListSetting Proxies => _proxies;
+    public ListSetting Hosts => _hosts;
+    public StepUpConfig StepUp => _stepUp;
+
+    /// <summary>Ob eine Verbindung von dieser Adresse als vertrauter Proxy gilt (dann werden seine X-Forwarded-Kopfzeilen geglaubt).</summary>
+    public bool IsTrustedProxy(IPAddress? address) => AddressList.ContainsAddress(_proxies.Entries, address);
+
+    /// <summary>Die Proxy-Liste ist weder in der App noch in der Umgebung gesetzt: es gilt der weite Standard (Warnung, F-03).</summary>
+    public bool ProxiesUnset => _proxies.Source == "default";
+
+    public Task SetProxiesAsync(string[] entries, CancellationToken ct = default) => _settings.SetAsync(ProxiesKey, Json(entries), ct);
+    public Task SetHostsAsync(string[] entries, CancellationToken ct = default) => _settings.SetAsync(HostsKey, Json(entries), ct);
+    public Task ResetProxiesAsync(CancellationToken ct = default) => _settings.DeleteAsync(ProxiesKey, ct);
+    public Task ResetHostsAsync(CancellationToken ct = default) => _settings.DeleteAsync(HostsKey, ct);
+
+    /// <returns>null bei gueltigen Werten, sonst die Meldung.</returns>
+    public static string? ValidateStepUp(bool enabled, int minutes) =>
+        minutes is < 0 or > StepUpConfig.MaxMinutes ? $"Die Dauer muss zwischen 0 (immer fragen) und {StepUpConfig.MaxMinutes} Minuten liegen." : null;
+
+    public Task SetStepUpAsync(bool enabled, int minutes, CancellationToken ct = default) => _settings.SetAsync(StepUpKey, new JsonObject { ["enabled"] = enabled, ["minutes"] = minutes }.ToJsonString(), ct);
+}

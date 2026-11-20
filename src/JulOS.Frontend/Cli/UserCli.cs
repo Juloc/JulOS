@@ -20,7 +20,7 @@ internal static class UserCli
         var builder = new NpgsqlDataSourceBuilder(cs);
         builder.ConnectionStringBuilder.GssEncryptionMode = GssEncryptionMode.Disable;
         await using var db = builder.Build();
-        var users = new UserStore(db);
+        var users = new UserStore(db, new SecretBox(SecretBox.ResolveKey(Environment.GetEnvironmentVariable("JULOS_SECRET_KEY"), Environment.GetEnvironmentVariable("JULOS_DATA"))));
         var sessions = new SessionStore(db);
         var hasher = new PasswordHasher();
         var cmd = args.Length > 0 ? args[0] : "";

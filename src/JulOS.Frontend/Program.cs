@@ -14,6 +14,7 @@ using JulOS.Frontend.Folders;
 using JulOS.Frontend.Hosts;
 using JulOS.Frontend.Modules;
 using JulOS.Frontend.Remote;
+using JulOS.Frontend.Security;
 using JulOS.Frontend.Settings;
 using JulOS.Frontend.SystemInfo;
 using JulOS.Frontend.Tools;
@@ -60,7 +61,12 @@ builder.Services.AddSingleton<QuickTrust>();
 builder.Services.AddSingleton<TcpProbe>();
 builder.Services.AddSingleton<NetTools>();
 builder.Services.AddSingleton(new SecretBox(SecretBox.ResolveKey(builder.Configuration["JULOS_SECRET_KEY"], builder.Configuration["JULOS_DATA"])));
-builder.Services.AddSingleton(new HostPolicy(builder.Configuration["JULOS_ALLOWED_HOSTS"]));
+// Einstellungen der Instanz in der Datenbank (Sicherheit: vertraute Proxys, erlaubte Zielhosts, zweiter Faktor); JULOS_TRUSTED_PROXIES und JULOS_ALLOWED_HOSTS sind nur noch der Rueckfall
+builder.Services.AddSingleton<InstanceSettings>();
+builder.Services.AddSingleton(sp => new SecurityConfig(sp.GetRequiredService<InstanceSettings>(), k => builder.Configuration[k]));
+builder.Services.AddSingleton<SecurityAuditStore>();
+builder.Services.AddSingleton(sp => { var cfg = sp.GetRequiredService<SecurityConfig>(); return new HostPolicy(() => cfg.Hosts.Entries); });
+builder.Services.AddSingleton<BackupKeys>();
 builder.Services.AddSingleton<SessionStore>();
 builder.Services.AddSingleton<PasswordHasher>();
 builder.Services.AddSingleton<LoginLimiter>();
@@ -71,7 +77,7 @@ builder.Services.AddHostedService<SessionPurgeWorker>();
 // Taegliche Sicherung der Datenbank und des Schluessels in den Backup-Ordner, siehe docs/BACKUP.md
 builder.Services.AddSingleton(BackupOptions.FromSettings(k => builder.Configuration[k]));
 builder.Services.AddSingleton(sp => new BackupService(sp.GetRequiredService<NpgsqlDataSource>(), sp.GetRequiredService<BackupOptions>(), sp.GetRequiredService<TimeProvider>(),
-    sp.GetRequiredService<ILogger<BackupService>>(), BackupTargets.Factory(sp.GetRequiredService<BackupOptions>(), sp.GetRequiredService<ILoggerFactory>().CreateLogger("JulOS.BackupCopy"))));
+    sp.GetRequiredService<ILogger<BackupService>>(), BackupTargets.Factory(sp.GetRequiredService<BackupOptions>(), sp.GetRequiredService<ILoggerFactory>().CreateLogger("JulOS.BackupCopy")), sp.GetRequiredService<BackupKeys>().Plan));
 builder.Services.AddHostedService<BackupWorker>();
 builder.Services.AddSingleton<ScreenTickets>();
 // Laufwerksumleitung: der eine Ordner, der je Verbindung als Laufwerk gereicht werden darf (leer oder "off": keine Freigabe), siehe docs/DRIVES.md
@@ -133,30 +139,39 @@ builder.Services.AddHostedService<SftpPoolSweeper>();
 builder.Services.AddModules(builder.Configuration);
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJson.Default));
 
-// Hinter einem Proxy im eigenen Netz (zum Beispiel Caddy) kommen Client-Adresse, Protokoll und Host aus den X-Forwarded-Kopfzeilen
+// Hinter einem Proxy im eigenen Netz (zum Beispiel Caddy) kommen Client-Adresse, Protokoll und Host aus den X-Forwarded-Kopfzeilen. Welche Adressen als Proxy gelten, steht in den
+// Einstellungen (Sicherheit) und wird bei jeder Anfrage nachgesehen (SecurityConfig): eine Aenderung gilt ohne Neustart. Die Middleware selbst vertraut jeder Adresse, aber nur
+// Anfragen von einem vertrauten Proxy kommen ueberhaupt zu ihr (UseWhen unten).
 builder.Services.Configure<ForwardedHeadersOptions>(o =>
 {
     o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost;
     o.ForwardLimit = 1;
     o.KnownProxies.Clear();
     o.KnownIPNetworks.Clear();
-    var trusted = builder.Configuration["JULOS_TRUSTED_PROXIES"] ?? "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7";
-    foreach (var net in trusted.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) o.KnownIPNetworks.Add(System.Net.IPNetwork.Parse(net));
+    o.KnownIPNetworks.Add(System.Net.IPNetwork.Parse("0.0.0.0/0"));
+    o.KnownIPNetworks.Add(System.Net.IPNetwork.Parse("::/0"));
 });
 
 var app = builder.Build();
 var log = app.Logger;
-app.UseForwardedHeaders();
+var security = app.Services.GetRequiredService<SecurityConfig>();
+app.Use((ctx, next) => { ctx.Items[SecurityEndpoints.PeerItem] = ctx.Connection.RemoteIpAddress; return next(ctx); });      // die Adresse des Gegenuebers, bevor ein Proxy sie ersetzt (Anzeige in den Einstellungen)
+app.UseWhen(ctx => security.IsTrustedProxy(ctx.Connection.RemoteIpAddress), branch => branch.UseForwardedHeaders());
 
 await MigrateWithRetryAsync(app.Services.GetRequiredService<Migrator>(), log);
+await app.Services.GetRequiredService<InstanceSettings>().LoadAsync();
 // Die bisherigen Zugangsdaten der Verbindungen werden zu einem Login je Host (nichts wird geloescht, docs/HOSTS.md); ein Fehler hier darf den Start nicht verhindern
 try { var made = await app.Services.GetRequiredService<HostLoginMigration>().RunAsync(); if (made > 0) log.LogInformation("Host-Login aus den Verbindungen übernommen: {Count} Host(s)", made); }
 catch (Exception e) { log.LogWarning(e, "Übernahme der Zugangsdaten in den Host-Login fehlgeschlagen; sie wird beim nächsten Start wiederholt"); }
 
-// Ohne JULOS_TRUSTED_PROXIES glaubt der Server X-Forwarded-* von jedem privaten Netz: ein Geraet im eigenen LAN, das den Port direkt erreicht, kann die Client-Adresse
-// (Sperre pro Adresse, Sitzungsliste) und das Protokoll faelschen (docs/SECURITY-REVIEW.md, F-06). Deshalb eine laute Warnung, solange es nicht eingeschraenkt ist.
-if (string.IsNullOrWhiteSpace(builder.Configuration["JULOS_TRUSTED_PROXIES"]))
-    log.LogWarning("JULOS_TRUSTED_PROXIES ist nicht gesetzt: X-Forwarded-For/-Proto/-Host werden von jedem privaten Netz geglaubt. Hinter einem Proxy auf dessen Adresse einschränken (zum Beispiel 192.0.2.10/32) und den Port 8080 nur für den Proxy erreichbar machen.");
+// Die TOTP-Geheimnisse der Konten liegen verschluesselt in der Datenbank (F-10): beim Start werden noch unverschluesselte umgestellt, gelesen werden beide Formen
+try { var sealedTotp = await app.Services.GetRequiredService<UserStore>().MigrateTotpAsync(); if (sealedTotp > 0) log.LogInformation("TOTP-Geheimnisse verschlüsselt: {Count} Konto/Konten", sealedTotp); }
+catch (Exception e) { log.LogWarning(e, "Verschlüsseln der TOTP-Geheimnisse fehlgeschlagen; es wird beim nächsten Start wiederholt"); }
+
+// Ohne Einstellung (App oder JULOS_TRUSTED_PROXIES) glaubt der Server X-Forwarded-* von jedem privaten Netz: ein Geraet im eigenen LAN, das den Port direkt erreicht, kann die Client-Adresse
+// (Sperre pro Adresse, Sitzungsliste) und das Protokoll faelschen (docs/SECURITY-REVIEW.md, F-03, F-06). Deshalb eine laute Warnung, solange es nicht eingeschraenkt ist.
+if (security.ProxiesUnset)
+    log.LogWarning("Vertraute Proxy-Adressen sind nicht gesetzt: X-Forwarded-For/-Proto/-Host werden von jedem privaten Netz geglaubt. Hinter einem Proxy in der App (Einstellungen, Sicherheit) oder mit JULOS_TRUSTED_PROXIES auf dessen Adresse einschränken (zum Beispiel 192.0.2.10/32) und den Port 8080 nur für den Proxy erreichbar machen.");
 if (!app.Services.GetRequiredService<SecretBox>().Enabled)
     log.LogWarning("Passwörter speichern ist aus: kein Schlüssel. JULOS_SECRET_KEY setzen oder dafür sorgen, dass der Server in JULOS_DATA schreiben darf (dort legt er secret.key an).");
 // Was der Bildkodierer kann, einmal ins Log (Einzelheiten: dotnet JulOS.dll diag encoders)
@@ -213,6 +228,7 @@ app.MapHostActions();
 app.MapConnections();
 app.MapFolders();
 app.MapSettings();
+app.MapSecurity();
 app.MapAgent();
 app.MapAgentLink(info);
 app.MapSystem();

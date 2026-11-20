@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 export const OUT = '/out';
 export const STATE_FILE = OUT + '/account.json';       // Wegwerf-Konto dieses Laufs (liegt ausserhalb von git, e2e.sh raeumt es beim naechsten Lauf weg)
@@ -33,4 +33,20 @@ export function totp(secret, shift = 0, now = Date.now()) {
   const h = createHmac('sha1', base32(secret)).update(counter).digest();
   const o = h[h.length - 1] & 15;
   return String((h.readUInt32BE(o) & 0x7fffffff) % 1_000_000).padStart(6, '0');
+}
+
+export const STEP_FILE = OUT + '/last-step';          // der letzte verbrauchte Zeitschritt des Wegwerf-Kontos (jeder Code gilt nur einmal)
+export const markStep = (step) => writeFileSync(STEP_FILE, String(step));
+
+/**
+ * Der naechste Code, den der Server annimmt: im Zeitfenster +-1 der erste Schritt nach dem zuletzt verbrauchten. Gibt es keinen mehr, wird bis zum naechsten Schritt gewartet.
+ * Gilt fuer Freigaben mit dem zweiten Faktor (POST /api/auth/step-up), die wie die Anmeldung jeden Schritt nur einmal annehmen.
+ */
+export async function nextCode(secret) {
+  for (;;) {
+    const now = Date.now(), step = Math.floor(now / 30000);
+    const last = existsSync(STEP_FILE) ? Number(readFileSync(STEP_FILE, 'utf8')) : 0;
+    for (const shift of [-1, 0, 1]) if (step + shift > last) { markStep(step + shift); return totp(secret, shift, now); }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
 }

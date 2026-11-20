@@ -1,7 +1,9 @@
 namespace JulOS.Frontend.Auth;
 
 internal sealed record Health(bool Ok, bool Db, string Version);
-internal sealed record ErrorBody(string Error, int? RetryAfter = null);
+internal sealed record ErrorBody(string Error, int? RetryAfter = null, string? Code = null);
+internal sealed record StepUpRequest(string? Code);
+internal sealed record StepUpResponse(DateTimeOffset? Until, int Minutes);
 internal sealed record SetupStatus(bool Needed);
 internal sealed record SetupBeginRequest(string? Code, string? User, string? Password);
 internal sealed record SetupBeginResponse(string Secret, string Uri, string[] Recovery);

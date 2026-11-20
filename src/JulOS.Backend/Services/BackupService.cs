@@ -9,10 +9,10 @@ using Npgsql;
 namespace JulOS.Backend.Services;
 
 /// <summary>
-/// Einstellungen des taeglichen Backups (siehe docs/BACKUP.md). <c>JULOS_BACKUP</c>: leer = an, aber nur wenn der Backup-Ordner eingebunden ist
+/// Einstellungen des taeglichen Backups (siehe docs/BACKUP.md). <c>CopyKey</c>: aus <c>JULOS_BACKUP_KEY</c> (copy = true, off = false, leer = null: nicht gesetzt, dann entscheidet <see cref="BackupKeys"/>). <c>JULOS_BACKUP</c>: leer = an, aber nur wenn der Backup-Ordner eingebunden ist
 /// (sonst Warnung im Log und in "Ueber JulOS", nie ein stilles Schreiben in den fluechtigen Container), <c>on</c> = an, ein fehlender Ordner ist ein Fehler, <c>off</c> = aus.
 /// </summary>
-public sealed record BackupOptions(bool Off, bool Required, string Dir, TimeOnly Time, int KeepDays, bool CopyKey, string? DataDir, BackupCopyOptions? Copy = null)
+public sealed record BackupOptions(bool Off, bool Required, string Dir, TimeOnly Time, int KeepDays, bool? CopyKey, string? DataDir, BackupCopyOptions? Copy = null)
 {
     public const string DefaultDir = "/backup";
 
@@ -35,7 +35,7 @@ public sealed record BackupOptions(bool Off, bool Required, string Dir, TimeOnly
             throw new InvalidOperationException("JULOS_BACKUP_KEEP_DAYS muss eine ganze Zahl ab 1 sein.");
         var k = (key ?? "").Trim().ToLowerInvariant();
         if (k is not ("" or "copy" or "off")) throw new InvalidOperationException("JULOS_BACKUP_KEY muss copy oder off sein (oder leer).");
-        return new BackupOptions(m == "off", m == "on", string.IsNullOrWhiteSpace(dir) ? DefaultDir : dir.Trim(), at, keep, k != "off", string.IsNullOrWhiteSpace(dataDir) ? null : dataDir, copy);
+        return new BackupOptions(m == "off", m == "on", string.IsNullOrWhiteSpace(dir) ? DefaultDir : dir.Trim(), at, keep, k == "" ? null : k == "copy", string.IsNullOrWhiteSpace(dataDir) ? null : dataDir, copy);
     }
 }
 
@@ -54,9 +54,11 @@ public sealed record CopyStatus(string State, DateTimeOffset? LastAt = null, str
 /// Optional geht danach eine Kopie an ein zweites Ziel ausserhalb des Rechners (<see cref="IBackupTarget"/>, siehe docs/BACKUP.md): ein Fehler dort ist nur eine Warnung
 /// im Status, das lokale Backup bleibt gueltig, der naechste Lauf holt Fehlendes nach.
 /// </summary>
-public sealed class BackupService(NpgsqlDataSource db, BackupOptions options, TimeProvider clock, ILogger<BackupService> log, Func<IBackupTarget>? copyTarget = null)
+public sealed class BackupService(NpgsqlDataSource db, BackupOptions options, TimeProvider clock, ILogger<BackupService> log, Func<IBackupTarget>? copyTarget = null, Func<BackupKeyPlan>? keyPlan = null)
 {
-    public const string Prefix = "julos-db-", Suffix = ".sql.gz", KeyName = "secret.key";
+    private BackupKeyPlan KeyPlan() => keyPlan is null ? BackupKeys.PlanFor(options, null, null) : keyPlan();
+
+    public const string Prefix = "julos-db-", Suffix = ".sql.gz", KeyName = "secret.key", WrappedName = "secret.key.wrapped";
     private const string Stamp = "yyyyMMdd'T'HHmmss'Z'";
 
     private volatile BackupStatus _status = new("pending");
@@ -115,7 +117,7 @@ public sealed class BackupService(NpgsqlDataSource db, BackupOptions options, Ti
             }
             finally { if (File.Exists(tmp)) File.Delete(tmp); }
 
-            var keyNote = CopyKey();
+            var keyNote = KeyFiles();
             var removed = Prune(now);
             var size = new FileInfo(final).Length;
             _status = new("ok", now, size, Time: options.Time.ToString("HH:mm"));
@@ -185,8 +187,9 @@ public sealed class BackupService(NpgsqlDataSource db, BackupOptions options, Ti
         }
 
         var keyNote = "";
+        var plan = KeyPlan();
         var keyPath = Path.Combine(options.Dir, KeyName);
-        if (options.CopyKey && File.Exists(keyPath))
+        if (plan.CopyKey && File.Exists(keyPath))
         {
             var key = await File.ReadAllBytesAsync(keyPath, ct);
             var there = remote.ContainsKey(KeyName) ? await target.ReadAsync(KeyName, ct) : null;
@@ -195,6 +198,18 @@ public sealed class BackupService(NpgsqlDataSource db, BackupOptions options, Ti
                 await target.PutAsync(KeyName, new MemoryStream(key), ct);
                 keyNote = ", Schlüssel kopiert";
             }
+        }
+        else if (plan.RemoveCopies && remote.ContainsKey(KeyName))
+        {
+            await target.DeleteAsync(KeyName, ct);                         // in der App ausgeschaltet: auch die alte Kopie am Ziel geht weg
+            remote.Remove(KeyName);
+            keyNote = ", Schlüsselkopie entfernt";
+        }
+        if (plan.Wrapped is { } wrapped)
+        {
+            var file = RecoveryKey.ToFile(wrapped);
+            var there = remote.ContainsKey(WrappedName) ? await target.ReadAsync(WrappedName, ct) : null;
+            if (there is null || !there.AsSpan().SequenceEqual(file)) await target.PutAsync(WrappedName, new MemoryStream(file), ct);
         }
 
         var remoteDumps = remote.Select(kv => (Name: kv.Key, When: ParseDumpTime(kv.Key))).Where(x => x.When is not null).OrderByDescending(x => x.When).ToList();
@@ -207,16 +222,29 @@ public sealed class BackupService(NpgsqlDataSource db, BackupOptions options, Ti
         return $"{uploaded} Auszug/Auszüge kopiert{keyNote}{(removed > 0 ? $", {removed} alte(s) entfernt" : "")}";
     }
 
-    /// <summary>Kopiert den Schluessel aus dem Datenordner neben die Auszuege (nur wenn neu oder geaendert). Gibt einen Hinweis fuers Log zurueck.</summary>
-    private string CopyKey()
+    /// <summary>
+    /// Der Schluessel im Backup-Ordner (F-01): eine Kopie von <c>secret.key</c> nur, wenn der Plan es verlangt (App-Einstellung, JULOS_BACKUP_KEY=copy oder eine Kopie aus frueheren Versionen);
+    /// nach ausdruecklichem Ausschalten in der App wird eine vorhandene Kopie entfernt. Mit einem bestaetigten Wiederherstellungsschluessel liegt die umhuellte Form daneben (wertlos ohne ihn).
+    /// Gibt einen Hinweis fuers Log zurueck.
+    /// </summary>
+    private string KeyFiles()
     {
-        if (!options.CopyKey) return ", Schlüssel nicht kopiert (JULOS_BACKUP_KEY=off)";
-        if (options.DataDir is null) return "";
-        var src = Path.Combine(options.DataDir, KeyName);
-        if (!File.Exists(src)) return ", kein secret.key im Datenordner (Schlüssel kommt aus JULOS_SECRET_KEY: den gesondert sichern)";
+        var plan = KeyPlan();
+        var note = plan.CopyKey ? CopyKey() : ", Schlüssel nicht kopiert";
         var dest = Path.Combine(options.Dir, KeyName);
-        var content = File.ReadAllBytes(src);
-        if (File.Exists(dest) && File.ReadAllBytes(dest).AsSpan().SequenceEqual(content)) return ", Schlüssel unverändert";
+        if (!plan.CopyKey && plan.RemoveCopies && File.Exists(dest)) { File.Delete(dest); note = ", Schlüsselkopie entfernt"; }
+        if (plan.Wrapped is { } wrapped)
+        {
+            var file = RecoveryKey.ToFile(wrapped);
+            var wrappedPath = Path.Combine(options.Dir, WrappedName);
+            if (!File.Exists(wrappedPath) || !File.ReadAllBytes(wrappedPath).AsSpan().SequenceEqual(file)) WritePrivate(wrappedPath, file);
+            note += ", umhüllter Schlüssel abgelegt";
+        }
+        return note;
+    }
+
+    private static void WritePrivate(string dest, byte[] content)
+    {
         var tmp = dest + ".tmp";
         try
         {
@@ -224,6 +252,18 @@ public sealed class BackupService(NpgsqlDataSource db, BackupOptions options, Ti
             File.Move(tmp, dest, overwrite: true);
         }
         finally { if (File.Exists(tmp)) File.Delete(tmp); }
+    }
+
+    /// <summary>Kopiert den Schluessel aus dem Datenordner neben die Auszuege (nur wenn neu oder geaendert).</summary>
+    private string CopyKey()
+    {
+        if (options.DataDir is null) return "";
+        var src = Path.Combine(options.DataDir, KeyName);
+        if (!File.Exists(src)) return ", kein secret.key im Datenordner (Schlüssel kommt aus JULOS_SECRET_KEY: den gesondert sichern)";
+        var dest = Path.Combine(options.Dir, KeyName);
+        var content = File.ReadAllBytes(src);
+        if (File.Exists(dest) && File.ReadAllBytes(dest).AsSpan().SequenceEqual(content)) return ", Schlüssel unverändert";
+        WritePrivate(dest, content);
         return ", Schlüssel kopiert";
     }
 

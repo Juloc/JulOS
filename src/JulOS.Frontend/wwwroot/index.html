@@ -323,6 +323,32 @@
       </div>
     </dialog>
 
+    <!-- Einstellungen, Sicherheit: vertraute Proxys, erlaubte Zielhosts, zweiter Faktor, Schluessel im Backup (security.js) -->
+    <dialog id="securityDlg" class="sec-dlg">
+      <h2 data-i18n="sec.title">Sicherheit</h2>
+      <div id="secBody"></div>
+      <div class="row"><button class="ghost close" data-act="close" type="button" data-i18n="common.close">Schließen</button></div>
+    </dialog>
+
+    <!-- Freigabe fuer Aktionen: Code aus der Authenticator-App (stepup.js); der Server verlangt sie vor Aktionen, die Hosts, Dateien oder die Sicherheit aendern -->
+    <dialog id="stepUpDlg">
+      <h2 data-i18n="su.title">Mit dem zweiten Faktor bestätigen</h2>
+      <form id="suForm" autocomplete="off">
+        <p class="hint" data-i18n="su.text">Diese Aktion ändert etwas auf einem Host, an Dateien oder an der Sicherheit. Gib den aktuellen Code aus deiner Authenticator-App ein. Danach gilt die Freigabe für die eingestellte Zeit.</p>
+        <label data-i18n="app.codeFromApp">Code aus der App <input id="suCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="24" required></label>
+        <p class="hint" data-i18n="su.hint">Jeder Code gilt nur einmal. Wurde er eben schon benutzt, warte auf den nächsten.</p>
+        <div class="dlg-btns"><button type="submit" class="primary" data-i18n="su.confirm">Bestätigen</button><button id="suCancel" type="button" class="ghost" data-i18n="common.cancel">Abbrechen</button></div>
+        <p id="suMsg" class="msg" role="alert"></p>
+      </form>
+    </dialog>
+
+    <!-- Hinweis auf dem Start-Bildschirm, solange die vertrauten Proxy-Adressen nirgends gesetzt sind (F-03) -->
+    <div id="secHint" class="sec-hint" role="status" hidden>
+      <span data-i18n="sec.hint">Vertraute Proxy-Adressen sind nicht gesetzt: das Netz ist weniger geschützt als nötig.</span>
+      <button id="secHintOpen" type="button" class="ghost" data-i18n="sec.hintOpen">Jetzt einstellen</button>
+      <button id="secHintClose" type="button" class="ghost" data-i18n-aria-label="common.close" aria-label="Schließen">×</button>
+    </div>
+
     <!-- Konto: Passwort aendern, Authenticator neu einrichten (account.js) -->
     <dialog id="accountDlg">
       <h2 data-i18n="app.account">Konto</h2>

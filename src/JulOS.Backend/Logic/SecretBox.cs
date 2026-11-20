@@ -24,6 +24,9 @@ public sealed class SecretBox
 
     public bool Enabled => _key is not null;
 
+    /// <summary>Eine Kopie des Schluessels, nur um ihn mit dem Wiederherstellungsschluessel zu umhuellen (<see cref="RecoveryKey"/>). Nie loggen, nie senden.</summary>
+    public byte[]? ExportKey() => _key is null ? null : (byte[])_key.Clone();
+
     /// <summary>
     /// Welcher Schluessel gilt: JULOS_SECRET_KEY, wenn gesetzt. Sonst eine Schluesseldatei im Datenordner (JULOS_DATA): gibt es sie noch nicht,
     /// wird sie einmalig erzeugt (32 Zufallsbytes, nur fuer den Server lesbar) und danach unveraendert weiterverwendet. Der Schluessel liegt so

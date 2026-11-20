@@ -20,7 +20,8 @@ public sealed record SetupBeginResult(bool Ok, int Status, string? Error = null,
 /// <summary>
 /// Ersteinrichtung, Anmeldung und Sitzungen. Fehlermeldungen verraten nie, ob Benutzer, Passwort oder Code falsch war.
 /// </summary>
-public sealed class AuthService(UserStore users, SessionStore sessions, PasswordHasher hasher, LoginLimiter limiter, SetupCode setupCode, TimeProvider clock, ILogger<AuthService> log)
+public sealed class AuthService(UserStore users, SessionStore sessions, PasswordHasher hasher, LoginLimiter limiter, SetupCode setupCode, TimeProvider clock, ILogger<AuthService> log,
+    SecurityConfig? security = null, SecurityAuditStore? audit = null)
 {
     private const string LoginFailed = "Anmeldung fehlgeschlagen. Benutzer, Passwort und Code prüfen.";
 
@@ -63,7 +64,7 @@ public sealed class AuthService(UserStore users, SessionStore sessions, Password
 
         await users.ConfirmAsync(pending.Id, ct);
         setupCode.MarkUsed();
-        var token = await sessions.CreateAsync(pending.Id, ip, userAgent, ct);
+        var token = await sessions.CreateAsync(pending.Id, ip, userAgent, ct, LoginGrant());
         log.LogInformation("Ersteinrichtung abgeschlossen, Konto {User} angelegt.", pending.Name);
         return new(true, 200, User: pending.Name, Token: token, RecoveryLeft: RecoveryCodes.Count);
     }
@@ -114,9 +115,64 @@ public sealed class AuthService(UserStore users, SessionStore sessions, Password
 
         if (needsRehash) await users.SetPasswordAsync(user.Id, await hasher.HashAsync(password), endSessions: false, ct);
         limiter.Succeed("user:" + user.Name.ToLowerInvariant());
-        var token = await sessions.CreateAsync(user.Id, ip, userAgent, ct);
+        var token = await sessions.CreateAsync(user.Id, ip, userAgent, ct, LoginGrant());
         log.LogInformation("Angemeldet: {User} von {Ip}{Recovery}", user.Name, ip, recoveryHash is not null ? " (Wiederherstellungscode)" : "");
         return new(true, 200, User: user.Name, Token: token, RecoveryLeft: await users.RecoveryLeftAsync(user.Id, ct));
+    }
+
+    // ---- Zweiter Faktor fuer Aktionen (Step-up, docs/SECURITY-REVIEW.md F-04) ----
+
+    /// <summary>
+    /// Eine Anmeldung mit Code aus der Authenticator-App ist selbst ein frischer zweiter Faktor: sie gibt die Sitzung fuer das Zeitfenster frei (bei "immer fragen" nicht).
+    /// Ein gestohlenes Cookie, das erst spaeter benutzt wird, hat diese Freigabe nicht mehr.
+    /// </summary>
+    private DateTimeOffset? LoginGrant() => security?.StepUp is { Enabled: true, Minutes: > 0 } s ? clock.GetUtcNow().AddMinutes(s.Minutes) : null;
+
+    /// <summary>Ob die Sitzung Aktionen ausfuehren darf: die Freigabe ist abgeschaltet oder gilt noch. Eine Freigabe "fuer eine Aktion" wird verbraucht.</summary>
+    public async Task<bool> StepUpFreshAsync(SessionIdentity who, CancellationToken ct = default) =>
+        security is not { StepUp.Enabled: true } || await sessions.TakeStepUpAsync(who.Id, clock.GetUtcNow(), ct);
+
+    public sealed record StepUpResult(bool Ok, int Status, string? Error = null, int RetryAfter = 0, DateTimeOffset? Until = null, int Minutes = 0);
+
+    /// <summary>
+    /// Ein frischer Code aus der Authenticator-App (oder ein Wiederherstellungscode) gibt die Sitzung fuer das Zeitfenster frei. Wie beim Anmelden: ein Zeitschritt gilt nur einmal
+    /// (auch nicht der, mit dem man sich eben angemeldet hat: man wartet auf den naechsten), Fehlversuche zaehlen je Konto und je Adresse und sperren mit wachsender Wartezeit.
+    /// </summary>
+    public async Task<StepUpResult> ConfirmStepUpAsync(SessionIdentity who, string? code, string ip, CancellationToken ct = default)
+    {
+        var keys = new[] { "acct:" + who.UserId, "ip:" + ip };
+        var wait = keys.Max(limiter.Wait);
+        if (wait > TimeSpan.Zero) return new(false, 429, TooMany, (int)Math.Ceiling(wait.TotalSeconds));
+        var user = await users.FindByIdAsync(who.UserId, ct);
+        if (user is null) return new(false, 401, "Nicht angemeldet.");
+        var plain = (code ?? "").Replace(" ", "");
+        var ok = false;
+        if (plain.Length is > 0 and <= 20)
+        {
+            if (RecoveryCodes.LooksLikeRecoveryCode(plain)) ok = await users.ConsumeRecoveryCodeAsync(user.Id, RecoveryCodes.Hash(plain), ct);
+            else if (Totp.Check(user.TotpSecret, plain, user.TotpLastStep, clock.GetUtcNow()) is { } step) ok = await users.TryAdvanceTotpStepAsync(user.Id, step, ct);
+        }
+        if (!ok)
+        {
+            foreach (var k in keys) limiter.Fail(k);
+            log.LogWarning("Freigabe für Aktionen: falscher Code für {User} von {Ip}", user.Name, ip);
+            await AuditAsync(user.Name, "step_up.failed");
+            return new(false, 401, "Der Code stimmt nicht. Prüfe den Eintrag in der App und die Uhrzeit des Handys, ein Code gilt nur einmal.");
+        }
+        foreach (var k in keys) limiter.Succeed(k);
+        var cfg = security?.StepUp ?? new StepUpConfig(true, StepUpConfig.DefaultMinutes);
+        var once = cfg.Minutes == 0;
+        var until = clock.GetUtcNow() + (once ? StepUpConfig.OnceLifetime : TimeSpan.FromMinutes(cfg.Minutes));
+        await sessions.GrantStepUpAsync(who.Id, until, once, ct);
+        await AuditAsync(user.Name, "step_up.ok", once ? "once" : cfg.Minutes + " min");
+        return new(true, 200, Until: until, Minutes: cfg.Minutes);
+    }
+
+    private async Task AuditAsync(string user, string evt, string? detail = null)
+    {
+        if (audit is null) return;
+        try { await audit.AddAsync(user, evt, detail, CancellationToken.None); }
+        catch (Exception e) { log.LogError(e, "Verlauf der Sicherheit konnte nicht geschrieben werden"); }
     }
 
     // ---- Konto in der Oberflaeche: Passwort aendern, Authenticator neu einrichten. Immer mit gueltiger Sitzung (ApiGuard) UND dem aktuellen Passwort. ----

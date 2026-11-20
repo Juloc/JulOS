@@ -216,6 +216,8 @@ The design follows [INTEGRATIONS.md](INTEGRATIONS.md) section 3. For this agent 
 
 ## Actions (stage 3)
 
+**Second factor (0.18):** `actions/prepare` (the first step) needs a fresh authenticator code of the session (`403 step_up_required`, window 10 minutes by default, see [SECURITY-REVIEW.md](SECURITY-REVIEW.md), "Second factor for actions"); the confirmation and `run` stay as described below. The same applies to the control level, agent codes, agent update and removal.
+
 Actions are the first thing in JulOS that changes a machine, so they are built to be hard to trigger by accident, by a stolen browser tab, or by a hostile agent.
 
 | Action (id) | Right | What the agent does | Target |

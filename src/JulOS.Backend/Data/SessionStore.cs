@@ -28,12 +28,13 @@ public sealed class SessionStore(NpgsqlDataSource db)
 
     private static readonly string Valid = $"s.created_at > now() - interval '{MaxDays} days' and s.last_seen > now() - interval '{IdleDays} days' and u.totp_confirmed";
 
-    public async Task<string> CreateAsync(Guid userId, string? ip, string? userAgent, CancellationToken ct = default)
+    /// <param name="stepUpUntil">Eine frische Anmeldung (mit Code aus der Authenticator-App) gilt zugleich als Freigabe fuer Aktionen bis zu diesem Zeitpunkt, null: keine.</param>
+    public async Task<string> CreateAsync(Guid userId, string? ip, string? userAgent, CancellationToken ct = default, DateTimeOffset? stepUpUntil = null)
     {
         var token = SessionTokens.New();
         await using var cmd = db.Cmd(
-            "insert into sessions (hash, user_id, created_at, last_seen, rotated_at, user_agent, ip) values ($1, $2, now(), now(), now(), $3, $4)",
-            SessionTokens.Hash(token), userId, userAgent is { Length: > 120 } ? userAgent[..120] : userAgent, ip);
+            "insert into sessions (hash, user_id, created_at, last_seen, rotated_at, user_agent, ip, step_up_until) values ($1, $2, now(), now(), now(), $3, $4, $5)",
+            SessionTokens.Hash(token), userId, userAgent is { Length: > 120 } ? userAgent[..120] : userAgent, ip, stepUpUntil);
         await cmd.ExecuteNonQueryAsync(ct);
         return token;
     }
@@ -80,6 +81,36 @@ public sealed class SessionStore(NpgsqlDataSource db)
     {
         await using var cmd = db.Cmd($"select 1 from sessions s join users u on u.id = s.user_id where s.id = $1 and {Valid}", sessionId);
         return await cmd.ExecuteScalarAsync(ct) is not null;
+    }
+
+    /// <summary>Gibt die Sitzung fuer Aktionen frei (nach einem richtigen Code): bis <paramref name="until"/>, oder mit <paramref name="once"/> fuer genau eine Aktion.</summary>
+    public async Task GrantStepUpAsync(Guid sessionId, DateTimeOffset until, bool once, CancellationToken ct = default)
+    {
+        await using var cmd = db.Cmd("update sessions set step_up_until = $2, step_up_once = $3 where id = $1", sessionId, until, once);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>Eine geaenderte Dauer gilt sofort: bestehende Freigaben aller Sitzungen werden auf die neue Dauer gekuerzt, bei "immer fragen" (0) gestrichen. Laengere werden nie verlaengert.</summary>
+    public async Task CapStepUpAsync(DateTimeOffset now, int minutes, CancellationToken ct = default)
+    {
+        await using var cmd = db.Cmd("update sessions set step_up_until = case when $2 = 0 then null else least(step_up_until, $1::timestamptz + make_interval(mins => $2)) end where step_up_until is not null", now, minutes);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>Ob die Sitzung jetzt freigegeben ist. Eine Freigabe "fuer eine Aktion" wird dabei verbraucht (atomar: zwei gleichzeitige Aktionen bekommen sie nicht beide).</summary>
+    public async Task<bool> TakeStepUpAsync(Guid sessionId, DateTimeOffset now, CancellationToken ct = default)
+    {
+        DateTimeOffset? until; bool once;
+        await using (var cmd = db.Cmd("select step_up_until, step_up_once from sessions where id = $1", sessionId))
+        await using (var r = await cmd.ExecuteReaderAsync(ct))
+        {
+            if (!await r.ReadAsync(ct) || r.IsDBNull(0)) return false;
+            until = r.GetFieldValue<DateTimeOffset>(0); once = r.GetBoolean(1);
+        }
+        if (until <= now) return false;
+        if (!once) return true;
+        await using var take = db.Cmd("update sessions set step_up_until = null, step_up_once = false where id = $1 and step_up_until = $2", sessionId, until);
+        return await take.ExecuteNonQueryAsync(ct) == 1;
     }
 
     public async Task DeleteAsync(string hash, CancellationToken ct = default)

@@ -226,6 +226,6 @@ public sealed class RouteSecurityTests
         await using var db = await TestDb.CreateAsync();
         var log = new List<string>();
         await using (var app = new Server(db, log: log)) { app.Http(); }
-        lock (log) Assert.Contains(log, l => l.Contains("JULOS_TRUSTED_PROXIES ist nicht gesetzt"));
+        lock (log) Assert.Contains(log, l => l.Contains("Vertraute Proxy-Adressen sind nicht gesetzt"));
     }
 }

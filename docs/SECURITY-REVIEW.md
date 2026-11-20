@@ -15,7 +15,7 @@ claim can be tested. **Nothing was tested against the live address**; the live c
 
 - **No finding lets an anonymous visitor do anything beyond the public routes.** A test now enumerates every registered route and proves it (see "Routes").
 - Passwords: Argon2id, **current**. Dependencies: **no known vulnerability** in any NuGet package (direct or indirect); runtime and base image current as of 2026-11-10 (.NET 10.0.15). One unpatched Ubuntu CVE in a library JulOS only uses for encoding (F-12). Table below.
-- Findings: **0 critical, 1 high, 8 medium, 19 low, 10 info** (38; F-24 to F-32 come from the review of the Files-over-SFTP branch, F-33 to F-38 from the review of root file access, see "Files over SFTP" and "Root file access" below). **11 fixed** (F-06, F-07, F-08, F-09, F-14, F-24, F-25, F-26, F-27, F-29, F-34), one partly (F-03), the rest open with a suggestion because they need a decision on operation, key handling or a new feature. The one high finding (F-24, a compromised host could make a host-to-host copy write outside the chosen folder on another host) was fixed in the review before the merge.
+- Findings: **0 critical, 1 high, 8 medium, 20 low, 10 info** (39; F-24 to F-32 come from the review of the Files-over-SFTP branch, F-33 to F-38 from the review of root file access, F-39 from the review of the host login, see "Files over SFTP", "Root file access" and "Host login" below). **12 fixed** (F-06, F-07, F-08, F-09, F-14, F-24, F-25, F-26, F-27, F-29, F-34, F-39), one partly (F-03), the rest open with a suggestion because they need a decision on operation, key handling or a new feature. The one high finding (F-24, a compromised host could make a host-to-host copy write outside the chosen folder on another host) was fixed in the review before the merge.
 - The weak spots are not in the login but around it: **where the backup lands** (F-01), **what a stolen session can do without a second confirmation** (F-04, F-17), **missing early warning** (F-18) and **configuration that is optional but should not be** (F-02, F-03).
 
 ## Findings
@@ -60,6 +60,7 @@ claim can be tested. **Nothing was tested against the live address**; the live c
 | F-36 | Low | Anyone who can write to the agent's user or the helper socket group can use the file verbs of the helper without any confirmation in the app, now on any file (F-23 for files) | Open (accepted, documented; the word is never a default) |
 | F-37 | Low | A recursive delete or copy as root lists a folder and then works on names: a local user who can write there can swap things in between (F-28, but as root) | Open (accepted, documented in FILES.md) |
 | F-38 | Info | Reading a link on a root place reads its target as root (F-32 as root) | Info (by design) |
+| F-39 | Low | Host login: one password per host instead of per connection; a stolen session could add a connection to a foreign address and make JulOS send the host password there | **Fixed** (the password is bound to the addresses of the host's connections, see "Host login" below; test) |
 
 ### F-01 Backup next to its key (Medium, open, needs a decision)
 
@@ -159,7 +160,7 @@ Also checked (by code or test): ownership: every store query filters by `user_id
 
 ## Stored secrets
 
-- **Connection passwords:** AES-256-GCM, fresh random 12-byte nonce per encryption (no reuse), connection id as associated data, key length checked, plaintext zeroed; `secret.key` is created `0600` atomically; changing host/port/kind/user deletes the stored password; no API returns a password. **No key rotation exists** (a lost or leaked key means re-entering all passwords by hand; recommendation below).
+- **Host login password:** same box, host id as associated data, bound to the host's addresses (see "Host login" below). **Connection passwords:** AES-256-GCM, fresh random 12-byte nonce per encryption (no reuse), connection id as associated data, key length checked, plaintext zeroed; `secret.key` is created `0600` atomically; changing host/port/kind/user deletes the stored password; no API returns a password. **No key rotation exists** (a lost or leaked key means re-entering all passwords by hand; recommendation below).
 - **SSH host keys / RDP certificates:** trust on first use, a change is refused until the exact new fingerprint is confirmed, the check runs before credentials are sent. The backup SFTP target pins its host key as well (`JULOS_BACKUP_SFTP_HOST_KEY` or a file written at first use).
 - **Logs, audit, errors:** no password, token, cookie, TOTP code or file content is logged; texts to the browser are fixed German texts or short bounded codes; the setup code is logged on purpose. Core dumps: the runtime writes none unless `DOTNET_DbgEnableMiniDump` is set; the container sets no such variable (host `core_pattern` not checked).
 - **Backups:** F-01, F-16.
@@ -278,6 +279,20 @@ Reviewed: `tools/julos-agent-helper.py` (`FileOps`), `tools/julos-agent.py` (`fi
 **Not verified here**
 - A real host with systemd, the socket-activated helper, the changed unit (no `ProtectHome`), SELinux or AppArmor profiles that deny root on files, and a real phone. Special files (devices, sockets), files above 4 GiB, extremely long names and non-UTF-8 names were not tried; the helper refuses what is not a regular file and the server hides names it cannot show.
 - Behaviour with a very slow or lossy link between server and agent beyond the 60 s timeout per block.
+
+## Host login (review of the branch `claude/host-login`, 2026-11-20)
+
+New: a host can hold one user and one password for terminal, Files (SFTP) and desktop connections (`database/020`, [HOSTS.md](HOSTS.md#login-one-user-and-password-per-host)). What changed for secrets:
+
+- **Where passwords live now:** per host (`hosts.login_secret`) **and** still per connection (`connections.secret`, untouched by the takeover, which only copies). Same box: AES-256-GCM, fresh nonce, **host id** as associated data, same key (`JULOS_SECRET_KEY` or `/data/secret.key`), no key rotation (still open, recommendation 9). Nothing in the database, API, log or history holds a plain password (tests: the stored value does not contain it, responses and the captured log are searched for it); the API says `hasPassword`.
+- **F-01 is unchanged and still the big leak path:** a backup holds the dump (now also the host ciphertext) **next to** the key copy, so whoever reads the backup folder reads **every** stored target password, per host or per connection. One host password per machine makes the stolen set *smaller* per host but not safer; the recommendation stays: second backup target readable only by you, or `JULOS_BACKUP_KEY=off`, and decide on passphrase encryption.
+- **F-39 (Low, fixed):** with the password on the host, a connection added by someone with a valid session could point at a foreign address and receive it. The host password is therefore bound to the addresses the host's connections had when it was saved (`login_targets`); another address falls back to the connection's own data (nothing is sent); re-saving on the host page binds the new set (that needs the password typed again). Residual: a session thief can still open the *existing* connections of the host (as before) and can set a new login with a password they know (it can only send what they typed).
+- **Ownership and requests:** all three routes sit behind `ApiGuard` (route test: 401 without session; header and origin tested for PUT and DELETE), the host must belong to the user (`404` otherwise, nothing changes, nothing is audited for a foreign host), rate limits (read 60 a minute, change 20 a minute), user name 1 to 64 characters without control characters, password at most 256.
+- **History fail-closed:** `login.set` and `login.remove` are written to `host_audit` before the change; no entry, no change (`503`). Detail codes only (`user+password`, `password`, `user`, `password removed`), never a value; the log line carries host id and the signed-in user, not the login's user name or password.
+- **Effect on sessions:** a change closes the pooled SFTP sessions of that host (the Files app never keeps the old credentials alive), running terminals are left alone, the SSH host key pins are not reset.
+- **Files "save for this host":** only after a successful logon with exactly that password, only when the host login already has a user and no password, never creates a user, bound to that connection's address, audited; the typed password is not logged and the pool never holds it.
+- **Root:** no stored root password and no second login; root actions and root files go through the agent (the `files-root` word), a root terminal is `sudo -i` typed by the owner. This keeps the most valuable credential out of the store.
+- **Not verified here:** a real host, a real phone and the live database takeover on production data (tested against throwaway data and a throwaway instance only).
 
 ## Not verified here
 

@@ -3,14 +3,16 @@
 The Files app (desktop window and phone page "Dateien") shows **places**:
 
 - **Gemeinsamer Ordner** (shared folder): the one folder of the JulOS server (`JULOS_FILES_ROOT`, default `JULOS_UPLOAD_DIR`). Read only: view the list, search by name, download. This is the old behaviour, unchanged; see [ARCHITECTURE.md](ARCHITECTURE.md) for its guarantees.
-- **Every host with an SSH connection**: the files of the SSH user, over **SFTP**, with the credentials you already saved for the connection. List, view text, download, upload (pick or drag and drop), new folder, rename, copy, move (also from host to host through the server) and delete.
+- **Every host with an SSH connection**: the files of the SSH user, over **SFTP**, with the **login of the host** (or, if the connection asks for its own, the credentials saved at the connection). List, view text, download, upload (pick or drag and drop), new folder, rename, copy, move (also from host to host through the server) and delete.
 - **"<Host> (Root)"**, only for a host whose agent allows it: the same functions **as root**, through the host agent (no SSH, no password). Off unless you switch it on in three places, see [Root access](#root-access-files-as-root).
 
 A connection that is not SSH (RDP, VNC) is not a place. A host with several SSH connections offers a choice ("Host · Connection"). On an SSH place what you can do is what the SSH user can do; only the separate place "<Host> (Root)" works as root (below).
 
 ## What it needs
 
-- An SSH connection (kind **Terminal**) with a host, port and user name. A saved password is used; if the connection has none, the app asks for it in a dialog, uses it for that one connection, **never stores it and never logs it**.
+- An SSH connection (kind **Terminal**) with a host and port. The credentials are those of [the host login](HOSTS.md#login-one-user-and-password-per-host): its user and password when the host has them (**no question**), or the connection's own when it has the tick "Eigenen Benutzer verwenden".
+  The Files app never asks for a password the host login already holds.
+- If the host has a login with a **user but no password**, the dialog asks only for the password (the user is shown) and offers **Für diesen Host speichern** (a tick, off by default): the password is saved as the host's password only **after the logon worked** (`saveForHost` in `POST remote/open`; the answer says `hostLoginSaved`), encrypted, bound to the connection's address, written to the host history. Without the tick, and for any other case without a saved password, the typed password is used for that one connection, **never stored and never logged**.
 - SFTP enabled on the host (the OpenSSH default `Subsystem sftp`). Otherwise the app says so (`sftp_unavailable`).
 - Reading works out of the box. **Writing is off by default** and has to be switched on, see below.
 
@@ -39,7 +41,7 @@ Other settings: `JULOS_FILES_MAX_MB` (largest file and largest operation, defaul
 | **Never a page.** | Downloads are always `attachment` and `application/octet-stream` (plus `nosniff`); there is no HTML or SVG preview. The text view sends the text as a JSON value and the page sets it with `textContent`. Binary files (a NUL byte in the first 8 KiB, or no valid UTF-8) are refused as text (`not_text`). |
 | **Writes need a confirmation issued by the server (two steps).** | Like the host actions: first `POST remote/prepare` checks everything and answers with a **token** and a readable summary (host, target host, paths, counts, size, names that would be replaced, a folder with content); the page shows exactly that. Only then the action itself (`upload`, `mkdir`, `rename`, `delete`, `copy`) runs with the token. The token is valid for **60 s**, **once**, and bound to the **session**, the **action** and the **exact request** (connection, source paths, target, name; the count follows from the paths). A changed path or action, another session, a reuse or an expiry is refused (`confirmation_mismatch`, `confirmation_invalid`, `confirmation_expired`; a refused token is used up). Only its SHA-256 is kept in memory, at most 20 open per user. An upload confirmation covers exactly the prepared file names, each once. **Overwriting** and **deleting a folder with its content** stay a second explicit step: the page needs a tick, and the run may only ask for `overwrite` or `recursive` if the server showed it in `prepare` (otherwise `confirmation_mismatch`); the server never replaces anything otherwise (`exists`). There is **no recycle bin**. The root `/` is never deleted. |
 | **Every write and every error is in the history, fail-closed.** | Table `files_audit` (migration `019`). Before the first writing step an entry `started` is written; **if it cannot be written, nothing is executed** (`audit_failed`, as with the host actions); the result (`ok`, `failed`, `cancelled`) follows as its own entry, and a job only counts as finished after its result entry is stored. Columns: user, host (the name of the connection), action, path (shortened to 300 characters, control characters replaced), result (`ok`, `failed`, `denied`, `cancelled`), detail code, number of items, time. **Never contents, never passwords.** The last 2000 rows per user are kept; the history survives deleting the connection. The page shows it under the clock icon (`GET /api/files/audit`). |
-| **Sessions are short-lived and pooled.** | One SFTP session per user and connection, shared by all requests, closed after **60 s without use**, when the connection drops, **when the connection is edited or deleted, and at sign-out, "sign out all others" and a password change** (an unused session at once, one with a running job when the job ends; never handed out again); at most 4 per user (the longest unused closes first, otherwise `too_many_sessions`). While a place is open the page keeps it alive. A session never holds the password; after it closed, a connection without a saved password asks again. |
+| **Sessions are short-lived and pooled.** | One SFTP session per user and connection, shared by all requests, closed after **60 s without use**, when the connection drops, **when the connection is edited or deleted, and at sign-out, "sign out all others" and a password change** (an unused session at once, one with a running job when the job ends; never handed out again); at most 4 per user (the longest unused closes first, otherwise `too_many_sessions`). While a place is open the page keeps it alive. A session never holds the password; after it closed, a connection without a saved password asks again. **Changing or removing the host login closes the pooled sessions of all connections of that host.** |
 
 ## The API
 
@@ -48,7 +50,7 @@ All paths are under `/api/files/`. Errors are `{"error": "<German text>", "code"
 | Method and path | What |
 |---|---|
 | `GET info` | `{local, write, maxBytes}` |
-| `POST remote/open` | `{connection, password?, acceptHostKey?}` opens (or keeps alive) the session; `{home, hostKey: known\|remembered\|replaced, fingerprint, algorithm}`. Errors `password_required`, `logon_failed`, `host_key_new`, `host_key_changed`, `unreachable`, `timeout`, `sftp_unavailable` |
+| `POST remote/open` | `{connection, password?, acceptHostKey?, saveForHost?}` opens (or keeps alive) the session; `{home, hostKey: known\|remembered\|replaced, fingerprint, algorithm, hostLoginSaved?}`. Errors `password_required` (with `user` and `canSave` when the host login has a user but no password), `logon_failed`, `host_key_new`, `host_key_changed`, `unreachable`, `timeout`, `sftp_unavailable` |
 | `POST remote/close` | `{connection}` |
 | `GET remote/list?c=&path=` | entries (`name`, `path`, `kind` = file/directory/link/other, `size`, `modified`, `mode`, `resolved`, `openable`), directories and links to directories first, natural order; `truncated`, `hidden` |
 | `GET remote/text?c=&path=&token=` | `{path, text, truncated, size}`; the `token` only on a root place |
@@ -108,7 +110,7 @@ The place appears in the app only when 1 to 4 hold at that moment (the page know
 ## Not built, and decisions
 
 - **Root access** is built as its own place (see above). Not built there: editing text, permissions and owner changes, symbolic links, a view of the target of a link.
-- **Key authentication** for the files is not offered; the saved connections hold passwords. Decision: use the same credentials as the terminal, add nothing new.
+- **Key authentication** for the files is not offered; the logins hold passwords. Decision: use the same credentials as the terminal (the host login), add nothing new. Root is not a second stored login (see [HOSTS.md](HOSTS.md#login-one-user-and-password-per-host)).
 - **Recycle bin, editing, thumbnails, sorting by size and date, search on hosts**: see [IDEAS.md](IDEAS.md).
 - Decision: the first host key must be confirmed (stricter than the terminal) because a file manager moves more data than a shell you watch.
 - Decision: a typed password is held only for the one connection attempt; the pool keeps the authenticated session, never the password.

@@ -10,6 +10,7 @@ const STATE = {
   proxies: { entries: [], source: 'default' }, hosts: { entries: [], source: 'env' }, proxiesUnset: true,
   client: { address: '203.0.113.9', peer: '192.0.2.10', forwarded: true },
   stepUp: { enabled: true, minutes: 10 },
+  confirmMode: 'check',
   backupKey: { copyKey: false, source: 'default', wrapped: false, canProtect: true, recovery: { state: 'none', replacing: false } },
 };
 const UI = (o = {}) => ({ proxyText: '', hostText: '', step: null, blocked: null, blockedAsk: false, proxyAsk: '', recoveryKey: '', audit: [], msg: {}, ...o });
@@ -60,7 +61,7 @@ test('Seite: Warnung bei leerer Proxy-Liste, Hinweis auf den Proxy dieses Zugrif
   assert.ok(!set.includes('Weder in der App') && !set.includes('data-sec="addpeer"'));
   // zweiter Faktor aus: Warnung, Auswahl gesperrt; Schluessel mit ins Backup: Warnung
   const off = securityMarkup(STATE, UI({ step: { enabled: false, minutes: 10 }, copyKey: true }), esc);
-  assert.ok(off.includes('Ausgeschaltet') && off.includes('id="secStepMin" disabled'));
+  assert.ok(off.includes('Ausgeschaltet') && off.includes('data-min="10" disabled'));
   assert.ok(off.includes('alle gespeicherten Passwörter öffnen'));
   // der Wiederherstellungsschluessel erscheint nur, wenn er gerade erzeugt wurde, mit Kopieren, Laden und Bestaetigen
   const key = securityMarkup(STATE, UI({ recoveryKey: 'ABCD-EFGH' }), esc);

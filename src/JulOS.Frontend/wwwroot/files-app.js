@@ -600,7 +600,7 @@ export function mountFiles(box, deps) {
     if (!prep) return null;
     const r = await confirmDialog(kit, C.saveModel(prep, e.name, file.size, changed), { expiresIn: prep.expiresIn });
     if (!r) return null;
-    try { await retryOpen(place, () => fapi.upload(place, prep.dir, file, { overwrite: prep.conflicts.includes(e.name), token: prep.token }).promise); }
+    try { await retryOpen(place, () => fapi.upload(place, prep.dir, file, { overwrite: prep.conflicts.includes(e.name), token: prep.token, answer: r.answer }).promise); }
     catch (err) { if (!C.isCancelled(err)) say(C.errorMessage(err)); return null; }
     say(t('files.edit.saved', { name: X.safeName(e.name) }));
     let stat = { size: file.size, modified: base.modified };
@@ -625,8 +625,9 @@ export function mountFiles(box, deps) {
     const name = await inputDialog(kit, { title: t('files.mkdir.title'), label: t('files.mkdir.nameLabel'), confirm: t('files.mkdir.next') });
     if (!name) return;
     const prep = await prepare('mkdir', { dir, name }, place);
-    if (!prep || !(await confirmDialog(kit, C.mkdirModel(prep), { expiresIn: prep.expiresIn }))) return;
-    await runWrite(() => guarded(() => fapi.mkdir(place, prep.dir, prep.name, prep.token), place), t('files.mkdir.done', { name: X.safeName(prep.name) }), C.joinPath(prep.dir, prep.name, place));
+    const r = prep && await confirmDialog(kit, C.mkdirModel(prep), { expiresIn: prep.expiresIn });
+    if (!r) return;
+    await runWrite(() => guarded(() => fapi.mkdir(place, prep.dir, prep.name, prep.token, r.answer), place), t('files.mkdir.done', { name: X.safeName(prep.name) }), C.joinPath(prep.dir, prep.name, place));
   }
   async function newFile() {
     if (!canWrite()) return say(noWriteTitle());
@@ -637,7 +638,7 @@ export function mountFiles(box, deps) {
     const r = prep && await confirmDialog(kit, C.newFileModel(prep, name), { expiresIn: prep.expiresIn });
     if (!r) return;
     const file = new File([], name, { type: 'application/octet-stream' });
-    await runWrite(() => retryOpen(place, () => fapi.upload(place, prep.dir, file, { overwrite: prep.conflicts.includes(name), token: prep.token }).promise), t('files.newFile.done', { name: X.safeName(name) }), C.joinPath(prep.dir, name, place));
+    await runWrite(() => retryOpen(place, () => fapi.upload(place, prep.dir, file, { overwrite: prep.conflicts.includes(name), token: prep.token, answer: r.answer }).promise), t('files.newFile.done', { name: X.safeName(name) }), C.joinPath(prep.dir, name, place));
   }
   async function rename(e) {
     if (!canWrite()) return say(noWriteTitle());
@@ -647,7 +648,7 @@ export function mountFiles(box, deps) {
     const prep = await prepare('rename', { paths: [e.path], name }, place);
     const r = prep && await confirmDialog(kit, C.renameModel(prep), { expiresIn: prep.expiresIn });
     if (!r) return;
-    await runWrite(() => guarded(() => fapi.rename(place, prep.paths[0], prep.name, r.ack, prep.token), place), t('files.rename.done', { name: X.safeName(prep.name) }), C.joinPath(C.parentOf(e.path, place), prep.name, place));
+    await runWrite(() => guarded(() => fapi.rename(place, prep.paths[0], prep.name, prep.conflicts.length > 0, prep.token, r.answer), place), t('files.rename.done', { name: X.safeName(prep.name) }), C.joinPath(C.parentOf(e.path, place), prep.name, place));
   }
   async function remove(sel) {
     if (!sel.length) return;
@@ -657,7 +658,7 @@ export function mountFiles(box, deps) {
     const model = prep && C.deleteModel(prep);
     const r = model && await confirmDialog(kit, model, { expiresIn: prep.expiresIn });
     if (!r) return;
-    await runJob(model.title, 'delete', () => guarded(() => fapi.remove(place, prep.paths, prep.nonEmpty && r.ack, prep.token), place));
+    await runJob(model.title, 'delete', () => guarded(() => fapi.remove(place, prep.paths, prep.nonEmpty, prep.token, r.answer), place));
     st.multi = false; await reload();
   }
 
@@ -685,7 +686,7 @@ export function mountFiles(box, deps) {
     const model = prep && C.copyModel(action, prep);
     const r = model && await confirmDialog(kit, model, { expiresIn: prep.expiresIn });
     if (!r) return false;
-    await runJob(model.title, action, () => guarded(() => fapi.copy(srcPlace, prep.paths, target, { move: action === 'move', overwrite: prep.conflicts.length > 0 && r.ack, token: prep.token }), srcPlace));
+    await runJob(model.title, action, () => guarded(() => fapi.copy(srcPlace, prep.paths, target, { move: action === 'move', overwrite: prep.conflicts.length > 0, token: prep.token, answer: r.answer }), srcPlace));
     if (st.place && (target.place.id === st.place.id || (action === 'move' && srcPlace.id === st.place.id))) await reload();
     return true;
   }
@@ -742,7 +743,7 @@ export function mountFiles(box, deps) {
     let aborted = false, current = null;
     const prog = progressDialog(kit, t('files.upload.title'), { onCancel: () => { aborted = true; if (current) current.abort(); } });
     let okN = 0; const failed = [];
-    const send = (f, onProgress) => (current = fapi.upload(place, prep.dir, f, { overwrite: overwrite.has(f.name) && r.ack, token: prep.token, onProgress }));
+    const send = (f, onProgress) => (current = fapi.upload(place, prep.dir, f, { overwrite: overwrite.has(f.name), token: prep.token, answer: r.answer, onProgress }));
     for (let i = 0; i < files.length && !aborted; i++) {
       const f = files[i];
       prog.update({ percent: 0, text: `${X.safeName(f.name)} (${i + 1}/${files.length})` });

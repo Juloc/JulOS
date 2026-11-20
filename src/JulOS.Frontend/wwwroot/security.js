@@ -14,8 +14,11 @@ export const listText = (entries) => (entries || []).join('\n');
 export const SOURCES = { app: tk('sec.sourceApp'), env: tk('sec.sourceEnv'), default: tk('sec.sourceDefault') };
 export const sourceText = (source) => t(SOURCES[source] || SOURCES.default);
 
-/** Die Auswahl der Dauer: 0 heisst "bei jeder Aktion fragen", sonst Minuten (1 bis 60). */
-export const MINUTES = [0, 1, 5, 10, 15, 30, 60];
+/** Die schnelle Auswahl der Dauer: 0 heisst "bei jeder Aktion fragen", sonst Minuten (der Server nimmt 0 bis 60; ein anderer, frueher eingestellter Wert bleibt als eigener Eintrag sichtbar). */
+export const MINUTES = [0, 10, 30, 60];
+/** Wie gefaehrliche Aktionen bestaetigt werden (docs/HOST-AGENT.md): die Reihenfolge der Auswahl, Haekchen ist der Standard. */
+export const CONFIRM_MODES = ['check', 'type', 'click'];
+const CONFIRM_TEXT = { check: [tk('sec.confirm.check'), tk('sec.confirm.checkHelp')], type: [tk('sec.confirm.type'), tk('sec.confirm.typeHelp')], click: [tk('sec.confirm.click'), tk('sec.confirm.clickHelp')] };
 export const minutesText = (m) => (m === 0 ? t('sec.always') : tp('sec.minutes', m));
 
 /** Der Zugriff gerade: "von Adresse X ueber Proxy Y" oder direkt. */
@@ -50,13 +53,14 @@ export function keyInfo(b) {
 
 const EVENTS = {
   'proxies.set': tk('sec.ev.proxies_set'), 'proxies.reset': tk('sec.ev.proxies_reset'), 'hosts.set': tk('sec.ev.hosts_set'), 'hosts.reset': tk('sec.ev.hosts_reset'),
-  'step_up.set': tk('sec.ev.step_up_set'), 'step_up.ok': tk('sec.ev.step_up_ok'), 'step_up.failed': tk('sec.ev.step_up_failed'),
+  'confirm_mode.set': tk('sec.ev.confirm_mode_set'), 'step_up.set': tk('sec.ev.step_up_set'), 'step_up.ok': tk('sec.ev.step_up_ok'), 'step_up.failed': tk('sec.ev.step_up_failed'),
   'backup_key.set': tk('sec.ev.backup_key_set'), 'recovery.new': tk('sec.ev.recovery_new'), 'recovery.confirm': tk('sec.ev.recovery_confirm'),
 };
 
 /** Die Zeilen des Verlaufs: Zeit, wer, was (ein unbekanntes Ereignis erscheint mit seinem Namen). */
 export function auditLine(e) {
-  return { at: fmtDate(e.at), who: e.user, what: EVENTS[e.event] ? t(EVENTS[e.event]) : e.event, detail: e.detail || '' };
+  const detail = e.event === 'confirm_mode.set' && CONFIRM_TEXT[e.detail] ? t(CONFIRM_TEXT[e.detail][0]) : (e.detail || '');
+  return { at: fmtDate(e.at), who: e.user, what: EVENTS[e.event] ? t(EVENTS[e.event]) : e.event, detail };
 }
 
 /**
@@ -97,9 +101,18 @@ export function securityMarkup(state, ui, esc) {
   const step = `<section class="sec-sec"><h3>${esc(t('sec.stepUp'))}</h3>
     <p class="hint">${esc(t('sec.stepUpHelp'))}</p>
     <label class="sec-check"><span><input id="secStepOn" type="checkbox"${st.enabled ? ' checked' : ''}> ${esc(t('sec.stepUpOn'))}</span></label>
-    <label>${esc(t('sec.stepUpFor'))}<select id="secStepMin"${st.enabled ? '' : ' disabled'}>${MINUTES.map((n) => `<option value="${n}"${n === st.minutes ? ' selected' : ''}>${esc(minutesText(n))}</option>`).join('')}</select></label>
+    <p class="hint">${esc(t('sec.stepUpFor'))}</p>
+    <div class="sec-chips" id="secStepMin" role="radiogroup" aria-label="${esc(t('sec.stepUpFor'))}">${(MINUTES.includes(st.minutes) ? MINUTES : [...MINUTES, st.minutes].sort((a, b) => a - b)).map((n) => `<button type="button" class="sec-chip${n === st.minutes ? ' on' : ''}" role="radio" aria-checked="${n === st.minutes}" data-sec="step-min" data-min="${n}"${st.enabled ? '' : ' disabled'}>${esc(minutesText(n))}</button>`).join('')}</div>
+    <p class="hint">${esc(t('sec.stepUpLonger'))}</p>
     ${st.enabled ? '' : `<p class="sec-warn">${esc(t('sec.stepUpOffWarn'))}</p>`}
     <div class="dlg-btns">${btn('save-step', t('common.save'), 'primary')}</div>${msg('step')}</section>`;
+
+  const cm = ui.confirmMode || state.confirmMode || 'check';
+  const confirm = `<section class="sec-sec"><h3>${esc(t('sec.confirm'))}</h3>
+    <p class="hint">${esc(t('sec.confirmHelp'))}</p>
+    <div class="sec-radios" role="radiogroup" aria-label="${esc(t('sec.confirm'))}">${CONFIRM_MODES.map((m) => `<label class="sec-radio"><input type="radio" name="secConfirm" value="${m}"${m === cm ? ' checked' : ''}><span><b>${esc(t(CONFIRM_TEXT[m][0]))}</b><span class="hint">${esc(t(CONFIRM_TEXT[m][1]))}</span></span></label>`).join('')}</div>
+    ${cm === 'click' ? `<p class="sec-warn" role="status">${esc(t('sec.confirmClickWarn'))}</p>` : ''}
+    <div class="dlg-btns">${btn('save-confirm', t('common.save'), 'primary')}</div>${msg('confirm')}</section>`;
 
   const bk = state.backupKey, ki = keyInfo(bk), ri = recoveryInfo(bk.recovery, bk.canProtect);
   const recBox = ui.recoveryKey
@@ -118,7 +131,7 @@ export function securityMarkup(state, ui, esc) {
   const audit = (ui.audit || []).length
     ? `<section class="sec-sec"><h3>${esc(t('sec.audit'))}</h3><ul class="sec-audit">${ui.audit.map((e) => { const l = auditLine(e); return `<li><span>${esc(l.at)}</span> <b>${esc(l.what)}</b> ${esc(l.who)}${l.detail ? ' · ' + esc(l.detail) : ''}</li>`; }).join('')}</ul></section>` : '';
 
-  return proxies + hosts + step + backup + audit;
+  return proxies + hosts + step + confirm + backup + audit;
 }
 
 /** Bindet den Dialog #securityDlg. api ist die Funktion mit Freigabe-Wiederholung (shell.js), setMsg und esc kommen von dort. Gibt zurueck: { open, warn } (warn: den Hinweis fuer den Start-Bildschirm pruefen). */
@@ -128,7 +141,7 @@ export function initSecurity({ api, esc }) {
   let state = null;
   let ui = fresh();
 
-  function fresh() { return { proxyText: '', hostText: '', step: null, blocked: null, blockedAsk: false, proxyAsk: '', recoveryKey: '', copyKey: undefined, audit: [], msg: {}, error: '' }; }
+  function fresh() { return { proxyText: '', hostText: '', step: null, confirmMode: null, blocked: null, blockedAsk: false, proxyAsk: '', recoveryKey: '', copyKey: undefined, audit: [], msg: {}, error: '' }; }
   const say = (k, text, ok = false) => { ui.msg[k] = { text, ok }; render(); };
   const render = () => { body.innerHTML = securityMarkup(state, ui, esc); };
 
@@ -138,7 +151,7 @@ export function initSecurity({ api, esc }) {
       const a = await api('/api/security/audit?limit=10').catch(() => ({ entries: [] }));
       ui.audit = a.entries || [];
       if (!keepText) { ui.proxyText = listText(state.proxies.entries); ui.hostText = listText(state.hosts.entries); }
-      ui.step = { ...state.stepUp }; ui.copyKey = undefined;
+      ui.step = { ...state.stepUp }; ui.copyKey = undefined; ui.confirmMode = state.confirmMode || 'check';
       ui.error = '';
     } catch (e) { ui.error = e.message; }
     render();
@@ -152,7 +165,7 @@ export function initSecurity({ api, esc }) {
   });
   body.addEventListener('change', (e) => {
     if (e.target.id === 'secStepOn') { ui.step = { ...ui.step, enabled: e.target.checked }; render(); }
-    else if (e.target.id === 'secStepMin') ui.step = { ...ui.step, minutes: Number(e.target.value) };
+    else if (e.target.name === 'secConfirm') { ui.confirmMode = e.target.value; render(); }
     else if (e.target.id === 'secCopyKey') { ui.copyKey = e.target.checked; render(); }
   });
 
@@ -192,6 +205,11 @@ export function initSecurity({ api, esc }) {
     'save-step': async () => {
       try { await put('/api/security/step-up', { enabled: !!ui.step.enabled, minutes: ui.step.minutes }); await load(); say('step', t('sec.saved'), true); }
       catch (e) { say('step', e.message); }
+    },
+    'step-min': (b) => { ui.step = { ...ui.step, minutes: Number(b.dataset.min) }; render(); },
+    'save-confirm': async () => {
+      try { await put('/api/security/confirm-mode', { mode: ui.confirmMode }); await load(); say('confirm', t('sec.saved'), true); }
+      catch (e) { say('confirm', e.message); }
     },
     'save-backup': async () => {
       try { await put('/api/security/backup-key', { copyKey: ui.copyKey ?? state.backupKey.copyKey }); await load(); say('backup', t('sec.saved'), true); }

@@ -4,12 +4,13 @@
  *  - der Text der Bestaetigung (Host, Aktion, Ziel, Warnungen), das Tippen des Rechnernamens
  *  - Fortschritt, Ergebnis, Fehlertexte, Verlauf als HTML-Bausteine (jeder Wert vom Server oder Agenten geht durch esc)
  *  - die Aufrufe: Bestaetigung holen (prepare), ausfuehren (run), Auftrag abfragen
- * Server: POST /api/hosts/{id}/actions/prepare -> { token, expiresIn, action, target, targetName, host, typeToConfirm?, warnings, readOnly }
- *         POST /api/hosts/{id}/actions/run {token, action, target, typed} -> 202 { job } ; GET /api/hosts/{id}/actions/{job} -> { state, progress, done, total, result?, error? }
+ * Server: POST /api/hosts/{id}/actions/prepare -> { token, expiresIn, action, target, targetName, host, typeToConfirm?, warnings, readOnly, confirmLevel, confirmMode, confirmWarn?, confirmCritical? }
+ *         POST /api/hosts/{id}/actions/run {token, action, target, typed?, acknowledged?} -> 202 { job } ; GET /api/hosts/{id}/actions/{job} -> { state, progress, done, total, result?, error? }
  * ===================================================================== */
 import { t, tk, tp } from './i18n.js';
 import { when, hostSupport } from './hostinfo.js';
 import { dl, noteP, callout, listBlock, card, icon, button } from './hostui.js';
+import { confirmView, auditConfirmText } from './confirm.js';
 
 export const RIGHTS = ['updates', 'reboot', 'services', 'docker', 'logs'];
 export const LEVELS = ['read', 'updates', 'full'];
@@ -82,16 +83,18 @@ export const typedName = (conf) => (conf && typeof conf.typeToConfirm === 'strin
 export const typedOk = (conf, text) => { const need = typedName(conf); return !need || String(text || '').trim().toLowerCase() === need.toLowerCase(); };
 
 const WARN = { julos_group: tk('hostact.warn.julosGroup'), kept_back: tk('hostact.warn.keptBack'), proxmox_full: tk('hostact.warn.proxmoxFull') };
-/** Alles, was die Bestaetigung zeigt: Satz, Zeilen, Warnungen, Tippaufforderung */
+/** Alles, was die Bestaetigung zeigt: Satz, Zeilen, Warnungen, Stufe (Routine, gefaehrlich, sehr gefaehrlich), Haekchen oder Tippaufforderung */
 export function confirmModel(conf) {
   const target = targetText(conf);
+  const v = confirmView(conf, conf.host);
   return {
     title: actionLabel(conf.action),
     sentence: target ? t('hostact.sentenceTarget', { host: conf.host, action: actionLabel(conf.action), target }) : t('hostact.sentence', { host: conf.host, action: actionLabel(conf.action) }),
     rows: [[t('hostact.rowHost'), conf.host], [t('hostact.rowAction'), actionLabel(conf.action)], [t('hostact.rowTarget'), target]],
-    warnings: (conf.warnings || []).map((w) => t(WARN[w] || tk('hostact.warn.unknown'))),
-    typed: typedName(conf),
-    danger: isDanger(conf.action, conf.target),
+    warnings: (conf.warnings || []).filter((w) => !(v.critical && w === 'julos_group')).map((w) => t(WARN[w] || tk('hostact.warn.unknown'))),   // bei "sehr gefaehrlich" sagt es schon die rote Zeile
+    level: v.level, mode: v.mode, needsCheck: v.needsCheck, warn: v.warn, criticalWarn: v.criticalWarn,
+    typed: v.typed,
+    danger: v.danger,
     expiresIn: conf.expiresIn,
     options: confirmOptions(conf),
   };
@@ -112,8 +115,10 @@ export function confirmHtml(conf, esc) {
     ? `<label class="hu-check"><input type="checkbox" id="hostActFull"><span class="hu-cb" aria-hidden="true"></span><span>${esc(t('hostact.fullLabel'))}</span></label>${noteP(t('hostact.fullHint', { list: o.keptBack.join(', ') }), esc)}`
     : '';
   const removals = o && o.removals > 0 && (o.proxmox || o.fullChoice) ? `<div id="hostActRemovals"${o.proxmox ? '' : ' hidden'}>${callout(tp('hostact.removals', o.removals), esc, 'warn')}</div>` : '';
+  const levelBox = (m.warn ? callout(t('confirm.warnTitle'), esc, 'warn', m.warn) : '') + (m.criticalWarn ? callout(t('confirm.criticalTitle'), esc, 'bad', m.criticalWarn) : '');
+  const ack = m.needsCheck ? `<label class="hu-check hact-ack"><input type="checkbox" id="hostActAck"><span class="hu-cb" aria-hidden="true"></span><span>${esc(t('confirm.ack'))}</span></label>` : '';
   const typed = m.typed ? `<label class="hu-field hact-typed"><span>${esc(t('hostact.typePrompt', { name: m.typed }))}</span><input id="hostActTyped" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="${esc(t('hostact.typeLabel'))}"></label>` : '';
-  return callout(m.sentence, esc, m.danger ? 'bad' : 'info') + dl(m.rows, esc) + warn + full + removals + typed + noteP(t('hostact.expires', { n: m.expiresIn }), esc);
+  return callout(m.sentence, esc, 'info') + dl(m.rows, esc) + levelBox + warn + full + removals + ack + typed + noteP(t('hostact.expires', { n: m.expiresIn }), esc);
 }
 
 /* ---------- Fehler ---------- */
@@ -122,7 +127,7 @@ const ERR = {
   paused: tk('hostact.err.paused'), control_off: tk('hostact.err.control_off'), offline: tk('hostact.err.offline'), agent_outdated: tk('hostact.err.agent_outdated'), unsupported: tk('hostact.err.unsupported'),
   agent_not_permitted: tk('hostact.err.agent_not_permitted'), not_permitted: tk('hostact.err.agent_not_permitted'), busy: tk('hostact.err.busy'), unknown_target: tk('hostact.err.unknown_target'),
   list_unavailable: tk('hostact.err.list_unavailable'), protected_unit: tk('hostact.err.protected_unit'), too_many: tk('hostact.err.too_many'), confirmation_invalid: tk('hostact.err.confirmation_invalid'),
-  confirmation_expired: tk('hostact.err.confirmation_expired'), confirmation_mismatch: tk('hostact.err.confirmation_mismatch'), typed_mismatch: tk('hostact.err.typed_mismatch'),
+  confirmation_expired: tk('hostact.err.confirmation_expired'), confirmation_mismatch: tk('hostact.err.confirmation_mismatch'), typed_mismatch: tk('hostact.err.typed_mismatch'), confirm_required: tk('hostact.err.confirm_required'),
   audit_failed: tk('hostact.err.audit_failed'), invalid_level: tk('hostact.err.invalid_level'), rate_limited: tk('hostact.err.rate_limited'), job_not_found: tk('hostact.err.job_not_found'),
   apt_locked: tk('hostact.err.apt_locked'), apt_failed: tk('hostact.err.apt_failed'), dpkg_failed: tk('hostact.err.dpkg_failed'), dpkg_broken: tk('hostact.err.dpkg_broken'), proxmox_whole: tk('hostact.err.proxmox_whole'), systemctl_failed: tk('hostact.err.systemctl_failed'), journal_failed: tk('hostact.err.journal_failed'),
   docker_denied: tk('hostact.err.docker_denied'), docker_unavailable: tk('hostact.err.docker_unavailable'), docker_failed: tk('hostact.err.docker_failed'), pull_failed: tk('hostact.err.pull_failed'),
@@ -207,7 +212,7 @@ export function auditLine(e) {
   const detail = e.detail ? (e.event === 'denied' || e.event === 'failed' ? errText(e.detail) : e.detail === 'reboot_required' ? t('hostact.rebootHintShort') : e.detail === 'already' ? t('hostact.already') : levelOrDetail(e)) : '';
   return { when: when(e.at), who: e.user, text: [action, e.action === 'control.set' ? levelText(e.target) : e.target].filter(Boolean).join(' · '), event: e.action === 'control.set' ? eventText('ok') : eventText(e.event), detail };
 }
-const levelOrDetail = (e) => (e.detail === 'no_answer' ? t('hostact.noAnswer') : e.action.startsWith('login.') && LOGIN_DETAIL[e.detail] ? t(LOGIN_DETAIL[e.detail]) : e.detail);
+const levelOrDetail = (e) => (e.detail === 'no_answer' ? t('hostact.noAnswer') : auditConfirmText(e.detail) || e.action.startsWith('login.') && LOGIN_DETAIL[e.detail] ? t(LOGIN_DETAIL[e.detail]) : e.detail);
 
 export function auditHtml(resp, esc) {
   const list = (resp && resp.entries) || [];
@@ -261,7 +266,7 @@ export function unitsHtml(resp, esc, act) {
 
 /* ---------- Aufrufe ---------- */
 export const prepareAction = (api, hostId, action, target = null, lines = null) => api(`/api/hosts/${hostId}/actions/prepare`, { method: 'POST', body: { action, target, lines } });
-export const runAction = (api, hostId, conf, typed = null, full = null) => api(`/api/hosts/${hostId}/actions/run`, { method: 'POST', body: { token: conf.token, action: conf.action, target: conf.target || null, typed, ...(full === true ? { full: true } : {}) } });
+export const runAction = (api, hostId, conf, typed = null, full = null, acknowledged = null) => api(`/api/hosts/${hostId}/actions/run`, { method: 'POST', body: { token: conf.token, action: conf.action, target: conf.target || null, typed, ...(acknowledged === true ? { acknowledged: true } : {}), ...(full === true ? { full: true } : {}) } });
 export const fetchJob = (api, hostId, job) => api(`/api/hosts/${hostId}/actions/${job}`);
 export const fetchAudit = (api, hostId, limit = 30) => api(`/api/hosts/${hostId}/audit?limit=${limit}`);
 export const fetchUnits = (api, hostId, fresh = false) => api(`/api/hosts/${hostId}/units${fresh ? '?fresh=1' : ''}`);

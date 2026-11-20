@@ -51,6 +51,17 @@ public sealed record TextPreview(string Text, bool Truncated, long Size);
 /// </summary>
 public static class FileTransfer
 {
+    /// <summary>
+    /// Die Eintraege einer Ordnerliste, deren Name als Pfadteil taugt (<see cref="RemotePath.SafeSegment"/>); die anderen meldet <paramref name="unsafeCount"/>. Ein Ziel, das "../x" nennt,
+    /// bekommt so nie Einfluss darauf, WO geschrieben oder geloescht wird, auch wenn eine Sitzung solche Namen nicht selbst aussortiert.
+    /// </summary>
+    private static List<RemoteEntry> Safe(RemoteListing listing, out int unsafeCount)
+    {
+        var ok = listing.Entries.Where(e => RemotePath.SafeSegment(e.Name)).ToList();
+        unsafeCount = listing.Entries.Count - ok.Count;
+        return ok;
+    }
+
     // ---------- Zaehlen ----------
 
     /// <summary>Zaehlt den Baum unter <paramref name="paths"/> (lstat, ohne Links zu folgen). Wirft <see cref="FileRuleException"/> bei zu vielen Eintraegen, zu grosser Tiefe oder zu grosser Summe.</summary>
@@ -68,7 +79,9 @@ public static class FileTransfer
                     dirs++; Check();
                     if (depth >= limits.MaxDepth) throw new FileRuleException("too_deep", "Der Ordner ist zu tief verschachtelt.");
                     var l = await s.ListAsync(e.Path, limits.MaxItems - (files + dirs + links) + 1, ct);
-                    foreach (var c in l.Entries) await Walk(c, depth + 1);
+                    var safe = Safe(l, out var odd);
+                    foreach (var c in safe) await Walk(c, depth + 1);
+                    links += odd; Check();                                                   // gefaelschte Namen: gezaehlt wie Sonderdateien, nie benutzt
                     if (l.Truncated) throw new FileRuleException("too_many_items", "Zu viele Einträge.");
                     break;
                 case RemoteKind.File: files++; bytes += e.Size; Check(); break;
@@ -181,16 +194,23 @@ public static class FileTransfer
                     Dictionary<string, RemoteEntry> names = [];
                     if (there is null) await dst.CreateDirectoryAsync(dest, ct);
                     else if (there.Kind != RemoteKind.Directory) throw new FileRuleException(there.Kind == RemoteKind.Link ? "target_is_link" : "type_mismatch", "Am Ziel gibt es eine Datei oder einen Link mit diesem Namen.");
-                    else names = (await dst.ListAsync(dest, limits.MaxItems, ct)).Entries.ToDictionary(x => x.Name);        // einmal je Ordner, nicht je Datei
+                    else names = Safe(await dst.ListAsync(dest, limits.MaxItems, ct), out _).GroupBy(x => x.Name).ToDictionary(g => g.Key, g => g.First());        // einmal je Ordner, nicht je Datei
                     dirs++; progress.ItemDone(); track?.Directories.Add(e.Path);
-                    foreach (var c in (await src.ListAsync(e.Path, limits.MaxItems, ct)).Entries) await Copy(c, RemotePath.Join(dest, c.Name), depth + 1, false, names);
+                    var children = Safe(await src.ListAsync(e.Path, limits.MaxItems, ct), out var odd);
+                    foreach (var c in children) await Copy(c, RemotePath.Join(dest, c.Name), depth + 1, false, names);
+                    for (var i = 0; i < odd; i++) { progress.Skip(); progress.ItemDone(); if (track is not null) track.Skipped++; }
                     break;
                 case RemoteKind.File:
                 case RemoteKind.Link when top && e.Resolved == RemoteKind.File:
                     var existing = parentNames is null ? await dst.StatAsync(dest, follow: false, ct) : parentNames.GetValueOrDefault(e.Name);
                     if (!top && !overwrite && existing is not null) { progress.SkipExisting(); progress.ItemDone(); if (track is not null) track.Skipped++; break; }
                     await using (var r = await src.OpenReadAsync(e.Path, ct))
-                        await WriteAtomicAsync(dst, dest, r, overwrite, limits.MaxBytes, limits.BufferSize, progress.AddBytes, existingKnown: true, existing, ct);
+                        await WriteAtomicAsync(dst, dest, r, overwrite, limits.MaxBytes, limits.BufferSize, n =>
+                        {
+                            progress.AddBytes(n);
+                            // Die Summe der angekuendigten Groessen wurde vorher geprueft; ein Ziel, das weniger ankuendigt als es liefert, darf die Grenze trotzdem nicht sprengen
+                            if (progress.BytesDone > limits.MaxBytes) throw new FileRuleException("too_large", "Die Operation ist zu groß.");
+                        }, existingKnown: true, existing, ct);
                     files++; progress.ItemDone(); track?.Files.Add((e.Path, e.Kind == RemoteKind.Link));
                     break;
                 default:
@@ -266,7 +286,7 @@ public static class FileTransfer
             if (recursive)
             {
                 if (depth > limits.MaxDepth) throw new FileRuleException("too_deep", "Der Ordner ist zu tief verschachtelt.");
-                foreach (var c in (await s.ListAsync(e.Path, limits.MaxItems, ct)).Entries) await Delete(c, depth + 1);
+                foreach (var c in Safe(await s.ListAsync(e.Path, limits.MaxItems, ct), out _)) await Delete(c, depth + 1);      // ein gefaelschter Name bleibt stehen: der Ordner ist dann "nicht leer"
             }
             await s.DeleteDirectoryAsync(e.Path, ct);                                // nicht leer und nicht rekursiv: NotEmpty
             dirs++; progress.ItemDone();

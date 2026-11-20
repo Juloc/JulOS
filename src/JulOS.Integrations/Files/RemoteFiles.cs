@@ -113,6 +113,12 @@ public static class RemotePath
     public static bool ValidName(string? name) =>
         !string.IsNullOrEmpty(name) && name != "." && name != ".." && !name.Contains('/') && !name.Any(char.IsControl) && Encoding.UTF8.GetByteCount(name) <= MaxName && name.Trim().Length > 0;
 
+    /// <summary>
+    /// Darf ein Name, den das ZIEL in einer Ordnerliste nennt, als ein Pfadteil benutzt werden? Ein gekaperter Host kann "../x" oder "a/b" melden; als Teil eines Pfads (Kopieren auf einen
+    /// anderen Host, Loeschen) fuehrte das aus dem gemeinten Ordner hinaus (wie scp CVE-2019-6111). Erlaubt: nicht leer, kein "/", nicht "." oder "..", keine Steuerzeichen.
+    /// </summary>
+    public static bool SafeSegment(string? name) => !string.IsNullOrEmpty(name) && name != "." && name != ".." && !name.Contains('/') && !name.Any(char.IsControl);
+
     public static string Join(string directory, string name) => directory == "/" ? "/" + name : directory + "/" + name;
 
     /// <summary>Der Ordner darueber ("/" bleibt "/").</summary>

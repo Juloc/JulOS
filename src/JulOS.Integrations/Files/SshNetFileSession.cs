@@ -71,7 +71,7 @@ public sealed class SshNetFileSession : ISftpFileSession
             await foreach (var f in Client.ListDirectoryAsync(directory, ct).ConfigureAwait(false))
             {
                 if (f.Name is "." or "..") continue;
-                if (f.Name.Any(char.IsControl)) { hidden++; continue; }
+                if (!RemotePath.SafeSegment(f.Name)) { hidden++; continue; }                     // Steuerzeichen, "/" oder ".." im Namen: ein Name des Ziels ist nie ein Pfad
                 if (entries.Count >= limit) { truncated = true; break; }
                 var path = RemotePath.Join(directory, f.Name);
                 lock (_handles) _handles[path] = (f, Environment.TickCount64);

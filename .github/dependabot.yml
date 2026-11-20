@@ -15,6 +15,10 @@ updates:
   - package-ecosystem: docker
     directory: /
     schedule: { interval: weekly, day: monday }
+    ignore:
+      # Die .NET-Hauptversion hebt der Owner bewusst selbst an (nicht per Dependabot)
+      - dependency-name: "dotnet/*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: docker-compose
     directory: /
     schedule: { interval: weekly, day: monday }

@@ -42,7 +42,7 @@ jobs:
       - name: Bildschirm-Engine tests (ohne Ziele)
         run: dotnet test --project tests/JulOS.Display.Tests/JulOS.Display.Tests.csproj
       - name: Browser-Logik (node)
-        run: node --test tests/frontend
+        run: node --test "tests/frontend/*.test.mjs"
       - name: Agent-Skript uebersetzt
         run: python3 -m py_compile tools/julos-agent.py tools/julos-clip.py
 

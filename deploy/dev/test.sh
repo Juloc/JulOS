@@ -10,4 +10,4 @@ JULOS_TEST_RDP_HOST="rdp-target" \
 JULOS_TEST_SSH="127.0.0.1:${DEV_SSH_PORT:-42222}" \
   dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj "$@"
 # Groessen-Logik des Handy-Clients (reines JavaScript, braucht nur node)
-if command -v node >/dev/null; then node --test tests/frontend; else echo "node fehlt: tests/frontend uebersprungen"; fi
+if command -v node >/dev/null; then node --test "tests/frontend/*.test.mjs"; else echo "node fehlt: tests/frontend uebersprungen"; fi

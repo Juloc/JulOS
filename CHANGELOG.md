@@ -4,7 +4,7 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
-## [Unveröffentlicht]
+## [0.15.0] - 2026-11-20
 
 ### Sicherheit
 - **Dateien: Bestätigung vom Server (F-25)**: schreibende Aktionen (hochladen, überschreiben, umbenennen, Ordner anlegen, kopieren, verschieben, löschen) verlangen nicht mehr ein Flag des Browsers, sondern wie die Host-Aktionen zwei Schritte: `POST /api/files/remote/prepare` prüft alles und liefert ein Token (60 s, einmalig, nur sein SHA-256 im Speicher, gebunden an Sitzung, Aktion und die genaue Anfrage) samt Zusammenfassung (Host, Pfade, Anzahl, Namen, die ersetzt würden, Ordner mit Inhalt); erst die Aktion mit dem Token führt aus. Geänderte Pfade oder Aktion, eine andere Sitzung, Wiederverwendung und Ablauf werden abgelehnt; `recursive` und `overwrite` nur, wenn der Server sie beim Vorbereiten gezeigt hat. `POST remote/plan` entfällt (ist in `prepare` aufgegangen), `confirm` entfällt. Desktop-Fenster und Handy-Seite sind auf den Zweischritt umgestellt.

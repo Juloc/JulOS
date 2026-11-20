@@ -547,7 +547,7 @@ StandardInput=socket
 StandardOutput=socket
 StandardError=journal
 TimeoutStopSec=30
-ProtectKernelModules=yes
+# No ProtectKernelModules here: installing a kernel package writes /lib/modules, and that is a confirmed action of the word updates
 LockPersonality=yes
 UNIT
   # The sandbox would hide /home and give the helper its own /tmp. For files as root that would be a lie (the Files app would show an empty /home and a private /tmp),

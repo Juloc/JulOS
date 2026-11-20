@@ -4,6 +4,11 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [0.19.2] - 2026-11-20
+
+### Behoben
+- **Kernel-Updates über JulOS scheiterten** (`mkdir: cannot create directory '/lib/modules/…': Read-only file system`): Der Dienst des Root-Helfers hatte `ProtectKernelModules=yes`, das `/lib/modules` schreibgeschützt macht. Der Installer setzt die Vorgabe im Helfer-Dienst nicht mehr (der Agent-Dienst behält sie). **Bestehende Hosts:** Die Dienstdatei `/etc/systemd/system/julos-agent-helper@.service` wird nur vom Installer geschrieben; Hosts, auf denen Kernel-Updates über JulOS laufen sollen, brauchen einen erneuten Installer-Lauf (oder die Zeile `ProtectKernelModules=yes` dort löschen und `systemctl daemon-reload`). Auf cubi ist es erledigt.
+
 ## [0.19.1] - 2026-11-20
 
 ### Behoben

@@ -12,8 +12,8 @@ internal sealed record OpenRequest(Guid? Connection, string? Password, string? A
 /// <summary>HostKey: known (wie gemerkt), remembered (erstmals bestaetigt und gemerkt), replaced (geaenderten Schluessel bestaetigt). HostLoginSaved: das getippte Passwort wurde als Passwort des Host-Logins gespeichert.</summary>
 internal sealed record OpenResponse(string Home, string HostKey, string? Fingerprint, string? Algorithm, bool? HostLoginSaved = null);
 internal sealed record CloseRequest(Guid? Connection);
-internal sealed record MkdirRequest(Guid? Connection, string? Dir, string? Name, string? Token);
-internal sealed record RenameRequest(Guid? Connection, string? Path, string? Name, bool? Overwrite, string? Token);
+internal sealed record MkdirRequest(Guid? Connection, string? Dir, string? Name, string? Token, bool? Acknowledged = null, string? Typed = null);
+internal sealed record RenameRequest(Guid? Connection, string? Path, string? Name, bool? Overwrite, string? Token, bool? Acknowledged = null, string? Typed = null);
 internal sealed record FileTarget(Guid? Connection, string? Dir);
 /// <summary>
 /// Schritt 1 jeder schreibenden Aktion. Action: upload, mkdir, rename, delete, copy, move. Je nach Aktion: Paths (Quellen), Dir (Ordner: Ziel beim Hochladen, Mkdir und Kopieren), Name (neuer Name), Names (Dateinamen
@@ -23,10 +23,12 @@ internal sealed record PrepareRequest(string? Action, Guid? Connection, string[]
 /// <summary>
 /// Root: einer der Orte ist ein Root-Ort (der Agent des Hosts arbeitet als root; die Seite warnt auffaellig).
 /// Die Bestaetigung: Token (60 s, einmal; im Server nur sein SHA-256) und was genau geschaehe (so wie der Server es geprueft hat: Host, Ziel-Host, Pfade, Anzahl, Groesse, Namen, die ersetzt wuerden, ein Ordner mit Inhalt).
+/// ConfirmLevel: routine, dangerous, critical. ConfirmMode: was der zweite Schritt verlangt (click: nichts, check: <c>acknowledged</c>, type: <c>typed</c> mit TypeToConfirm). ConfirmWarn und ConfirmCritical: Schluessel der Warntexte.
 /// </summary>
-internal sealed record PrepareResponse(string Token, int ExpiresIn, string Action, string Host, string? TargetHost, string[] Paths, string? Dir, string? Name, string[]? Names, int Files, int Directories, int Links, long Bytes, string[] Conflicts, bool NonEmpty, bool Root = false);
-internal sealed record DeleteRequest(Guid? Connection, string[]? Paths, bool? Recursive, string? Token);
-internal sealed record CopyRequest(Guid? Connection, string[]? Paths, FileTarget? Target, bool? Move, bool? Overwrite, string? Token);
+internal sealed record PrepareResponse(string Token, int ExpiresIn, string Action, string Host, string? TargetHost, string[] Paths, string? Dir, string? Name, string[]? Names, int Files, int Directories, int Links, long Bytes, string[] Conflicts, bool NonEmpty, bool Root = false,
+    string ConfirmLevel = "routine", string ConfirmMode = "click", string? ConfirmWarn = null, string? ConfirmCritical = null, string? TypeToConfirm = null);
+internal sealed record DeleteRequest(Guid? Connection, string[]? Paths, bool? Recursive, string? Token, bool? Acknowledged = null, string? Typed = null);
+internal sealed record CopyRequest(Guid? Connection, string[]? Paths, FileTarget? Target, bool? Move, bool? Overwrite, string? Token, bool? Acknowledged = null, string? Typed = null);
 internal sealed record JobStartedDto(Guid Job);
 internal sealed record JobResultDto(int Files, int Directories);
 /// <summary>State: running, done, failed, cancelled. Error: Code bei failed.</summary>

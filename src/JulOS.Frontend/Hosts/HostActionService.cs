@@ -20,8 +20,11 @@ internal sealed record ActionDenied(int Status, string Code);
 /// <summary>Wahlmoeglichkeiten der Bestaetigung "alle Updates": Proxmox (wird immer vollstaendig aktualisiert, dist-upgrade), FullChoice (der Benutzer darf "auch Pakete mit neuen Abhaengigkeiten" dazunehmen), Full (Vorgabe), KeptBack (was <c>apt-get upgrade</c> zurueckhaelt) und Removals (was ein dist-upgrade entfernen wuerde).</summary>
 internal sealed record ActionOptions(bool Proxmox, bool FullChoice, bool Full, string[] KeptBack, int Removals);
 
-/// <summary>Was der Benutzer bestaetigen soll: genau Host, Aktion, Ziel; bei Neustart, Ausschalten und "alle Updates" muss er <see cref="TypeToConfirm"/> (den Rechnernamen) tippen.</summary>
-internal sealed record ActionConfirmation(string Token, int ExpiresIn, string Action, string? Target, string? TargetName, string Host, string? TypeToConfirm, string[] Warnings, bool ReadOnly, ActionOptions? Options = null);
+/// <summary>
+/// Was der Benutzer bestaetigen soll: genau Host, Aktion, Ziel und die Stufe (<see cref="ConfirmInfo"/>: Routine, gefaehrlich, sehr gefaehrlich) mit dem, was <c>run</c> dafuer verlangt (nichts, das Haekchen oder
+/// den Rechnernamen). <see cref="TypeToConfirm"/> ist nur gesetzt, wenn der Name getippt werden muss.
+/// </summary>
+internal sealed record ActionConfirmation(string Token, int ExpiresIn, string Action, string? Target, string? TargetName, string Host, string? TypeToConfirm, string[] Warnings, bool ReadOnly, ConfirmInfo Confirm, ActionOptions? Options = null);
 
 /// <summary>Die Fehlerzusammenfassung eines apt-Laufs, aus dem Protokoll des Agenten gelesen: E:-Zeilen, betroffene und zurueckgehaltene Pakete, offene Fragen, Sperre.</summary>
 internal sealed record ActionSummary(string[] Errors, string[] FailedPackages, string[] KeptBack, bool ConfigQuestion, bool Locked, int Installed);
@@ -62,9 +65,9 @@ internal sealed class HostActionJob(string id, Guid hostId, Guid userId, string 
 /// der Agent und sein Helfer pruefen lokal noch einmal. Jede Anfrage, Ablehnung und jedes Ergebnis steht im Verlauf (host_audit). Pro Host laeuft nur eine schreibende Aktion.
 /// </summary>
 internal sealed class HostActionService(AgentLinks links, AgentStore agents, HostStore hosts, HostAuditStore audit, HostInfoService info, SettingsStore settings, IConfiguration config,
-    TimeProvider time, HostActionOptions options, ILogger<HostActionService> log)
+    TimeProvider time, HostActionOptions options, SecurityConfig security, ILogger<HostActionService> log)
 {
-    private sealed record Pending(Guid UserId, Guid SessionId, Guid HostId, string Action, string? Target, string? Expected, int Lines, DateTimeOffset Expires);
+    private sealed record Pending(Guid UserId, Guid SessionId, Guid HostId, string Action, string? Target, string? Expected, ConfirmInfo Confirm, int Lines, DateTimeOffset Expires);
     private sealed record Gate(HostRecord Host, AgentRecord Agent, AgentLink Link, HostActionDef Def);
 
     private readonly ConcurrentDictionary<string, Pending> _confirmations = new();      // Hash der Bestaetigung -> was sie erlaubt
@@ -130,7 +133,7 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
     }
 
     /// <summary>Das Ziel muss in der Liste stehen, die der Agent selbst gemeldet hat (Paket der Update-Liste, Dienst der Dienstliste, Container der Containerliste). Gibt den Anzeigenamen und Warnungen zurueck.</summary>
-    private sealed record Checked(string? Name, string[] Warnings, ActionOptions? Options, ActionDenied? Denied)
+    private sealed record Checked(string? Name, string[] Warnings, ActionOptions? Options, ActionDenied? Denied, bool JulOs = false)
     {
         public static Checked Deny(int status, string code) => new(null, [], null, new ActionDenied(status, code));
         public static Checked Pass(string? name, params string[] warnings) => new(name, warnings, null, null);
@@ -161,7 +164,7 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
                 if (g.Def.Name is "service.stop" or "service.restart" && target!.StartsWith("julos-agent", StringComparison.Ordinal)) return Checked.Deny(409, "protected_unit");
                 var r = await info.GetAsync(userId, g.Host.Id, HostInfoEndpoints.Units, true, ct);
                 if (r?.Data is not { } list || r.State != "ok") return Checked.Deny(409, "list_unavailable");
-                return list.Units.Any(x => x.Unit == target) ? Checked.Pass(target) : Checked.Deny(404, "unknown_target");
+                return list.Units.Any(x => x.Unit == target) ? Checked.Pass(target) with { JulOs = IsJulOsUnit(target) } : Checked.Deny(404, "unknown_target");
             }
             case HostTarget.Container:
             {
@@ -169,10 +172,23 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
                 if (r?.Data is not { } d || r.State != "ok") return Checked.Deny(409, "list_unavailable");
                 if (d.Containers.FirstOrDefault(c => c.Id == target) is not { } c) return Checked.Deny(404, "unknown_target");
                 if (g.Def.Name is "docker.stop" or "docker.restart" && HostActions.LooksLikeJulOs(c.Project, c.Image)) warnings.Add("julos_group");
-                return Checked.Pass(c.Name.Length > 0 ? c.Name : target, [.. warnings]);
+                return Checked.Pass(c.Name.Length > 0 ? c.Name : target, [.. warnings]) with { JulOs = HostActions.LooksLikeJulOs(c.Project, c.Image) };
             }
             default: return Checked.Pass(null);
         }
+    }
+
+    /// <summary>Ein Dienst von JulOS selbst (der Agent ist ohnehin gesperrt): sein Stoppen oder Neustarten saegt am eigenen Ast.</summary>
+    private static bool IsJulOsUnit(string? unit) => unit is not null && unit.StartsWith("julos", StringComparison.OrdinalIgnoreCase) && !unit.StartsWith("julos-agent", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Laeuft JulOS auf diesem Host? Erkennbar am Container oder Dienst von JulOS in dem, was der Agent zuletzt gemeldet hat (zwischengespeichert, nur beim Ausschalten gefragt). Nicht erkennbar heisst nicht "nein":
+    /// dann gilt die Stufe "gefaehrlich", nicht "sehr gefaehrlich".
+    /// </summary>
+    private async Task<bool> RunsJulOsAsync(Guid userId, Gate g, CancellationToken ct)
+    {
+        if (await info.GetAsync(userId, g.Host.Id, HostInfoEndpoints.Docker, false, ct) is { State: "ok", Data: { } d } && d.Containers.Any(c => HostActions.LooksLikeJulOs(c.Project, c.Image))) return true;
+        return await info.GetAsync(userId, g.Host.Id, HostInfoEndpoints.Units, false, ct) is { State: "ok", Data: { } u } && u.Units.Any(x => IsJulOsUnit(x.Unit));
     }
 
     private static string AuditTarget(string? target, string? name) => name is not null && name != target && target is not null ? $"{name} ({target})" : target ?? "";
@@ -187,20 +203,22 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
         target = string.IsNullOrWhiteSpace(target) ? null : target;
         var (gate, denied) = await GateAsync(who, hostId, actionName, target, ct);
         if (gate is null) return (null, denied);
-        var (name, warnings, options0, bad) = await CheckTargetAsync(who.UserId, gate, target, ct);
+        var (name, warnings, options0, bad, julos) = await CheckTargetAsync(who.UserId, gate, target, ct);
         if (bad is not null) { await TryAudit(who.UserId, gate.Host, gate.Def.Name, target, "denied", bad.Code, null, ct); return (null, bad); }
 
         var now = time.GetUtcNow();
         foreach (var (key, p) in _confirmations) if (p.Expires <= now) _confirmations.TryRemove(key, out _);       // abgelaufene vergessen
         if (_confirmations.Count(c => c.Value.UserId == who.UserId) >= MaxPendingPerUser) return (null, new(429, "too_many"));
 
-        var typed = gate.Def.RequiresTyping(target) ? HostName(gate) : null;
+        var runsJulOs = gate.Def.Name == "power.poweroff" && await RunsJulOsAsync(who.UserId, gate, ct);
+        var confirm = ConfirmPolicy.ForHostAction(gate.Def.Name, security.ConfirmMode, new HostFacts(runsJulOs, julos));
+        var typed = confirm.Demand == ConfirmDemand.Type ? HostName(gate) : null;
         var token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).Replace('+', '-').Replace('/', '_').TrimEnd('=');
         var expires = now + options.ConfirmLifetime;
         var n = Math.Clamp(lines ?? 100, 10, 200);
-        _confirmations[Hash(token)] = new Pending(who.UserId, who.Id, hostId, gate.Def.Name, target, typed, n, expires);
+        _confirmations[Hash(token)] = new Pending(who.UserId, who.Id, hostId, gate.Def.Name, target, typed, confirm, n, expires);
         await TryAudit(who.UserId, gate.Host, gate.Def.Name, AuditTarget(target, name), "prepared", null, null, ct);
-        return (new ActionConfirmation(token, (int)options.ConfirmLifetime.TotalSeconds, gate.Def.Name, target, name, gate.Host.Name, typed, warnings, gate.Def.ReadOnly, options0), null);
+        return (new ActionConfirmation(token, (int)options.ConfirmLifetime.TotalSeconds, gate.Def.Name, target, name, gate.Host.Name, typed, warnings, gate.Def.ReadOnly, confirm, options0), null);
     }
 
     /// <summary>Der Name, den der Benutzer zur Bestaetigung tippen soll: der Rechnername, den der Agent meldet, sonst der Name des Hosts in JulOS.</summary>
@@ -210,7 +228,7 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
 
     // ---------------------------------------------------------------- Schritt 2: ausfuehren
 
-    public async Task<(HostActionJob? Job, ActionDenied? Denied)> RunAsync(SessionIdentity who, Guid hostId, string? token, string? actionName, string? target, string? typed, bool full, CancellationToken ct)
+    public async Task<(HostActionJob? Job, ActionDenied? Denied)> RunAsync(SessionIdentity who, Guid hostId, string? token, string? actionName, string? target, string? typed, bool acknowledged, bool full, CancellationToken ct)
     {
         target = string.IsNullOrWhiteSpace(target) ? null : target;
         if (await hosts.GetAsync(who.UserId, hostId, ct) is not { } host) return (null, new(404, "host_not_found"));
@@ -222,16 +240,22 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
         if (string.IsNullOrEmpty(token) || token.Length > 100 || !_confirmations.TryRemove(Hash(token), out var p)) return await No(403, "confirmation_invalid");   // unbekannt oder schon benutzt: die Bestaetigung gilt einmal
         if (p.Expires <= time.GetUtcNow()) return await No(403, "confirmation_expired");
         if (p.UserId != who.UserId || p.SessionId != who.Id || p.HostId != hostId || p.Action != actionName || p.Target != target) return await No(403, "confirmation_mismatch");
-        if (p.Expected is not null && !string.Equals(typed?.Trim(), p.Expected, StringComparison.OrdinalIgnoreCase))
+        // Die Stufe verlangt, was der Server beim Vorbereiten genannt hat: das Haekchen oder den Rechnernamen (der Browser darf es nicht allein tragen). Fehlt es, bleibt die Bestaetigung (sie gilt weiter bis zum Ablauf).
+        if (p.Confirm.Demand == ConfirmDemand.Check && !acknowledged || p.Expected is not null && string.IsNullOrWhiteSpace(typed))
         {
-            _confirmations[Hash(token)] = p;                    // nur das Tippen war falsch: die Bestaetigung bleibt (sie gilt weiter bis zum Ablauf)
+            _confirmations[Hash(token)] = p;
+            return await No(400, "confirm_required");
+        }
+        if (p.Expected is not null && !string.Equals(typed!.Trim(), p.Expected, StringComparison.OrdinalIgnoreCase))
+        {
+            _confirmations[Hash(token)] = p;
             return await No(400, "typed_mismatch");
         }
 
         // Alles noch einmal: zwischen Schritt 1 und 2 kann sich etwas geaendert haben (Pause, Stufe, Verbindung)
         var (gate, denied) = await GateAsync(who, hostId, p.Action, p.Target, ct);
         if (gate is null) return (null, denied);
-        var (name, _, options0, bad) = await CheckTargetAsync(who.UserId, gate, p.Target, ct);
+        var (name, _, options0, bad, _) = await CheckTargetAsync(who.UserId, gate, p.Target, ct);
         if (bad is not null) { await TryAudit(who.UserId, host, gate.Def.Name, p.Target, "denied", bad.Code, null, ct); return (null, bad); }
         // dist-upgrade: auf Proxmox immer, sonst nur, wenn der Benutzer es in der Bestaetigung ausdruecklich angehakt hat
         var useFull = gate.Def.Name == "updates.install" && p.Target == HostActions.AllPackages && (options0?.Proxmox == true || full);
@@ -239,7 +263,7 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
         var id = Guid.NewGuid().ToString("N");
         if (!_busy.TryAdd(hostId, id)) return await No(409, "busy");
         var job = new HostActionJob(id, hostId, who.UserId, gate.Def.Name, p.Target, name, time.GetUtcNow(), host.Name, useFull);
-        try { await audit.AddAsync(who.UserId, hostId, host.Name, gate.Def.Name, AuditTargetOf(job), "started", null, id, ct); }
+        try { await audit.AddAsync(who.UserId, hostId, host.Name, gate.Def.Name, AuditTargetOf(job), "started", p.Confirm.Audit, id, ct); }
         catch (Exception e) when (e is Npgsql.NpgsqlException or InvalidOperationException)
         {
             _busy.TryRemove(hostId, out _);                      // ohne Eintrag im Verlauf geschieht nichts

@@ -7,8 +7,9 @@ using JulOS.Frontend.Auth;
 namespace JulOS.Frontend.Hosts;
 
 internal sealed record ActionPrepareRequest(string? Action, string? Target, int? Lines);
-internal sealed record ActionRunRequest(string? Token, string? Action, string? Target, string? Typed, bool? Full = null);
-internal sealed record ActionConfirmationResponse(string Token, int ExpiresIn, string Action, string? Target, string? TargetName, string Host, string? TypeToConfirm, string[] Warnings, bool ReadOnly, ActionOptions? Options = null);
+internal sealed record ActionRunRequest(string? Token, string? Action, string? Target, string? Typed, bool? Full = null, bool? Acknowledged = null);
+/// <summary>ConfirmLevel: routine, dangerous, critical. ConfirmMode: was <c>run</c> verlangt (click: nichts, check: Haekchen, type: Rechnername). ConfirmWarn und ConfirmCritical: Schluessel der Warntexte (die Seite uebersetzt sie).</summary>
+internal sealed record ActionConfirmationResponse(string Token, int ExpiresIn, string Action, string? Target, string? TargetName, string Host, string? TypeToConfirm, string[] Warnings, bool ReadOnly, string ConfirmLevel, string ConfirmMode, string? ConfirmWarn, string? ConfirmCritical, ActionOptions? Options = null);
 internal sealed record ActionStarted(string Job, string State);
 internal sealed record ActionResultDto(bool Ok, bool Accepted, bool Already, bool? Updated, bool RebootRequired, int? Count, string[]? Lines, string? Output, string? Name, string? Image,
     ActionSummary? Summary = null, string[]? Log = null, bool NeedsRepair = false, bool Full = false);
@@ -45,7 +46,7 @@ internal static class HostActionEndpoints
         ["agent_not_permitted"] = "Der Agent erlaubt diese Aktion auf dem Rechner nicht.", ["busy"] = "Auf diesem Host läuft schon eine Aktion.", ["unknown_target"] = "Das Ziel steht nicht in der Liste des Agenten.",
         ["list_unavailable"] = "Die Liste des Agenten ist gerade nicht lesbar.", ["protected_unit"] = "Der Agent und sein Helfer lassen sich nicht über sich selbst stoppen.", ["too_many"] = "Zu viele offene Bestätigungen.",
         ["confirmation_invalid"] = "Die Bestätigung gilt nicht (mehr).", ["confirmation_expired"] = "Die Bestätigung ist abgelaufen.", ["confirmation_mismatch"] = "Die Bestätigung gehört zu etwas anderem.",
-        ["typed_mismatch"] = "Der getippte Name stimmt nicht.", ["audit_failed"] = "Der Verlauf ließ sich nicht schreiben, die Aktion wurde nicht ausgeführt.", ["invalid_level"] = "Ungültige Stufe.",
+        ["typed_mismatch"] = "Der getippte Name stimmt nicht.", ["confirm_required"] = "Bitte erst bestätigen (Haken setzen oder den Namen tippen).", ["audit_failed"] = "Der Verlauf ließ sich nicht schreiben, die Aktion wurde nicht ausgeführt.", ["invalid_level"] = "Ungültige Stufe.",
         ["rate_limited"] = "Zu viele Anfragen, bitte kurz warten.", ["job_not_found"] = "Auftrag nicht gefunden.",
         ["proxmox_whole"] = "Proxmox wird nur als Ganzes aktualisiert, nicht Paket für Paket.",
     };
@@ -71,7 +72,7 @@ internal static class HostActionEndpoints
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (!hits.Allow("host-action:" + id.UserId, PerMinute, Minute)) return Fail(429, "rate_limited");
             var (value, denied) = await svc.PrepareAsync(id, host, body.Action, body.Target, body.Lines, ctx.RequestAborted);
-            return value is null ? Fail(denied!) : Results.Json(new ActionConfirmationResponse(value.Token, value.ExpiresIn, value.Action, value.Target, value.TargetName, value.Host, value.TypeToConfirm, value.Warnings, value.ReadOnly, value.Options), AppJson.Default.ActionConfirmationResponse);
+            return value is null ? Fail(denied!) : Results.Json(new ActionConfirmationResponse(value.Token, value.ExpiresIn, value.Action, value.Target, value.TargetName, value.Host, value.TypeToConfirm, value.Warnings, value.ReadOnly, value.Confirm.LevelName, value.Confirm.ModeName, value.Confirm.Warn, value.Confirm.Critical, value.Options), AppJson.Default.ActionConfirmationResponse);
         });
 
         // Schritt 2: mit der Bestaetigung ausfuehren. Antwort sofort (202), der Fortschritt kommt ueber den Auftrag
@@ -79,7 +80,7 @@ internal static class HostActionEndpoints
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (!hits.Allow("host-action:" + id.UserId, PerMinute, Minute)) return Fail(429, "rate_limited");
-            var (job, denied) = await svc.RunAsync(id, host, body.Token, body.Action, body.Target, body.Typed, body.Full == true, ctx.RequestAborted);
+            var (job, denied) = await svc.RunAsync(id, host, body.Token, body.Action, body.Target, body.Typed, body.Acknowledged == true, body.Full == true, ctx.RequestAborted);
             return job is null ? Fail(denied!) : Results.Json(new ActionStarted(job.Id, job.State), AppJson.Default.ActionStarted, statusCode: 202);
         });
 

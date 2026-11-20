@@ -4,6 +4,7 @@ using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
 using JulOS.Frontend.Auth;
 using JulOS.Integrations.Display.Rdp.Drive;
+using JulOS.Frontend.Files;
 using JulOS.Integrations.Ssh;
 
 namespace JulOS.Frontend.Connections;
@@ -60,7 +61,7 @@ internal static class ConnectionEndpoints
             return Results.Json(ToDto(c), AppJson.Default.ConnectionDto);
         });
 
-        app.MapPut("/api/connections/{connection:guid}", async (Guid connection, ConnectionRequest body, HttpContext ctx, ConnectionStore store, HostStore hosts, HostPolicy policy, SecretBox box, DriveRoot drives) =>
+        app.MapPut("/api/connections/{connection:guid}", async (Guid connection, ConnectionRequest body, HttpContext ctx, ConnectionStore store, HostStore hosts, HostPolicy policy, SecretBox box, DriveRoot drives, SftpPool pool) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             var before = await store.GetAsync(id.UserId, connection, ctx.RequestAborted);
@@ -100,6 +101,7 @@ internal static class ConnectionEndpoints
             {
                 await store.SetCertFingerprintAsync(id.UserId, connection, null, ctx.RequestAborted);
             }
+            await pool.InvalidateAsync(id.UserId, connection);          // die Dateien-App nutzt danach nur noch die neuen Zugangsdaten und den neuen Host-Schluessel
             return Results.Json(ToDto(c), AppJson.Default.ConnectionDto);
         });
 
@@ -142,10 +144,11 @@ internal static class ConnectionEndpoints
             return Results.Json(ToDto(c), AppJson.Default.ConnectionDto);
         });
 
-        app.MapDelete("/api/connections/{connection:guid}", async (Guid connection, HttpContext ctx, ConnectionStore store) =>
+        app.MapDelete("/api/connections/{connection:guid}", async (Guid connection, HttpContext ctx, ConnectionStore store, SftpPool pool) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (!await store.DeleteAsync(id.UserId, connection, ctx.RequestAborted)) return Error(404, "Verbindung nicht gefunden.");
+            await pool.InvalidateAsync(id.UserId, connection);          // die Dateien-App benutzt keine Sitzung mehr mit den alten Zugangsdaten
             return Results.NoContent();
         });
     }

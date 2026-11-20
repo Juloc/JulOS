@@ -251,12 +251,12 @@ internal static class RemoteFileEndpoints
         });
 
         // Upload im Strom (roher Koerper): erst unter einem temporaeren Namen, dann umbenennen. Ein vorhandenes Ziel nur mit overwrite=1; confirm=1 sagt, dass die Seite gefragt hat.
-        app.MapPost("/api/files/remote/upload", async (Guid? c, string? dir, string? name, string? overwrite, string? confirm, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, FilesOptions options, ILogger<FileAuditStore> log) =>
+        app.MapPost("/api/files/remote/upload", async (Guid? c, string? dir, string? name, string? overwrite, string? token, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, FilesOptions options, FileConfirmations conf, ILogger<FileAuditStore> log) =>
         {
             if (RateLimited(ctx, hits, "transfer", 60)) return Fail("rate_limited");
             var (x, fail) = await ResolveAsync(ctx, c, connections, policy);
             if (x is null) return fail!;
-            var denied = await WriteGateAsync(options, audit, log, x, "upload", dir, confirm == "1");
+            var denied = await WriteOnAsync(options, audit, log, x, "upload", dir);
             if (denied is not null) return denied;
             if (!RemotePath.ValidName(name)) return Fail("invalid_name");
             if (ctx.Request.ContentLength is > 0 and var len && len > options.MaxBytes) return Fail("too_large");
@@ -272,7 +272,9 @@ internal static class RemoteFileEndpoints
                 var there = await lease.Session.StatAsync(folder, follow: true, ctx.RequestAborted);
                 if (there is null) return Fail("not_found");
                 if (there.Kind != RemoteKind.Directory) return Fail("not_a_directory");
+                if (await RedeemAsync(conf, audit, log, x, token, FileConfirmations.Canon("upload", x.Connection.Id, null, [], folder, null), "upload", name, false, overwrite == "1", target) is { } refused) return refused;
                 var existed = await lease.Session.StatAsync(target, follow: false, ctx.RequestAborted) is not null;
+                if (await StartedAsync(audit, log, x, "upload", target, 1) is { } stopped) return stopped;
                 var bytes = await FileTransfer.WriteAtomicAsync(lease.Session, target, ctx.Request.Body, overwrite == "1", options.MaxBytes, FileLimits.Default.BufferSize, null, ctx.RequestAborted);
                 await AuditAsync(audit, log, x.Id.UserId, x.Connection, "upload", target, "ok", existed ? "overwrite" : null, 1);
                 return Results.Json(new UploadedDto(target, bytes, existed), AppJson.Default.UploadedDto);
@@ -286,12 +288,12 @@ internal static class RemoteFileEndpoints
             finally { LeaveStream(x.Id.UserId); }
         });
 
-        app.MapPost("/api/files/remote/mkdir", async (MkdirRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, FilesOptions options, ILogger<FileAuditStore> log) =>
+        app.MapPost("/api/files/remote/mkdir", async (MkdirRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, FilesOptions options, FileConfirmations conf, ILogger<FileAuditStore> log) =>
         {
             if (RateLimited(ctx, hits, "write", 120)) return Fail("rate_limited");
             var (x, fail) = await ResolveAsync(ctx, body.Connection, connections, policy);
             if (x is null) return fail!;
-            var denied = await WriteGateAsync(options, audit, log, x, "mkdir", body.Dir, body.Confirm == true);
+            var denied = await WriteOnAsync(options, audit, log, x, "mkdir", body.Dir);
             if (denied is not null) return denied;
             if (!RemotePath.ValidName(body.Name)) return Fail("invalid_name");
             string? target = null;
@@ -301,6 +303,8 @@ internal static class RemoteFileEndpoints
                 var folder = RemotePath.Normalize(body.Dir, lease.Session.HomeDirectory);
                 if (folder is null) return Fail("invalid_path");
                 target = RemotePath.Join(folder, body.Name!);
+                if (await RedeemAsync(conf, audit, log, x, body.Token, FileConfirmations.Canon("mkdir", x.Connection.Id, null, [], folder, body.Name), "mkdir", null, false, false, target) is { } refused) return refused;
+                if (await StartedAsync(audit, log, x, "mkdir", target, 1) is { } stopped) return stopped;
                 await lease.Session.CreateDirectoryAsync(target, ctx.RequestAborted);
                 await AuditAsync(audit, log, x.Id.UserId, x.Connection, "mkdir", target, "ok", null, 1);
                 return Results.Json(new PathDto(target), AppJson.Default.PathDto);
@@ -313,12 +317,12 @@ internal static class RemoteFileEndpoints
         });
 
         // Umbenennen im selben Ordner (Verschieben in einen anderen Ordner ist "copy" mit move=true)
-        app.MapPost("/api/files/remote/rename", async (RenameRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, FilesOptions options, ILogger<FileAuditStore> log) =>
+        app.MapPost("/api/files/remote/rename", async (RenameRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, FilesOptions options, FileConfirmations conf, ILogger<FileAuditStore> log) =>
         {
             if (RateLimited(ctx, hits, "write", 120)) return Fail("rate_limited");
             var (x, fail) = await ResolveAsync(ctx, body.Connection, connections, policy);
             if (x is null) return fail!;
-            var denied = await WriteGateAsync(options, audit, log, x, "rename", body.Path, body.Confirm == true);
+            var denied = await WriteOnAsync(options, audit, log, x, "rename", body.Path);
             if (denied is not null) return denied;
             if (!RemotePath.ValidName(body.Name)) return Fail("invalid_name");
             try
@@ -328,6 +332,7 @@ internal static class RemoteFileEndpoints
                 if (from is null || from == "/") return Fail("invalid_path");
                 var to = RemotePath.Join(RemotePath.Parent(from), body.Name!);
                 if (to == from) return Fail("same_place");
+                if (await RedeemAsync(conf, audit, log, x, body.Token, FileConfirmations.Canon("rename", x.Connection.Id, null, [from], null, body.Name), "rename", null, false, body.Overwrite == true, from) is { } refused) return refused;
                 var source = await lease.Session.StatAsync(from, follow: false, ctx.RequestAborted);
                 if (source is null) return Fail("not_found");
                 var there = await lease.Session.StatAsync(to, follow: false, ctx.RequestAborted);
@@ -335,6 +340,7 @@ internal static class RemoteFileEndpoints
                 if (there is not null && (there.Kind == RemoteKind.Link || source.Kind == RemoteKind.Link)) return Fail("target_is_link");     // ein Link wird nie ersetzt und ersetzt nie etwas
                 if (there is not null && (body.Overwrite != true)) return Fail("exists");
                 if (there is not null && (there.Kind == RemoteKind.Directory || source.Kind == RemoteKind.Directory)) return Fail("type_mismatch");
+                if (await StartedAsync(audit, log, x, "rename", $"{from} → {body.Name}", 1) is { } stopped) return stopped;
                 await lease.Session.RenameAsync(from, to, body.Overwrite == true, source.Kind == RemoteKind.Link, ctx.RequestAborted);
                 await AuditAsync(audit, log, x.Id.UserId, x.Connection, "rename", $"{from} → {body.Name}", "ok", there is not null ? "overwrite" : null, 1);
                 return Results.Json(new PathDto(to), AppJson.Default.PathDto);
@@ -346,62 +352,119 @@ internal static class RemoteFileEndpoints
             }
         });
 
-        // Vorab: was wuerde ein Loeschen, Kopieren oder Verschieben betreffen (Anzahl, Groesse, Namen, die es am Ziel schon gibt)? Nur lesend; die Seite zeigt es in der Bestaetigung.
-        app.MapPost("/api/files/remote/plan", async (PlanRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, ILogger<FileAuditStore> log) =>
+        // Schritt 1 jeder schreibenden Aktion: der Server prueft alles (Schalter, Verbindung, Pfade, Zahlen, Namen, die ersetzt wuerden, ein Ordner mit Inhalt) und stellt eine kurzlebige, einmalige Bestaetigung aus,
+        // gebunden an Sitzung, Aktion und diese Anfrage; die Seite zeigt genau diese Angaben. Erst der zweite Aufruf (upload, mkdir, rename, delete, copy) fuehrt mit dem Token aus.
+        app.MapPost("/api/files/remote/prepare", async (PrepareRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, FilesOptions options, FileConfirmations conf, ILogger<FileAuditStore> log) =>
         {
-            if (RateLimited(ctx, hits, "plan", 60)) return Fail("rate_limited");
-            if (body.Action is not ("delete" or "copy" or "move") || body.Paths is not { Length: > 0 and <= 500 }) return Fail("invalid_request");
+            if (RateLimited(ctx, hits, "prepare", 120)) return Fail("rate_limited");
+            var action = body.Action;
+            if (action is not ("upload" or "mkdir" or "rename" or "delete" or "copy" or "move")) return Fail("invalid_request");
             var (x, fail) = await ResolveAsync(ctx, body.Connection, connections, policy);
             if (x is null) return fail!;
+            var denied = await WriteOnAsync(options, audit, log, x, action, body.Paths is { Length: > 0 } ps ? Describe(ps) : body.Dir);
+            if (denied is not null) return denied;
             await using var leases = new Leases();
             try
             {
                 var src = await leases.AddAsync(LeaseAsync(x, null, null, pool, connections, box, factory, log, ctx.RequestAborted));
-                var paths = NormalizeAll(body.Paths);
-                if (paths is null) return Fail("invalid_path");
-                var count = await FileTransfer.CountAsync(src.Session, paths, FileLimits.Default, ctx.RequestAborted);
+                var home = src.Session.HomeDirectory;
+                string[] paths = [];
+                string? dir = null, name = null, targetHost = null;
+                string[]? names = null;
+                Guid? targetConnection = null;
+                var counts = new TreeCount(0, 0, 0, 0);
                 var conflicts = new List<string>();
                 var nonEmpty = false;
-                if (body.Action == "delete")
+                switch (action)
                 {
-                    foreach (var p in paths)
-                        if (await src.Session.StatAsync(p, follow: false, ctx.RequestAborted) is { Kind: RemoteKind.Directory } && (await src.Session.ListAsync(p, 1, ctx.RequestAborted)).Entries.Count > 0) nonEmpty = true;
+                    case "upload":
+                    {
+                        names = body.Names is { Length: > 0 and <= 100 } n && n.All(RemotePath.ValidName) ? [.. n.Distinct()] : null;
+                        if (names is null) return Fail("invalid_name");
+                        dir = RemotePath.Normalize(body.Dir, home);
+                        if (dir is null) return Fail("invalid_path");
+                        var there = await src.Session.StatAsync(dir, follow: true, ctx.RequestAborted);
+                        if (there is null) return Fail("not_found");
+                        if (there.Kind != RemoteKind.Directory) return Fail("not_a_directory");
+                        foreach (var f in names) if (await src.Session.StatAsync(RemotePath.Join(dir, f), follow: false, ctx.RequestAborted) is not null) conflicts.Add(f);
+                        counts = new TreeCount(names.Length, 0, 0, 0);
+                        break;
+                    }
+                    case "mkdir":
+                    {
+                        if (!RemotePath.ValidName(body.Name)) return Fail("invalid_name");
+                        dir = RemotePath.Normalize(body.Dir, home);
+                        if (dir is null) return Fail("invalid_path");
+                        name = body.Name;
+                        counts = new TreeCount(0, 1, 0, 0);
+                        break;
+                    }
+                    case "rename":
+                    {
+                        if (!RemotePath.ValidName(body.Name) || body.Paths is not { Length: 1 }) return Fail(body.Paths is { Length: 1 } ? "invalid_name" : "invalid_request");
+                        var from = RemotePath.Normalize(body.Paths[0], null);
+                        if (from is null || from == "/") return Fail("invalid_path");
+                        paths = [from]; name = body.Name;
+                        var source = await src.Session.StatAsync(from, follow: false, ctx.RequestAborted);
+                        if (source is null) return Fail("not_found");
+                        if (await src.Session.StatAsync(RemotePath.Join(RemotePath.Parent(from), name!), follow: false, ctx.RequestAborted) is not null) conflicts.Add(name!);
+                        counts = new TreeCount(source.Kind == RemoteKind.File ? 1 : 0, source.Kind == RemoteKind.Directory ? 1 : 0, source.Kind == RemoteKind.Link ? 1 : 0, source.Size);
+                        break;
+                    }
+                    default:                                                   // delete, copy, move
+                    {
+                        if (body.Paths is not { Length: > 0 and <= 500 }) return Fail("invalid_request");
+                        var normalized = NormalizeAll(body.Paths);
+                        if (normalized is null) return Fail("invalid_path");
+                        paths = normalized;
+                        counts = await FileTransfer.CountAsync(src.Session, paths, Limits(options), ctx.RequestAborted);
+                        if (action == "delete")
+                        {
+                            foreach (var p in paths)
+                                if (await src.Session.StatAsync(p, follow: false, ctx.RequestAborted) is { Kind: RemoteKind.Directory } && (await src.Session.ListAsync(p, 1, ctx.RequestAborted)).Entries.Count > 0) nonEmpty = true;
+                            break;
+                        }
+                        if (body.Target is not { } t) return Fail("invalid_request");
+                        var same = t.Connection == x.Connection.Id;
+                        var (tx, tfail) = same ? (x, null) : await ResolveAsync(ctx, t.Connection, connections, policy);
+                        if (tx is null) return tfail!;
+                        var dst = same ? src : await leases.AddAsync(LeaseAsync(tx, null, null, pool, connections, box, factory, log, ctx.RequestAborted));
+                        dir = RemotePath.Normalize(t.Dir, dst.Session.HomeDirectory);
+                        if (dir is null) return Fail("invalid_path");
+                        targetConnection = t.Connection;
+                        targetHost = same ? null : HostName(tx.Connection);
+                        foreach (var p in paths)
+                            if (await dst.Session.StatAsync(RemotePath.Join(dir, RemotePath.NameOf(p)), follow: false, ctx.RequestAborted) is not null) conflicts.Add(RemotePath.NameOf(p));
+                        break;
+                    }
                 }
-                else
-                {
-                    if (body.Target is not { } t) return Fail("invalid_request");
-                    var same = t.Connection == x.Connection.Id;
-                    var (tx, tfail) = same ? (x, null) : await ResolveAsync(ctx, t.Connection, connections, policy);
-                    if (tx is null) return tfail!;
-                    var dst = same ? src : await leases.AddAsync(LeaseAsync(tx, null, null, pool, connections, box, factory, log, ctx.RequestAborted));
-                    var dir = RemotePath.Normalize(t.Dir, dst.Session.HomeDirectory);
-                    if (dir is null) return Fail("invalid_path");
-                    foreach (var p in paths)
-                        if (await dst.Session.StatAsync(RemotePath.Join(dir, RemotePath.NameOf(p)), follow: false, ctx.RequestAborted) is not null) conflicts.Add(RemotePath.NameOf(p));
-                }
-                return Results.Json(new PlanDto(count.Files, count.Directories, count.Links, count.Bytes, [.. conflicts], nonEmpty), AppJson.Default.PlanDto);
+                var token = conf.Issue(x.Id, FileConfirmations.Canon(action, x.Connection.Id, targetConnection, paths, dir, name), action, nonEmpty, conflicts.Count > 0, names);
+                if (token is null) return Fail("too_many_pending");
+                return Results.Json(new PrepareResponse(token, (int)conf.Lifetime.TotalSeconds, action, HostName(x.Connection), targetHost, paths, dir, name, names, counts.Files, counts.Directories, counts.Links, counts.Bytes, [.. conflicts], nonEmpty), AppJson.Default.PrepareResponse);
             }
             catch (Exception e) when (e is not OperationCanceledException)
             {
-                await AuditAsync(audit, log, x.Id.UserId, x.Connection, body.Action!, Describe(body.Paths), "failed", FileErrors.Code(e));
+                await AuditAsync(audit, log, x.Id.UserId, x.Connection, action, body.Paths is { Length: > 0 } q ? Describe(q) : body.Dir, "failed", FileErrors.Code(e));
                 return Fail(e);
             }
         });
 
-        app.MapPost("/api/files/remote/delete", async (DeleteRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, FileJobs jobs, HitCounter hits, FilesOptions options, ILogger<FileAuditStore> log) =>
+        app.MapPost("/api/files/remote/delete", async (DeleteRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, FileJobs jobs, HitCounter hits, FilesOptions options, FileConfirmations conf, ILogger<FileAuditStore> log) =>
         {
             if (RateLimited(ctx, hits, "write", 120)) return Fail("rate_limited");
             var (x, fail) = await ResolveAsync(ctx, body.Connection, connections, policy);
             if (x is null) return fail!;
-            var denied = await WriteGateAsync(options, audit, log, x, "delete", Describe(body.Paths), body.Confirm == true);
+            var denied = await WriteOnAsync(options, audit, log, x, "delete", Describe(body.Paths));
             if (denied is not null) return denied;
             if (body.Paths is not { Length: > 0 and <= 500 }) return Fail("invalid_request");
             var paths = NormalizeAll(body.Paths);
             if (paths is null) return Fail("invalid_path");
+            if (await RedeemAsync(conf, audit, log, x, body.Token, FileConfirmations.Canon("delete", x.Connection.Id, null, paths, null, null), "delete", null, body.Recursive == true, false, Describe(paths)) is { } refused) return refused;
             SftpPool.Lease lease;
             try { lease = await LeaseAsync(x, null, null, pool, connections, box, factory, log, ctx.RequestAborted); }
             catch (Exception e) when (e is not OperationCanceledException) { await AuditAsync(audit, log, x.Id.UserId, x.Connection, "delete", Describe(paths), "failed", FileErrors.Code(e)); return Fail(e); }
             var recursive = body.Recursive == true;
+            if (await StartedAsync(audit, log, x, "delete", Describe(paths)) is { } stopped) { await lease.DisposeAsync(); return stopped; }
             var job = jobs.Start(x.Id.UserId, "delete", HostName(x.Connection), async (j, ct) =>
             {
                 await using (lease) j.Result = await FileTransfer.DeleteAsync(lease.Session, paths, recursive, Limits(options), j.Progress, ct);
@@ -411,13 +474,13 @@ internal static class RemoteFileEndpoints
         });
 
         // Kopieren und Verschieben, auch von Host zu Host: der Server liest per SFTP von der Quelle und schreibt per SFTP aufs Ziel (im Strom, erst unter temporaerem Namen)
-        app.MapPost("/api/files/remote/copy", async (CopyRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, FileJobs jobs, HitCounter hits, FilesOptions options, ILogger<FileAuditStore> log) =>
+        app.MapPost("/api/files/remote/copy", async (CopyRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, FileJobs jobs, HitCounter hits, FilesOptions options, FileConfirmations conf, ILogger<FileAuditStore> log) =>
         {
             if (RateLimited(ctx, hits, "write", 120)) return Fail("rate_limited");
             var action = body.Move == true ? "move" : "copy";
             var (x, fail) = await ResolveAsync(ctx, body.Connection, connections, policy);
             if (x is null) return fail!;
-            var denied = await WriteGateAsync(options, audit, log, x, action, Describe(body.Paths), body.Confirm == true);
+            var denied = await WriteOnAsync(options, audit, log, x, action, Describe(body.Paths));
             if (denied is not null) return denied;
             if (body.Paths is not { Length: > 0 and <= 500 } || body.Target is not { } t) return Fail("invalid_request");
             var paths = NormalizeAll(body.Paths);
@@ -438,6 +501,9 @@ internal static class RemoteFileEndpoints
             var move = body.Move == true;
             var overwrite = body.Overwrite == true;
             var host = same ? HostName(x.Connection) : $"{HostName(x.Connection)} → {HostName(tx.Connection)}";
+            var refused = await RedeemAsync(conf, audit, log, x, body.Token, FileConfirmations.Canon(action, x.Connection.Id, t.Connection, paths, dir, null), action, null, false, overwrite, $"{Describe(paths)} → {dir}");
+            if (refused is null) refused = await StartedAsync(audit, log, x, action, $"{Describe(paths)} → {dir}", null, host);
+            if (refused is not null) { await src.DisposeAsync(); if (!same) await dst.DisposeAsync(); return refused; }
             var job = jobs.Start(x.Id.UserId, action, host, async (j, ct) =>
             {
                 await using (src) await using (same ? null : dst)
@@ -495,12 +561,39 @@ internal static class RemoteFileEndpoints
         return AuditAsync(audit, log, j.UserId, c, action, path, result, d, items, host);
     }
 
-    /// <summary>Schreiben nur mit JULOS_FILES_WRITE=on und nur mit der Bestaetigung der Seite. Eine Ablehnung wegen des Schalters kommt in den Verlauf.</summary>
-    private static async Task<IResult?> WriteGateAsync(FilesOptions options, FileAuditStore audit, ILogger log, Ctx x, string action, string? path, bool confirmed)
+    /// <summary>Schreiben nur mit JULOS_FILES_WRITE=on. Eine Ablehnung wegen des Schalters kommt in den Verlauf.</summary>
+    private static async Task<IResult?> WriteOnAsync(FilesOptions options, FileAuditStore audit, ILogger log, Ctx x, string action, string? path)
     {
-        if (!options.Write) { await AuditAsync(audit, log, x.Id.UserId, x.Connection, action, path, "denied", "write_off"); return Fail("write_off"); }
-        if (!confirmed) return Fail("confirm_required");
-        return null;
+        if (options.Write) return null;
+        await AuditAsync(audit, log, x.Id.UserId, x.Connection, action, path, "denied", "write_off");
+        return Fail("write_off");
+    }
+
+    /// <summary>
+    /// Loest die Bestaetigung ein (Schritt 2). Unbekannt, benutzt, abgelaufen oder fuer etwas anderes ausgestellt (andere Sitzung, Aktion, Pfade, Ziel, Name): abgelehnt und im Verlauf. Eine Ausfuehrung darf
+    /// recursive oder overwrite nur verlangen, wenn der Server beides beim Vorbereiten gezeigt hat; sonst gilt die Bestaetigung als fuer etwas anderes ausgestellt.
+    /// </summary>
+    private static async Task<IResult?> RedeemAsync(FileConfirmations conf, FileAuditStore audit, ILogger log, Ctx x, string? token, string canon, string action, string? uploadName, bool recursive, bool overwrite, string? path)
+    {
+        var r = conf.Take(x.Id, token, canon, action, uploadName, out var c);
+        if (r == ConfirmResult.Ok && ((recursive && !c!.NeedsRecursive) || (overwrite && !c!.NeedsOverwrite))) r = ConfirmResult.Mismatch;
+        if (r == ConfirmResult.Ok) return null;
+        var code = r switch { ConfirmResult.Expired => "confirmation_expired", ConfirmResult.Mismatch => "confirmation_mismatch", _ => "confirmation_invalid" };
+        await AuditAsync(audit, log, x.Id.UserId, x.Connection, action, path, "denied", code);
+        return Fail(code);
+    }
+
+    /// <summary>
+    /// Der Eintrag "started" VOR dem ersten schreibenden Schritt. Laesst er sich nicht schreiben, wird nichts ausgefuehrt (wie bei den Host-Aktionen); das Ergebnis kommt am Ende als eigener Eintrag.
+    /// </summary>
+    private static async Task<IResult?> StartedAsync(FileAuditStore audit, ILogger log, Ctx x, string action, string? path, int? items = null, string? host = null)
+    {
+        try { await audit.AddAsync(x.Id.UserId, x.Connection.Id, host ?? HostName(x.Connection), action, path, "started", null, items, CancellationToken.None); return null; }
+        catch (Exception e) when (e is Npgsql.NpgsqlException or InvalidOperationException)
+        {
+            log.LogError("Verlauf nicht geschrieben ({Type}): Aktion {Action} nicht ausgefuehrt", e.GetType().Name, action);
+            return Fail("audit_failed");
+        }
     }
 
     private static bool TryEnterStream(Guid user)

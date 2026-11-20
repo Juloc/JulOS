@@ -18,6 +18,7 @@ internal sealed class SftpPool(TimeProvider time, int maxPerUser, TimeSpan idle)
         public Task<ISftpFileSession>? Connecting;
         public ISftpFileSession? Session;
         public int Leases;
+        public bool Doomed;                 // aus dem Pool genommen, wird geschlossen, sobald die letzte Leihe zurueck ist
         public DateTimeOffset LastUsed;
     }
 
@@ -103,7 +104,8 @@ internal sealed class SftpPool(TimeProvider time, int maxPerUser, TimeSpan idle)
         lock (_gate)
         {
             entry.Leases--; entry.LastUsed = time.GetUtcNow();
-            if (!session.IsConnected && entry.Leases <= 0 && _entries.TryGetValue((entry.User, entry.Connection), out var cur) && cur == entry) { _entries.Remove((entry.User, entry.Connection)); drop = true; }
+            if (entry.Doomed && entry.Leases <= 0) drop = true;
+            else if (!session.IsConnected && entry.Leases <= 0 && _entries.TryGetValue((entry.User, entry.Connection), out var cur) && cur == entry) { _entries.Remove((entry.User, entry.Connection)); drop = true; }
         }
         if (drop) await session.DisposeAsync();
     }
@@ -115,6 +117,28 @@ internal sealed class SftpPool(TimeProvider time, int maxPerUser, TimeSpan idle)
         lock (_gate)
             if (_entries.TryGetValue((user, connection), out var e) && e.Leases == 0 && e.Connecting is null) { _entries.Remove((user, connection)); s = e.Session; }
         if (s is not null) await s.DisposeAsync();
+    }
+
+    /// <summary>
+    /// Nimmt die Sitzung dieser Verbindung aus dem Pool und schliesst sie: gleich, wenn sie niemand benutzt, sonst sobald die letzte Leihe (zum Beispiel ein laufender Auftrag) zurueck ist. Es wird nie wieder jemand
+    /// damit versorgt. Fuer eine geaenderte oder geloeschte Verbindung (die Zugangsdaten gelten nicht mehr) und das Ende einer App-Sitzung.
+    /// </summary>
+    public Task InvalidateAsync(Guid user, Guid connection) => InvalidateWhereAsync(e => e.User == user && e.Connection == connection);
+
+    /// <summary>Wie <see cref="InvalidateAsync"/> fuer alle Sitzungen eines Benutzers.</summary>
+    public Task InvalidateUserAsync(Guid user) => InvalidateWhereAsync(e => e.User == user);
+
+    private async Task InvalidateWhereAsync(Func<Entry, bool> match)
+    {
+        List<ISftpFileSession> close = [];
+        lock (_gate)
+            foreach (var e in _entries.Values.Where(match).ToList())
+            {
+                _entries.Remove((e.User, e.Connection));
+                e.Doomed = true;
+                if (e.Leases == 0 && e.Connecting is null && e.Session is not null) close.Add(e.Session);
+            }
+        foreach (var s in close) await s.DisposeAsync();
     }
 
     /// <summary>Schliesst alle Sitzungen ohne Leihe, die laenger als die Leerlaufzeit unbenutzt sind, und die abgerissenen. Gibt zurueck, wie viele.</summary>

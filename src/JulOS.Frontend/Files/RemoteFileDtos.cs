@@ -12,14 +12,20 @@ internal sealed record OpenRequest(Guid? Connection, string? Password, string? A
 /// <summary>HostKey: known (wie gemerkt), remembered (erstmals bestaetigt und gemerkt), replaced (geaenderten Schluessel bestaetigt).</summary>
 internal sealed record OpenResponse(string Home, string HostKey, string? Fingerprint, string? Algorithm);
 internal sealed record CloseRequest(Guid? Connection);
-internal sealed record MkdirRequest(Guid? Connection, string? Dir, string? Name, bool? Confirm);
-internal sealed record RenameRequest(Guid? Connection, string? Path, string? Name, bool? Overwrite, bool? Confirm);
+internal sealed record MkdirRequest(Guid? Connection, string? Dir, string? Name, string? Token);
+internal sealed record RenameRequest(Guid? Connection, string? Path, string? Name, bool? Overwrite, string? Token);
 internal sealed record FileTarget(Guid? Connection, string? Dir);
-internal sealed record PlanRequest(string? Action, Guid? Connection, string[]? Paths, FileTarget? Target);
-/// <summary>Was ein Auftrag betrifft; Conflicts: Namen, die es am Ziel schon gibt; NonEmpty: ein Ordner mit Inhalt ist dabei (Loeschen braucht dann recursive).</summary>
-internal sealed record PlanDto(int Files, int Directories, int Links, long Bytes, string[] Conflicts, bool NonEmpty);
-internal sealed record DeleteRequest(Guid? Connection, string[]? Paths, bool? Recursive, bool? Confirm);
-internal sealed record CopyRequest(Guid? Connection, string[]? Paths, FileTarget? Target, bool? Move, bool? Overwrite, bool? Confirm);
+/// <summary>
+/// Schritt 1 jeder schreibenden Aktion. Action: upload, mkdir, rename, delete, copy, move. Je nach Aktion: Paths (Quellen), Dir (Ordner: Ziel beim Hochladen, Mkdir und Kopieren), Name (neuer Name), Names (Dateinamen
+/// beim Hochladen), Target (Ziel von copy und move).
+/// </summary>
+internal sealed record PrepareRequest(string? Action, Guid? Connection, string[]? Paths, string? Dir, string? Name, string[]? Names, FileTarget? Target);
+/// <summary>
+/// Die Bestaetigung: Token (60 s, einmal; im Server nur sein SHA-256) und was genau geschaehe (so wie der Server es geprueft hat: Host, Ziel-Host, Pfade, Anzahl, Groesse, Namen, die ersetzt wuerden, ein Ordner mit Inhalt).
+/// </summary>
+internal sealed record PrepareResponse(string Token, int ExpiresIn, string Action, string Host, string? TargetHost, string[] Paths, string? Dir, string? Name, string[]? Names, int Files, int Directories, int Links, long Bytes, string[] Conflicts, bool NonEmpty);
+internal sealed record DeleteRequest(Guid? Connection, string[]? Paths, bool? Recursive, string? Token);
+internal sealed record CopyRequest(Guid? Connection, string[]? Paths, FileTarget? Target, bool? Move, bool? Overwrite, string? Token);
 internal sealed record JobStartedDto(Guid Job);
 internal sealed record JobResultDto(int Files, int Directories);
 /// <summary>State: running, done, failed, cancelled. Error: Code bei failed.</summary>

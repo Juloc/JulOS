@@ -453,6 +453,17 @@ public sealed partial class AgentLinkTests
     }
 
     [Fact]
+    public async Task Program_output_keeps_its_line_breaks_but_loses_control_characters()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db);
+        await using var r = await ActionRigAsync(db, app);
+        r.Agent.OnHost = (m, path, body, progress) => Task.FromResult((200, "{\"ok\":true,\"output\":\"Reading package lists...\\r\\nE: erste\\tZeile\\u001b[31m\\n\\n\\n\\nZeile 3\"}"));
+        var job = await Confirmed(r, "updates.refresh");
+        Assert.Equal("Reading package lists...\nE: erste Zeile[31m\n\nZeile 3", job.GetProperty("result").GetProperty("output").GetString());
+    }
+
+    [Fact]
     public async Task Containers_and_images_use_their_fixed_paths_with_the_id_from_the_list()
     {
         await using var db = await TestDb.CreateAsync();

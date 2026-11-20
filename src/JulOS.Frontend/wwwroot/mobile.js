@@ -6,8 +6,8 @@ import { t, tp, tk, fmtNumber, fmtTime, fmtDay, getPref, LANG_CHOICES } from './
 import { looksLikeAddress } from './quick.js';
 import { tileKind, KIND_KEY, withProgram } from './terminal-programs.js';
 import { favouriteList, recentList, filterByFolder, groupByFolder, folderIconSvg, folderName, setFavorite } from './folders.js';
-import { cardLines, wantsInfo } from './hostinfo.js';
-import { connectionState, dotClass as hostDot, stateText, serviceState, hostDetail, agentSummary, servicesSummary } from './hosts.js';
+import { hostCardHtml, menuOpen } from './hostview.js';
+import { connectionState, dotClass as hostDot, stateText } from './hosts.js';
 import { connLabels } from './conn-names.js';
 
 /* =====================================================================
@@ -66,6 +66,7 @@ const DEST = [
   { id: 'files', label: tk('mobile.files'), ic: 'folder', title: tk('mobile.files') },
   { id: 'server', label: tk('mobile.hosts'), ic: 'dns', title: tk('mobile.hosts') },
   { id: 'profile', label: tk('mobile.profile'), ic: 'person', title: tk('mobile.profile') },
+  { id: 'host', hidden: true, title: tk('mobile.hosts') },        // die Seite eines Hosts: gehoert zu Hosts, steht nicht in der Leiste
 ];
 const SWATCHES = [['#9a67ea', tk('mobile.colorViolet')], ['#4f86f7', tk('mobile.colorBlue')], ['#00a67e', tk('mobile.colorGreen')], ['#0aa5b8', tk('mobile.colorTeal')], ['#e5599a', tk('mobile.colorPink')], ['#e5484d', tk('mobile.colorRed')], ['#f5a524', tk('mobile.colorOrange')]];
 const SCHEME_LABEL = { light: tk('mobile.schemeLight'), dark: tk('mobile.schemeDark'), auto: tk('mobile.schemeAuto') };
@@ -75,6 +76,7 @@ const DEFAULT_SEED = '#9a67ea';
 
 let ctx = null, root = null, ready = null;
 let current = 'home', shown = false;
+let hostPageId = null, hostPagePanel = null;     // die Seite eines Hosts (openHost)
 let user = '';
 let overview = null, overviewOk = null, overviewAt = 0, overviewTimer = 0;   // overviewOk: null = unbekannt, true/false
 const view = { q: '', kind: 'all', host: '', folder: 'all', allActs: false };
@@ -114,6 +116,7 @@ function build() {
       <section class="m3-page" id="pg-services" data-page="services" aria-label="${esc(t('mobile.services'))}" hidden></section>
       <section class="m3-page" id="pg-files" data-page="files" aria-label="${esc(t('mobile.files'))}" hidden></section>
       <section class="m3-page" id="pg-server" data-page="server" aria-label="${esc(t('mobile.server'))}" hidden></section>
+      <section class="m3-page" id="pg-host" data-page="host" aria-label="${esc(t('mobile.hosts'))}" hidden></section>
       <section class="m3-page" id="pg-profile" data-page="profile" aria-label="${esc(t('mobile.profile'))}" hidden></section>
     </div>
     <nav class="m3-nav" id="mNav" aria-label="${esc(t('mobile.mainNav'))}"></nav>
@@ -142,7 +145,7 @@ function build() {
   // Delegation fuer alles, was in den Seiten gezeichnet wird
   root.addEventListener('click', onClick);
   root.addEventListener('contextmenu', (e) => { const card = e.target.closest('[data-conn]'); if (card) { e.preventDefault(); actionSheet(byId(card.dataset.conn)); } });
-  window.addEventListener('popstate', (e) => { if (shown) go((e.state && e.state.m3) || 'home', { push: false }); });
+  window.addEventListener('popstate', (e) => { const st = e.state && e.state.m3; if (shown) go(st === 'host' ? (hostPageId ? 'host' : 'server') : st || 'home', { push: false }); });
   history.replaceState({ m3: 'home' }, '');
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => queueMicrotask(applyShellTheme));
   document.addEventListener('visibilitychange', () => { if (!document.hidden) pollOverview(); });
@@ -150,8 +153,8 @@ function build() {
 
 function renderNav() {
   // Seiten ohne Inhalt gibt es nicht: Monitoring fehlt, Server nur mit Auslastung oder Hosts
-  const items = DEST.filter((d) => d.id !== 'server' || overviewOk || hosts().length);
-  $('#mNav').innerHTML = items.map((d) => `<button type="button" class="mb m3-state" data-go="${d.id}" ${d.id === current ? 'aria-current="page"' : ''}><span class="pill">${icon(d.ic)}</span><span>${esc(t(d.label))}</span></button>`).join('');
+  const items = DEST.filter((d) => !d.hidden && (d.id !== 'server' || overviewOk || hosts().length));
+  $('#mNav').innerHTML = items.map((d) => `<button type="button" class="mb m3-state" data-go="${d.id}" ${d.id === (current === 'host' ? 'server' : current) ? 'aria-current="page"' : ''}><span class="pill">${icon(d.ic)}</span><span>${esc(t(d.label))}</span></button>`).join('');
 }
 
 /* ---------- Sichtbarkeit (von shell.js): Fernsteuerung an, Oberflaeche aus und umgekehrt ---------- */
@@ -180,10 +183,21 @@ export function userChanged(name, message) {
   renderAll();
 }
 export function connectionsChanged() { if (root) { renderAll(); if (filesApp) filesApp.refreshPlaces(); } }
+/** Die Seite eines Hosts (hostpage.js) mit Zurueck-Pfeil; der Pfeil geht einen Schritt zurueck (zur Liste der Hosts) */
+function renderHostPage() {
+  const h = hosts().find((x) => x.id === hostPageId);
+  if (!h) { go('server'); return; }
+  ctx.hostPage.mount($('#pg-host'), h, hostPagePanel, { onBack: () => { if (history.state && history.state.m3 === 'host') history.back(); else go('server'); } });
+}
+/** Oeffnet die Seite eines Hosts (optional gleich in einem Abschnitt) */
+export function openHost(host, panel) {
+  hostPageId = host.id; hostPagePanel = panel || null;
+  if (current === 'host') renderPage('host'); else go('host');
+}
 /** Neue Zustaende der Hosts (alle 30 s): die Seite neu zeichnen, die sie zeigt */
-export function hostsChanged() { if (root) renderAll(); }
+export function hostsChanged() { if (root && !menuOpen()) renderAll(); }
 /** Neue Systemwerte oder Updates eines Hosts (hostinfo.js): nur die Seite Server neu zeichnen, wenn sie gerade zu sehen ist */
-export function hostInfoChanged() { if (root && current === 'server') renderServer(); }
+export function hostInfoChanged() { if (root && current === 'server' && !menuOpen()) renderServer(); }
 
 /** Merkt sich (nur auf diesem Geraet), was gestartet wurde, fuer "Aktivitaeten"; Haeufigkeit und letzte Benutzung zaehlt der Server (shell.js). */
 export function started(c) {
@@ -200,10 +214,11 @@ export function go(id, { push = true, focusSearch = false } = {}) {
   if (!DEST.some((d) => d.id === id)) id = 'home';
   const from = current;
   if (id !== from) {
-    if (push) { if (from === 'home') history.pushState({ m3: id }, ''); else if (id === 'home') { if (history.state && history.state.m3 && history.state.m3 !== 'home') { history.back(); return; } } else history.replaceState({ m3: id }, ''); }
+    if (from === 'host') ctx.hostPage.unmount();
+    if (push) { if (id === 'host') history.pushState({ m3: 'host' }, ''); else if (from === 'host') history.replaceState({ m3: id }, ''); else if (from === 'home') history.pushState({ m3: id }, ''); else if (id === 'home') { if (history.state && history.state.m3 && history.state.m3 !== 'home') { history.back(); return; } } else history.replaceState({ m3: id }, ''); }
     const a = $('#pg-' + from), b = $('#pg-' + id);
     current = id;
-    $$('#mNav .mb').forEach((n) => { if (n.dataset.go === id) n.setAttribute('aria-current', 'page'); else n.removeAttribute('aria-current'); });
+    $$('#mNav .mb').forEach((n) => { if (n.dataset.go === (id === 'host' ? 'server' : id)) n.setAttribute('aria-current', 'page'); else n.removeAttribute('aria-current'); });
     a.classList.remove('in'); a.classList.add('out');
     setTimeout(() => { a.hidden = true; a.classList.remove('out'); }, 90);
     setTimeout(() => {
@@ -221,10 +236,10 @@ export function go(id, { push = true, focusSearch = false } = {}) {
   if (focusSearch) setTimeout(() => $('#mSearch').focus(), 330);
 }
 
-function renderAll() { if (!root) return; renderNav(); renderPage(current); }
+function renderAll() { if (!root) return; renderNav(); if (current !== 'host') renderPage(current); }       // die Seite eines Hosts zeichnet sich nicht von selbst neu (Reiter und Stand blieben nicht)
 function renderPage(id) {
   if (id === 'home') renderHome(); else if (id === 'services') renderServices(); else if (id === 'server') renderServer(); else if (id === 'files') renderFiles();
-  else if (id === 'profile') renderProfile();
+  else if (id === 'profile') renderProfile(); else if (id === 'host') renderHostPage();
   // Seitentitel in der Leiste: auf Home bleibt "JulOS", sonst der Titel der Seite
   $('#mBar').classList.toggle('home', current === 'home');
 }
@@ -495,18 +510,11 @@ function soonHtml(ic, title, text) {
   return `<div class="m3-h" data-head><h1>${title}</h1></div>
     <div class="m3-card soon"><span class="big">${icon(ic)}</span><span class="m3-chip status"><span class="m3-dot"></span>${t('mobile.comingSoon')}</span><p>${text}</p></div>`;
 }
-/** Die Hosts mit Zustand, Agent und Diensten (docs/HOSTS.md); der Agent wird je Host eingerichtet */
+/** Die Hosts als Karten mit Zustand, Art des Agenten, Kennzahlen, Hinweisen und Verbindungen (docs/HOSTS.md, Karte: hostview.js); der Agent wird je Host eingerichtet */
 function hostsHtml() {
   ctx.info.ensure(hosts());              // nur die Seite Server fragt nach Systemwerten und Updates (hoechstens alle 55 s), sonst niemand
-  // Zeilen zum Host-Agenten: Modus, Systemwerte, Updates; warn faerbt, was Aufmerksamkeit braucht
-  const lines = (h) => { const ls = cardLines(h, ctx.info.get(h.id)); return ls.length ? `<div class="m3-rows">${ls.map((l) => `<div class="m3-row${l.warn ? ' bad' : ''}"><div class="rt">${esc(l.text)}</div>${l.warn ? `<div class="rc"><span class="m3-chip status"><span class="m3-dot bad"></span>${t('hostinfo.attention')}</span></div>` : ''}</div>`).join('')}</div>` : ''; };
-  const rows = hosts().map((h) => `<div class="m3-card host" data-host-card="${esc(h.id)}">
-      <div class="m3-li static"><span class="lead">${icon('dns')}</span><span class="txt"><span class="hl"><span class="m3-dot hdot ${hostDot(h.online)}"></span>${esc(h.name)} <small>${stateText(h.online)}</small></span><span class="sl">${esc([hostDetail(h), agentSummary(h), servicesSummary(h)].filter(Boolean).join(' · '))}</span></span></div>
-      ${lines(h)}
-      <div class="svcs">${h.services.map((s) => { const c = byId(s.connection); return c ? `<button type="button" class="mb m3-chip m3-state" data-act="start" data-conn="${esc(c.id)}"><span class="m3-dot hdot ${hostDot(serviceState(h, c.id))}"></span>${esc(c.name)}</button>` : ''; }).join('')}</div>
-      <div class="acts-row">${wantsInfo(h) ? `<button type="button" class="mb m3-btn tonal m3-state" data-act="hostinfo" data-host="${esc(h.id)}">${icon('info')}${t('mobile.hostDetails')}</button>` : ''}<button type="button" class="mb m3-btn tonal m3-state" data-act="hostagent" data-host="${esc(h.id)}">${icon('download')}${h.agent ? t('mobile.agentManage') : t('shell.agentSetup')}</button>
-        <button type="button" class="mb m3-btn text m3-state" data-act="hostedit" data-host="${esc(h.id)}">${icon('edit')}${t('common.edit')}</button></div></div>`).join('');
-  return `<div class="m3-sec">${icon('dns')}<span>${t('mobile.hosts')}</span><span class="sp"></span><button type="button" class="mb m3-btn text m3-state" data-act="addhost">${icon('add')}${t('mobile.addHost')}</button></div>${rows || `<p class="empty-hint">${t('mobile.noHost')}</p>`}`;
+  const cards = hosts().map((h) => hostCardHtml(h, ctx.info.get(h.id), { esc, connection: byId })).join('');
+  return `<div class="m3-sec">${icon('dns')}<span>${t('mobile.hosts')}</span><span class="sp"></span><button type="button" class="mb m3-btn text m3-state" data-act="addhost">${icon('add')}${t('mobile.addHost')}</button></div>${cards ? `<div class="hu-grid">${cards}</div>` : `<p class="empty-hint">${t('mobile.noHost')}</p>`}`;
 }
 function renderServer() {
   const pg = $('#pg-server');
@@ -604,7 +612,8 @@ function onClick(e) {
   else if (act === 'quickq') ctx.quick(view.q);
   else if (act === 'addhost') ctx.addHost();
   else if (act === 'hostedit' || act === 'hostagent') { const h = hosts().find((x) => x.id === a.dataset.host); if (h) ctx.editHost(h); }
-  else if (act === 'hostinfo') { const h = hosts().find((x) => x.id === a.dataset.host); if (h) ctx.hostInfo(h); }
+  else if (act === 'hostinfo') { const h = hosts().find((x) => x.id === a.dataset.host); if (h) ctx.hostInfo(h, a.dataset.hpage || null); }
+  else if (act === 'hostaction') { const h = hosts().find((x) => x.id === a.dataset.host); if (h) ctx.hostAction(h, a.dataset.hcact, a.dataset.htarget || null, { onDone: () => ctx.info.load(h, { fresh: true }) }); }
   else if (act === 'mod') openModSheet(a.dataset.mod);
   else if (act === 'allacts') { view.allActs = !view.allActs; renderHome(); }
   else if (act === 'last') { const c = lastConnection(); if (c) ctx.connect(c); }
@@ -659,7 +668,7 @@ function wireSheet(dlg) {
   dlg.addEventListener('pointerup', end); dlg.addEventListener('pointercancel', end);
 }
 function enhanceSheets() {
-  for (const id of ['connDlg', 'hostDlg', 'hostInfoDlg', 'hostActDlg', 'startDlg', 'quickDlg', 'folderDlg', 'devicesDlg', 'accountDlg', 'netDlg']) { const d = $('#' + id); if (!d) continue; d.classList.add('m3sheet'); wireSheet(d); }
+  for (const id of ['connDlg', 'hostDlg', 'hostActDlg', 'startDlg', 'quickDlg', 'folderDlg', 'devicesDlg', 'accountDlg', 'netDlg']) { const d = $('#' + id); if (!d) continue; d.classList.add('m3sheet'); wireSheet(d); }
   // Art und Bildübertragung: segmentierte Tasten statt Auswahlliste; das select bleibt als Wertspeicher bestehen (shell.js liest und setzt es)
   const segFor = (sel) => {
     const label = sel.closest('label'), box = document.createElement('div');

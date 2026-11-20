@@ -3,15 +3,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { setPref } from '../../src/JulOS.Frontend/wwwroot/i18n.js';
 import {
-  canAct, hasActionAgent, confirmModel, confirmHtml, typedOk, typedName, targetText, isDanger, actionLabel, errText, jobHtml, jobFinal, jobPercent,
+  canAct, hasActionAgent, blockReason, whyText, confirmModel, confirmHtml, typedOk, typedName, targetText, isDanger, actionLabel, errText, jobHtml, jobFinal, jobPercent,
   auditHtml, auditLine, controlHtml, makeAct, unitsHtml, prepareAction, runAction, fetchJob, setControl, setPause, ACTION_LABEL, RIGHTS,
 } from '../../src/JulOS.Frontend/wwwroot/hostactions.js';
-import { updatesHtml, servicesHtml, dockerHtml, systemHtml } from '../../src/JulOS.Frontend/wwwroot/hostinfo.js';
+import { PANELS } from '../../src/JulOS.Frontend/wwwroot/hostview.js';
 import de from '../../src/JulOS.Frontend/wwwroot/i18n/de.js';
 import en from '../../src/JulOS.Frontend/wwwroot/i18n/en.js';
 
 setPref('de', null);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/** Ein Abschnitt des Dialogs (hostview.js) mit den Antworten des Servers und den Tasten nach Erlaubnis */
+const panel = (id, ctx) => PANELS.find((p) => p.id === id).html({ esc, host: host(), paused: false, data: {}, ...ctx });
 const host = (over = {}) => ({ id: 'h1', name: 'Server', agent: { online: true, kind: 'host', version: '0.6.0', control: 'full', allow: ['updates', 'reboot', 'services', 'docker', 'logs'], caps: ['sysinfo', 'updates', 'services', 'docker'], ...over } });
 
 test('Tasten erscheinen nur, wenn Stufe am Server UND lokale Erlaubnis des Agenten passen, der Agent neu genug und verbunden ist und nichts pausiert ist', () => {
@@ -24,11 +26,27 @@ test('Tasten erscheinen nur, wenn Stufe am Server UND lokale Erlaubnis des Agent
   assert.ok(!canAct(host({ version: '0.5.0' }), 'updates'));
   assert.ok(canAct(host({ version: '0.10.1' }), 'updates'));
   assert.ok(!canAct(host({ online: false }), 'updates'));
-  assert.ok(!canAct(host({ kind: 'desktop' }), 'updates'));
+  assert.ok(canAct(host({ kind: 'desktop' }), 'updates'));                       // massgeblich sind die gemeldeten Faehigkeiten, nicht der Name der Plattform
+  assert.ok(!canAct(host({ kind: 'desktop', caps: [] }), 'updates'));            // ein Agent ohne Faehigkeiten kann nichts
   assert.ok(!canAct(host(), 'updates', true));                                   // Pause
   assert.ok(!canAct(host({ control: 'bogus' }), 'updates'));
   assert.ok(!canAct({ id: 'x' }, 'updates') && !canAct(null, 'updates'));
-  assert.ok(hasActionAgent(host()) && !hasActionAgent(host({ kind: 'desktop' })) && !hasActionAgent(host({ version: '0.5.0' })));
+  assert.ok(hasActionAgent(host()) && hasActionAgent(host({ kind: 'desktop' })) && !hasActionAgent(host({ kind: 'desktop', caps: [] })) && !hasActionAgent(host({ version: '0.5.0' })));
+});
+
+test('Warum eine Aktion gesperrt ist: Grund und Weg zum Freischalten (Abschnitt Aktionen) oder nichts zu tun', () => {
+  assert.equal(blockReason(host(), 'reboot'), null);
+  assert.deepEqual(blockReason(null, 'updates'), { why: 'noAgent' });
+  assert.deepEqual(blockReason(host({ online: false }), 'updates'), { why: 'offline' });
+  assert.deepEqual(blockReason(host({ caps: [], kind: 'desktop' }), 'updates'), { why: 'noCaps' });
+  assert.deepEqual(blockReason(host({ version: '0.5.0' }), 'updates'), { why: 'outdated' });
+  assert.deepEqual(blockReason(host(), 'updates', true), { why: 'paused', link: 'actions' });
+  assert.deepEqual(blockReason(host({ control: 'read' }), 'updates'), { why: 'levelOff', link: 'actions' });
+  assert.deepEqual(blockReason(host({ control: 'updates' }), 'reboot'), { why: 'level', link: 'actions' });
+  assert.deepEqual(blockReason(host({ allow: ['updates'] }), 'docker'), { why: 'word', word: 'docker', link: 'actions' });
+  assert.match(whyText({ why: 'word', word: 'docker' }), /Wort docker.*Agent neu einrichten/);
+  assert.match(whyText({ why: 'levelOff', link: 'actions' }), /unter Aktionen einschalten/);
+  assert.match(whyText({ why: 'unbekannt' }), /kann das noch nicht/);                     // Unbekanntes: allgemeiner Satz
 });
 
 test('Ein Desktop-Agent 0.7.0 mit dem Wort host bekommt dieselben Aktionen wie ein Host-Agent (ein Agent, zwei Faehigkeitsgruppen)', () => {
@@ -83,13 +101,11 @@ test('Rechnername tippen: Gross/Klein und Leerraum zaehlen nicht, sonst wird nic
 
 test('Bestaetigung als HTML: Werte werden geschuetzt, der Name zum Tippen steht im Satz', () => {
   const conf = { token: 'x', expiresIn: 60, action: 'power.reboot', host: '<img src=x onerror=alert(1)>', typeToConfirm: '"><script>', warnings: [] };
-  for (const kit of [false, true]) {
-    const html = confirmHtml(conf, esc, kit);
-    assert.ok(!html.includes('<img') && !html.includes('<script'), html);
-    assert.ok(html.includes('&lt;img'));
-    assert.ok(html.includes('id="hostActTyped"'));
-    assert.ok(html.includes('60'));
-  }
+  const html = confirmHtml(conf, esc);
+  assert.ok(!html.includes('<img') && !html.includes('<script'), html);
+  assert.ok(html.includes('&lt;img'));
+  assert.ok(html.includes('id="hostActTyped"'));
+  assert.ok(html.includes('60'));
   assert.ok(!confirmHtml({ ...conf, action: 'service.start', typeToConfirm: undefined, target: 'a.service' }, esc, false).includes('hostActTyped'));
 });
 
@@ -99,9 +115,9 @@ test('Aktionstasten tragen nur Aktion und Ziel, geschuetzt; ohne Erlaubnis gibt 
   assert.ok(!b.includes('<script'));
   assert.match(b, /data-hact="service.restart"/);
   assert.match(b, /data-htarget="x&quot;&gt;&lt;script&gt;/);
-  assert.match(act.btn('power.reboot', '', 'Neustart'), /class="danger hi-act"/);
-  assert.match(makeAct(host(), false, esc, true).btn('service.restart', 'a.service', 'x'), /m3-btn sm tonal/);
-  assert.match(makeAct(host(), false, esc, true).btn('service.stop', 'a.service', 'x'), /m3-btn sm danger/);
+  assert.match(act.btn('power.reboot', '', 'Neustart'), /class="hu-btn sm danger"/);
+  assert.match(act.btn('service.restart', 'a.service', 'x'), /hu-btn sm tonal/);
+  assert.match(act.btn('service.stop', 'a.service', 'x'), /hu-btn sm danger/);
   assert.equal(makeAct(host({ allow: [] }), false, esc, false).btn('service.restart', 'a.service', 'x'), '');
   assert.equal(makeAct(host(), true, esc, false).btn('service.restart', 'a.service', 'x'), '');
   assert.equal(makeAct(host(), false, esc, false).bar(''), '');
@@ -110,22 +126,24 @@ test('Aktionstasten tragen nur Aktion und Ziel, geschuetzt; ohne Erlaubnis gibt 
 
 test('die Abschnitte zeigen ohne act keine Tasten und mit act Tasten nach Erlaubnis', () => {
   const updates = { state: 'ok', updates: { manager: 'apt', count: 2, security: 1, securityKnown: true, packages: [{ name: 'libc6', from: '1', to: '2', security: true }, { name: 'x" onclick="y', from: '1', to: '2' }], keptBack: [], held: [], removals: 0, truncated: false } };
-  assert.ok(!updatesHtml(updates, esc).includes('data-hact'));
-  const on = updatesHtml(updates, esc, makeAct(host(), false, esc, false));
+  const A = (over) => makeAct(host(over), false, esc);
+  assert.ok(!panel('updates', { data: { updates } }).includes('data-hact'));
+  const on = panel('updates', { data: { updates }, act: A() });
   assert.equal((on.match(/data-hact="updates.install"/g) || []).length, 3);        // zwei Pakete und "alle"
   assert.ok(on.includes('data-hact="updates.refresh"'));
   assert.ok(on.includes('data-htarget="all"'));
   assert.ok(!on.includes('onclick="y'));                                           // der Paketname bleibt Text, kein Attribut
-  assert.ok(!updatesHtml(updates, esc, makeAct(host({ control: 'read' }), false, esc, false)).includes('data-hact'));
-  const empty = updatesHtml({ state: 'ok', updates: { ...updates.updates, count: 0, packages: [] } }, esc, makeAct(host(), false, esc, false));
+  assert.ok(!panel('updates', { data: { updates }, act: A({ control: 'read' }) }).includes('data-hact'));
+  const empty = panel('updates', { data: { updates: { state: 'ok', updates: { ...updates.updates, count: 0, packages: [] } } }, act: A() });
   assert.ok(!empty.includes('data-htarget="all"'));                                // nichts zu installieren
-  const sys = systemHtml({ state: 'ok', info: { hostname: 'h', memory: {}, disks: [] } }, esc, makeAct(host(), false, esc, false));
-  assert.ok(sys.includes('data-hact="power.reboot"') && sys.includes('data-hact="power.poweroff"'));
-  assert.ok(!systemHtml({ state: 'ok', info: { hostname: 'h', memory: {}, disks: [] } }, esc, makeAct(host({ control: 'updates' }), false, esc, false)).includes('power.reboot'));
-  const svc = servicesHtml({ state: 'ok', services: { state: 'degraded', count: 1, failed: [{ unit: 'a.service', sub: 'failed', description: '<b>x</b>' }] } }, esc, makeAct(host(), false, esc, false));
+  const power = panel('actions', { host: host(), act: A() });
+  assert.ok(power.includes('data-hact="power.reboot"') && power.includes('data-hact="power.poweroff"'));
+  assert.ok(!panel('actions', { host: host({ control: 'updates' }), act: A({ control: 'updates' }) }).includes('power.reboot'));
+  const svc = panel('services', { data: { services: { state: 'ok', services: { state: 'degraded', count: 1, failed: [{ unit: 'a.service', sub: 'failed', description: '<b>x</b>' }] } } }, act: A() });
   assert.ok(svc.includes('data-hact="service.restart"') && svc.includes('data-hact="logs.unit"') && svc.includes('data-hact-open="units"'));
   assert.ok(!svc.includes('<b>x</b>'));
-  const dock = dockerHtml({ state: 'ok', docker: { available: true, running: 1, total: 2, restarting: 0, truncated: false, containers: [{ id: 'aaaaaaaaaaaa', name: 'web', image: 'nginx:1', state: 'running', status: 'Up' }, { id: 'bbbbbbbbbbbb', name: 'old', image: 'x', state: 'exited', status: 'Exited' }] } }, esc, makeAct(host(), false, esc, false));
+  const dockData = { state: 'ok', docker: { available: true, running: 1, total: 2, restarting: 0, truncated: false, containers: [{ id: 'aaaaaaaaaaaa', name: 'web', image: 'nginx:1', state: 'running', status: 'Up' }, { id: 'bbbbbbbbbbbb', name: 'old', image: 'x', state: 'exited', status: 'Exited' }] } };
+  const dock = panel('docker', { data: { docker: dockData }, act: A() });
   assert.ok(dock.includes('data-hact="docker.stop" data-htarget="aaaaaaaaaaaa"') && dock.includes('data-hact="docker.restart"'));
   assert.ok(dock.includes('data-hact="docker.start" data-htarget="bbbbbbbbbbbb"'));
   assert.ok(!dock.includes('data-hact="docker.start" data-htarget="aaaaaaaaaaaa"'));
@@ -159,6 +177,10 @@ test('Ergebnis: erledigt mit Neustart-Hinweis, angenommen, fehlgeschlagen mit Co
   assert.match(ok, /Erledigt: Updates installieren/);
   assert.match(ok, /Neustart ist nötig/);
   assert.ok(ok.includes('Setting up &lt;x&gt;') && !ok.includes('<x>'));
+  // Ausgabe eines Programms (apt): jede Zeile bleibt eine Zeile, als Text im <pre> (CSS pre-wrap), nie als HTML
+  const apt = jobHtml({ action: 'updates.refresh', state: 'ok', result: { ok: true, output: 'Hit:1 http://x\nGet:2 <b>y</b>\nReading package lists...' } }, esc);
+  assert.ok(apt.includes('<pre class="hu-pre">Hit:1 http://x\nGet:2 &lt;b&gt;y&lt;/b&gt;\nReading package lists...</pre>'), apt);
+  assert.ok(!apt.includes('<b>y'));
   assert.match(jobHtml({ action: 'power.reboot', state: 'accepted', result: { accepted: true } }, esc, false), /startet gleich neu/);
   assert.match(jobHtml({ action: 'power.poweroff', state: 'accepted', result: { accepted: true } }, esc, false), /fährt gleich herunter/);
   const failed = jobHtml({ action: 'updates.refresh', state: 'failed', error: 'apt_locked', result: { output: 'E: lock' } }, esc, false);
@@ -167,7 +189,7 @@ test('Ergebnis: erledigt mit Neustart-Hinweis, angenommen, fehlgeschlagen mit Co
   assert.ok(failed.includes('E: lock'));
   assert.match(jobHtml({ action: 'x', state: 'failed', error: 'Rm -rf /' }, esc, false), /Die Aktion ist fehlgeschlagen/);   // unbekannter Code: allgemeiner Text, nie roh
   const logs = jobHtml({ action: 'logs.unit', state: 'ok', result: { lines: ['a <script>', 'b'] } }, esc, true);
-  assert.ok(logs.includes('a &lt;script&gt;\nb') && !logs.includes('<script>') && logs.includes('m3-pre'));
+  assert.ok(logs.includes('a &lt;script&gt;\nb') && !logs.includes('<script>') && logs.includes('class="hu-pre"'));
   assert.match(jobHtml({ action: 'logs.unit', state: 'ok', result: { lines: [] } }, esc, false), /Keine Zeilen/);
   assert.match(jobHtml({ action: 'docker.pull', state: 'ok', result: { updated: true } }, esc, false), /neueres Image/);
   assert.match(jobHtml({ action: 'docker.pull', state: 'ok', result: { updated: false } }, esc, false), /schon aktuell/);
@@ -217,10 +239,10 @@ test('Verlauf: neueste zuerst, Ablehnungen mit Grund, Werte geschuetzt', () => {
 test('Schalter Aktionen: Stufe, lokale Erlaubnis, Pause; ohne Erlaubnis ein Hinweis auf den Installer', () => {
   const html = controlHtml(host({ control: 'updates', allow: ['updates', 'logs'] }), true, esc, false);
   assert.match(html, /<option value="updates" selected>/);
-  assert.ok(html.includes('updates, logs') && html.includes('id="hostActPause" type="checkbox" checked'));
+  assert.ok(html.includes('>updates</span>') && html.includes('>logs</span>') && html.includes('id="hostActPause" type="checkbox" checked'));
   assert.ok(!html.includes('--allow'));
   const none = controlHtml(host({ control: 'read', allow: [] }), false, esc, true);
-  assert.ok(none.includes('--allow') && none.includes('m3-rows') && !none.includes(' checked'));
+  assert.ok(none.includes('--allow') && none.includes('hu-card') && !none.includes(' checked'));
 });
 
 test('Aufrufe: erst prepare, dann run mit genau der Bestaetigung; kein Weg an prepare vorbei', async () => {

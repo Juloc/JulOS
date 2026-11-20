@@ -1,8 +1,8 @@
 import { ico, prefs, applyServerPrefs } from './app.js';
 import { Sessions } from './sessions.js';
-import { agentSummary, hostDetail } from './hosts.js';
-import { createHostInfoStore, agentDetail, installCommand, pickTerminal } from './hostinfo.js';
-import { initHostInfoDialog } from './hostinfo-dialog.js';
+import { hostDetail } from './hosts.js';
+import { createHostInfoStore } from './hostinfo.js';
+import { initHostPage } from './hostpage.js';
 import { initHostActionDialog } from './hostactions-dialog.js';
 import { loadOrganisation, takeOverLocal, mergePlacements, setFolder, touch, move, folderName } from './folders.js';
 import { initFolderDialog } from './folder-dialog.js';
@@ -332,61 +332,6 @@ for (const [id, delta] of [['#connUp', -1], ['#connDown', 1]]) {
   });
 }
 
-/** Der Befehl fuer den Host: die Dateien kommen vom Server selbst (passend zu seiner Version), der Code gilt einmal. */
-function agentCommands(code) {
-  const origin = location.origin;
-  const http = origin.startsWith('http:') && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(origin);
-  return [
-    'mkdir -p ~/julos && cd ~/julos',
-    `for f in julos-agent.py julos-clip.py install-linux-agent.sh; do curl -fsSLO ${origin}/agent-files/$f; done`,
-    `bash install-linux-agent.sh --server ${origin} --code ${code}${http ? ' --allow-http' : ''}`,
-  ].join('\n');
-}
-
-/** Zeile unter "Host-Agent": in welchem Terminal der Befehl landet (oder dass es keins gibt und der Befehl nur angezeigt wird) */
-function showSshTarget(h) {
-  const conn = pickTerminal(state.connections, h.id);
-  $('#hostSshTarget').textContent = conn ? t('shell.sshTarget', { name: conn.name }) : t('shell.sshNoTerminal');
-  $('#hostSshInstall').hidden = !conn;
-}
-
-/** Frischer Code (10 Minuten, einmal) und der fertige Einzeiler fuer den Host */
-async function hostInstallCommand(h) {
-  const r = await api(`/api/hosts/${h.id}/agent/code`, { method: 'POST', body: {} });
-  return installCommand(location.origin, r.code);
-}
-
-/** Zeigt den Befehl im Dialog (zum Kopieren); note sagt, was der Benutzer damit tut */
-function showSshCommand(cmd, noteText) {
-  $('#hostSshCmd').textContent = cmd; $('#hostSshNote').textContent = noteText; $('#hostSshCmdBox').hidden = false;
-}
-
-/** "Agent per SSH installieren": Terminal dieses Hosts oeffnen und den Befehl in die Eingabeleiste legen, NICHT senden. Das sudo-Passwort tippt der Benutzer im Terminal; JulOS sieht es nie. */
-$('#hostSshInstall').addEventListener('click', async (e) => {
-  const h = state.editingHost; if (!h) return;
-  const conn = pickTerminal(state.connections, h.id); if (!conn) return;
-  const b = e.currentTarget; b.disabled = true; setMsg($('#hostMsg'), '');
-  try {
-    const cmd = await hostInstallCommand(h);
-    $('#hostDlg').close();
-    startDialog(conn, { prefill: cmd });
-    notice(t('shell.sshPrefilled', { name: conn.name }));
-  } catch (err) { setMsg($('#hostMsg'), err.message); }
-  finally { b.disabled = false; }
-});
-
-$('#hostSshCopy').addEventListener('click', async (e) => {
-  const h = state.editingHost; if (!h) return;
-  const b = e.currentTarget; b.disabled = true; setMsg($('#hostMsg'), '');
-  try {
-    const cmd = await hostInstallCommand(h);
-    showSshCommand(cmd, t('shell.sshCommandNote'));
-    try { await navigator.clipboard.writeText(cmd); setMsg($('#hostMsg'), t('shell.commandsCopied'), true); }
-    catch { const r = document.createRange(); r.selectNodeContents($('#hostSshCmd')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); setMsg($('#hostMsg'), t('shell.copySelected')); }
-  } catch (err) { setMsg($('#hostMsg'), err.message); }
-  finally { b.disabled = false; }
-});
-
 /** Host anlegen (h = null) oder bearbeiten. onCreated bekommt den neuen Host (zum Beispiel fuer die Auswahl in der Verbindung). */
 function hostDialog(h, onCreated) {
   state.editingHost = h; state.hostCreated = onCreated || null;
@@ -398,28 +343,8 @@ function hostDialog(h, onCreated) {
   info.hidden = !h;
   if (h) info.textContent = [hostDetail(h), tp('shell.hostConns', nOf)].filter(Boolean).join(' · ');
   setMsg($('#hostMsg'), '');
-  $('#hostAgent').hidden = !h;                       // ein Agent braucht einen gespeicherten Host
-  $('#hostAgentCode').hidden = true; $('#hostAgentCmd').textContent = ''; $('#hostAgentCodeText').textContent = '';
-  $('#hostSshCmdBox').hidden = true; $('#hostSshCmd').textContent = '';
-  if (h) showAgentState(h);
   $('#hostDlg').showModal();
   setTimeout(() => $('#hostName').focus(), 100);
-}
-
-function showAgentState(h) {
-  const a = h.agent;
-  $('#hostAgentState').textContent = [agentSummary(h), agentDetail(h)].filter(Boolean).join(' · ');
-  showSshTarget(h);
-  $('#hostAgentSetup').textContent = a ? t('shell.agentRenew') : t('shell.agentSetup');
-  $('#hostAgentRemove').hidden = !a;
-  $('#hostAgentUpdate').hidden = !a;
-  $('#hostAgentAuto').checked = !!(a && a.autoUpdate);
-  const due = !!(a && a.updateAvailable);
-  $('#hostAgentUpdateBtn').hidden = !due;
-  $('#hostAgentUpdateBtn').disabled = !(due && a.online && a.canUpdate);
-  const hint = $('#hostAgentUpdateHint');
-  hint.textContent = !due ? '' : !a.canUpdate ? t('shell.agentCannotUpdate') : !a.online ? t('shell.agentOfflineUpdate') : '';
-  hint.hidden = !hint.textContent;
 }
 
 $('#hostForm').addEventListener('submit', async (e) => {
@@ -443,69 +368,6 @@ $('#hostDelete').addEventListener('click', async (e) => {
   b.dataset.sure = '';
   try { await api(`/api/hosts/${state.editingHost.id}`, { method: 'DELETE' }); $('#hostDlg').close(); await loadHosts(); if (M) M.snack(t('shell.hostDeleted')); }
   catch (err) { setMsg($('#hostMsg'), err.message); }
-});
-
-$('#hostAgentSetup').addEventListener('click', async (e) => {
-  const h = state.editingHost; if (!h) return;
-  const b = e.currentTarget; b.disabled = true; setMsg($('#hostMsg'), '');
-  try {
-    const r = await api(`/api/hosts/${h.id}/agent/code`, { method: 'POST', body: {} });
-    $('#hostAgentCodeText').textContent = r.code;
-    $('#hostAgentCmd').textContent = agentCommands(r.code);
-    $('#hostAgentCode').hidden = false;
-  } catch (err) { setMsg($('#hostMsg'), err.message); }
-  finally { b.disabled = false; }
-});
-
-$('#hostAgentCopy').addEventListener('click', async () => {
-  const text = $('#hostAgentCmd').textContent;
-  try { await navigator.clipboard.writeText(text); setMsg($('#hostMsg'), t('shell.commandsCopied'), true); }
-  catch { const r = document.createRange(); r.selectNodeContents($('#hostAgentCmd')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); setMsg($('#hostMsg'), t('shell.copySelected')); }
-});
-
-// Aktualisieren: der Server schickt dem Agenten die Anweisung, der Agent holt die Datei selbst, prueft sie und startet neu; danach melden wir uns kurz bei der Liste, bis die neue Version da ist
-$('#hostAgentUpdateBtn').addEventListener('click', async (e) => {
-  const b = e.currentTarget, h = state.editingHost; if (!h) return;
-  b.disabled = true; setMsg($('#hostMsg'), '');
-  try {
-    const r = await api(`/api/hosts/${h.id}/agent/update`, { method: 'POST', body: {} });
-    setMsg($('#hostMsg'), t('shell.agentUpdating', { version: r.version }), true);
-    for (let i = 0; i < 20; i++) {
-      await new Promise((ok) => setTimeout(ok, 2000));
-      await loadHosts();
-      const now = state.hosts.find((x) => x.id === h.id);
-      if (now && now.agent && now.agent.online && !now.agent.updateAvailable) {
-        state.editingHost = now; showAgentState(now);
-        setMsg($('#hostMsg'), t('shell.agentNowOn', { version: now.agent.version }), true);
-        if (M) M.snack(t('shell.agentUpdated'));
-        return;
-      }
-    }
-    setMsg($('#hostMsg'), t('shell.agentNoReport'));
-  } catch (err) { setMsg($('#hostMsg'), err.message); }
-  finally { const now = state.hosts.find((x) => x.id === h.id); if (now) { state.editingHost = now; showAgentState(now); } }
-});
-
-$('#hostAgentAuto').addEventListener('change', async (e) => {
-  const box = e.currentTarget, h = state.editingHost; if (!h) return;
-  box.disabled = true; setMsg($('#hostMsg'), '');
-  try { await api(`/api/hosts/${h.id}/agent/auto-update`, { method: 'PUT', body: { enabled: box.checked } }); await loadHosts(); }
-  catch (err) { box.checked = !box.checked; setMsg($('#hostMsg'), err.message); }
-  finally { box.disabled = false; const now = state.hosts.find((x) => x.id === h.id); if (now) state.editingHost = now; }
-});
-
-// Entfernen braucht ein zweites Tippen (das Token gilt danach nicht mehr, der Agent trennt sich sofort)
-$('#hostAgentRemove').addEventListener('click', async (e) => {
-  const b = e.currentTarget, h = state.editingHost; if (!h) return;
-  if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = t('shell.reallyRemove'); setTimeout(() => { b.dataset.sure = ''; b.textContent = t('shell.agentRemove'); }, 3000); return; }
-  b.dataset.sure = ''; b.textContent = t('shell.agentRemove');
-  try {
-    await api(`/api/hosts/${h.id}/agent`, { method: 'DELETE' });
-    await loadHosts();
-    state.editingHost = state.hosts.find((x) => x.id === h.id) || h;
-    showAgentState(state.editingHost); $('#hostAgentCode').hidden = true;
-    if (M) M.snack(t('shell.agentRemoved'));
-  } catch (err) { setMsg($('#hostMsg'), err.message); }
 });
 
 $('#connForm').addEventListener('submit', async (e) => {
@@ -703,11 +565,15 @@ Sessions.addEventListener('switcher', () => { if (M) M.openSwitcher(); else goHo
 
 const hostInfo = createHostInfoStore({ api, onChange: () => { if (D && D.hostInfoChanged) D.hostInfoChanged(); if (M && M.hostInfoChanged) M.hostInfoChanged(); } });
 const openHostAction = initHostActionDialog({ api, esc });
-const openHostInfo = initHostInfoDialog({ state, api, esc, store: hostInfo, openAction: openHostAction, reloadHosts: loadHosts });
+const hostPage = initHostPage({ state, api, esc, store: hostInfo, openAction: openHostAction, reloadHosts: loadHosts, origin: () => location.origin,
+  snack: (text) => { if (M) M.snack(text); },
+  installOverSsh: (conn, cmd) => { startDialog(conn, { prefill: cmd }); notice(t('shell.sshPrefilled', { name: conn.name })); } });
+// Die Seite eines Hosts (Abschnitt panel): am Desktop eine Ansicht im Start-Fenster, am Handy eine eigene Seite
+const openHostInfo = (h, panel) => (D ? D.openHost(h, panel) : M && M.openHost(h, panel));
 const openAccount = initAccount({ api, setMsg });
 const openNetTools = initNetTools({ api, setMsg, connections: () => state.connections });
-if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), hostInfo: openHostInfo, info: hostInfo, signOut, home: goHome, account: openAccount, devices: openDevices, nettools: openNetTools });
-if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), hostInfo: openHostInfo, info: hostInfo, devices: openDevices, account: openAccount, nettools: openNetTools, signOut });
+if (M) await M.init({ state, api, esc, describeAgent, ago, connect: startDialog, edit: editDialog, add: (kind) => editDialog(null, kind), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), hostInfo: openHostInfo, hostPage, hostAction: openHostAction, info: hostInfo, signOut, home: goHome, account: openAccount, devices: openDevices, nettools: openNetTools });
+if (D) await D.init({ state, esc, api, connect: startDialog, edit: editDialog, add: () => editDialog(null), program: launchProgram, quick: quickDialog, folders: openFolders, editHost: (h) => hostDialog(h), addHost: () => hostDialog(null), hostInfo: openHostInfo, hostPage, hostAction: openHostAction, info: hostInfo, devices: openDevices, account: openAccount, nettools: openNetTools, signOut });
 
 /* ---------- Geraete und Sitzungen ---------- */
 function describeAgent(ua) {

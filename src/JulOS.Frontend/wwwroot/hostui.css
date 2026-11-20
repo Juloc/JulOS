@@ -1,0 +1,236 @@
+/* Host-Oberflaeche (hostview.js, hostui.js, hostpage.js): Host-Karten, Kennzahlen, Balken, Chips und die Seite "Host-Details". Eine Datei fuer Handy und Desktop.
+ *
+ * Farben: keine festen Farben in den Regeln, nur die Tokens unten. Sie nehmen die Werte der jeweiligen Oberflaeche: am Handy die M3-Rollen (--m3-*, m3.css), am Desktop die
+ * geprueften --dk-* (desktop.css, WCAG AA gegen Glas und Hintergrund) und sonst die --md-* der Dialoge. Hell und dunkel ergeben sich daraus; die einzige eigene Zustandsfarbe ist Gelb
+ * (--hu-warn), mit light-dark(). Fliesstext ist nie kleiner als 13 px. Bausteine und Beispiele: docs/ui-kit.html, Abschnitt "Hosts". */
+:root {
+  --hu-fg: var(--m3-on-surface, var(--dk-on-surface, var(--md-on-surface)));
+  --hu-fg2: var(--m3-on-surface-variant, var(--dk-on-variant, var(--md-on-variant)));
+  --hu-fill: var(--m3-primary, var(--dk-primary, var(--md-primary)));
+  --hu-on-fill: var(--m3-on-primary, var(--dk-on-primary, var(--md-on-primary)));
+  --hu-accent: var(--m3-primary, var(--dk-accent-text, var(--md-primary)));
+  --hu-accent-bg: var(--m3-secondary-container, var(--dk-secondary-container, var(--md-secondary-container)));
+  --hu-on-accent-bg: var(--m3-on-secondary-container, var(--dk-on-secondary-container, var(--md-on-secondary-container)));
+  --hu-ok: var(--m3-ok, var(--dk-ok-text, light-dark(#1b6f3a, #6dd58c)));
+  --hu-warn: var(--dk-st-busy, light-dark(#8a5700, #f0b030));
+  --hu-bad: var(--m3-error, var(--dk-bad-text, var(--md-error)));
+  --hu-bad-bg: var(--m3-error-container, var(--dk-bad-bg, var(--md-error-container)));
+  --hu-on-bad: var(--m3-on-error-container, var(--dk-bad-text, var(--md-error)));
+  --hu-ok-bg: color-mix(in oklab, var(--hu-ok) 16%, transparent);
+  --hu-warn-bg: color-mix(in oklab, var(--hu-warn) 18%, transparent);
+  --hu-card: var(--m3-surface-high, color-mix(in oklab, var(--hu-fg) 6%, transparent));
+  --hu-track: color-mix(in oklab, var(--hu-fg) 13%, transparent);
+  --hu-soft: color-mix(in oklab, var(--hu-fg) 7%, transparent);
+  --hu-line: color-mix(in oklab, var(--hu-fg) 24%, transparent);
+  --hu-line-soft: color-mix(in oklab, var(--hu-fg) 12%, transparent);
+  --hu-menu-bg: var(--m3-surface-highest, var(--dk-glass-strong, var(--md-surface-high)));
+  --hu-focus: var(--m3-primary, var(--dk-accent, var(--md-primary)));
+}
+
+.hu-i { width: 20px; height: 20px; fill: currentColor; stroke: none; flex: none; }
+.hu-i.big { width: 36px; height: 36px; }
+.hu-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--hu-fg2); opacity: .7; }
+.hu-dot.ok { background: var(--hu-ok); opacity: 1; box-shadow: 0 0 0 3px var(--hu-ok-bg); }
+
+/* ---------- Tasten ---------- */
+.hu-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 40px; min-height: 0; padding: 0 18px; border: 0; border-radius: 999px; background: var(--hu-accent-bg); color: var(--hu-on-accent-bg);
+  font-weight: 500; font-size: 14px; line-height: 1; font-family: inherit; letter-spacing: .1px; cursor: pointer; box-shadow: none; white-space: nowrap; text-transform: none; text-decoration: none; transition: box-shadow .15s, filter .15s; }
+.hu-btn .hu-i { width: 18px; height: 18px; }
+.hu-btn:hover:not(:disabled) { box-shadow: inset 0 0 0 999px color-mix(in oklab, currentColor 9%, transparent); }
+.hu-btn:active:not(:disabled) { filter: none; box-shadow: inset 0 0 0 999px color-mix(in oklab, currentColor 14%, transparent); }
+.hu-btn:disabled { opacity: .5; cursor: default; }
+.hu-btn:focus-visible, .hu-tab:focus-visible, .hu-chip.btn:focus-visible, .hu-mi:focus-visible, .hu-fold summary:focus-visible, .hu-panel:focus-visible { outline: 2px solid var(--hu-focus); outline-offset: 2px; }
+.hu-btn.filled { background: var(--hu-fill); color: var(--hu-on-fill); }
+.hu-btn.text { background: transparent; color: var(--hu-accent); padding: 0 12px; }
+.hu-btn.danger { background: var(--hu-bad-bg); color: var(--hu-on-bad); }
+.hu-btn.sm { height: 34px; padding: 0 14px; font-size: 13.5px; }
+.hu-btn.icon { width: 40px; padding: 0; background: transparent; color: var(--hu-fg2); }
+.hu-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+
+/* ---------- Karte, Chips, Kennzahlen ---------- */
+.hu-card { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 16px; border-radius: 20px; background: var(--hu-card); border: 1px solid var(--hu-line-soft); color: var(--hu-fg); text-align: left; }
+.hu-ch { display: flex; align-items: center; gap: 10px; color: var(--hu-fg); }
+.hu-ch h4 { margin: 0; flex: 1; min-width: 0; font-weight: 600; font-size: 15px; line-height: 1.3; font-family: inherit; color: inherit; }
+.hu-ch .hu-i { color: var(--hu-accent); }
+.hu-ca { margin-left: auto; }
+.hu-sub { margin: 14px 0 4px; font-weight: 600; font-size: 13.5px; line-height: 1.3; font-family: inherit; color: var(--hu-fg2); letter-spacing: .02em; }
+.hu-card > .hu-sub:first-child { margin-top: 0; }
+.hu-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 4px 11px; border-radius: 999px; background: var(--hu-track); color: var(--hu-fg); font-weight: 500; font-size: 13px; line-height: 1.25; font-family: inherit; max-width: 100%; }
+.hu-chip .hu-i { width: 16px; height: 16px; }
+.hu-chip > span { overflow-wrap: anywhere; min-width: 0; }
+.hu-chip.ok { background: var(--hu-ok-bg); color: var(--hu-ok); }
+.hu-chip.warn { background: var(--hu-warn-bg); color: var(--hu-warn); }
+.hu-chip.bad { background: var(--hu-bad-bg); color: var(--hu-on-bad); }
+.hu-chip.btn { border: 0; cursor: pointer; text-align: left; }
+.hu-chip.btn:hover { box-shadow: inset 0 0 0 999px color-mix(in oklab, currentColor 9%, transparent); }
+.hu-flags { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.hu-meters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.hu-meters.flat { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.hu-meter { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.hu-mh { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.hu-mh .hu-i { width: 18px; height: 18px; color: var(--hu-fg2); }
+.hu-ml { flex: 1; min-width: 0; font-size: 13.5px; color: var(--hu-fg2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hu-mv { font-weight: 600; font-size: 14.5px; line-height: 1.2; font-family: inherit; font-variant-numeric: tabular-nums; color: var(--hu-fg); text-align: right; overflow-wrap: anywhere; }
+.hu-ms { font-size: 13px; color: var(--hu-fg2); overflow-wrap: anywhere; }
+.hu-meter.warn .hu-mv { color: var(--hu-bad); }
+.hu-bar { display: block; height: 8px; border-radius: 999px; background: var(--hu-track); overflow: hidden; }
+.hu-bar i { display: block; height: 100%; border-radius: inherit; background: var(--hu-fill); transition: width .4s ease; }
+.hu-bar.warn i { background: var(--hu-warn); }
+.hu-bar.bad i { background: var(--hu-bad); }
+/* Auf der Host-Karte stehen drei schmale Spalten: Beschriftung oben, Wert gross, ohne die Zeile darunter */
+.hu-meters:not(.flat) .hu-mh { display: grid; grid-template-columns: auto minmax(0, 1fr); row-gap: 2px; }
+.hu-meters:not(.flat) .hu-mv { grid-column: 1 / -1; text-align: left; font-size: 17px; }
+.hu-meters:not(.flat) .hu-ms { display: none; }
+
+/* ---------- Hinweise, Aussagen, Zeilen, Listen ---------- */
+.hu-note { margin: 0; font-size: 13.5px; line-height: 1.45; color: var(--hu-fg2); }
+.hu-note.warn { color: var(--hu-warn); }
+.hu-msg { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border-radius: 16px; background: var(--hu-soft); color: var(--hu-fg); }
+.hu-msg > .hu-i { margin-top: 1px; color: var(--hu-fg2); }
+.hu-msg > div { min-width: 0; }
+.hu-msg b { display: block; font-weight: 600; font-size: 14.5px; line-height: 1.35; overflow-wrap: anywhere; }
+.hu-msg > div > span { display: block; margin-top: 2px; font-size: 13.5px; color: var(--hu-fg2); overflow-wrap: anywhere; }
+.hu-msg.ok { background: var(--hu-ok-bg); } .hu-msg.ok > .hu-i { color: var(--hu-ok); }
+.hu-msg.warn { background: var(--hu-warn-bg); } .hu-msg.warn > .hu-i { color: var(--hu-warn); }
+.hu-msg.bad { background: var(--hu-bad-bg); } .hu-msg.bad > .hu-i { color: var(--hu-bad); }
+.hu-kv { display: flex; flex-direction: column; }
+.hu-kvr { display: grid; grid-template-columns: minmax(96px, 36%) minmax(0, 1fr); gap: 12px; padding: 10px 0; border-top: 1px solid var(--hu-line-soft); font-size: 14px; }
+.hu-kvr:first-child { border-top: 0; padding-top: 2px; }
+.hu-kvr .k { color: var(--hu-fg2); font-size: 13.5px; }
+.hu-kvr .v { overflow-wrap: anywhere; }
+.hu-kvr.bad .v { color: var(--hu-bad); font-weight: 600; }
+.hu-list { list-style: none; margin: 0; padding: 0; }
+.hu-list li { display: flex; flex-direction: column; gap: 4px; padding: 12px 0; border-top: 1px solid var(--hu-line-soft); min-width: 0; }
+.hu-list li:first-child { border-top: 0; padding-top: 2px; }
+.hu-list li:last-child { padding-bottom: 2px; }
+/* Eine einzelne Taste (Paket installieren) steht rechts neben dem Eintrag, wenn die Breite reicht; mehrere Tasten (Dienste, Container) stehen darunter */
+@container (min-width: 480px) {
+  .hu-list li:has(> .hu-acts > .hu-btn:only-child) { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; align-items: center; }
+  .hu-list li:has(> .hu-acts > .hu-btn:only-child) > .hu-acts { grid-column: 2; grid-row: 1 / span 2; margin: 0; }
+}
+.hu-lt { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.hu-ln { font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }
+.hu-ld { font-size: 13.5px; color: var(--hu-fg2); overflow-wrap: anywhere; }
+.hu-ld.mono { font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; color: var(--hu-fg); }
+.hu-list li.off .hu-ln, .hu-list li.off .hu-ld { opacity: .72; }
+.hu-att { list-style: none; margin: 0; padding: 0; }
+.hu-att li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--hu-line-soft); }
+.hu-att li:first-child { border-top: 0; padding-top: 0; }
+.hu-att li > div { flex: 1; min-width: 0; }
+.hu-att li > div > b { display: block; font-size: 14px; overflow-wrap: anywhere; }
+.hu-att li > div > span { display: block; font-size: 13.5px; color: var(--hu-fg2); overflow-wrap: anywhere; }
+.hu-att li.bad > .hu-i { color: var(--hu-bad); } .hu-att li.warn > .hu-i { color: var(--hu-warn); }
+.hu-fold { border-radius: 20px; background: var(--hu-card); border: 1px solid var(--hu-line-soft); padding: 0 16px; }
+.hu-fold summary { display: flex; align-items: center; gap: 8px; min-height: 52px; cursor: pointer; list-style: none; font-weight: 600; font-size: 14px; color: var(--hu-fg); }
+.hu-fold summary::-webkit-details-marker { display: none; }
+.hu-fold .chev { transition: transform .15s; color: var(--hu-fg2); }
+.hu-fold[open] .chev { transform: rotate(90deg); }
+.hu-fold[open] > .hu-list { padding-bottom: 12px; }
+.hu-pre { margin: 8px 0 0; max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; background: var(--hu-soft); color: var(--hu-fg); border-radius: 12px; padding: 12px; }
+.hu-prog progress { display: block; width: 100%; height: 8px; margin: 10px 0 4px; accent-color: var(--hu-fill); }
+.hu-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 16px; border-radius: 18px; border: 1px dashed var(--hu-line); color: var(--hu-fg); }
+.hu-empty .hu-i { color: var(--hu-fg2); }
+.hu-empty > b { font-size: 15px; }
+.hu-empty > span { font-size: 13.5px; color: var(--hu-fg2); }
+.hu-empty .hu-btn { margin-top: 8px; }
+
+/* Eingabefelder und der Schalter (am Handy zeichnen die gefuellten Felder des Sheets, m3.css, die Beschriftung selbst) */
+.hu-page div.hu-field, .hu-dlg div.hu-field, .hu-page .hu-field, html.desktop .hu-dlg .hu-field { display: flex; flex-direction: column; gap: 6px; margin: 0; font-size: 13.5px; color: var(--hu-fg2); }
+html.desktop .hu-dlg .hu-field select, html.desktop .hu-dlg .hu-field input, .hu-page .hu-field select, .hu-page .hu-field input { width: 100%; min-height: 44px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--hu-line); background: var(--hu-soft); color: var(--hu-fg); font-size: 14px; line-height: 1.2; font-family: inherit; }
+html.desktop .hu-dlg .hu-field select:focus, html.desktop .hu-dlg .hu-field input:focus, .hu-page .hu-field select:focus, .hu-page .hu-field input:focus { outline: 2px solid var(--hu-focus); outline-offset: 1px; border-color: transparent; }
+.hu-switch { position: relative; display: flex; flex-direction: row; align-items: center; gap: 12px; min-height: 44px; font-size: 14px; color: var(--hu-fg); cursor: pointer; }
+.hu-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.hu-sw { position: relative; flex: none; width: 48px; height: 28px; border-radius: 999px; background: var(--hu-track); box-shadow: inset 0 0 0 2px var(--hu-fg2); transition: background .15s; }
+.hu-sw::after { content: ""; position: absolute; top: 8px; left: 8px; width: 12px; height: 12px; border-radius: 50%; background: var(--hu-fg2); transition: transform .15s, width .15s, height .15s, top .15s, left .15s, background .15s; }
+.hu-switch input:checked + .hu-sw { background: var(--hu-fill); box-shadow: none; }
+.hu-switch input:checked + .hu-sw::after { top: 4px; left: 4px; width: 20px; height: 20px; transform: translateX(20px); background: var(--hu-on-fill); }
+.hu-switch input:focus-visible + .hu-sw { outline: 2px solid var(--hu-focus); outline-offset: 2px; }
+
+/* Haken der Einrichtung (Abschnitt Agent) */
+.hu-checks { display: flex; flex-direction: column; gap: 2px; }
+.hu-checks .hu-sub { margin-top: 4px; }
+.hu-check { position: relative; display: flex; flex-direction: row; align-items: center; gap: 14px; min-height: 44px; padding: 4px 2px; font-size: 14px; color: var(--hu-fg); cursor: pointer; }
+.hu-check[hidden] { display: none; }
+.hu-check input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.hu-cb { flex: none; width: 22px; height: 22px; border-radius: 6px; box-shadow: inset 0 0 0 2px var(--hu-fg2); display: inline-flex; align-items: center; justify-content: center; transition: background .15s; }
+.hu-check input:checked + .hu-cb { background: var(--hu-fill); box-shadow: none; }
+.hu-check input:checked + .hu-cb::after { content: ""; width: 6px; height: 11px; margin-top: -2px; border: solid var(--hu-on-fill); border-width: 0 2.5px 2.5px 0; transform: rotate(45deg); }
+.hu-check input:focus-visible + .hu-cb { outline: 2px solid var(--hu-focus); outline-offset: 2px; }
+.hu-cmd { display: flex; flex-direction: column; gap: 6px; }
+.hu-cmd .hu-pre { margin: 0; user-select: all; }
+
+/* ---------- Host-Karte (Hostliste) ---------- */
+.hu-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); gap: 14px; margin-top: 12px; align-items: stretch; }
+.hu-host { gap: 14px; position: relative; }
+.hu-hh { display: flex; align-items: center; gap: 12px; }
+.hu-hi { flex: none; width: 44px; height: 44px; border-radius: 14px; display: inline-flex; align-items: center; justify-content: center; background: var(--hu-accent-bg); color: var(--hu-on-accent-bg); }
+.hu-host.off .hu-hi { background: var(--hu-track); color: var(--hu-fg2); }
+.hu-ht { flex: 1; min-width: 0; }
+.hu-hn { margin: 0; font-weight: 600; font-size: 16.5px; line-height: 1.25; font-family: inherit; color: var(--hu-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hu-ht p { margin: 2px 0 0; font-size: 13.5px; color: var(--hu-fg2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hu-state { display: inline-flex; align-items: center; gap: 7px; flex: none; padding: 4px 11px; border-radius: 999px; font-weight: 600; font-size: 13px; line-height: 1.3; font-family: inherit; background: var(--hu-track); color: var(--hu-fg2); }
+.hu-state.ok { background: var(--hu-ok-bg); color: var(--hu-ok); }
+.hu-hk { display: flex; flex-wrap: wrap; gap: 6px; }
+.hu-svcs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.hu-sl { font-size: 13px; color: var(--hu-fg2); margin-right: 2px; }
+.hu-hf { display: flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 2px; }
+.hu-menuw { position: relative; margin-left: auto; }
+.hu-menu { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 30; min-width: 210px; display: flex; flex-direction: column; padding: 6px; border-radius: 16px; background: var(--hu-menu-bg); border: 1px solid var(--hu-line); box-shadow: 0 10px 30px rgba(0, 0, 0, .28); backdrop-filter: blur(20px); }
+.hu-mi { display: flex; align-items: center; gap: 12px; min-height: 42px; padding: 0 12px; border: 0; border-radius: 12px; background: none; color: var(--hu-fg); font-weight: 500; font-size: 14px; line-height: 1; font-family: inherit; text-align: left; cursor: pointer; }
+.hu-mi .hu-i { color: var(--hu-fg2); }
+.hu-mi:hover { background: var(--hu-soft); }
+
+/* ---------- Seite "Host-Details" (hostpage.js): Desktop in der Ansicht des Start-Fensters, Handy als eigene Seite ---------- */
+.hu-page { color: var(--hu-fg); }
+.hu-ph { display: flex; align-items: center; gap: 10px; padding: 14px 0 14px; }
+.hu-dt { flex: 1; min-width: 0; }
+.hu-dtt { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.hu-dt h2 { margin: 0; min-width: 0; font-weight: 650; font-size: 22px; line-height: 1.25; font-family: inherit; color: var(--hu-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hu-dsub { margin: 2px 0 0; font-size: 13.5px; color: var(--hu-fg2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hu-db { display: grid; grid-template-columns: 224px minmax(0, 1fr); gap: 20px; align-items: start; }
+.hu-nav { position: sticky; top: 8px; display: flex; flex-direction: column; gap: 2px; padding: 8px; border-radius: 22px; background: var(--hu-card); border: 1px solid var(--hu-line-soft); }
+.hu-tab { display: flex; align-items: center; gap: 12px; flex: none; min-height: 44px; padding: 0 14px; border: 0; border-radius: 999px; background: none; color: var(--hu-fg2); font-weight: 500; font-size: 14px; line-height: 1.3; font-family: inherit; text-align: left; cursor: pointer; }
+.hu-tab:hover { background: var(--hu-soft); }
+.hu-tab[aria-selected="true"] { background: var(--hu-accent-bg); color: var(--hu-on-accent-bg); }
+.hu-tl { flex: 1; min-width: 0; padding: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hu-bd { min-width: 22px; height: 22px; padding: 0 7px; border-radius: 999px; font-weight: 700; font-size: 12px; line-height: 22px; font-family: inherit; font-style: normal; text-align: center; background: var(--hu-track); color: var(--hu-fg); }
+.hu-bd.warn { background: var(--hu-warn-bg); color: var(--hu-warn); }
+.hu-bd.bad { background: var(--hu-bad-bg); color: var(--hu-on-bad); }
+.hu-panels { min-width: 0; padding-bottom: 24px; }
+.hu-panel { display: flex; flex-direction: column; gap: 14px; container-type: inline-size; }
+.hu-cols { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+.hu-cols > .hu-msg, .hu-cols > .wide { grid-column: 1 / -1; }
+@container (min-width: 620px) { .hu-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+#hostInfoMsg:empty { display: none; }
+#hostInfoMsg { margin: 0; padding: 4px 0 14px; }
+.hu-nodata { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+#hostActDlg.hu-act { width: min(94vw, 560px); }
+#hostActBody { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }
+.hact-typed { margin-top: 2px; }
+
+/* Menue der Karte: einfache Aktionen, gesperrte ausgegraut mit Grund */
+.hu-menu { max-height: min(70vh, 460px); overflow-y: auto; min-width: 270px; max-width: min(340px, 86vw); }
+.hu-menu.down { bottom: auto; top: calc(100% + 6px); }
+.hu-mt { display: flex; flex-direction: column; gap: 2px; min-width: 0; text-align: left; line-height: 1.3; }
+.hu-mt small { display: block; font-size: 13px; font-weight: 400; line-height: 1.35; color: var(--hu-fg2); white-space: normal; }
+.hu-mi.dis { cursor: default; }
+.hu-mi.dis .hu-mt, .hu-mi.dis .hu-i { opacity: .62; }
+.hu-mi.dis[data-hostinfo] { cursor: pointer; }
+.hu-mi { flex: none; height: auto; min-height: 44px; padding-top: 6px; padding-bottom: 6px; }
+.hu-mnote { display: block; margin: 2px 6px 6px; padding: 8px 10px; border-radius: 10px; background: var(--hu-soft); font-size: 13px; line-height: 1.35; color: var(--hu-fg2); white-space: normal; }
+.hu-msep { display: block; height: 1px; margin: 6px 8px; background: var(--hu-line-soft); }
+
+/* Handy: Reiter oben (haften unter der Leiste) statt Seitenleiste */
+html:not(.desktop) .hu-ph { padding: 4px 0 8px; }
+html:not(.desktop) .hu-db { grid-template-columns: minmax(0, 1fr); gap: 0; }
+html:not(.desktop) .hu-nav { top: 0; z-index: 4; flex-direction: row; overflow-x: auto; overflow-y: hidden; margin: 0 calc(-1 * var(--m3-pad, 16px)) 12px; padding: 6px var(--m3-pad, 16px) 8px; border-radius: 0; border: 0; border-bottom: 1px solid var(--hu-line-soft);
+  background: var(--m3-glass-strong, var(--hu-card)); backdrop-filter: blur(18px); scrollbar-width: none; }
+html:not(.desktop) .hu-nav::-webkit-scrollbar { display: none; }
+html:not(.desktop) .hu-tab { min-height: 40px; padding: 0 14px; gap: 8px; }
+html:not(.desktop) .hu-tab .hu-i { width: 18px; height: 18px; }
+html:not(.desktop) .hu-tl { flex: none; }
+@media (pointer: coarse), (max-width: 999px) {
+  .hu-btn { height: 44px; } .hu-btn.sm { height: 40px; } .hu-chip.btn { min-height: 40px; }
+}
+@media (prefers-reduced-motion: reduce) { .hu-bar i, .hu-sw, .hu-sw::after, .hu-fold .chev { transition: none; } }

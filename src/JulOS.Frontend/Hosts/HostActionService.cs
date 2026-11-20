@@ -305,12 +305,13 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
             var o = doc.RootElement;
             if (o.ValueKind != JsonValueKind.Object) return (null, "invalid_answer");
             string? Text(string name, int max) => o.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? AgentLabels.Printable(v.GetString(), max) is { Length: > 0 } s ? s : null : null;
+            string? Multiline(string name, int max) => o.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? AgentLabels.PrintableLines(v.GetString(), max) is { Length: > 0 } s ? s : null : null;
             bool Bool(string name) => o.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
             if (status != 200)
             {
                 var code = Text("error", 32);
                 var safe = code is not null && code.All(c => c is >= 'a' and <= 'z' or '_') ? code : "agent_error";
-                var output = Text("output", 4000);
+                var output = Multiline("output", 4000);
                 return (output is null ? null : new HostActionResult(false, false, false, null, false, null, null, output, null, null), safe);
             }
             string[]? lines = o.TryGetProperty("lines", out var l) && l.ValueKind == JsonValueKind.Array
@@ -318,7 +319,7 @@ internal sealed class HostActionService(AgentLinks links, AgentStore agents, Hos
             int? count = o.TryGetProperty("count", out var c2) && c2.ValueKind == JsonValueKind.Number && c2.TryGetInt32(out var cn) ? Math.Clamp(cn, 0, 1_000_000) : null;
             bool? updated = o.TryGetProperty("updated", out var u) && u.ValueKind is JsonValueKind.True or JsonValueKind.False ? u.ValueKind == JsonValueKind.True : null;
             var name = Text("unit", 100) ?? Text("container", 64);
-            return (new HostActionResult(true, Bool("accepted"), Bool("already"), updated, Bool("rebootRequired"), count, lines, Text("output", 4000), name, Text("image", 200)), null);
+            return (new HostActionResult(true, Bool("accepted"), Bool("already"), updated, Bool("rebootRequired"), count, lines, Multiline("output", 4000), name, Text("image", 200)), null);
         }
         catch (JsonException) { return (null, "invalid_answer"); }
     }

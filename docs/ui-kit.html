@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="../src/JulOS.Frontend/wwwroot/style.css">
 <link rel="stylesheet" href="../src/JulOS.Frontend/wwwroot/m3.css">
 <link rel="stylesheet" href="../src/JulOS.Frontend/wwwroot/mobile.css">
+<link rel="stylesheet" href="../src/JulOS.Frontend/wwwroot/hostui.css">
 <style>
   /* nur das Blatt selbst (Rahmen, Erklärungen), nie die Bausteine */
   html, body { height: auto; }
@@ -137,6 +138,56 @@
     <button type="button" class="mb m3-state"><span class="pill"><svg data-i="person"></svg></span><span>Profil</span></button>
   </nav></div>
 
+  <div class="name">Hosts: Karte, Kennzahlen, Balken (hostui.css, Markup in hostview.js)</div>
+  <p class="doc">Eine Host-Karte für Handy und Desktop: Name und Zustand, Art des Agenten, drei Kennzahlen mit Balken (gelb ab 80 %, rot ab 90 %), Hinweise nur wenn es etwas gibt (Sicherheitsupdates rot), die Verbindungen als Chips, eine ruhige Hauptaktion und die Nebenaktionen im Menü.</p>
+  <article class="hu-card hu-host" style="margin-top:var(--m3-sp-2)">
+    <header class="hu-hh"><span class="hu-hi"><svg class="hu-i" data-i="dns"></svg></span><div class="hu-ht"><div class="hu-hn" role="heading" aria-level="3">Werkbank</div><p>werkbank-01 · Debian GNU/Linux 13</p></div><span class="hu-state ok"><i class="hu-dot ok"></i>online</span></header>
+    <div class="hu-hk"><span class="hu-chip"><svg class="hu-i" data-i="terminal"></svg><span>Host-Agent · Agent 0.6.0</span></span></div>
+    <div class="hu-meters">
+      <div class="hu-meter"><div class="hu-mh"><svg class="hu-i" data-i="speed"></svg><span class="hu-ml">CPU</span><span class="hu-mv">1,42</span></div><span class="hu-bar" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="24" aria-label="CPU"><i style="width:24%"></i></span></div>
+      <div class="hu-meter warn"><div class="hu-mh"><svg class="hu-i" data-i="memory"></svg><span class="hu-ml">RAM</span><span class="hu-mv">86 %</span></div><span class="hu-bar warn" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="86" aria-label="RAM"><i style="width:86%"></i></span></div>
+      <div class="hu-meter"><div class="hu-mh"><svg class="hu-i" data-i="disk"></svg><span class="hu-ml">Platte</span><span class="hu-mv">72 %</span></div><span class="hu-bar" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="72" aria-label="Platte"><i style="width:72%"></i></span></div>
+    </div>
+    <div class="hu-flags"><span class="hu-chip"><svg class="hu-i" data-i="update"></svg><span>Laufzeit 7 d 23 h</span></span><span class="hu-chip bad"><svg class="hu-i" data-i="update"></svg><span>7 Updates · 2 davon Sicherheit</span></span><span class="hu-chip warn"><svg class="hu-i" data-i="power"></svg><span>Neustart nötig</span></span></div>
+    <div class="hu-svcs"><span class="hu-sl">Verbindungen</span><button type="button" class="hu-chip btn"><i class="hu-dot ok"></i><span>Terminal</span></button><button type="button" class="hu-chip btn"><i class="hu-dot"></i><span>Desktop</span></button></div>
+    <footer class="hu-hf"><button type="button" class="hu-btn tonal"><svg class="hu-i" data-i="info"></svg><span>Details</span></button><span class="hu-menuw"><button type="button" class="hu-btn icon" aria-label="Weitere Aktionen"><svg class="hu-i" data-i="more"></svg></button></span></footer>
+  </article>
+
+  <div class="name">Hosts: Leerzustand mit nächster Handlung</div>
+  <article class="hu-card hu-host off"><header class="hu-hh"><span class="hu-hi"><svg class="hu-i" data-i="dns"></svg></span><div class="hu-ht"><div class="hu-hn" role="heading" aria-level="3">Raspberry</div><p>Kein Agent</p></div><span class="hu-state off"><i class="hu-dot"></i>offline</span></header>
+    <div class="hu-empty"><svg class="hu-i big" data-i="dns"></svg><b>Noch kein Agent</b><span>Mit einem Agenten sieht JulOS Systemwerte, Updates und Dienste dieses Rechners.</span><button type="button" class="hu-btn filled"><svg class="hu-i" data-i="update"></svg><span>Agent einrichten</span></button></div></article>
+
+  <div class="name">Hosts: Abschnittskarte, Aussage, Zeilen, Liste</div>
+  <div style="display:flex;flex-direction:column;gap:var(--m3-sp-3)">
+    <div class="hu-msg bad"><svg class="hu-i" data-i="info"></svg><div><b>7 Updates verfügbar</b><span>2 davon Sicherheit</span></div></div>
+    <section class="hu-card"><header class="hu-ch"><svg class="hu-i" data-i="dns"></svg><h4>Rechner</h4></header>
+      <div class="hu-kv"><div class="hu-kvr"><span class="k">Betriebssystem</span><span class="v">Debian GNU/Linux 13 · x86_64</span></div><div class="hu-kvr"><span class="k">Laufzeit</span><span class="v">7 d 23 h</span></div><div class="hu-kvr bad"><span class="k">Neustart</span><span class="v">nötig</span></div></div></section>
+    <section class="hu-card"><header class="hu-ch"><svg class="hu-i" data-i="disk"></svg><h4>Datenträger</h4></header>
+      <div class="hu-meter warn"><div class="hu-mh"><span class="hu-ml">/srv/daten</span><span class="hu-mv">92 %</span></div><span class="hu-bar bad" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="92" aria-label="/srv/daten"><i style="width:92%"></i></span><span class="hu-ms">1,8 TB von 2,0 TB · xfs</span></div></section>
+    <section class="hu-card"><h4 class="hu-sub">Sicherheitsupdates</h4><ul class="hu-list"><li class="tagged"><div class="hu-lt"><span class="hu-ln">libssl3</span><span class="hu-chip bad">Sicherheit</span></div><span class="hu-ld">3.0.15 → 3.0.16</span><div class="hu-acts"><button type="button" class="hu-btn sm tonal">Installieren</button></div></li></ul></section>
+  </div>
+
+  <div class="name">Hosts: Menü der Karte (einfache Aktionen, gesperrte mit Grund) und Haken</div>
+  <p class="doc">Jede Aktion läuft über den bestätigten Ablauf. Was Stufe, Pause oder das lokale Wort nicht erlauben, steht ausgegraut; sperrt dasselbe alles, steht der Grund einmal oben.</p>
+  <div class="hu-menu" role="menu" style="position:static;min-width:0;max-width:340px">
+    <span class="hu-mnote">Aus für diesen Host: unter Aktionen einschalten</span>
+    <button type="button" role="menuitem" class="hu-mi dis" aria-disabled="true"><svg class="hu-i" data-i="update"></svg><span class="hu-mt">Updates installieren</span></button>
+    <button type="button" role="menuitem" class="hu-mi dis" aria-disabled="true"><svg class="hu-i" data-i="power"></svg><span class="hu-mt">Neu starten</span></button>
+    <span class="hu-msep" role="separator"></span>
+    <button type="button" role="menuitem" class="hu-mi"><svg class="hu-i" data-i="more"></svg><span class="hu-mt">Agent verwalten</span></button>
+  </div>
+  <div class="hu-checks" style="margin-top:var(--m3-sp-2)">
+    <label class="hu-check"><input type="checkbox" checked><span class="hu-cb" aria-hidden="true"></span><span>Updates installieren</span></label>
+    <label class="hu-check"><input type="checkbox"><span class="hu-cb" aria-hidden="true"></span><span>Neu starten und ausschalten</span></label>
+  </div>
+
+  <div class="name">Hosts: Navigation der Details (Reiter am Handy, Seitenleiste am Desktop)</div>
+  <nav class="hu-nav" role="tablist" aria-label="Beispiel" style="flex-direction:row;overflow-x:auto;border:0;padding:0">
+    <button type="button" role="tab" class="hu-tab" aria-selected="true"><svg class="hu-i" data-i="dns"></svg><span class="hu-tl" style="flex:none">Überblick</span><i class="hu-bd warn">4</i></button>
+    <button type="button" role="tab" class="hu-tab" aria-selected="false"><svg class="hu-i" data-i="update"></svg><span class="hu-tl" style="flex:none">Updates</span><i class="hu-bd bad">7</i></button>
+    <button type="button" role="tab" class="hu-tab" aria-selected="false"><svg class="hu-i" data-i="disk"></svg><span class="hu-tl" style="flex:none">Datenträger</span></button>
+  </nav>
+
   <div class="name">Gefahrenbereich</div>
   <div class="m3-card m3-rows"><div class="m3-row"><div class="rt">Auf diesem Gerät abmelden<small>Danach ist die Anmeldung nötig.</small></div><div class="rc"><button type="button" class="mb m3-btn danger sm m3-state">Abmelden</button></div></div></div>
 </main>
@@ -151,6 +202,12 @@
     home: 'M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z', apps: 'M4 8h4V4H4v4zm6 12h4v-4h-4v4zm-6 0h4v-4H4v4zm0-6h4v-4H4v4zm6 0h4v-4h-4v4zm6-10v4h4V4h-4zm-6 4h4V4h-4v4zm6 6h4v-4h-4v4zm0 6h4v-4h-4v4z',
     dns: 'M20 13H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 19c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM20 3H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1V4c0-.55-.45-1-1-1zM7 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z',
     play: 'M8 5v14l11-7z',
+    speed: 'M20.38 8.57l-1.23 1.85a8 8 0 0 1-.22 7.58H5.07A8 8 0 0 1 15.58 6.85l1.85-1.23A10 10 0 0 0 3.35 19a2 2 0 0 0 1.72 1h13.85a2 2 0 0 0 1.74-1 10 10 0 0 0-.27-10.44zm-9.79 6.84a2 2 0 0 0 2.83 0l5.66-8.49-8.49 5.66a2 2 0 0 0 0 2.83z',
+    memory: 'M15 9H9v6h6V9zm-2 4h-2v-2h2v2zm8-2V9h-2V7c0-1.1-.9-2-2-2h-2V3h-2v2h-2V3H9v2H7c-1.1 0-2 .9-2 2v2H3v2h2v2H3v2h2v2c0 1.1.9 2 2 2h2v2h2v-2h2v2h2v-2h2c1.1 0 2-.9 2-2v-2h2v-2h-2v-2h2zm-4 6H7V7h10v10z',
+    disk: 'M2 20h20v-4H2v4zm2-3h2v2H4v-2zM2 4v4h20V4H2zm4 3H4V5h2v2zm-4 7h20v-4H2v4zm2-3h2v2H4v-2z',
+    update: 'M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z',
+    power: 'M13 3h-2v10h2V3zm4.83 2.17l-1.42 1.42A6.92 6.92 0 0 1 19 12c0 3.87-3.13 7-7 7A6.995 6.995 0 0 1 7.58 6.58L6.17 5.17A8.932 8.932 0 0 0 3 12a9 9 0 0 0 18 0c0-2.74-1.23-5.18-3.17-6.83z',
+    more: 'M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z',
     person: 'M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z',
   };
   for (const s of document.querySelectorAll('svg[data-i]')) { s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('aria-hidden', 'true'); s.innerHTML = `<path d="${P[s.dataset.i] || ''}"/>`; }

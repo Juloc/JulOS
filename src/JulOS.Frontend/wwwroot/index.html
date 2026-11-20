@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="terminal.css">
   <link rel="stylesheet" href="widgets.css">
+  <link rel="stylesheet" href="hostui.css">
   <link rel="stylesheet" href="files.css">
   <title>JulOS</title>
 </head>
@@ -257,42 +258,6 @@
         <h2 id="hostDlgTitle">Host</h2>
         <label>Name <input id="hostName" type="text" maxlength="60" autocomplete="off" required></label>
         <p id="hostInfo" class="hint" hidden></p>
-        <section id="hostAgent" class="agentbox" hidden>
-          <h3 data-i18n="app.hostAgent">Agent auf diesem Host</h3>
-          <p id="hostAgentState" class="agentstate"></p>
-          <p class="hint" data-i18n="app.hostAgentHint">Der Agent läuft in der Sitzung des Ziels und gibt der App die Fensterleiste, den Programmstart sowie Fotos und Dateien für die Zwischenablage. Er meldet sich von dort aus beim Server, auf dem Host lauscht nichts. Ein Host hat einen Agenten, er gilt für alle Verbindungen dieses Hosts.</p>
-          <div id="hostAgentCode" hidden>
-            <p class="hint"><span data-i18n="app.hostCodeA">Dieser Code gilt </span><b data-i18n="app.hostCodeB">10 Minuten</b><span data-i18n="app.hostCodeC"> und nur </span><b data-i18n="app.hostCodeD">einmal</b><span data-i18n="app.hostCodeE">. Er wird nur jetzt angezeigt.</span></p>
-            <p id="hostAgentCodeText" class="agentcode"></p>
-            <p class="hint" data-i18n="app.hostCodeCmd">Auf dem Host, in einem Terminal der grafischen Sitzung:</p>
-            <pre id="hostAgentCmd" class="agentcmd"></pre>
-            <button id="hostAgentCopy" type="button" class="ghost" data-i18n="app.copyCommands">Befehle kopieren</button>
-          </div>
-          <div id="hostAgentUpdate" hidden>
-            <p id="hostAgentUpdateHint" class="hint" hidden></p>
-            <div class="row">
-              <button id="hostAgentUpdateBtn" type="button" class="primary" hidden data-i18n="app.updateNow">Jetzt aktualisieren</button>
-            </div>
-            <label class="check" data-i18n="app.autoUpdate"><input id="hostAgentAuto" type="checkbox"> Automatisch aktualisieren, wenn eine neue Version da ist</label>
-          </div>
-          <div class="row">
-            <button id="hostAgentSetup" type="button" class="ghost" data-i18n="app.agentSetup">Agent einrichten</button>
-            <button id="hostAgentRemove" type="button" class="danger" hidden data-i18n="app.agentRemove">Agent entfernen</button>
-          </div>
-          <div id="hostAgentSsh" class="agentbox">
-            <h3 data-i18n="app.hostSshTitle">Host-Agent (Server ohne Desktop)</h3>
-            <p class="hint" data-i18n="app.hostSshHint">Für einen Server oder eine VM ohne Bildschirm (zum Beispiel Docker-Host oder Proxmox): ein kleines Programm, das Systemwerte, Updates, Dienste und Container nur liest und meldet. Es läuft als eigener Benutzer ohne Anmeldung und meldet sich von dort aus beim Server.</p>
-            <p id="hostSshTarget" class="hint"></p>
-            <div class="row">
-              <button id="hostSshInstall" type="button" class="primary" data-i18n="app.hostSshInstall">Agent per SSH installieren</button>
-              <button id="hostSshCopy" type="button" class="ghost" data-i18n="app.hostSshCopy">Befehl kopieren</button>
-            </div>
-            <div id="hostSshCmdBox" hidden>
-              <p id="hostSshNote" class="hint"></p>
-              <pre id="hostSshCmd" class="agentcmd"></pre>
-            </div>
-          </div>
-        </section>
         <p id="hostMsg" class="msg" role="alert"></p>
         <div class="row">
           <button id="hostSave" type="submit" class="primary" data-i18n="common.save">Speichern</button>
@@ -302,20 +267,8 @@
       </form>
     </dialog>
 
-    <!-- Host-Details: Systemwerte, Updates, Dienste, Container (docs/HOST-AGENT.md) -->
-    <dialog id="hostInfoDlg">
-      <h2 id="hostInfoTitle">Host</h2>
-      <p id="hostInfoSub" class="hint"></p>
-      <div id="hostInfoBody"></div>
-      <p id="hostInfoMsg" class="msg" role="alert"></p>
-      <div class="row">
-        <button id="hostInfoRefresh" type="button" class="primary" data-i18n="hostinfo.refresh">Neu lesen</button>
-        <button class="ghost close" data-act="close" type="button" data-i18n="common.close">Schließen</button>
-      </div>
-    </dialog>
-
-    <!-- Bestaetigung einer Aktion auf einem Host (Stufe 3): erst sagt der Server, was geschaehe, dann folgt die Ausfuehrung -->
-    <dialog id="hostActDlg">
+        <!-- Bestaetigung einer Aktion auf einem Host (Stufe 3): erst sagt der Server, was geschaehe, dann folgt die Ausfuehrung -->
+    <dialog id="hostActDlg" class="hu-dlg hu-act">
       <h2 id="hostActTitle">Host</h2>
       <div id="hostActBody"></div>
       <p id="hostActMsg" class="msg" role="alert"></p>

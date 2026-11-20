@@ -3,7 +3,7 @@
  * Ein Host ist, was GET /api/hosts liefert: { id, name, online, hostname?, os?, agent?: { online, lastSeen?, version?, platform?, outdated, latest?, updateAvailable, canUpdate, autoUpdate }, services: [{ connection, kind, online? }] }
  * ===================================================================== */
 
-import { t, fmtDate, tp } from './i18n.js';
+import { t, fmtDate } from './i18n.js';
 
 /** 'up' (erreichbar), 'down' oder 'unknown' (nicht geprueft: Erlaubnisliste oder noch keine Antwort) */
 export function serviceState(host, connectionId) {
@@ -40,12 +40,4 @@ export function agentSummary(h) {
   const what = [a.version && t('hosts.agentVersion', { v: a.version }), a.platform].filter(Boolean).join(', ');
   const base = a.online ? t('hosts.agentOnline') : t('hosts.agentOffline') + (a.lastSeen && when(a.lastSeen) ? ' ' + t('hosts.lastSeen', { when: when(a.lastSeen) }) : '');
   return base + (what ? ' – ' + what : '') + (a.outdated ? ' – ' + t('hosts.outdated') : a.updateAvailable ? ' – ' + t('hosts.updateAvailable') + (a.latest ? ' (' + a.latest + ')' : '') : '');
-}
-
-/** Wie viele Dienste eines Hosts antworten, als Text ("2 von 3 Diensten erreichbar") */
-export function servicesSummary(h) {
-  const n = h.services.length;
-  if (!n) return t('hosts.noConnections');
-  const up = h.services.filter((s) => s.online === true).length;
-  return tp('hosts.servicesUp', n, { up });
 }

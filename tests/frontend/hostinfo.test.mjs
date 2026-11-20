@@ -1,11 +1,11 @@
-// Host-Agent-Oberflaeche (hostinfo.js): Formatierer, Zusammenfassungen, HTML-Bausteine, Speicher, Einzeiler, Terminal-Wahl. Reine Logik, kein Browser noetig.
+// Host-Agent-Oberflaeche (hostinfo.js): Formatierer, Zusammenfassungen, Speicher, Einzeiler, Terminal-Wahl. Reine Logik, kein Browser noetig.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { setPref } from '../../src/JulOS.Frontend/wwwroot/i18n.js';
 import {
-  fmtBytes, fmtUptime, fmtAge, ramPercent, mainDisk, systemParts, systemLine, updatesLine, agentModeText, capsText, agentDetail, wantsInfo, cardLines,
-  errorText, stateNote, systemHtml, updatesHtml, servicesHtml, dockerHtml, createHostInfoStore, installCommand, pickTerminal, fetchKind, FRESH_MS,
+  fmtBytes, fmtUptime, fmtAge, ramPercent, mainDisk, updatesLine, agentModeText, capsText, agentDetail, wantsInfo,
+  errorText, stateNote, createHostInfoStore, installCommand, AGENT_INSTALLER, pickTerminal, fetchKind, FRESH_MS,
 } from '../../src/JulOS.Frontend/wwwroot/hostinfo.js';
 import { prefillState } from '../../src/JulOS.Frontend/wwwroot/terminal-input.js';
 
@@ -41,18 +41,6 @@ test('die Platte der Karte: "/", sonst die voelligste', () => {
   assert.equal(mainDisk([]), null);
 });
 
-test('Systemwerte: Teile, Warnungen und die Zeile', () => {
-  const p = systemParts(info());
-  assert.deepEqual(p.map((x) => x.id), ['load', 'ram', 'disk', 'uptime']);
-  assert.equal(systemLine(info()), 'Last 0,50 · RAM 25 % · Platte 20 % · Laufzeit 3 d 4 h');
-  assert.ok(!p.some((x) => x.warn));
-  const warn = systemParts(info({ rebootRequired: true, memory: { totalBytes: 10, availableBytes: 0, swapTotalBytes: 0, swapFreeBytes: 0 }, load: [9, 1, 1] }));
-  assert.deepEqual(warn.filter((x) => x.warn).map((x) => x.id), ['load', 'ram', 'reboot']);
-  assert.equal(warn.at(-1).text, 'Neustart nötig');
-  assert.deepEqual(systemParts(null), []);
-  assert.deepEqual(systemParts({}), []);
-});
-
 test('Updates-Zeile: n verfuegbar (m Sicherheit), keine, unbekannt', () => {
   assert.equal(updatesLine({ updates: { count: 3, security: 1, securityKnown: true } }), 'Updates: 3 verfügbar (1 Sicherheit)');
   assert.equal(updatesLine({ updates: { count: 3, security: 0, securityKnown: true } }), 'Updates: 3 verfügbar');
@@ -77,16 +65,6 @@ test('Modus und Faehigkeiten des Agenten', () => {
   assert.ok(!wantsInfo(host({ agent: null })));
 });
 
-test('Zeilen der Host-Karte', () => {
-  const entry = { status: { state: 'ok', info: info() }, updates: { state: 'ok', updates: { count: 2, security: 2, securityKnown: true } }, services: { services: { count: 1 } } };
-  const lines = cardLines(host(), entry);
-  assert.deepEqual(lines.map((l) => l.id), ['agent', 'system', 'updates', 'services']);
-  assert.equal(lines.find((l) => l.id === 'updates').warn, true);
-  assert.equal(lines.find((l) => l.id === 'services').text, '1 Dienst fehlgeschlagen');
-  assert.deepEqual(cardLines(host(), null).map((l) => l.id), ['agent']);
-  assert.deepEqual(cardLines(host({ agent: null }), null), []);
-});
-
 test('Fehlercodes und Zustaende werden zu Saetzen, Unbekanntes zu einem allgemeinen Satz', () => {
   assert.match(errorText('timeout'), /rechtzeitig/);
   assert.match(errorText('apt_failed'), /apt/);
@@ -98,33 +76,6 @@ test('Fehlercodes und Zustaende werden zu Saetzen, Unbekanntes zu einem allgemei
   assert.match(stateNote({ state: 'unsupported' }), /kann der Agent/);
   assert.match(stateNote({ state: 'offline', stale: true, at: '2026-01-02T10:00:00Z' }), /nicht verbunden\. Stand von /);
   assert.match(stateNote(null), /gelesen/);
-});
-
-test('HTML-Bausteine: Werte vom Agenten werden maskiert', () => {
-  const evil = '<img src=x onerror=alert(1)>';
-  const sys = systemHtml({ state: 'ok', info: info({ hostname: evil, os: evil, kernel: evil, disks: [{ mount: evil, totalBytes: 1, usedBytes: 1, percent: 1 }], addresses: [{ iface: evil, family: 4, address: evil, prefix: 1 }], rebootRequired: true, rebootPackages: [evil] }) }, esc);
-  const upd = updatesHtml({ state: 'ok', updates: { manager: 'apt', count: 2, security: 1, securityKnown: true, packages: [{ name: evil, from: evil, to: evil, security: true }, { name: 'b', to: '1', new: true }], keptBack: [evil], held: [evil], removals: 0, truncated: true, listsAgeSeconds: 9 * 86400 } }, esc);
-  const svc = servicesHtml({ state: 'ok', services: { state: 'degraded', count: 1, failed: [{ unit: evil, sub: 'failed', description: evil }] } }, esc);
-  const dock = dockerHtml({ state: 'ok', docker: { available: true, running: 1, total: 1, containers: [{ id: evil, name: evil, image: evil, state: 'running', status: evil }] } }, esc);
-  for (const html of [sys, upd, svc, dock]) { assert.doesNotMatch(html, /<img/); assert.match(html, /&lt;img/); }
-  assert.match(upd, /class="sec"/);
-  assert.match(upd, /hi-badge/);
-  assert.match(upd, /neu: 1/);
-  assert.match(upd, /sudo apt update/);                    // Hinweis auf die Paketlisten
-  assert.match(upd, /class="hi-note warn"/);               // Listen aelter als 7 Tage
-  assert.ok(upd.indexOf('hi-sum') < upd.indexOf('hi-list'));
-});
-
-test('HTML-Bausteine: leere und fehlende Daten', () => {
-  assert.match(updatesHtml({ state: 'ok', updates: { manager: 'apt', count: 0, securityKnown: true, security: 0, packages: [], listsAgeSeconds: 100 } }, esc), /Updates: keine/);
-  assert.match(servicesHtml({ state: 'ok', services: { state: 'running', count: 0, failed: [] } }, esc), /Keine fehlgeschlagenen Dienste/);
-  assert.match(dockerHtml({ state: 'ok', docker: { available: false, reason: 'no_access' } }, esc), /Kein Zugriff auf Docker/);
-  assert.match(dockerHtml({ state: 'ok', docker: { available: false, reason: 'no_socket' } }, esc), /nicht vorhanden/);
-  assert.match(dockerHtml({ state: 'ok', docker: { available: true, running: 2, total: 5, containers: [] } }, esc), /2 von 5 Containern/);
-  assert.match(systemHtml({ state: 'offline' }, esc), /nicht verbunden/);
-  assert.match(systemHtml({ state: 'offline', stale: true, at: '2026-01-02T10:00:00Z', info: info() }, esc), /Stand von[\s\S]*Debian/);   // alter Stand bleibt sichtbar
-  assert.match(updatesHtml(null, esc), /gelesen/);
-  assert.match(systemHtml({ state: 'ok', info: info({ virt: { kind: 'vm', name: 'kvm' }, proxmox: { product: 've', version: '8.2' } }) }, esc), /Virtuelle Maschine \(kvm\) · Proxmox VE 8\.2/);
 });
 
 test('fetchKind: der Pfad, ?fresh=1 nur auf Wunsch', async () => {
@@ -181,14 +132,24 @@ test('Speicher: gleichzeitige Anforderung teilt eine Abfrage', async () => {
   assert.equal(n, 1);
 });
 
-test('Einzeiler fuer den Host: Datei bleibt zum Ansehen, nichts wird in eine Shell geleitet, --allow-http nur fuer fremdes http', () => {
+test('Einzeiler fuer den Host: EIN Installer, Datei bleibt zum Ansehen, nichts wird in eine Shell geleitet, --allow-http nur fuer fremdes http', () => {
   const cmd = installCommand('https://julos.example.org', 'ABCDE-FGHIJ');
-  assert.equal(cmd, 'curl -fsSL https://julos.example.org/agent-files/install-host-agent.sh -o julos-install-host-agent.sh && sudo sh julos-install-host-agent.sh --server https://julos.example.org --code ABCDE-FGHIJ');
+  assert.equal(cmd, 'curl -fsSL https://julos.example.org/agent-files/install-agent.sh -o julos-install-agent.sh && sudo sh julos-install-agent.sh --server https://julos.example.org --code ABCDE-FGHIJ');
+  assert.equal(AGENT_INSTALLER, 'install-agent.sh');                       // der Skriptname steht an einer Stelle
   assert.doesNotMatch(cmd, /\|/);
-  assert.doesNotMatch(cmd, /allow-http/);
+  assert.doesNotMatch(cmd, /allow-http|--allow /);                         // ohne Auswahl keine Erlaubnis: nie ein Standard
   assert.match(installCommand('http://192.0.2.5:8080', 'ABCDE-FGHIJ'), / --allow-http$/);
   assert.doesNotMatch(installCommand('http://localhost:18191', 'ABCDE-FGHIJ'), /allow-http/);
   assert.doesNotMatch(installCommand('http://127.0.0.1', 'ABCDE-FGHIJ'), /allow-http/);
+});
+
+test('Einzeiler: die Haken werden zu --allow (feste Reihenfolge, nur bekannte Woerter) und --docker-group nur mit dem Wort docker', () => {
+  const c = (o) => installCommand('https://julos.example.org', 'ABCDE-FGHIJ', o);
+  assert.match(c({ allow: ['reboot', 'updates', 'logs'] }), / --code ABCDE-FGHIJ --allow updates,logs,reboot$/);
+  assert.match(c({ allow: ['docker', 'services'], dockerGroup: true }), / --allow services,docker --docker-group$/);
+  assert.doesNotMatch(c({ allow: ['updates'], dockerGroup: true }), /docker-group/);        // die Gruppe gehoert zum Wort docker
+  assert.doesNotMatch(c({ allow: ['rm -rf /', 'updates;ls'] }), /--allow/);                 // Unbekanntes kommt nie in den Befehl
+  assert.match(installCommand('http://192.0.2.5:8080', 'X', { allow: ['logs'] }), / --allow logs --allow-http$/);
 });
 
 test('Terminal fuer die Installation: nur eine blanke Shell dieses Hosts, die zuletzt benutzte zuerst', () => {
@@ -218,38 +179,25 @@ test('prefillState: Entwurf ersetzen, Leiste oeffnen, nichts senden', () => {
 test('die neue Datei steht im Service Worker und die Version ist erhoeht', () => {
   const sw = fs.readFileSync(new URL('../../src/JulOS.Frontend/wwwroot/sw.js', import.meta.url), 'utf8');
   assert.ok(Number(/VERSION = 'pd-v(\d+)'/.exec(sw)[1]) >= 55);
-  for (const f of ['/hostinfo.js', '/hostinfo-dialog.js']) assert.ok(sw.includes(`'${f}'`), f);
+  for (const f of ['/hostinfo.js', '/hostpage.js', '/hostui.js', '/hostview.js', '/hostagent.js', '/hostui.css']) assert.ok(sw.includes(`'${f}'`), f);
+  assert.ok(Number(/VERSION = 'pd-v(\d+)'/.exec(sw)[1]) >= 61);
 });
 
 // ---- Gesundheit der Platten und Netzwerk
-import { healthIssues, healthPart, healthHtml, netRate } from '../../src/JulOS.Frontend/wwwroot/hostinfo.js';
+import { healthIssues, netRate } from '../../src/JulOS.Frontend/wwwroot/hostinfo.js';
 
 const esc2 = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-test('Platten-Gesundheit: Probleme aus SMART, RAID und ZFS, sonst "in Ordnung", ohne lesbare Daten nichts behaupten', () => {
+test('Platten-Gesundheit: Probleme aus SMART, RAID und ZFS; ohne lesbare Daten gibt es keine Probleme', () => {
   const bad = { health: { smart: { available: true, devices: [{ name: '/dev/sda', health: 'ok' }, { name: '/dev/sdb', health: 'failing' }] }, md: [{ name: 'md1', state: 'degraded', active: 1, total: 2 }], zfs: { healthy: false, pools: [{ name: 'tank', state: 'DEGRADED' }] } } };
   const issues = healthIssues(bad);
   assert.equal(issues.length, 3);
   assert.match(issues.join(' | '), /SMART \/dev\/sdb/);
   assert.match(issues.join(' | '), /RAID md1/);
   assert.match(issues.join(' | '), /tank: DEGRADED|tank DEGRADED|Pool tank/);
-  const part = healthPart(bad);
-  assert.equal(part.warn, true);
-  const ok = healthPart({ health: { smart: { available: true, devices: [{ name: '/dev/sda', health: 'ok' }] }, md: [], zfs: { healthy: true, pools: [] } } });
-  assert.deepEqual([ok.warn, ok.text], [false, 'Platten: in Ordnung']);
-  assert.equal(healthPart({ health: { smart: { available: false, reason: 'no_access' }, md: [] } }), null);        // nichts lesbar: nichts behaupten
-  assert.equal(healthPart({ health: { pending: true } }), null);
-  assert.equal(healthPart({}), null);
-});
-
-test('Platten-Gesundheit im Dialog: Grund, warum SMART fehlt, RAID-Zustand, alles escaped', () => {
-  const html = healthHtml({ smart: { available: false, reason: 'no_access' }, md: [{ name: '<b>md0</b>', level: 'raid1', state: 'recovering', active: 1, total: 2, syncPercent: 12.5 }], zfs: { healthy: true, pools: [] } }, esc2);
-  assert.match(html, /darf die Platten nicht lesen/);
-  assert.match(html, /&lt;b&gt;md0&lt;\/b&gt;/);
-  assert.doesNotMatch(html, /<b>md0/);
-  assert.match(html, /12,5 %/);
-  assert.match(healthHtml({ pending: true }, esc2), /Wird gelesen/);
-  assert.equal(healthHtml(null, esc2), '');
+  assert.deepEqual(healthIssues({ health: { smart: { available: false, reason: 'no_access' }, md: [] } }), []);   // nichts lesbar: nichts behaupten
+  assert.deepEqual(healthIssues({ health: { pending: true } }), []);
+  assert.deepEqual(healthIssues({}), []);
 });
 
 test('Netzwerkrate: aus zwei Ablesungen, nicht bei Zaehlerrueckgang oder kurzem Abstand', () => {
@@ -260,26 +208,4 @@ test('Netzwerkrate: aus zwei Ablesungen, nicht bei Zaehlerrueckgang oder kurzem 
   assert.equal(netRate(r(0, 5000, 500), r(10, 1000, 600)), null);            // Zaehler zurueckgesetzt (Neustart)
   assert.equal(netRate(null, r(10, 1, 1)), null);
   assert.equal(netRate(r(0, 1, 1), { at: at(10), info: {} }), null);
-});
-
-test('Handy-Huelle: dieselben Inhalte mit den Bausteinen aus docs/ui-kit.html (m3-rows, m3-list, m3-msg), alles escaped', async () => {
-  const { systemHtml, updatesHtml, servicesHtml, dockerHtml } = await import('../../src/JulOS.Frontend/wwwroot/hostinfo.js');
-  const kitDoc = globalThis.document;
-  globalThis.document = { documentElement: { classList: { contains: (c) => c === 'm3' } } };
-  try {
-    const sys = systemHtml({ state: 'ok', info: { hostname: '<x>', os: 'Debian', memory: { totalBytes: 100, availableBytes: 5 }, disks: [{ mount: '/', usedBytes: 1, totalBytes: 2, percent: 95 }], health: { smart: { available: false, reason: 'no_access' }, md: [{ name: 'md0', state: 'degraded', active: 1, total: 2 }] } } }, esc2);
-    assert.match(sys, /class="m3-card m3-rows"/);
-    assert.match(sys, /class="m3-row bad"/);                       // Speicher und Platte fast voll: hervorgehoben
-    assert.match(sys, /m3-sec/);                                   // Ueberschrift der Gesundheit
-    assert.doesNotMatch(sys, /hi-dl|hi-sub|<x>/);
-    const upd = updatesHtml({ state: 'ok', updates: { manager: 'apt', count: 2, security: 1, securityKnown: true, packages: [{ name: 'libc6', from: '1', to: '2', security: true }, { name: '<b>', to: '3', new: true }], keptBack: ['k'], listsAgeSeconds: 9 * 86400 } }, esc2);
-    assert.match(upd, /m3-card m3-list/);
-    assert.match(upd, /m3-chip status/);
-    assert.match(upd, /m3-msg warn/);                              // Summe mit Sicherheitsupdate und alte Paketlisten
-    assert.doesNotMatch(upd, /hi-list|hi-note/);
-    assert.match(upd, /&lt;b&gt;/);
-    assert.match(servicesHtml({ state: 'ok', services: { count: 1, failed: [{ unit: 'a.service' }] } }, esc2), /m3-msg warn/);
-    assert.match(servicesHtml({ state: 'ok', services: { count: 0, failed: [] } }, esc2), /m3-msg ok/);
-    assert.match(dockerHtml({ state: 'ok', docker: { available: false, reason: 'no_access' } }, esc2), /class="hint"/);
-  } finally { if (kitDoc === undefined) delete globalThis.document; else globalThis.document = kitDoc; }
 });

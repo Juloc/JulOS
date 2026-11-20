@@ -4,7 +4,7 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
-## [Unveröffentlicht]
+## [0.18.0] - 2026-11-20
 
 ### Sicherheit
 - **Einstellungen in der App** (F-02, F-03; [docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md)): neue Seite **Einstellungen, Sicherheit** (Handy und Desktop, Deutsch und Englisch) mit *Vertrauten Proxy-Adressen* und *Erlaubten Zielhosts* (IP, Netz in CIDR-Schreibweise oder Name; bei den Zielhosts auch Netze). Gespeichert in der Datenbank (Migration `021`, Tabelle `instance_settings`), **gilt ohne Neustart**; `JULOS_TRUSTED_PROXIES` und `JULOS_ALLOWED_HOSTS` sind nur noch der Rückfall, die Seite zeigt, woher der Wert kommt (App, Umgebung, Standard). Schutz vor Selbstaussperren: vor dem Speichern der Zielhosts steht, welche gespeicherten Verbindungen gesperrt wären (Speichern nur nach Bestätigung, der Server verlangt sie), bei den Proxys die Vorschau „Dein Zugriff kommt gerade von Adresse X über Proxy Y“ und eine Bestätigung, wenn der Proxy dieses Zugriffs nicht mehr in der Liste steht. Solange keine Proxy-Adresse gesetzt ist, warnen die Seite, ein kleiner Hinweis auf dem Start-Bildschirm und das Log; der Standard ohne Einstellung bleibt unverändert (alle privaten Netze), damit ein Update nichts bricht. Änderungen stehen im Verlauf der Sicherheit (`security_audit`, ohne Geheimnisse).

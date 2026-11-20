@@ -13,6 +13,9 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 - **Verlauf**: neue Tabelle `files_audit` (Migration `019`): Benutzer, Host, Aktion, Pfad (gekürzt), Ergebnis, Zeit, nie Inhalte oder Passwörter; `GET /api/files/audit` und die Taste „Verlauf“ in der App.
 - Neue Dateien: `FileTransfer`, `ISftpFileSession`/`SshNetFileSession` (Integrations), `SftpPool`, `FileJobs`, `RemoteFileEndpoints` (Frontend), `files-core.js`, `files-app.js`, `files.css`; neue Tests (Logik gegen ein Dateisystem im Speicher, Pool, HTTP, ein echtes SFTP-Ziel des Dev-Stacks, Node).
 
+### Sicherheit
+- **Review der Dateien über SFTP** ([docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md), Abschnitt „Files over SFTP“, F-24 bis F-32). **Behoben:** Dateinamen, die ein Ziel in einer Ordnerliste meldet, werden nie als Pfad benutzt (`../../x`, `a/b`): ein gekaperter Host konnte sonst beim Kopieren auf einen anderen Host außerhalb des gewählten Ordners schreiben; die Summe der wirklich empfangenen Bytes ist je Kopie begrenzt. Offen und zu entscheiden: eine vom Server ausgegebene, einmalige Bestätigung für schreibende Aktionen (heute nur ein Merker der Seite; Schreiben bleibt standardmäßig aus), Verlauf vor dem Schreiben.
+
 ### Geändert
 - Der Fensterinhalt von „Dateien“ am Desktop ist jetzt die gemeinsame App (Orte links); der gemeinsame Ordner (`JULOS_FILES_ROOT`, nur lesen) bleibt als eigener Ort unverändert. Die Fehlerantwort der Seite (`ApiError`) trägt jetzt die ganze Antwort (`data`).
 

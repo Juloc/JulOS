@@ -87,52 +87,37 @@ const rowsEl = (rows) => h('dl', { class: 'f-rows' }, rows.map(([k, v]) => [h('d
 const noteEl = (text, kind = '') => h('p', { class: 'f-msg ' + kind, role: kind === 'warn' ? 'alert' : undefined, text });
 
 /**
- * Bestaetigung einer Aktion: der Satz, die Zeilen (Host, Pfad, Anzahl), eine Warnung, optional ein Eingabefeld (neuer Name) und ein Haekchen ("Ja, ersetzen"). model kann eine Funktion des
- * eingegebenen Werts sein (live: Warnung und Haekchen aendern sich beim Tippen). Gibt { value, ack } oder null (abgebrochen).
+ * Bestaetigung einer Aktion (Schritt 2 der Zweischritt-Bestaetigung): der Satz, die Zeilen (Host, Pfad, Anzahl), eine Warnung und, wenn der Server es verlangt, ein Haekchen ("Ja, ersetzen"). Alles stammt aus der
+ * Antwort des Servers (prepare). Die Bestaetigung gilt nur kurz (expiresIn Sekunden): danach ist die Taste aus und der Dialog sagt es. Gibt { ack } oder null (abgebrochen).
  */
-export async function confirmDialog(kit, model, { input = null } = {}) {
-  const dyn = h('div', { class: 'f-dyn' });
-  let field = null, check = null, current = null;
-  const compute = () => (typeof model === 'function' ? model(field ? field.value : '') : model);
+export async function confirmDialog(kit, model, { expiresIn = 0 } = {}) {
   const wrap = h('div', { class: 'f-confirm' });
-  const sentence = h('p', { class: 'f-sentence' });
-  if (input) {
-    field = h('input', { type: 'text', class: 'f-input', value: input.value || '', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': input.label, maxlength: 255 });
+  const dlg = modal({ title: model.title, kit, content: [wrap], actions: [{ id: 'no', label: t('common.cancel'), kind: 'ghost' }, { id: 'yes', label: model.confirm, kind: model.danger ? 'danger' : 'primary', disabled: !!model.ack }] });
+  let check = null, timer = null;
+  wrap.append(h('p', { class: 'f-sentence', text: model.sentence }), rowsEl(model.rows));
+  if (model.note) wrap.append(noteEl(model.note));
+  if (model.warning) wrap.append(noteEl(model.warning, 'warn'));
+  if (model.ack) {
+    check = h('input', { type: 'checkbox', id: 'fAck' });
+    check.addEventListener('change', () => dlg.setDisabled('yes', !check.checked));
+    wrap.append(h('label', { class: 'f-ack check', for: 'fAck' }, check, ' ', model.ack));
   }
-  const m3 = compute();
-  const dlg = modal({ title: m3.title, kit, content: [wrap], actions: [{ id: 'no', label: t('common.cancel'), kind: 'ghost' }, { id: 'yes', label: m3.confirm, kind: m3.danger ? 'danger' : 'primary', disabled: true }] });
-  const render = () => {
-    current = compute();
-    sentence.textContent = current.sentence;
-    dyn.replaceChildren(rowsEl(current.rows));
-    if (current.note) dyn.append(noteEl(current.note));
-    if (current.warning) dyn.append(noteEl(current.warning, 'warn'));
-    check = null;
-    if (current.ack) {
-      check = h('input', { type: 'checkbox', id: 'fAck' });
-      check.addEventListener('change', refresh);
-      dyn.append(h('label', { class: 'f-ack check', for: 'fAck' }, check, ' ', current.ack));
-    }
-    dlg.setLabel('yes', current.confirm);
-    refresh();
-  };
-  const refresh = () => {
-    const nameOk = !input || C.validName(field.value);
-    const ackOk = !current.ack || (check && check.checked);
-    dlg.setDisabled('yes', !(nameOk && ackOk && current.ready !== undefined));
-    if (input && field.value && !nameOk) field.setAttribute('aria-invalid', 'true'); else if (field) field.removeAttribute('aria-invalid');
-  };
-  wrap.append(sentence);
-  if (input) {
-    wrap.append(h('label', { class: 'f-field' }, h('span', { text: input.label }), field));
-    field.addEventListener('input', () => { const had = check && check.checked; render(); if (had && check) { /* neue Frage, neue Antwort */ } });
-    field.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !dlg.el.querySelector('[data-act="yes"]').disabled) { e.preventDefault(); dlg.close('yes'); } });
-  }
-  wrap.append(dyn);
-  render();
-  if (field) setTimeout(() => { field.focus(); field.select(); }, 60);
+  if (expiresIn > 0) timer = setTimeout(() => { dlg.setDisabled('yes', true); wrap.append(noteEl(C.errText('confirmation_expired'), 'warn')); }, expiresIn * 1000);
   const which = await dlg.promise;
-  return which === 'yes' ? { value: field ? field.value.trim() : null, ack: !!(check && check.checked) } : null;
+  clearTimeout(timer);
+  return which === 'yes' ? { ack: !!(check && check.checked) } : null;
+}
+
+/** Ein Name wird abgefragt (neuer Ordner, Umbenennen); nur Eingabe, geschrieben wird erst nach der Bestaetigung des Servers. Gibt den Namen oder null. */
+export async function inputDialog(kit, { title, label, value = '', confirm }) {
+  const field = h('input', { type: 'text', class: 'f-input', value, autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': label, maxlength: 255 });
+  const dlg = modal({ title, kit, content: [h('label', { class: 'f-field' }, h('span', { text: label }), field)], actions: [{ id: 'no', label: t('common.cancel'), kind: 'ghost' }, { id: 'yes', label: confirm, kind: 'primary', disabled: !C.validName(value) }] });
+  const refresh = () => { const ok = C.validName(field.value); dlg.setDisabled('yes', !ok); if (field.value && !ok) field.setAttribute('aria-invalid', 'true'); else field.removeAttribute('aria-invalid'); };
+  field.addEventListener('input', refresh);
+  field.addEventListener('keydown', (e) => { if (e.key === 'Enter' && C.validName(field.value)) { e.preventDefault(); dlg.close('yes'); } });
+  setTimeout(() => { field.focus(); field.select(); }, 60);
+  const which = await dlg.promise;
+  return which === 'yes' ? field.value.trim() : null;
 }
 
 /** Fortschritt: ein Dialog mit Balken und Text; update() waehrend der Arbeit, finish() am Ende (dann kommt "Schliessen"); onCancel() fuer "Abbrechen" */
@@ -376,18 +361,27 @@ export function mountFiles(box, deps) {
     if ((await dlg.promise) === 'dl') download(e);
   }
 
-  /* ----- Schreiben: jedes mit Bestaetigung ----- */
+  /* ----- Schreiben: zwei Schritte. Erst prepare (der Server prueft und beschreibt, was geschaehe), dann der Dialog nach dieser Antwort, dann die Aktion mit dem Token ----- */
+  /** Schritt 1 mit Fehlermeldung; null bei einem Fehler oder Abbruch */
+  async function prepare(action, args) {
+    try { return await guarded(() => fapi.prepare(action, st.place, args)); }
+    catch (e) { if (!C.isCancelled(e)) say(C.errorMessage(e)); return null; }
+  }
+
   async function newFolder() {
-    const r = await confirmDialog(kit, (name) => C.mkdirModel(st.place, st.path, name || '…'), { input: { label: t('files.mkdir.nameLabel'), value: '' } });
-    if (!r) return;
-    await runWrite(() => guarded(() => fapi.mkdir(st.place, st.path, r.value)), t('files.mkdir.done', { name: r.value }));
+    const name = await inputDialog(kit, { title: t('files.mkdir.title'), label: t('files.mkdir.nameLabel'), confirm: t('files.mkdir.next') });
+    if (!name) return;
+    const prep = await prepare('mkdir', { dir: st.path, name });
+    if (!prep || !(await confirmDialog(kit, C.mkdirModel(prep), { expiresIn: prep.expiresIn }))) return;
+    await runWrite(() => guarded(() => fapi.mkdir(st.place, prep.dir, prep.name, prep.token)), t('files.mkdir.done', { name: prep.name }));
   }
   async function rename(e) {
-    const r = await confirmDialog(kit, (name) => C.renameModel(st.place, e.path, name || e.name, st.entries.some((x) => x.name === name && x.path !== e.path && !x.openable && !e.openable)), { input: { label: t('files.rename.nameLabel'), value: e.name } });
+    const name = await inputDialog(kit, { title: t('files.rename.title'), label: t('files.rename.nameLabel'), value: e.name, confirm: t('files.mkdir.next') });
+    if (!name || name === e.name) return;
+    const prep = await prepare('rename', { paths: [e.path], name });
+    const r = prep && await confirmDialog(kit, C.renameModel(prep), { expiresIn: prep.expiresIn });
     if (!r) return;
-    if (r.value === e.name) return;
-    const exists = st.entries.some((x) => x.name === r.value);
-    await runWrite(() => guarded(() => fapi.rename(st.place, e.path, r.value, exists && r.ack)), t('files.rename.done', { name: r.value }));
+    await runWrite(() => guarded(() => fapi.rename(st.place, prep.paths[0], prep.name, r.ack, prep.token)), t('files.rename.done', { name: prep.name }));
   }
   async function runWrite(fn, doneText) {
     try { await fn(); say(doneText); await reload(); }
@@ -395,27 +389,23 @@ export function mountFiles(box, deps) {
   }
 
   async function remove(sel) {
-    const paths = sel.map((e) => e.path);
-    let plan;
-    try { plan = await guarded(() => fapi.plan('delete', st.place, paths)); } catch (e) { if (!C.isCancelled(e)) say(C.errorMessage(e)); return; }
-    const model = C.deleteModel(st.place, paths, plan);
-    const r = await confirmDialog(kit, model);
+    const prep = await prepare('delete', { paths: sel.map((e) => e.path) });
+    const model = prep && C.deleteModel(prep);
+    const r = model && await confirmDialog(kit, model, { expiresIn: prep.expiresIn });
     if (!r) return;
-    const label = C.deleteModel(st.place, paths, plan).title;
-    await runJob(label, 'delete', () => guarded(() => fapi.remove(st.place, paths, plan.nonEmpty && r.ack)));
+    await runJob(model.title, 'delete', () => guarded(() => fapi.remove(st.place, prep.paths, prep.nonEmpty && r.ack, prep.token)));
     await reload();
   }
 
-  /** Das Ziel waehlen (auch ein anderer Host), dann planen, bestaetigen, als Auftrag laufen lassen */
+  /** Das Ziel waehlen (auch ein anderer Host), dann vorbereiten, bestaetigen, als Auftrag laufen lassen */
   async function copyOrMove(action, sel) {
-    const paths = sel.map((e) => e.path);
     const target = await chooseTarget(action);
     if (!target) return;
-    let plan;
-    try { plan = await guarded(() => fapi.plan(action, st.place, paths, target)); } catch (e) { if (!C.isCancelled(e)) say(C.errorMessage(e)); return; }
-    const r = await confirmDialog(kit, C.copyModel(action, st.place, target, paths, plan));
+    const prep = await prepare(action, { paths: sel.map((e) => e.path), target });
+    const model = prep && C.copyModel(action, prep);
+    const r = model && await confirmDialog(kit, model, { expiresIn: prep.expiresIn });
     if (!r) return;
-    await runJob(t(action === 'move' ? tk('files.move.title') : tk('files.copy.title')), action, () => guarded(() => fapi.copy(st.place, paths, target, { move: action === 'move', overwrite: plan.conflicts.length > 0 && r.ack })));
+    await runJob(model.title, action, () => guarded(() => fapi.copy(st.place, prep.paths, target, { move: action === 'move', overwrite: prep.conflicts.length > 0 && r.ack, token: prep.token })));
     if (target.place.id === st.place.id || action === 'move') await reload();
   }
 
@@ -453,28 +443,32 @@ export function mountFiles(box, deps) {
     if (tooBig.length) say(t('files.err.too_large'));
     files = files.filter((f) => !tooBig.includes(f));
     if (!files.length) return;
-    const existing = C.uploadConflicts(files, st.entries);
-    const r = await confirmDialog(kit, C.uploadModel(place, dir, files, existing));
+    if (files.length > 100) return say(t('files.err.too_many_items'));
+    const names = [...new Set(files.map((f) => f.name))];
+    files = names.map((n) => files.find((f) => f.name === n));
+    const prep = await prepare('upload', { dir, names });
+    const r = prep && await confirmDialog(kit, C.uploadModel(prep, files), { expiresIn: prep.expiresIn });
     if (!r) return;
-    const overwrite = new Set(existing);
+    const overwrite = new Set(prep.conflicts);
     let aborted = false, current = null;
     const prog = progressDialog(kit, t('files.upload.title'), { onCancel: () => { aborted = true; if (current) current.abort(); } });
     let okN = 0; const failed = [];
+    const send = (f, onProgress) => (current = fapi.upload(place, prep.dir, f, { overwrite: overwrite.has(f.name) && r.ack, token: prep.token, onProgress }));
     for (let i = 0; i < files.length && !aborted; i++) {
       const f = files[i];
       prog.update({ percent: 0, text: `${f.name} (${i + 1}/${files.length})` });
-      current = fapi.upload(place, dir, f, { overwrite: overwrite.has(f.name), onProgress: (done, total) => prog.update({ percent: total ? Math.round((done / total) * 100) : null, text: `${f.name} (${i + 1}/${files.length}) · ${C.fileSize(done)} / ${C.fileSize(total)}` }) });
-      try { await retryOpen(place, () => current.promise, () => { current = fapi.upload(place, dir, f, { overwrite: overwrite.has(f.name) }); return current.promise; }); okN++; }
+      const progress = (done, total) => prog.update({ percent: total ? Math.round((done / total) * 100) : null, text: `${f.name} (${i + 1}/${files.length}) · ${C.fileSize(done)} / ${C.fileSize(total)}` });
+      try { await retryOpen(place, () => send(f, progress).promise, () => send(f, progress).promise); okN++; }
       catch (e) { if (C.isCancelled(e) && aborted) break; failed.push(`${f.name}: ${C.errorMessage(e)}`); }
     }
     const ok = !failed.length && !aborted;
     await prog.finish({ ok, text: aborted ? t('files.upload.cancelled', { n: okN }) : ok ? t('files.upload.done', { n: tp('files.nFiles', okN) }) : t('files.upload.partial', { ok: okN, failed: failed.length }), details: failed });
     if (st.place && st.place.id === place.id && st.path === dir) await reload();
   }
-  /** Ist die Sitzung waehrend des Hochladens zu, wird der Ort neu geoeffnet und die Datei noch einmal gesendet */
+  /** Fehlt die Sitzung beim Start des Hochladens (Leerlauf), wird der Ort neu geoeffnet und die Datei noch einmal gesendet: die Bestaetigung ist dann noch nicht eingeloest (das passiert erst mit der Sitzung) */
   async function retryOpen(place, first, again) {
     try { return await first(); } catch (e) {
-      if (['password_required', 'password_unreadable', 'host_key_new', 'host_key_changed', 'connection_lost'].includes(e.code)) { await ensureOpen(place); return again(); }
+      if (['password_required', 'password_unreadable', 'host_key_new', 'host_key_changed'].includes(e.code)) { await ensureOpen(place); return again(); }
       throw e;
     }
   }

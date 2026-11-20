@@ -459,12 +459,14 @@ internal static class RemoteFileEndpoints
             if (body.Paths is not { Length: > 0 and <= 500 }) return Fail("invalid_request");
             var paths = NormalizeAll(body.Paths);
             if (paths is null) return Fail("invalid_path");
-            if (await RedeemAsync(conf, audit, log, x, body.Token, FileConfirmations.Canon("delete", x.Connection.Id, null, paths, null, null), "delete", null, body.Recursive == true, false, Describe(paths)) is { } refused) return refused;
             SftpPool.Lease lease;
             try { lease = await LeaseAsync(x, null, null, pool, connections, box, factory, log, ctx.RequestAborted); }
             catch (Exception e) when (e is not OperationCanceledException) { await AuditAsync(audit, log, x.Id.UserId, x.Connection, "delete", Describe(paths), "failed", FileErrors.Code(e)); return Fail(e); }
             var recursive = body.Recursive == true;
-            if (await StartedAsync(audit, log, x, "delete", Describe(paths)) is { } stopped) { await lease.DisposeAsync(); return stopped; }
+            // Erst die Sitzung (ein Fehler dabei verbraucht die Bestaetigung nicht), dann einloesen, dann der Eintrag "started"
+            var refused = await RedeemAsync(conf, audit, log, x, body.Token, FileConfirmations.Canon("delete", x.Connection.Id, null, paths, null, null), "delete", null, recursive, false, Describe(paths));
+            if (refused is null) refused = await StartedAsync(audit, log, x, "delete", Describe(paths));
+            if (refused is not null) { await lease.DisposeAsync(); return refused; }
             var job = jobs.Start(x.Id.UserId, "delete", HostName(x.Connection), async (j, ct) =>
             {
                 await using (lease) j.Result = await FileTransfer.DeleteAsync(lease.Session, paths, recursive, Limits(options), j.Progress, ct);

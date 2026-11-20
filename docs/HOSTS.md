@@ -34,7 +34,7 @@ saw one machine; now the desktop interface and the phone shell list several, eac
 
 - **Service** (`services[].online`): the server opens a TCP connection to the saved address and port (1.5 s, nothing is sent, closed at once) and
   remembers the answer for 15 s (`TcpProbe`, at most 8 probes at a time). Targets come only from the user's saved connections and must pass
-  `JULOS_ALLOWED_HOSTS`; a target that does not is not probed and `online` is left out (shown as "unbekannt", grey).
+  the allowed target hosts (Settings, Security; fallback `JULOS_ALLOWED_HOSTS`); a target that does not is not probed and `online` is left out (shown as "unbekannt", grey).
 - **Host** (`online`): the agent link is connected **or** at least one service answers. `agent` is absent when none is enrolled;
   `agent.online` is the live link, `lastSeen` the last report.
 - **Operating system and name** (`os`, `hostname`) come from the agent (its `hello` and enrolment). Values are display only: up to 64

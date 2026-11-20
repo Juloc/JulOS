@@ -30,6 +30,8 @@ Other settings: `JULOS_FILES_MAX_MB` (largest file and largest operation, defaul
 
 ## Security model
 
+**Second factor (0.18):** every write and every root read starts with `POST /api/files/remote/prepare`, and that step needs a fresh authenticator code of the session (`403 step_up_required`); the second step with the token needs nothing more. Reading, listing and downloading on non-root places are unchanged. See [SECURITY-REVIEW.md](SECURITY-REVIEW.md), "Second factor for actions".
+
 | Rule | How |
 |---|---|
 | **Everything needs the session.** | All `/api/files/remote/*` routes sit behind `ApiGuard`: session cookie, and for every `POST` the header `X-JulOS: 1` and a matching `Origin`. Rate limits per user and minute (list 240, text 120, transfers 60, writes 120, open 20, plan 60). |

@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using JulOS.Backend.Data;
+using JulOS.Backend.Logic;
 using JulOS.Frontend.Files;
 using JulOS.Integrations.Files;
 using JulOS.Integrations.Ssh;
@@ -71,6 +72,7 @@ public sealed class RemoteFilesHttpTests
             if (token is null) return failed;
             var run = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(body))!.AsObject();
             run["token"] = token;
+            run["acknowledged"] = true;                                                                  // das Haekchen, wo die Stufe es verlangt (sonst ignoriert)
             return await Json(HttpMethod.Post, url, run);
         }
 
@@ -491,7 +493,7 @@ public sealed class RemoteFilesHttpTests
 
     private static async Task<HttpResponseMessage> UploadWith(Client api, Guid c, string dir, string name, byte[] data, string token, bool overwrite = false, bool stream = false)
     {
-        var r = api.Authed(HttpMethod.Post, $"/api/files/remote/upload?c={c}&dir={Uri.EscapeDataString(dir)}&name={Uri.EscapeDataString(name)}&token={Uri.EscapeDataString(token)}" + (overwrite ? "&overwrite=1" : ""));
+        var r = api.Authed(HttpMethod.Post, $"/api/files/remote/upload?c={c}&dir={Uri.EscapeDataString(dir)}&name={Uri.EscapeDataString(name)}&token={Uri.EscapeDataString(token)}&acknowledged=1" + (overwrite ? "&overwrite=1" : ""));
         r.Content = stream ? new StreamContent(new MemoryStream(data)) : new ByteArrayContent(data);
         r.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
         return await api.Raw(r);
@@ -756,12 +758,12 @@ public sealed class RemoteFilesHttpTests
         var token = prep.Body.GetProperty("token").GetString()!;
         Assert.Equal(43, token.Length);
         Assert.DoesNotContain(host.Log, l => l.StartsWith("delete ") || l.StartsWith("rmdir "));                  // Vorbereiten aendert nichts
-        var run = await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/d", "/p/b" }, recursive = true, token });
+        var run = await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/d", "/p/b" }, recursive = true, token, acknowledged = true });
         Assert.Equal(HttpStatusCode.Accepted, run.Status);
         await WaitJob(api, run.Body.GetProperty("job").GetString()!);
         Assert.False(host.Has("/p/d"));
         // einmalig
-        var again = await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/d", "/p/b" }, recursive = true, token });
+        var again = await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/d", "/p/b" }, recursive = true, token, acknowledged = true });
         Assert.Equal((HttpStatusCode.Forbidden, "confirmation_invalid"), (again.Status, Code(again.Body)));
     }
 
@@ -801,6 +803,52 @@ public sealed class RemoteFilesHttpTests
     }
 
     [Fact]
+    public async Task Dangerous_file_actions_need_the_checkbox_at_the_server_routine_ones_do_not_and_click_only_skips_it()
+    {
+        await using var db = await TestDb.CreateAsync();
+        var (app, api, c, host, _) = await OpenHost(db, h => h.Dir("/p").File("/p/a", "A").File("/p/b", "B").File("/p/c", "C").Dir("/dst").File("/dst/a", "alt"));
+        await using var rigGuard = app;
+        async Task<JsonElement> Prep(object body) => (await api.Post("/api/files/remote/prepare", body)).Body;
+
+        // Eine einzelne Datei loeschen ist Routine: kein Haekchen
+        var one = await Prep(new { action = "delete", connection = c, paths = new[] { "/p/c" } });
+        Assert.Equal(("routine", "click"), (one.GetProperty("confirmLevel").GetString(), one.GetProperty("confirmMode").GetString()));
+        var ran = await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/c" }, token = one.GetProperty("token").GetString() });
+        Assert.Equal(HttpStatusCode.Accepted, ran.Status);
+        await WaitJob(api, ran.Body.GetProperty("job").GetString()!);
+
+        // Mehrere Dateien loeschen ist gefaehrlich: ohne Haekchen 400 confirm_required, nichts geschieht, die Bestaetigung bleibt
+        var many = await Prep(new { action = "delete", connection = c, paths = new[] { "/p/a", "/p/b" } });
+        Assert.Equal(("dangerous", "check", "delete_many"), (many.GetProperty("confirmLevel").GetString(), many.GetProperty("confirmMode").GetString(), many.GetProperty("confirmWarn").GetString()));
+        var tk = many.GetProperty("token").GetString();
+        var denied = await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/a", "/p/b" }, token = tk });
+        Assert.Equal((HttpStatusCode.BadRequest, "confirm_required"), (denied.Status, Code(denied.Body)));
+        Assert.True(host.Has("/p/a") && host.Has("/p/b"));
+        var okRun = await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/a", "/p/b" }, token = tk, acknowledged = true });
+        Assert.Equal(HttpStatusCode.Accepted, okRun.Status);
+        await WaitJob(api, okRun.Body.GetProperty("job").GetString()!);
+        Assert.Contains("dangerous:check", (await api.Get("/api/files/audit")).Body.GetProperty("entries").EnumerateArray().Where(e => e.GetProperty("result").GetString() == "started").Select(e => e.GetProperty("detail").GetString() ?? "").ToArray());
+
+        // Ein vorhandener Name wuerde ersetzt: auf einem gewoehnlichen SSH-Zugang Routine (der Dialog zeigt es), das Haekchen verlangt nur der Root-Ort (RootFilesTests)
+        var up = await Prep(new { action = "upload", connection = c, dir = "/dst", names = new[] { "a" } });
+        Assert.Equal("routine", up.GetProperty("confirmLevel").GetString());
+
+        // Rechnernamen tippen: der Name der Verbindung; "nur Klick": gefaehrlich verlangt nichts mehr
+        var config = app.Services.GetRequiredService<SecurityConfig>();
+        await config.SetConfirmModeAsync(ConfirmMode.Type);
+        var t2 = await Prep(new { action = "delete", connection = c, paths = new[] { "/dst/a", "/dst" } });
+        Assert.Equal(("type", "A"), (t2.GetProperty("confirmMode").GetString(), t2.GetProperty("typeToConfirm").GetString()));            // der Name der Verbindung, wie ihn der Dialog zeigt
+        Assert.Equal("confirm_required", Code((await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/dst/a", "/dst" }, recursive = true, token = t2.GetProperty("token").GetString(), acknowledged = true })).Body));
+        Assert.Equal("typed_mismatch", Code((await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/dst/a", "/dst" }, recursive = true, token = t2.GetProperty("token").GetString(), typed = "falsch" })).Body));
+        await config.SetConfirmModeAsync(ConfirmMode.Click);
+        var click = await Prep(new { action = "delete", connection = c, paths = new[] { "/dst/a", "/dst" } });
+        Assert.Equal(("dangerous", "click"), (click.GetProperty("confirmLevel").GetString(), click.GetProperty("confirmMode").GetString()));
+        var go = await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/dst/a", "/dst" }, recursive = true, token = click.GetProperty("token").GetString() });
+        Assert.Equal(HttpStatusCode.Accepted, go.Status);
+        await WaitJob(api, go.Body.GetProperty("job").GetString()!);
+    }
+
+    [Fact]
     public async Task A_recursive_delete_or_an_overwrite_is_only_allowed_when_the_server_showed_it()
     {
         await using var db = await TestDb.CreateAsync();
@@ -812,7 +860,7 @@ public sealed class RemoteFilesHttpTests
         // Ordner mit Inhalt ohne den zweiten Schritt: der Auftrag scheitert, nichts wird geloescht
         var t2 = (await api.Post("/api/files/remote/prepare", new { action = "delete", connection = c, paths = new[] { "/p/voll" } })).Body;
         Assert.True(t2.GetProperty("nonEmpty").GetBoolean());
-        var run = await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/voll" }, token = t2.GetProperty("token").GetString() });
+        var run = await api.Post("/api/files/remote/delete", new { connection = c, paths = new[] { "/p/voll" }, token = t2.GetProperty("token").GetString(), acknowledged = true });
         Assert.Equal("not_empty", (await WaitJob(api, run.Body.GetProperty("job").GetString()!)).GetProperty("error").GetString());
         Assert.True(host.Has("/p/voll/x"));
         // Kopieren: Namen, die ersetzt wuerden, stehen in der Antwort; "overwrite" nur dann

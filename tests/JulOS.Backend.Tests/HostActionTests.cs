@@ -44,9 +44,9 @@ public sealed partial class AgentLinkTests
         return (res.StatusCode, await Json(res));
     }
 
-    private static async Task<(HttpStatusCode Status, JsonElement Body)> Run(HostRig r, string token, string action, string? target = null, string? typed = null, string? cookie = null, Guid? host = null)
+    private static async Task<(HttpStatusCode Status, JsonElement Body)> Run(HostRig r, string token, string action, string? target = null, string? typed = null, string? cookie = null, Guid? host = null, bool acknowledged = true)
     {
-        var res = await r.Http.SendAsync(Post($"/api/hosts/{host ?? r.Host}/actions/run", new { token, action, target, typed }, cookie ?? r.Cookie));
+        var res = await r.Http.SendAsync(Post($"/api/hosts/{host ?? r.Host}/actions/run", new { token, action, target, typed, acknowledged }, cookie ?? r.Cookie));
         return (res.StatusCode, await Json(res));
     }
 
@@ -209,7 +209,7 @@ public sealed partial class AgentLinkTests
         using var doc = JsonDocument.Parse(sent.Body);
         Assert.Equal(["job", "unit"], doc.RootElement.EnumerateObject().Select(x => x.Name).Order().ToArray());
         Assert.Equal(run.GetProperty("job").GetString(), doc.RootElement.GetProperty("job").GetString());
-        Assert.Equal(["service.restart prepared", "service.restart started", "service.restart ok"], (await Audit(db)).Select(x => x.Trim()).ToArray());
+        Assert.Equal(["service.restart prepared", "service.restart started routine:click", "service.restart ok"], (await Audit(db)).Select(x => x.Trim()).ToArray());
         Assert.Equal(0, await db.ScalarAsync<long>("select count(*) from host_audit where position($1 in action || coalesce(target,'') || event || coalesce(detail,'') || coalesce(job,'')) > 0", token));   // das Token steht nirgends im Verlauf
     }
 
@@ -270,35 +270,80 @@ public sealed partial class AgentLinkTests
         Assert.Empty(Posts(r.Agent));
     }
 
+    private static Task SetMode(Server app, string mode) => app.Services.GetRequiredService<SecurityConfig>().SetConfirmModeAsync(ConfirmPolicy.ParseMode(mode));
+
     [Fact]
-    public async Task Reboot_power_off_and_all_updates_need_the_host_name_typed_a_single_package_does_not()
+    public async Task Routine_actions_need_nothing_but_the_token_even_all_updates()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db);
+        await using var r = await ActionRigAsync(db, app);
+        foreach (var (action, target) in new[] { ("updates.install", "all"), ("updates.install", "libc6"), ("service.restart", "nginx.service"), ("docker.restart", "aaaaaaaaaaaa") })
+        {
+            var (_, p) = await Prepare(r, action, target);
+            Assert.Equal(("routine", "click"), (p.GetProperty("confirmLevel").GetString(), p.GetProperty("confirmMode").GetString()));
+            Assert.False(p.TryGetProperty("typeToConfirm", out _));
+            var (status, run) = await Run(r, p.GetProperty("token").GetString()!, action, target, acknowledged: false);
+            Assert.Equal(HttpStatusCode.Accepted, status);
+            await WaitJob(r, run.GetProperty("job").GetString()!);
+        }
+    }
+
+    [Fact]
+    public async Task Dangerous_actions_ask_what_the_mode_says_and_the_server_enforces_it()
     {
         await using var db = await TestDb.CreateAsync();
         await using var app = new Server(db);
         await using var r = await ActionRigAsync(db, app);
         r.Agent.OnHost = (m, path, body, progress) => Task.FromResult((200, path.Contains("reboot") ? """{"ok":true,"accepted":true,"delay":5}""" : """{"ok":true}"""));
 
-        Assert.False((await Prepare(r, "updates.install", "libc6")).Body.TryGetProperty("typeToConfirm", out _));
-        foreach (var (action, target) in new[] { ("updates.install", "all"), ("power.reboot", null), ("power.poweroff", null) })
-        {
-            var (_, p) = await Prepare(r, action, target);
-            Assert.Equal("srv-01", p.GetProperty("typeToConfirm").GetString());                              // der Rechnername, den der Agent meldet
-            var token = p.GetProperty("token").GetString()!;
-            var (ts, tb) = await Run(r, token, action, target);
-            Assert.Equal((HttpStatusCode.BadRequest, "typed_mismatch"), (ts, Code(tb)));
-            Assert.Equal("typed_mismatch", Code((await Run(r, token, action, target, typed: "anderer-name")).Body));
-            Assert.Empty(Posts(r.Agent));                                                                                          // nichts ging raus
-        }
-        var (_, rb) = await Prepare(r, "power.reboot");
-        var tk = rb.GetProperty("token").GetString()!;
-        Assert.Equal("typed_mismatch", Code((await Run(r, tk, "power.reboot", typed: "")).Body));
-        var (status, run) = await Run(r, tk, "power.reboot", typed: "  SRV-01 ");                            // Gross/Klein und Leerraum zaehlen nicht: die Bestaetigung blieb gueltig
-        Assert.Equal(HttpStatusCode.Accepted, status);
-        var job = await WaitJob(r, run.GetProperty("job").GetString()!);
-        Assert.Equal("accepted", job.GetProperty("state").GetString());                                     // "angenommen" kommt vor dem Neustart
-        Assert.True(job.GetProperty("result").GetProperty("accepted").GetBoolean());
-        Assert.Equal("/v1/host/reboot", Assert.Single(Posts(r.Agent)).Path);
-        Assert.Contains("power.reboot accepted", await Audit(db));
+        // Standard: Haekchen. Ohne "acknowledged" 400 confirm_required, nichts geht raus, die Bestaetigung bleibt
+        var (_, p) = await Prepare(r, "power.reboot");
+        Assert.Equal(("dangerous", "check", "reboot"), (p.GetProperty("confirmLevel").GetString(), p.GetProperty("confirmMode").GetString(), p.GetProperty("confirmWarn").GetString()));
+        Assert.False(p.TryGetProperty("typeToConfirm", out _));
+        var token = p.GetProperty("token").GetString()!;
+        var (ts, tb) = await Run(r, token, "power.reboot", acknowledged: false);
+        Assert.Equal((HttpStatusCode.BadRequest, "confirm_required"), (ts, Code(tb)));
+        Assert.Empty(Posts(r.Agent));
+        var (hs, hb) = await Run(r, token, "power.reboot");                                                    // dieselbe Bestaetigung, jetzt mit Haekchen
+        Assert.Equal(HttpStatusCode.Accepted, hs);
+        await WaitJob(r, hb.GetProperty("job").GetString()!);
+        Assert.Contains("power.reboot started dangerous:check", await Audit(db));
+
+        // Rechnernamen tippen (wie frueher): fehlt der Name 400 confirm_required, falscher Name typed_mismatch, Gross/Klein und Leerraum zaehlen nicht
+        await SetMode(app, "type");
+        var (_, pt) = await Prepare(r, "power.poweroff");
+        Assert.Equal("srv-01", pt.GetProperty("typeToConfirm").GetString());                                   // der Rechnername, den der Agent meldet
+        var tk = pt.GetProperty("token").GetString()!;
+        Assert.Equal("confirm_required", Code((await Run(r, tk, "power.poweroff", acknowledged: true)).Body));      // das Haekchen ersetzt den Namen nicht
+        Assert.Equal("typed_mismatch", Code((await Run(r, tk, "power.poweroff", typed: "anderer-name")).Body));
+        Assert.Equal(HttpStatusCode.Accepted, (await Run(r, tk, "power.poweroff", typed: "  SRV-01 ", acknowledged: false)).Status);
+        Assert.Contains("power.poweroff started critical:type", await Audit(db));                              // JulOS laeuft auf diesem Host (Container "julos"): sehr gefaehrlich
+    }
+
+    [Fact]
+    public async Task Click_only_skips_dangerous_but_very_dangerous_falls_back_to_the_checkbox()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db);
+        await using var r = await ActionRigAsync(db, app);
+        r.Agent.OnHost = (m, path, body, progress) => Task.FromResult((200, """{"ok":true,"accepted":true,"delay":5}"""));
+        await SetMode(app, "click");
+
+        var (_, reboot) = await Prepare(r, "power.reboot");
+        Assert.Equal(("dangerous", "click"), (reboot.GetProperty("confirmLevel").GetString(), reboot.GetProperty("confirmMode").GetString()));
+        var (rs, rb) = await Run(r, reboot.GetProperty("token").GetString()!, "power.reboot", acknowledged: false);
+        Assert.Equal(HttpStatusCode.Accepted, rs);
+        await WaitJob(r, rb.GetProperty("job").GetString()!);
+
+        // Der Container von JulOS (Compose-Projekt "julos") stoppen: sehr gefaehrlich, auch bei "nur Klick" mit Haekchen
+        var (_, stop) = await Prepare(r, "docker.stop", "bbbbbbbbbbbb");
+        Assert.Equal(("critical", "check", "julos_self"), (stop.GetProperty("confirmLevel").GetString(), stop.GetProperty("confirmMode").GetString(), stop.GetProperty("confirmCritical").GetString()));
+        var tk = stop.GetProperty("token").GetString()!;
+        Assert.Equal("confirm_required", Code((await Run(r, tk, "docker.stop", "bbbbbbbbbbbb", acknowledged: false)).Body));
+        Assert.Equal(HttpStatusCode.Accepted, (await Run(r, tk, "docker.stop", "bbbbbbbbbbbb")).Status);
+        // Ein anderer Container ist Routine
+        Assert.Equal("routine", (await Prepare(r, "docker.stop", "aaaaaaaaaaaa")).Body.GetProperty("confirmLevel").GetString());
     }
 
     [Fact]

@@ -130,6 +130,7 @@ public sealed partial class AgentLinkTests
         Assert.True(token is not null, $"prepare {url}: {st} {prep}");
         var run = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(body))!.AsObject();
         run["token"] = token;
+        run["acknowledged"] = true;
         var res = await r.Http.SendAsync(Post(url, run, r.Cookie));
         var text = await res.Content.ReadAsStringAsync();
         Assert.True(res.IsSuccessStatusCode, $"{url}: {res.StatusCode} {text}");
@@ -150,7 +151,7 @@ public sealed partial class AgentLinkTests
 
     private static Task<HttpResponseMessage> RootUpload(RootRig r, string dir, string name, byte[] data, string token, bool overwrite = false)
     {
-        var req = Send(HttpMethod.Post, $"/api/files/remote/upload?c={r.Host}&dir={Uri.EscapeDataString(dir)}&name={Uri.EscapeDataString(name)}&token={Uri.EscapeDataString(token)}" + (overwrite ? "&overwrite=1" : ""), r.Cookie, data);
+        var req = Send(HttpMethod.Post, $"/api/files/remote/upload?c={r.Host}&dir={Uri.EscapeDataString(dir)}&name={Uri.EscapeDataString(name)}&token={Uri.EscapeDataString(token)}&acknowledged=1" + (overwrite ? "&overwrite=1" : ""), r.Cookie, data);
         return r.Http.SendAsync(req);
     }
 
@@ -334,7 +335,7 @@ public sealed partial class AgentLinkTests
         {
             var (token, prep, st) = await FPrepare(r, ToPrepare(url, body));
             if (token is null) return (st, CodeOf(prep));
-            var run = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(body))!.AsObject(); run["token"] = token;
+            var run = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(body))!.AsObject(); run["token"] = token; run["acknowledged"] = true;
             var res = await r.Http.SendAsync(Post(url, run, r.Cookie));
             var json = JsonDocument.Parse(await res.Content.ReadAsStringAsync()).RootElement;
             if (res.StatusCode == HttpStatusCode.Accepted) { var j = await FJob(r, json.GetProperty("job").GetString()!); return (res.StatusCode, j.GetProperty("state").GetString() == "failed" ? j.GetProperty("error").GetString()! : "done"); }

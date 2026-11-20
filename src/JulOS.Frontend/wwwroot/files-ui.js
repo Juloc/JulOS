@@ -4,6 +4,7 @@
  * ===================================================================== */
 import { t } from './i18n.js';
 import * as C from './files-core.js';
+import { confirmReady } from './confirm.js';
 
 const ICONS = {
   dns: 'M20 13H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 19c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM20 3H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1V4c0-.55-.45-1-1-1zM7 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z',
@@ -109,26 +110,37 @@ export const rowsEl = (rows) => h('dl', { class: 'f-rows' }, rows.map(([k, v]) =
 export const noteEl = (text, kind = '') => h('p', { class: 'f-msg ' + kind, role: kind === 'warn' ? 'alert' : undefined, text });
 
 /**
- * Bestaetigung einer Aktion (Schritt 2 der Zweischritt-Bestaetigung): der Satz, die Zeilen (Host, Pfad, Anzahl), eine Warnung und, wenn der Server es verlangt, ein Haekchen ("Ja, ersetzen"). Alles stammt aus der
- * Antwort des Servers (prepare). Die Bestaetigung gilt nur kurz (expiresIn Sekunden): danach ist die Taste aus und der Dialog sagt es. Gibt { ack } oder null (abgebrochen).
+ * Bestaetigung einer Aktion (Schritt 2 der Zweischritt-Bestaetigung): der Satz, die Zeilen (Host, Pfad, Anzahl), die Warnung der Stufe (gelb, bei "sehr gefaehrlich" dazu eine rote Zeile) und, wenn der Server es
+ * verlangt, ein Haekchen ("Ich habe die Warnung gelesen") oder der Rechnername. Routine zeigt nur Satz, Zeilen und die Taste. Alles stammt aus der Antwort des Servers (prepare); der Server prueft es noch einmal.
+ * Die Bestaetigung gilt nur kurz (expiresIn Sekunden): danach ist die Taste aus und der Dialog sagt es. Gibt { ack, typed, answer } oder null (abgebrochen); answer ist, was die Aktion mitschicken soll.
  */
 export async function confirmDialog(kit, model, { expiresIn = 0 } = {}) {
   const wrap = h('div', { class: 'f-confirm' });
-  const dlg = modal({ title: model.title, kit, content: [wrap], actions: [{ id: 'no', label: t('common.cancel'), kind: 'ghost' }, { id: 'yes', label: model.confirm, kind: model.danger ? 'danger' : 'primary', disabled: !!model.ack }] });
-  let check = null, timer = null;
+  const dlg = modal({ title: model.title, kit, content: [wrap], actions: [{ id: 'no', label: t('common.cancel'), kind: 'ghost' }, { id: 'yes', label: model.confirm, kind: model.danger ? 'danger' : 'primary', disabled: !!model.ack || !!model.typed }] });
+  let check = null, field = null, timer = null;
+  const ready = () => (!model.ack || !!(check && check.checked)) && (!model.typed || confirmReady({ needsCheck: false, typed: model.typed }, { typed: field ? field.value : '' }));
   if (model.root) wrap.append(h('div', { class: 'f-rootnote', role: 'alert' }, icon('root'), h('span', { text: model.rootNote })));
   wrap.append(h('p', { class: 'f-sentence', text: model.sentence }), rowsEl(model.rows));
   if (model.note) wrap.append(noteEl(model.note));
-  if (model.warning) wrap.append(noteEl(model.warning, 'warn'));
+  if (model.levelWarn) wrap.append(noteEl(model.levelWarn, 'caution'));
+  if (model.criticalWarn) wrap.append(noteEl(model.criticalWarn, 'warn'));
+  if (model.warning) wrap.append(noteEl(model.warning, 'caution'));
   if (model.ack) {
     check = h('input', { type: 'checkbox', id: 'fAck' });
-    check.addEventListener('change', () => dlg.setDisabled('yes', !check.checked));
+    check.addEventListener('change', () => dlg.setDisabled('yes', !ready()));
     wrap.append(h('label', { class: 'f-ack check', for: 'fAck' }, check, ' ', model.ack));
+  }
+  if (model.typed) {
+    field = h('input', { type: 'text', id: 'fTyped', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': t('hostact.typeLabel') });
+    field.addEventListener('input', () => dlg.setDisabled('yes', !ready()));
+    wrap.append(h('label', { class: 'f-typed', for: 'fTyped' }, h('span', { text: t('hostact.typePrompt', { name: model.typed }) }), field));
   }
   if (expiresIn > 0) timer = setTimeout(() => { dlg.setDisabled('yes', true); wrap.append(noteEl(C.errText('confirmation_expired'), 'warn')); }, expiresIn * 1000);
   const which = await dlg.promise;
   clearTimeout(timer);
-  return which === 'yes' ? { ack: !!(check && check.checked) } : null;
+  if (which !== 'yes') return null;
+  const ack = !!(check && check.checked), typed = field ? field.value : '';
+  return { ack, typed, answer: { ...(check ? { acknowledged: ack } : {}), ...(model.typed ? { typed } : {}) } };
 }
 
 /** Ein Name wird abgefragt (neuer Ordner, Umbenennen); nur Eingabe, geschrieben wird erst nach der Bestaetigung des Servers. Gibt den Namen oder null. */

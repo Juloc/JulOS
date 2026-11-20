@@ -13,12 +13,14 @@ internal sealed record ClientDto(string Address, string Peer, bool Forwarded);
 internal sealed record StepUpDto(bool Enabled, int Minutes);
 internal sealed record RecoveryDto(string State, DateTimeOffset? CreatedAt, DateTimeOffset? ConfirmedAt, bool Replacing);
 internal sealed record BackupKeyDto(bool CopyKey, string Source, bool Wrapped, bool CanProtect, RecoveryDto Recovery);
-internal sealed record SecurityResponse(ListDto Proxies, ListDto Hosts, bool ProxiesUnset, ClientDto Client, StepUpDto StepUp, BackupKeyDto BackupKey);
+internal sealed record SecurityResponse(ListDto Proxies, ListDto Hosts, bool ProxiesUnset, ClientDto Client, StepUpDto StepUp, BackupKeyDto BackupKey, string ConfirmMode = "check");
 internal sealed record ListRequest(string[]? Entries, bool? Confirm = null);
 internal sealed record BlockedDto(string Name, string Host);
 internal sealed record HostsPreviewResponse(BlockedDto[] Blocked);
 internal sealed record SecurityError(string Error, string Code, BlockedDto[]? Blocked = null, string? Peer = null);
 internal sealed record StepUpSettingRequest(bool? Enabled, int? Minutes);
+internal sealed record ConfirmModeRequest(string? Mode);
+internal sealed record ConfirmModeDto(string Mode);
 internal sealed record BackupKeyRequest(bool? CopyKey);
 internal sealed record RecoveryResponse(string Key);
 internal sealed record SecurityAuditDto(long Id, DateTimeOffset At, string User, string Event, string? Detail);
@@ -68,7 +70,8 @@ internal static class SecurityEndpoints
             var r = keys.Recovery();
             return Results.Json(new SecurityResponse(new ListDto(cfg.Proxies.Entries, cfg.Proxies.Source), new ListDto(cfg.Hosts.Entries, cfg.Hosts.Source), cfg.ProxiesUnset, Client(ctx),
                 new StepUpDto(cfg.StepUp.Enabled, cfg.StepUp.Minutes),
-                new BackupKeyDto(plan.CopyKey, plan.Source, plan.Wrapped is not null, box.Enabled, new RecoveryDto(r.State, r.CreatedAt, r.ConfirmedAt, r.Replacing))),
+                new BackupKeyDto(plan.CopyKey, plan.Source, plan.Wrapped is not null, box.Enabled, new RecoveryDto(r.State, r.CreatedAt, r.ConfirmedAt, r.Replacing)),
+                ConfirmPolicy.Name(cfg.ConfirmMode)),
                 AppJson.Default.SecurityResponse);
         });
 
@@ -148,6 +151,16 @@ internal static class SecurityEndpoints
             await sessions.CapStepUpAsync(clock.GetUtcNow(), minutes, ctx.RequestAborted);        // eine kuerzere Dauer gilt sofort auch fuer Freigaben, die schon erteilt sind
             await Audit(audit, ctx, "step_up.set", enabled ? (minutes == 0 ? "immer fragen" : minutes + " min") : "aus");
             return Results.Json(new StepUpDto(cfg.StepUp.Enabled, cfg.StepUp.Minutes), AppJson.Default.StepUpDto);
+        });
+
+        // ---- Bestaetigung bei gefaehrlichen Aktionen: Haekchen, Rechnernamen tippen oder nur Klick (F-04, docs/HOST-AGENT.md) ----
+        app.MapPut("/api/security/confirm-mode", async (ConfirmModeRequest body, HttpContext ctx, SecurityConfig cfg, SecurityAuditStore audit, HitCounter hits) =>
+        {
+            if (Limited(ctx, hits)) return Error(429, "Zu viele Anfragen, bitte kurz warten.", "rate_limited");
+            if (!ConfirmPolicy.IsMode(body.Mode)) return Error(400, "Angaben fehlen.");
+            await cfg.SetConfirmModeAsync(ConfirmPolicy.ParseMode(body.Mode), ctx.RequestAborted);
+            await Audit(audit, ctx, "confirm_mode.set", ConfirmPolicy.Name(cfg.ConfirmMode));
+            return Results.Json(new ConfirmModeDto(ConfirmPolicy.Name(cfg.ConfirmMode)), AppJson.Default.ConfirmModeDto);
         });
 
         // ---- Schluessel im Backup und Wiederherstellungsschluessel (F-01) ----

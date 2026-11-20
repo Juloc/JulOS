@@ -195,7 +195,8 @@
 /* Meldungen */
 .f-msg { margin: 8px 0; padding: 8px 12px; border-radius: 10px; font-size: 13px; line-height: 1.4; }
 .f-msg.hint { color: var(--f-muted); padding-left: 0; }
-.f-msg.warn { background: var(--f-bad-bg); color: var(--f-bad); }
+.f-msg.warn { background: var(--f-bad-bg); color: var(--f-bad); font-weight: 600; }
+.f-msg.caution { background: rgba(240, 173, 0, .16); color: var(--f-fg, inherit); border-left: 4px solid #e0a100; }
 .f-msg.ok { background: var(--f-sel); }
 
 /* Root: der Ort und jeder Dialog dazu sind auffaellig (docs/FILES.md, Abschnitt Root) */
@@ -212,8 +213,10 @@
 .f-rows dd { margin: 0; word-break: break-all; }
 .f-field { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; font-size: 14px; }
 .f-input, .f-tsel { width: 100%; font: inherit; }
-.f-ack { display: flex !important; flex-direction: row !important; align-items: flex-start; gap: 8px; margin: 10px 0; font-weight: 550; }
-.f-ack input { margin-top: 3px; }
+.f-ack { display: flex !important; flex-direction: row !important; align-items: center; gap: 12px; min-height: 48px; margin: 10px 0; font-weight: 550; cursor: pointer; }
+.f-ack input { width: 24px; height: 24px; flex: none; margin: 0; }
+.f-typed { display: grid; gap: 4px; margin: 10px 0; font-size: 13px; }
+.f-typed input { width: 100%; }
 .f-pre { max-height: 55vh; max-height: 55dvh; overflow: auto; margin: 6px 0; padding: 10px; border-radius: 10px; background: rgba(127, 127, 127, .12); white-space: pre-wrap; overflow-wrap: anywhere; font: .78rem/1.4 ui-monospace, Menlo, Consolas, monospace; user-select: text; -webkit-user-select: text; }
 .f-progress { width: 100%; height: 12px; margin: 10px 0 4px; }
 .f-line { margin: 0 0 8px; font-size: 13px; color: var(--f-muted, inherit); min-height: 1.2em; word-break: break-all; }

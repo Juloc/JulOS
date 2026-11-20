@@ -6,11 +6,7 @@ namespace JulOS.Backend.Logic;
 public enum HostTarget { None, Package, Unit, Container }
 
 /// <summary>Eine Aktion auf einem Host (Stufe 3). Name und Pfad sind fest; der Pfad ist der einzige, den der Server dafuer an den Agenten schickt.</summary>
-public sealed record HostActionDef(string Name, string Right, string Cap, string Path, HostTarget Target, TimeSpan Timeout, bool ReadOnly = false)
-{
-    /// <summary>Muss der Benutzer zur Bestaetigung den Rechnernamen tippen? Neustart, Ausschalten und "alle Updates".</summary>
-    public bool RequiresTyping(string? target) => Name is "power.reboot" or "power.poweroff" || (Name == "updates.install" && target == HostActions.AllPackages);
-}
+public sealed record HostActionDef(string Name, string Right, string Cap, string Path, HostTarget Target, TimeSpan Timeout, bool ReadOnly = false);
 
 /// <summary>Die Liste aller Aktionen (docs/HOST-AGENT.md, Stufe 3) und die Pruefung der Zielnamen. Was nicht hier steht, schickt der Server nie.</summary>
 public static partial class HostActions

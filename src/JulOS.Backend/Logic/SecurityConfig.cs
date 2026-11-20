@@ -18,13 +18,13 @@ public sealed record StepUpConfig(bool Enabled, int Minutes)
 }
 
 /// <summary>
-/// Die Sicherheits-Einstellungen der Instanz (Tabelle instance_settings): vertraute Proxy-Adressen, erlaubte Zielhosts, zweiter Faktor fuer Aktionen.
+/// Die Sicherheits-Einstellungen der Instanz (Tabelle instance_settings): vertraute Proxy-Adressen, erlaubte Zielhosts, zweiter Faktor fuer Aktionen, Bestaetigung bei gefaehrlichen Aktionen.
 /// Der Wert aus der App gilt vor der Umgebungsvariable (JULOS_TRUSTED_PROXIES, JULOS_ALLOWED_HOSTS), die nur der Rueckfall ist; ohne beides gilt der eingebaute Wert.
 /// Leser (<see cref="HostPolicy"/>, der Proxy-Filter) fragen bei jeder Anfrage nach, eine Aenderung gilt also ohne Neustart.
 /// </summary>
 public sealed class SecurityConfig
 {
-    public const string ProxiesKey = "security.trustedProxies", HostsKey = "security.allowedHosts", StepUpKey = "security.stepUp";
+    public const string ProxiesKey = "security.trustedProxies", HostsKey = "security.allowedHosts", StepUpKey = "security.stepUp", ConfirmModeKey = "security.confirmMode";
 
     /// <summary>Ohne Einstellung glaubt der Server X-Forwarded-* von jedem privaten Netz (wie vor 0.18): bequem, aber schwach, darum die Warnung (F-03).</summary>
     public static readonly string[] DefaultProxies = ["127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"];
@@ -34,6 +34,7 @@ public sealed class SecurityConfig
     private volatile ListSetting _proxies = new(DefaultProxies, "default");
     private volatile ListSetting _hosts = new([], "default");
     private volatile StepUpConfig _stepUp = new(true, StepUpConfig.DefaultMinutes);
+    private volatile ConfirmMode _confirmMode = ConfirmMode.Check;
 
     public SecurityConfig(InstanceSettings settings, Func<string, string?> env)
     {
@@ -53,6 +54,7 @@ public sealed class SecurityConfig
         _proxies = Pick(ProxiesKey, _envProxies, DefaultProxies, names: false);
         _hosts = Pick(HostsKey, _envHosts, [], names: true);
         _stepUp = ReadStepUp() ?? new StepUpConfig(true, StepUpConfig.DefaultMinutes);
+        _confirmMode = _settings.GetElement(ConfirmModeKey) is { ValueKind: JsonValueKind.String } m ? ConfirmPolicy.ParseMode(m.GetString()) : ConfirmMode.Check;
     }
 
     private StepUpConfig? ReadStepUp() =>
@@ -72,6 +74,9 @@ public sealed class SecurityConfig
     public ListSetting Hosts => _hosts;
     public StepUpConfig StepUp => _stepUp;
 
+    /// <summary>Wie gefaehrliche Aktionen bestaetigt werden (Haekchen, Rechnernamen tippen, nur Klick). Steht in der Datenbank, gilt ohne Neustart; ohne Einstellung das Haekchen.</summary>
+    public ConfirmMode ConfirmMode => _confirmMode;
+
     /// <summary>Ob eine Verbindung von dieser Adresse als vertrauter Proxy gilt (dann werden seine X-Forwarded-Kopfzeilen geglaubt).</summary>
     public bool IsTrustedProxy(IPAddress? address) => AddressList.ContainsAddress(_proxies.Entries, address);
 
@@ -88,4 +93,7 @@ public sealed class SecurityConfig
         minutes is < 0 or > StepUpConfig.MaxMinutes ? $"Die Dauer muss zwischen 0 (immer fragen) und {StepUpConfig.MaxMinutes} Minuten liegen." : null;
 
     public Task SetStepUpAsync(bool enabled, int minutes, CancellationToken ct = default) => _settings.SetAsync(StepUpKey, new JsonObject { ["enabled"] = enabled, ["minutes"] = minutes }.ToJsonString(), ct);
+
+    /// <summary>Nur "check", "type" oder "click" werden gespeichert.</summary>
+    public Task SetConfirmModeAsync(ConfirmMode mode, CancellationToken ct = default) => _settings.SetAsync(ConfirmModeKey, JsonValue.Create(ConfirmPolicy.Name(mode))!.ToJsonString(), ct);
 }

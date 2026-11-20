@@ -4,6 +4,13 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Geändert
+- **Weniger eingeben bei Bestätigungen** ([docs/HOST-AGENT.md](docs/HOST-AGENT.md), „The confirmation“): Jede Aktion hat feste **drei Stufen**. **Alltägliches** (Paketlisten, Updates installieren auch alle, Dienste, Docker, Logs, einzelne Datei-Aktionen) braucht nur noch den Klick auf **Ausführen**, kein Rechnername mehr. **Gefährliches** (Neustart, Ausschalten, mehrere Dateien oder einen Ordner mit Inhalt löschen, alles Löschen und Ersetzen als root) zeigt eine gelbe Warnung in Klartext und ein Häkchen „Ich habe die Warnung gelesen“. **Sehr Gefährliches** (einen Host ausschalten, auf dem JulOS läuft, JulOS selbst stoppen, einen Pfad direkt unter `/` löschen oder verschieben) zeigt dazu eine rote Zeile.
+- **Einstellbar** unter Einstellungen, Sicherheit: „Bestätigung bei gefährlichen Aktionen“ (**Häkchen**, neuer Standard; **Rechnernamen tippen** wie bisher; **Nur Klick**, mit Warnung; sehr Gefährliches bleibt dann beim Häkchen). Gilt ohne Neustart, die Änderung braucht den zweiten Faktor und steht im Verlauf. Das Zeitfenster des zweiten Faktors ist jetzt als Auswahl **Immer fragen, 10, 30, 60 Minuten** erreichbar, mit einem Satz dazu (Standard unverändert 10 Minuten).
+- **Der Server setzt durch:** `prepare` nennt Stufe und Modus (`confirmLevel`, `confirmMode`), `run` ohne Häkchen (`acknowledged`) oder Namen (`typed`) antwortet `400 confirm_required` und führt nichts aus; Token, zweiter Faktor, Pausenschalter und alle Prüfungen sind unverändert. Eine gemeinsame Klasse (`ConfirmPolicy`) gilt für Host-Aktionen und Dateien; der Verlauf zeigt bei `started` Stufe und Modus. Neue Datei: `confirm.js` (Service-Worker-Version erhöht).
+
 ## [0.19.2] - 2026-11-20
 
 ### Behoben

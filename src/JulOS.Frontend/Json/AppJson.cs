@@ -136,6 +136,8 @@ namespace JulOS.Frontend;
 [JsonSerializable(typeof(HostsPreviewResponse))]
 [JsonSerializable(typeof(SecurityError))]
 [JsonSerializable(typeof(StepUpSettingRequest))]
+[JsonSerializable(typeof(ConfirmModeRequest))]
+[JsonSerializable(typeof(ConfirmModeDto))]
 [JsonSerializable(typeof(BackupKeyRequest))]
 [JsonSerializable(typeof(RecoveryResponse))]
 [JsonSerializable(typeof(SecurityAuditDto))]

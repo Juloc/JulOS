@@ -1,9 +1,10 @@
 import { t } from './i18n.js';
-import { confirmHtml, confirmModel, typedOk, typedName, prepareAction, runAction, fetchJob, jobHtml, jobFinal, errText } from './hostactions.js';
+import { confirmReady } from './confirm.js';
+import { confirmHtml, confirmModel, prepareAction, runAction, fetchJob, jobHtml, jobFinal, errText } from './hostactions.js';
 
 /* =====================================================================
  * Der Bestaetigungsdialog fuer Aktionen auf Hosts (docs/HOST-AGENT.md, Stufe 3). Jede Aktion geht durch ihn: erst nennt der Server, was genau geschehen wuerde (Host, Aktion, Ziel;
- * bei Neustart, Ausschalten und "alle Updates" muss der Rechnername getippt werden), dann fuehrt ein zweiter Aufruf aus. Danach zeigt der Dialog Fortschritt und Ergebnis.
+ * je nach Stufe nur "Ausfuehren", eine Warnung mit Haekchen oder, wie eingestellt, der Rechnername; der Server verlangt es), dann fuehrt ein zweiter Aufruf aus. Danach zeigt der Dialog Fortschritt und Ergebnis.
  * Der Dialog ist nur die Bestaetigung (ein kleines Blatt). Nach "Ausfuehren" schliesst er sich und die Aktion laeuft als Hintergrund-Aufgabe (hosttasks.js): nichts bleibt gesperrt,
  * Fortschritt und Ergebnis stehen im Panel der Aufgabe. Nur Aktionen, die lesen (Logs), zeigen ihr Ergebnis hier im Dialog (kurz, und das Ergebnis ist der Zweck).
  * Das Schliessen bricht eine laufende Aktion nie ab; der Server haelt das Ergebnis. Markup: index.html (#hostActDlg). Die Logik des Textes steht in hostactions.js.
@@ -51,9 +52,11 @@ export function initHostActionDialog({ api, esc, tasks = null, onStarted = null 
         btn.hidden = false;
         btn.className = model.danger ? 'danger' : 'primary';
         btn.textContent = t('hostact.confirm');
-        const input = $('#hostActTyped');
-        const refresh = () => { btn.disabled = !typedOk(conf, input ? input.value : ''); };
+        const input = $('#hostActTyped'), ack = $('#hostActAck');
+        const answer = () => ({ checked: !!(ack && ack.checked), typed: input ? input.value : '' });
+        const refresh = () => { btn.disabled = !confirmReady(model, answer()); };
         if (input) { input.addEventListener('input', refresh); input.focus(); }
+        if (ack) ack.addEventListener('change', refresh);
         refresh();
         // Die Bestaetigung gilt nur kurz; danach muss der Dialog neu geoeffnet werden (der Server lehnt sie ohnehin ab)
         timers.push(setTimeout(() => { if (alive() && !btn.hidden) { btn.disabled = true; msg(errText('confirmation_expired')); } }, Math.max(5, conf.expiresIn) * 1000));
@@ -63,12 +66,12 @@ export function initHostActionDialog({ api, esc, tasks = null, onStarted = null 
         if (fullBox) fullBox.addEventListener('change', () => { const r = $('#hostActRemovals'); if (r) r.hidden = !fullBox.checked; });
 
         btn.onclick = async () => {
-          if (!typedOk(conf, input ? input.value : '')) return;
+          if (!confirmReady(model, answer())) return;
           btn.disabled = true; msg('');
           let started;
           const full = !!(fullBox && fullBox.checked);
-          try { started = await runAction(api, host.id, conf, typedName(conf) ? input.value : null, full); }
-          catch (e) { if (alive()) { msg(e.code ? errText(e.code) : e.message); if (e.code === 'typed_mismatch') btn.disabled = false; else $('#hostActClose').textContent = t('common.close'); } return; }
+          try { started = await runAction(api, host.id, conf, model.typed ? input.value : null, full, model.needsCheck ? !!ack.checked : null); }
+          catch (e) { if (alive()) { msg(e.code ? errText(e.code) : e.message); if (e.code === 'typed_mismatch' || e.code === 'confirm_required') btn.disabled = false; else $('#hostActClose').textContent = t('common.close'); } return; }
           if (!alive()) return;
           clear();
           if (tasks && !conf.readOnly) {           // Hintergrund-Aufgabe: der Dialog schliesst sich, nichts bleibt gesperrt

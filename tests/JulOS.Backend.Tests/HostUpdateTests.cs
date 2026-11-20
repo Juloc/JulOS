@@ -39,7 +39,7 @@ public sealed partial class AgentLinkTests
         Assert.Equal("ok", (await WaitJob(r, run.GetProperty("job").GetString()!)).GetProperty("state").GetString());
         Assert.Equal("/v1/host/updates/repair", Posts(r.Agent).Single().Path);
         Assert.Contains("updates.repair ok", await Audit(db));
-        Assert.Contains("updates.repair started", await Audit(db));
+        Assert.Contains("updates.repair started routine:click", await Audit(db));
     }
 
     [Fact]
@@ -76,7 +76,7 @@ public sealed partial class AgentLinkTests
         Assert.True(opts.GetProperty("full").GetBoolean());
         Assert.False(opts.GetProperty("fullChoice").GetBoolean());                                  // auf Proxmox gibt es keine Wahl
         Assert.Equal(["proxmox_full"], StrList(p.GetProperty("warnings")));
-        Assert.Equal("srv-01", p.GetProperty("typeToConfirm").GetString());                           // "alle Updates" bleibt mit getipptem Namen
+        Assert.Equal("routine", p.GetProperty("confirmLevel").GetString());                           // "alle Updates" ist Routine: kein Name, kein Haekchen
 
         // auch ohne ausdruecklichen Wunsch (full fehlt in der Anfrage) laeuft dist-upgrade
         var (rs, run) = await Run(r, p.GetProperty("token").GetString()!, "updates.install", "all", typed: "srv-01");

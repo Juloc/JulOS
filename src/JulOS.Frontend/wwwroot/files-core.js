@@ -10,6 +10,7 @@
  * ===================================================================== */
 import { t, tp, tk, fmtNumber, fmtDate } from './i18n.js';
 import { loginUser, loginSaved } from './hostlogin.js';
+import { confirmView, auditConfirmText } from './confirm.js';
 
 export const LOCAL_ID = 'local';
 export const MAX_NAME_BYTES = 255;
@@ -131,7 +132,7 @@ export const ERR_KEYS = {
   same_place: tk('files.err.same_place'), type_mismatch: tk('files.err.type_mismatch'), target_is_link: tk('files.err.target_is_link'), root_forbidden: tk('files.err.root_forbidden'),
   invalid_name: tk('files.err.invalid_name'), invalid_path: tk('files.err.invalid_path'), invalid_request: tk('files.err.invalid_request'),
   not_text: tk('files.err.not_text'), write_off: tk('files.err.write_off'), confirmation_invalid: tk('files.err.confirmation_invalid'), confirmation_expired: tk('files.err.confirmation_expired'),
-  confirmation_mismatch: tk('files.err.confirmation_mismatch'), too_many_pending: tk('files.err.too_many_pending'), audit_failed: tk('files.err.audit_failed'),
+  confirmation_mismatch: tk('files.err.confirmation_mismatch'), confirm_required: tk('files.err.confirm_required'), typed_mismatch: tk('files.err.typed_mismatch'), too_many_pending: tk('files.err.too_many_pending'), audit_failed: tk('files.err.audit_failed'),
   connection_not_found: tk('files.err.connection_not_found'), not_ssh: tk('files.err.not_ssh'), target_not_allowed: tk('files.err.target_not_allowed'),
   password_required: tk('files.err.password_required'), password_unreadable: tk('files.err.password_unreadable'), logon_failed: tk('files.err.logon_failed'),
   unreachable: tk('files.err.unreachable'), timeout: tk('files.err.timeout'), sftp_unavailable: tk('files.err.sftp_unavailable'),
@@ -170,18 +171,19 @@ export function makeFilesApi(api, { createXhr = () => new XMLHttpRequest() } = {
      * einmal, nur fuer diese Sitzung und genau diese Anfrage. action: upload, mkdir, rename, delete, copy, move (auf Root-Orten auch download und text). Die Antwort ist die Grundlage des Dialogs.
      */
     prepare: (action, place, { paths, dir, name, names, target } = {}) => api('/api/files/remote/prepare', body({ action, connection: place.id, paths, dir, name, names, target: target ? { connection: target.place.id, dir: target.dir } : undefined })),
-    mkdir: (place, dir, name, token) => api('/api/files/remote/mkdir', body({ connection: place.id, dir, name, token })),
-    rename: (place, path, name, overwrite, token) => api('/api/files/remote/rename', body({ connection: place.id, path, name, overwrite: !!overwrite, token })),
-    remove: (place, paths, recursive, token) => api('/api/files/remote/delete', body({ connection: place.id, paths, recursive: !!recursive, token })),
-    copy: (place, paths, target, { move = false, overwrite = false, token } = {}) => api('/api/files/remote/copy', body({ connection: place.id, paths, target: { connection: target.place.id, dir: target.dir }, move, overwrite, token })),
+    /** answer: was der Benutzer bestaetigt hat ({ acknowledged, typed }, confirm.js); der Server verlangt es je nach Stufe und lehnt sonst mit 400 confirm_required ab */
+    mkdir: (place, dir, name, token, answer) => api('/api/files/remote/mkdir', body({ connection: place.id, dir, name, token, ...answer })),
+    rename: (place, path, name, overwrite, token, answer) => api('/api/files/remote/rename', body({ connection: place.id, path, name, overwrite: !!overwrite, token, ...answer })),
+    remove: (place, paths, recursive, token, answer) => api('/api/files/remote/delete', body({ connection: place.id, paths, recursive: !!recursive, token, ...answer })),
+    copy: (place, paths, target, { move = false, overwrite = false, token, answer } = {}) => api('/api/files/remote/copy', body({ connection: place.id, paths, target: { connection: target.place.id, dir: target.dir }, move, overwrite, token, ...answer })),
     job: (id) => api('/api/files/remote/jobs/' + id),
     cancel: (id) => api(`/api/files/remote/jobs/${id}/cancel`, { method: 'POST' }).catch(() => {}),
     audit: (limit = 50) => api('/api/files/audit?limit=' + limit),
     /** Eine Datei hochladen (roher Koerper). Gibt { promise, abort } zurueck; onProgress(geladen, gesamt). Ein Fehler hat code und data wie bei api(). */
-    upload(place, dir, file, { overwrite = false, token, onProgress } = {}) {
+    upload(place, dir, file, { overwrite = false, token, answer, onProgress } = {}) {
       const xhr = createXhr();
       const promise = new Promise((resolve, reject) => {
-        const url = `/api/files/remote/upload?c=${place.id}&dir=${q(dir)}&name=${q(file.name)}&token=${q(token || '')}${overwrite ? '&overwrite=1' : ''}`;
+        const url = `/api/files/remote/upload?c=${place.id}&dir=${q(dir)}&name=${q(file.name)}&token=${q(token || '')}${overwrite ? '&overwrite=1' : ''}${answer && answer.acknowledged ? '&acknowledged=1' : ''}${answer && answer.typed ? '&typed=' + q(answer.typed) : ''}`;
         xhr.open('POST', url);
         xhr.setRequestHeader('X-JulOS', '1');
         xhr.setRequestHeader('Content-Type', 'application/octet-stream');
@@ -296,15 +298,20 @@ export const countText = (plan) => {
 const namesText = (names) => names.slice(0, 5).join(', ') + (names.length > 5 ? ' …' : '');
 
 /**
- * Betrifft eine Aktion einen Root-Ort (prepare meldet root), steht das in jedem Dialog auffaellig dabei und die Taste ist rot: root darf fast alles, auch Dinge, die das System kaputt machen.
- * Das Ziel eines Kopierens zaehlt mit.
+ * Die Stufe aus der Antwort des Servers (confirm.js): Routine zeigt nur Titel, Zeilen und Ausfuehren; gefaehrlich eine gelbe Warnung und, je nach Einstellung, Haekchen oder Namen; sehr gefaehrlich
+ * dazu eine rote Zeile. Das Haekchen kommt nur vom Server (model.ack ist dann sein Text); nur der Editor fragt von sich aus (model.localAck: "seit dem Oeffnen geaendert").
+ * Betrifft eine Aktion einen Root-Ort (prepare meldet root), steht das in jedem Dialog auffaellig dabei und die Taste ist rot: root darf fast alles, auch Dinge, die das System kaputt machen. Das Ziel eines Kopierens zaehlt mit.
  */
-const rootify = (model, prep) => (prep && prep.root ? { ...model, root: true, rootNote: t('files.root.dialogNote'), danger: true } : model);
+const finish = (model, prep) => {
+  const v = confirmView(prep, prep && prep.host);
+  const m = { ...model, level: v.level, mode: v.mode, typed: v.typed, levelWarn: v.warn, criticalWarn: v.criticalWarn, ack: v.needsCheck ? t('confirm.ack') : (model.localAck ? model.ack : null), danger: !!model.danger || v.danger };
+  return prep && prep.root ? { ...m, root: true, rootNote: t('files.root.dialogNote'), danger: true } : m;
+};
 
 /** Lesen als root (Download und Textansicht): bestaetigt wird die Datei, sie wird danach vom Server als root gelesen und im Verlauf vermerkt */
 export function readModel(action, prep) {
   const path = pathsText(prep.paths);
-  return rootify({
+  return finish({
     title: t(action === 'download' ? tk('files.read.titleDownload') : tk('files.read.titleText')),
     sentence: t(action === 'download' ? tk('files.read.sentenceDownload') : tk('files.read.sentenceText'), { host: prep.host, path }),
     rows: [[t('files.rowHost'), prep.host], [t('files.rowPath'), path], [t('files.rowCount'), countText(prep)]],
@@ -316,12 +323,11 @@ export function readModel(action, prep) {
 /** Loeschen: nennt Host, Pfad und Anzahl (vom Server); ein Ordner mit Inhalt braucht den ausdruecklichen zweiten Schritt (recursive), einen Papierkorb gibt es nicht */
 export function deleteModel(prep) {
   const needsAck = !!prep.nonEmpty;
-  return rootify({
+  return finish({
     title: t('files.delete.title'),
     sentence: t('files.delete.sentence', { host: prep.host, path: pathsText(prep.paths) }),
     rows: [[t('files.rowHost'), prep.host], [t('files.rowPath'), pathsText(prep.paths)], [t('files.rowCount'), countText(prep)]],
-    warning: needsAck ? t('files.delete.recursiveWarning') : t('files.delete.noTrash'),
-    ack: needsAck ? t('files.delete.recursiveAck') : null,
+    note: t('files.delete.noTrash'),
     recursive: needsAck,
     confirm: t('files.delete.confirm'),
     danger: true,
@@ -332,14 +338,13 @@ export function copyModel(action, prep) {
   const move = action === 'move';
   const conflicts = prep.conflicts || [];
   const to = prep.targetHost || prep.host;
-  return rootify({
+  return finish({
     title: t(move ? tk('files.move.title') : tk('files.copy.title')),
     sentence: t(move ? tk('files.move.sentence') : tk('files.copy.sentence'), { from: prep.host, path: pathsText(prep.paths), to, dir: shortPath(prep.dir) }),
     rows: [[t('files.rowFrom'), prep.host], [t('files.rowPath'), pathsText(prep.paths)], [t('files.rowTo'), `${to}: ${shortPath(prep.dir)}`], [t('files.rowCount'), countText(prep)]],
     note: prep.targetHost ? t('files.copy.viaServer') : null,
     conflicts,
     warning: conflicts.length ? t('files.copy.overwriteWarning', { names: namesText(conflicts), n: conflicts.length }) : null,
-    ack: conflicts.length ? t('files.copy.overwriteAck') : null,
     overwrite: conflicts.length > 0,
     confirm: t(move ? tk('files.move.confirm') : tk('files.copy.confirm')),
     danger: conflicts.length > 0 || move,
@@ -349,12 +354,11 @@ export function copyModel(action, prep) {
 export function uploadModel(prep, files) {
   const total = files.reduce((n, f) => n + (f.size || 0), 0);
   const conflicts = prep.conflicts || [];
-  return rootify({
+  return finish({
     title: t('files.upload.title'),
     sentence: t('files.upload.sentence', { host: prep.host, dir: shortPath(prep.dir), n: tp('files.nFiles', files.length) }),
     rows: [[t('files.rowHost'), prep.host], [t('files.rowPath'), shortPath(prep.dir)], [t('files.rowCount'), `${tp('files.nFiles', files.length)} · ${fileSize(total)}`]],
     warning: conflicts.length ? t('files.upload.overwriteWarning', { names: namesText(conflicts), n: conflicts.length }) : null,
-    ack: conflicts.length ? t('files.upload.overwriteAck') : null,
     overwrite: conflicts.length > 0,
     confirm: t('files.upload.confirm'),
     danger: conflicts.length > 0,
@@ -363,19 +367,18 @@ export function uploadModel(prep, files) {
 /** Umbenennen: ersetzt der neue Name eine Datei (der Server meldet es als Konflikt), braucht es ein Haekchen */
 export function renameModel(prep) {
   const exists = (prep.conflicts || []).length > 0;
-  return rootify({
+  return finish({
     title: t('files.rename.title'),
     sentence: t('files.rename.sentence', { host: prep.host, path: shortPath(prep.paths[0]), name: prep.name }),
     rows: [[t('files.rowHost'), prep.host], [t('files.rowPath'), shortPath(prep.paths[0])], [t('files.rowNewName'), prep.name]],
     warning: exists ? t('files.rename.overwriteWarning', { name: prep.name }) : null,
-    ack: exists ? t('files.rename.overwriteAck') : null,
     overwrite: exists,
     confirm: t('files.rename.confirm'),
     danger: exists,
   }, prep);
 }
 export function mkdirModel(prep) {
-  return rootify({
+  return finish({
     title: t('files.mkdir.title'),
     sentence: t('files.mkdir.sentence', { host: prep.host, dir: shortPath(prep.dir), name: prep.name }),
     rows: [[t('files.rowHost'), prep.host], [t('files.rowPath'), shortPath(prep.dir)], [t('files.rowNewName'), prep.name]],
@@ -386,12 +389,12 @@ export function mkdirModel(prep) {
 /** Eine Datei speichern (Editor): ersetzt die Datei mit dem bearbeiteten Text. Hat sie sich auf dem Host seit dem Oeffnen geaendert (oder gibt es sie nicht mehr), steht das als Warnung da und es braucht ein Haekchen. */
 export function saveModel(prep, name, bytes, changed) {
   const path = (prep.dir === '/' || !prep.dir ? '' : prep.dir) + '/' + name;
-  return rootify({
+  return finish({
     title: t('files.save.title'),
     sentence: t('files.save.sentence', { host: prep.host, path: shortPath(path) }),
     rows: [[t('files.rowHost'), prep.host], [t('files.rowPath'), shortPath(path)], [t('files.rowCount'), fileSize(bytes)]],
     warning: changed ? t('files.save.changedWarning') : null,
-    ack: changed ? t('files.save.changedAck') : null,
+    ack: changed ? t('files.save.changedAck') : null, localAck: !!changed,
     overwrite: (prep.conflicts || []).includes(name),
     confirm: t('files.save.confirm'),
     danger: !!changed,
@@ -400,12 +403,11 @@ export function saveModel(prep, name, bytes, changed) {
 /** Eine leere Textdatei anlegen (ein Upload ohne Inhalt); gibt es den Namen schon, wuerde sie ersetzt und es braucht ein Haekchen */
 export function newFileModel(prep, name) {
   const exists = (prep.conflicts || []).includes(name);
-  return rootify({
+  return finish({
     title: t('files.newFile.title'),
     sentence: t('files.newFile.sentence', { host: prep.host, dir: shortPath(prep.dir), name }),
     rows: [[t('files.rowHost'), prep.host], [t('files.rowPath'), shortPath(prep.dir)], [t('files.rowNewName'), name]],
     warning: exists ? t('files.rename.overwriteWarning', { name }) : null,
-    ack: exists ? t('files.rename.overwriteAck') : null,
     overwrite: exists,
     confirm: t('files.mkdir.confirm'),
     danger: exists,
@@ -418,6 +420,6 @@ const RESULT = { started: tk('files.r.started'), ok: tk('files.r.ok'), failed: t
 export const auditLine = (e) => ({
   when: fmtDate(e.at, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }),
   host: e.host, action: t(ACTION[e.action] || tk('files.a.unknown')), path: e.path || '', result: t(RESULT[e.result] || tk('files.r.failed')), failed: e.result !== 'ok',
-  detail: e.detail ? (ERR_KEYS[e.detail] ? errText(e.detail) : e.detail === 'overwrite' ? t('files.d.overwrite') : e.detail === 'recursive' ? t('files.d.recursive') : '') : '',
+  detail: e.detail ? (ERR_KEYS[e.detail] ? errText(e.detail) : auditConfirmText(e.detail) || (e.detail === 'overwrite' ? t('files.d.overwrite') : e.detail === 'recursive' ? t('files.d.recursive') : '')) : '',
   items: e.items != null ? tp('files.items', e.items) : '',
 });

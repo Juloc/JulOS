@@ -258,17 +258,19 @@ test('Ergebnis eines Auftrags: was geschah, uebersprungene Links, Fehler als Tex
 
 const prep = (over = {}) => ({ token: 'TOK', expiresIn: 60, action: 'delete', host: 'Server A', targetHost: null, paths: ['/home/jul/projekt', '/home/jul/x.txt'], dir: null, name: null, names: null, files: 3, directories: 2, links: 1, bytes: 2048, conflicts: [], nonEmpty: true, ...over });
 
-test('Bestaetigung Loeschen: alles vom Server; nennt Host, Pfad und Anzahl; ein Ordner mit Inhalt braucht das ausdrueckliche Haekchen; kein Papierkorb', () => {
-  const m = C.deleteModel(prep());
+test('Bestaetigung Loeschen: alles vom Server; nennt Host, Pfad und Anzahl; das Haekchen kommt nur, wenn der Server es verlangt; kein Papierkorb', () => {
+  const m = C.deleteModel(prep({ confirmLevel: 'dangerous', confirmMode: 'check', confirmWarn: 'delete_recursive' }));
   assert.match(m.sentence, /Server A/);
   assert.match(m.sentence, /\/home\/jul\/projekt/);
   assert.deepEqual(m.rows.map((r) => r[0]), ['Host', 'Pfad', 'Umfang']);
   assert.match(m.rows[2][1], /3 Dateien, 2 Ordner, 1 Link · 2,0 KiB/);
   assert.match(m.rows[1][1], /und 1 weitere/);
   assert.ok(m.ack && m.recursive && m.danger);
+  assert.match(m.levelWarn, /samt allem darin/);
+  assert.equal(C.deleteModel(prep({ confirmLevel: 'dangerous', confirmMode: 'click' })).ack, null);           // "nur Klick": Warnung, aber kein Haekchen
   const simple = C.deleteModel(prep({ paths: ['/a/x.txt'], files: 1, directories: 0, links: 0, bytes: 3, nonEmpty: false }));
-  assert.deepEqual([simple.ack, simple.recursive], [null, false]);
-  assert.match(simple.warning, /keinen Papierkorb/);
+  assert.deepEqual([simple.ack, simple.recursive, simple.levelWarn], [null, false, null]);
+  assert.match(simple.note, /keinen Papierkorb/);
   assert.match(simple.rows[2][1], /1 Datei · 3 B/);
 });
 
@@ -280,7 +282,8 @@ test('Bestaetigung Kopieren und Verschieben: Quelle, Ziel (auch ein anderer Host
   assert.ok(!copy.ack && !copy.overwrite);
   assert.equal(C.copyModel('copy', { ...base, targetHost: null, dir: '/x' }).note, null);
   const clash = C.copyModel('move', { ...base, conflicts: ['a', 'b', 'c', 'd', 'e', 'f'] });
-  assert.ok(clash.ack && clash.overwrite && clash.danger);
+  assert.ok(!clash.ack && clash.overwrite && clash.danger);                                // ohne Stufe vom Server kein Haekchen: das Ersetzen ist nur angezeigt
+  assert.ok(C.copyModel('move', { ...base, conflicts: ['a'], root: true, confirmLevel: 'dangerous', confirmMode: 'check', confirmWarn: 'overwrite_root' }).ack);
   assert.match(clash.warning, /\(6\)/);
   assert.match(clash.warning, /a, b, c, d, e …/);
   assert.equal(clash.title, 'Verschieben');
@@ -293,10 +296,10 @@ test('Bestaetigung Hochladen, Umbenennen, Ordner: Host und Pfad stehen drin, Ers
   assert.match(fresh.sentence, /2 Dateien nach Server A/);
   assert.match(fresh.rows[2][1], /2 Dateien · 3,0 KiB/);
   const clash = C.uploadModel(prep({ action: 'upload', dir: '/home/jul', names: ['a.txt', 'b.txt'], paths: [], conflicts: ['a.txt'] }), files);
-  assert.ok(clash.ack && clash.danger && clash.overwrite);
+  assert.ok(!clash.ack && clash.danger && clash.overwrite);
   assert.match(clash.warning, /a\.txt/);
   const ren = C.renameModel(prep({ action: 'rename', paths: ['/home/jul/a.txt'], name: 'b.txt', conflicts: ['b.txt'] }));
-  assert.ok(ren.ack && ren.danger);
+  assert.ok(!ren.ack && ren.danger);
   assert.match(ren.sentence, /Server A/); assert.match(ren.sentence, /b\.txt/);
   assert.equal(C.renameModel(prep({ action: 'rename', paths: ['/home/jul/a.txt'], name: 'z.txt' })).ack, null);
   const mk = C.mkdirModel(prep({ action: 'mkdir', dir: '/home/jul', name: 'neu', paths: [] }));

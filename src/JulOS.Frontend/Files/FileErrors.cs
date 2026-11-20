@@ -54,6 +54,8 @@ internal static class FileErrors
         ["confirmation_invalid"] = (403, "Die Bestätigung ist unbekannt oder schon benutzt."),
         ["confirmation_expired"] = (403, "Die Bestätigung ist abgelaufen."),
         ["confirmation_mismatch"] = (403, "Die Bestätigung gilt für etwas anderes."),
+        ["confirm_required"] = (400, "Bitte erst bestätigen (Haken setzen oder den Namen tippen)."),
+        ["typed_mismatch"] = (400, "Der getippte Name stimmt nicht."),
         ["too_many_pending"] = (429, "Zu viele offene Bestätigungen."),
         ["audit_failed"] = (500, "Der Verlauf lässt sich nicht schreiben, deshalb wurde nichts ausgeführt."),
         ["connection_not_found"] = (404, "Verbindung nicht gefunden."),

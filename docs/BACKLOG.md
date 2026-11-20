@@ -22,6 +22,7 @@ Kept short on purpose. The owner decides what moves up. New ideas go to [IDEAS.m
 
 - **JulOS updates itself from the app:** shows the new version, release notes, a button; the server pulls the new image through a small, separate helper that has access to the container runtime (never the server itself), with a health check and an automatic way back. Needs a decision on the helper (a sidecar container versus the existing Compose manager of the owner).
 - **Assistant** ([ASSISTANT.md](ASSISTANT.md)): phase 1 read and propose (Codex bridge, API keys, internal MCP tools, notes per host, budget and usage), phase 2 free commands with modes, phase 3 files.
+- **Home Assistant in JulOS (state and updates):** a card on the host page through the Home Assistant API with a long-lived token the owner creates in his profile and types into JulOS: version, updates (Core, OS, add-ons), add-on status, read only first, installing updates later with confirmation. Files and the terminal already work through the stored host login (SFTP to `/config`, `/backup`, `/share`; checked live on 2026-11-20); a host agent is not possible on the appliance. Plan: [INTEGRATIONS.md](INTEGRATIONS.md), milestone for Home Assistant.
 - **Integrations** ([INTEGRATIONS.md](INTEGRATIONS.md)): Docker through a socket proxy, Proxmox API, Home Assistant API, Synology, Caddy read-only.
 - **Update overview of all hosts** and a **maintenance window** with a report (opt-in, never silent).
 - **One SSH key per host** instead of stored passwords (JulOS makes the key, the agent installs it).

@@ -322,3 +322,49 @@ test('die Dateien-App ist im Service Worker und die Texte stehen in Deutsch und 
   assert.ok(html.includes('href="files.css"'));
   assert.equal(de['mobile.files'], 'Dateien'); assert.equal(en['mobile.files'], 'Files');
 });
+
+test('Root: der Ort kommt nur, wenn Agent online, Stufe full, Wort files-root erlaubt und Agent ab 0.8.0', () => {
+  const agent = (o = {}) => ({ online: true, control: 'full', allow: ['files-root'], version: '0.8.0', ...o });
+  assert.equal(C.rootAvailable(agent()), true);
+  assert.equal(C.rootAvailable(agent({ version: '0.10.1' })), true);
+  for (const bad of [undefined, null, agent({ online: false }), agent({ control: 'updates' }), agent({ control: 'read' }), agent({ allow: ['updates'] }), agent({ allow: undefined }), agent({ version: '0.7.9' }), agent({ version: '' }), agent({ version: 'x' })]) {
+    assert.equal(C.rootAvailable(bad), false, JSON.stringify(bad));
+  }
+  const hosts = [{ id: 'h1', name: 'Server A', agent: agent() }, { id: 'h2', name: 'Server B', agent: agent({ allow: [] }) }, { id: 'h3', name: 'Server C', agent: agent({ online: false }) }];
+  const connections = [{ id: 'c1', kind: 'terminal', name: 'Shell', hostId: 'h1', host: 'srv-a', username: 'jul', hasPassword: true }];
+  const p = C.buildPlaces({ connections, hosts });
+  assert.deepEqual(p.flat.map((x) => [x.id, x.kind, x.label]), [['c1', 'ssh', 'Server A'], ['h1', 'root', 'Server A (Root)']]);   // nur Server A hat den Root-Ort; Host ohne SSH-Verbindung mit Root bekaeme nur diesen
+  assert.equal(C.findPlace(p, 'h1').kind, 'root');
+  assert.ok(C.isRoot(p.flat[1]) && !C.isRoot(p.flat[0]) && !C.isLocal(p.flat[1]));
+  const only = C.buildPlaces({ hosts: [hosts[0]] });
+  assert.deepEqual(only.flat.map((x) => x.label), ['Server A (Root)']);                                                         // auch ohne SSH-Verbindung
+  assert.equal(C.rootOf(p.flat[1]), '/');
+});
+
+test('Root: Lesen ist eine bestaetigte Aktion (prepare, dann Token an text und Download), jeder Dialog nennt Root und ist rot', async () => {
+  const root = { id: 'h1', kind: 'root', label: 'Server A (Root)', name: 'Server A' };
+  const { api, calls } = stubApi();
+  const f = C.makeFilesApi(api);
+  await f.prepare('text', root, { paths: ['/etc/hosts'] });
+  assert.deepEqual(calls[0], ['POST', '/api/files/remote/prepare', { action: 'text', connection: 'h1', paths: ['/etc/hosts'] }]);
+  await f.text(root, '/etc/hosts', 'tok');
+  assert.equal(calls[1][1], '/api/files/remote/text?c=h1&path=%2Fetc%2Fhosts&token=tok');
+  assert.equal(f.downloadUrl(root, '/etc/a b', 'tok'), '/api/files/remote/download?c=h1&path=%2Fetc%2Fa%20b&token=tok');
+  assert.equal(f.downloadUrl(remote, '/x'), '/api/files/remote/download?c=c1&path=%2Fx');                                      // ein SSH-Ort: kein Token
+  const rp = { host: 'Server A (Root)', paths: ['/etc/shadow'], files: 1, directories: 0, links: 0, bytes: 900, root: true, conflicts: [] };
+  const m = C.readModel('download', rp);
+  assert.ok(m.root && m.rootNote && m.danger);
+  assert.match(m.sentence, /Server A \(Root\)/); assert.match(m.sentence, /\/etc\/shadow/); assert.match(m.sentence, /als root/);
+  assert.match(C.readModel('text', rp).title, /ansehen/);
+  for (const model of [C.deleteModel({ ...rp, nonEmpty: false }), C.copyModel('copy', { ...rp, dir: '/x', targetHost: 'Server B' }), C.uploadModel({ ...rp, dir: '/x' }, [{ name: 'a', size: 1 }]), C.renameModel({ ...rp, name: 'n' }), C.mkdirModel({ ...rp, dir: '/', name: 'n' })]) {
+    assert.ok(model.root && model.rootNote && model.danger, model.title);                                                       // jede Root-Aktion steht auffaellig da
+  }
+  const plain = C.deleteModel({ ...rp, root: false, nonEmpty: false });
+  assert.ok(!plain.root);
+  assert.ok(C.copyModel('copy', { ...rp, root: true, dir: '/x', host: 'Server B', targetHost: 'Server A (Root)' }).root);       // auch wenn nur das Ziel root ist (der Server meldet root)
+});
+
+test('Root: die neuen Texte stehen in Deutsch und Englisch', () => {
+  for (const k of ['files.root.banner', 'files.root.dialogNote', 'files.rootAddress', 'app.allowFilesRoot', 'files.read.titleText', 'files.read.titleDownload']) assert.ok(de[k] && en[k], k);
+  assert.match(de['files.root.banner'], /\{host\}/); assert.match(en['files.root.banner'], /\{host\}/);
+});

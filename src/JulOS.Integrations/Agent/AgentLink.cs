@@ -429,7 +429,7 @@ public static class AgentLabels
     }
 
     /// <summary>Die lokalen Rechte (Aktionsarten), die ein Agent melden darf (dieselben Woerter wie AgentControl.Rights).</summary>
-    public static readonly string[] Rights = ["updates", "reboot", "services", "docker", "logs", "disks"];
+    public static readonly string[] Rights = ["updates", "reboot", "services", "docker", "logs", "disks", "files-root"];
 
     /// <summary>Anzeigetext des Agenten: nur druckbare Zeichen, hoechstens <paramref name="max"/> lang (Steuerzeichen und Umbrueche fallen weg).</summary>
     public static string Printable(string? s, int max)

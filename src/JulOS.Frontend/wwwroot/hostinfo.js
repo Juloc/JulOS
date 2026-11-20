@@ -208,7 +208,7 @@ export function installCommand(origin, code, opts = {}) {
   const allow = ALLOW_WORDS.filter((w) => (opts.allow || []).includes(w));
   return `curl -fsSL ${origin}/agent-files/${AGENT_INSTALLER} -o ${INSTALLER_FILE} && sudo sh ${INSTALLER_FILE} --server ${origin} --code ${code}${allow.length ? ` --allow ${allow.join(',')}` : ''}${opts.dockerGroup && allow.includes('docker') ? ' --docker-group' : ''}${http ? ' --allow-http' : ''}`;
 }
-const ALLOW_WORDS = ['updates', 'logs', 'services', 'docker', 'disks', 'reboot'];
+const ALLOW_WORDS = ['updates', 'logs', 'services', 'docker', 'disks', 'reboot', 'files-root'];
 
 /**
  * Die Terminal-Verbindung, in der der Befehl landen soll: eine SSH-Verbindung dieses Hosts mit der blanken Shell (nie eine Claude- oder Codex-Kachel: dort ginge

@@ -42,7 +42,7 @@ if sys.version_info < MIN_PYTHON:
 import argparse, base64, hashlib, hmac, http.client, http.server, json, logging, logging.handlers, os, queue, random, re, shutil, signal, socket, socketserver, ssl, stat, struct, subprocess, tempfile, threading, time
 import urllib.error, urllib.parse, urllib.request
 
-AGENT_VERSION = "0.7.0"      # der Server lehnt aeltere ab (AgentLinks.MinAgentVersion); ab 0.4.0 aktualisiert er sich auf Anweisung selbst; ab 0.5.0 gibt es den Host-Modus; ab 0.6.0 Schreib-Aktionen; ab 0.7.0 beantwortet auch der Desktop-Agent die Host-Anfragen (hello: caps desktop/host)
+AGENT_VERSION = "0.8.0"      # der Server lehnt aeltere ab (AgentLinks.MinAgentVersion); ab 0.4.0 aktualisiert er sich auf Anweisung selbst; ab 0.5.0 gibt es den Host-Modus; ab 0.6.0 Schreib-Aktionen; ab 0.7.0 beantwortet auch der Desktop-Agent die Host-Anfragen (hello: caps desktop/host); ab 0.8.0 Dateien als root (Wort files-root, /v1/host/files/*)
 API_VERSION = 1
 PLATFORM = "linux-x11"         # im Host-Modus "linux-host" (HOST_PLATFORM)
 HOST_PLATFORM = "linux-host"
@@ -604,7 +604,7 @@ def apply_update(server, message, script=None, allow_http=False, opener=None, cu
 # Lesen: Systemwerte, Update-Liste, fehlgeschlagene Dienste, Docker-Container. Schreiben (Stufe 3, Abschnitt "Schreib-Aktionen" weiter unten): nur feste Pfade,
 # nur mit lokaler Erlaubnis je Aktionsart, nur ein Auftrag zugleich.
 HOST_CAPS_ALL = ("sysinfo", "updates", "services", "docker")
-CONTROL_RIGHTS = ("updates", "reboot", "services", "docker", "logs", "disks")
+CONTROL_RIGHTS = ("updates", "reboot", "services", "docker", "logs", "disks", "files-root")
 PERMISSIONS_FILE = os.environ.get("JULOS_AGENT_PERMISSIONS") or "/etc/julos-agent/permissions"
 DOCKER_SOCKET = os.environ.get("JULOS_AGENT_DOCKER_SOCKET") or "/var/run/docker.sock"
 CMD_TIMEOUT = 30
@@ -640,7 +640,7 @@ def read_text(path, limit=1024 * 1024):
 
 # ---- Rechte (Stufe 3): am Server nach Stufe 'control' geprueft, hier noch einmal lokal
 def parse_permissions(text):
-    """Die Datei /etc/julos-agent/permissions: je Zeile ein Recht (updates, reboot, services, docker, logs, disks), '#' beginnt einen Kommentar. Unbekanntes wird ignoriert."""
+    """Die Datei /etc/julos-agent/permissions: je Zeile ein Recht (updates, reboot, services, docker, logs, disks, files-root), '#' beginnt einen Kommentar. Unbekanntes wird ignoriert."""
     out = set()
     for line in text.splitlines():
         word = line.split("#", 1)[0].strip().lower()
@@ -1919,6 +1919,36 @@ def public_jobs():
     return {"jobs": [{k: v for k, v in j.items() if k in keys} for j in job_store().snapshot()]}
 
 
+# ---------------------------------------------------------------- Dateien als root (Wort files-root, docs/FILES.md)
+# Der Agent reicht nur weiter: feste Pfade /v1/host/files/<verb>, geprueftes Wort, geformte Anfrage; die Arbeit macht der root-Helfer (Verben files.*), der Wort und Werte selbst noch einmal prueft.
+# Kein Auftrag und keine Sperre: jede Anfrage steht fuer sich (ein Block, eine Liste, ein Umbenennen). Der Inhalt von Dateien wird nie gespeichert oder geloggt.
+FILE_VERBS = ("list", "stat", "read", "create", "write", "rename", "delete", "rmdir", "mkdir")
+FILE_STATUS = {"not_found": 404, "denied": 403, "exists": 409, "not_empty": 409, "not_a_directory": 400, "is_directory": 400, "invalid_path": 400, "invalid_request": 400, "invalid_name": 400,
+               "bad_offset": 409, "type_mismatch": 409, "protected_path": 403, "root_forbidden": 400, "not_a_file": 400, "cross_device": 409, "is_link": 409, "not_permitted": 403}
+FILE_FIELDS = {"list": ("path", "limit"), "stat": ("path", "follow"), "read": ("path", "offset", "length"), "create": ("path",), "write": ("path", "offset", "data"),
+               "rename": ("from", "to", "overwrite"), "delete": ("path",), "rmdir": ("path",), "mkdir": ("path",)}
+
+
+def files_root(verb, body):
+    """Eine Dateianfrage an den root-Helfer. (Status, Objekt). Der Agent prueft das Wort und die Form, der Helfer alles noch einmal."""
+    if verb not in FILE_VERBS or not isinstance(body, dict):
+        return err(400, "invalid_request")
+    if "files-root" not in permissions():
+        return 403, {"error": "not_permitted", "need": "files-root"}
+    request = {"verb": "files." + verb}
+    for key in FILE_FIELDS[verb]:
+        if key in body:
+            request[key] = body[key]
+    r = helper_call(request, None, 120)
+    if r is None:
+        return err(503, "helper_unavailable")
+    if r.get("ok"):
+        return 200, {k: v for k, v in r.items() if k != "code"}
+    code = r.get("code") if isinstance(r.get("code"), str) and re.match(r"^[a-z_]{1,32}\Z", r.get("code")) else "failed"
+    return FILE_STATUS.get(code, 500 if code in ("helper_closed", "timeout", "failed") else 400), {"error": code}
+
+
+
 def host_api(method, path, body, emit=None):
     """Die Anfragen an einen Host-Agenten (docs/HOST-AGENT.md). Gibt (Status, Objekt) zurueck. Nur feste Pfade; ein Desktop-Pfad ist hier 404.
     emit(text, done, total) meldet den Fortschritt einer langen Aktion an den Server."""
@@ -1939,6 +1969,8 @@ def host_api(method, path, body, emit=None):
                     return 404, {"error": "unsupported"}
                 return hit[1]()
             return 404, {"error": "unbekannt"}
+        if method == "POST" and path.startswith("/v1/host/files/"):
+            return files_root(path[len("/v1/host/files/"):], body)
         if method == "POST" and path in WRITE_ROUTES:
             need, action = WRITE_ROUTES[path]
             if need not in permissions():

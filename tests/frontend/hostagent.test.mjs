@@ -10,10 +10,10 @@ const agent = (o = {}) => ({ online: true, kind: 'host', version: '0.6.0', caps:
 const host = (o = {}) => ({ id: 'h1', name: 'Server', online: true, agent: agent(o) });
 const html = (h, setup = newSetup(), terminal = null) => agentPanel({ host: h, esc, setup, terminal });
 
-test('Die Haken: nur diese sechs Woerter, nie ein Standard, die Docker-Gruppe erst mit Docker', () => {
-  assert.deepEqual(ALLOW_CHOICES.map((c) => c.word), ['updates', 'logs', 'services', 'docker', 'disks', 'reboot']);
+test('Die Haken: nur diese sieben Woerter, nie ein Standard, die Docker-Gruppe erst mit Docker', () => {
+  assert.deepEqual(ALLOW_CHOICES.map((c) => c.word), ['updates', 'logs', 'services', 'docker', 'disks', 'reboot', 'files-root']);
   const h = html(host());
-  assert.equal((h.match(/data-allow="/g) || []).length, 6);
+  assert.equal((h.match(/data-allow="/g) || []).length, 7);
   assert.doesNotMatch(h, /data-allow="[a-z]+" checked/);                                       // kein Haken der Einrichtung ist vorgewaehlt
   assert.match(h, /data-hag-grouprow hidden/);                                                  // Docker-Gruppe verborgen, solange Docker nicht angehakt ist
   const s = { ...newSetup(), allow: ['docker'], dockerGroup: true };
@@ -28,6 +28,7 @@ test('Der Befehl: ein Installer fuer jede Maschine, die Haken werden --allow, di
   const c = (o) => setupCommand('https://julos.example.org', 'ABCDE-FGHIJ', { ...newSetup(), ...o });
   assert.equal(c({}), 'curl -fsSL https://julos.example.org/agent-files/install-agent.sh -o julos-install-agent.sh && sudo sh julos-install-agent.sh --server https://julos.example.org --code ABCDE-FGHIJ');
   assert.match(c({ allow: ['reboot', 'updates'] }), /--allow updates,reboot$/);
+  assert.match(c({ allow: ['files-root', 'logs'] }), /--allow logs,files-root$/);                  // das Wort fuer Dateien als root, in fester Reihenfolge am Ende
   assert.match(c({ allow: ['disks', 'reboot', 'updates'] }), /--allow updates,disks,reboot$/);        // das Wort fuer die SMART-Abfrage, immer in dieser Reihenfolge
   assert.match(c({ allow: ['docker'], dockerGroup: true }), /--allow docker --docker-group$/);
   assert.doesNotMatch(c({ allow: ['logs'], dockerGroup: true }), /docker-group/);

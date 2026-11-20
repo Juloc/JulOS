@@ -124,6 +124,7 @@ builder.Services.AddSingleton(FileSessionFactory.Default);
 builder.Services.AddSingleton(sp => new SftpPool(sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<FilesOptions>().MaxSessionsPerUser, sp.GetRequiredService<FilesOptions>().Idle));
 builder.Services.AddSingleton(sp => new FileJobs(sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<FilesOptions>().MaxJobsPerUser));
 builder.Services.AddSingleton<FileAuditStore>();
+builder.Services.AddSingleton<RootFiles>();
 builder.Services.AddSingleton(sp => new FileConfirmations(sp.GetRequiredService<TimeProvider>(), TimeSpan.FromSeconds(60)));
 builder.Services.AddHostedService<SftpPoolSweeper>();
 // Module Caddy und DDNS (nur lesen, standardmaessig aus): JULOS_CADDY, JULOS_DDNS, siehe docs/MODULES.md

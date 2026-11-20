@@ -11,6 +11,7 @@ import { icon, card, callout, noteP, button } from './hostui.js';
 export const ALLOW_CHOICES = [
   { word: 'updates', label: tk('app.allowUpdates') }, { word: 'logs', label: tk('app.allowLogs') }, { word: 'services', label: tk('app.allowServices') },
   { word: 'docker', label: tk('app.allowDocker') }, { word: 'disks', label: tk('app.allowDisks') }, { word: 'reboot', label: tk('app.allowReboot') },
+  { word: 'files-root', label: tk('app.allowFilesRoot') },
 ];
 
 /** Der Zustand der Einrichtung auf der Seite: gewaehlte Woerter, Docker-Gruppe, fertiger Befehl und Hinweis */

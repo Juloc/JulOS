@@ -82,6 +82,23 @@ class DryRunTests(unittest.TestCase):          # der Host-Zweig (--host): unvera
         self.assertNotIn("julos-agent-helper", out)               # Docker geht ueber den Socket, nicht ueber root
         self.assertIn("no access to the Docker socket", err)      # und der Installer sagt, was noch fehlt
 
+    def test_files_root_is_a_known_word_that_needs_the_helper_and_opens_its_sandbox(self):
+        rc, out, err = run("--dry-run", "--host", "--server", SERVER, "--code", CODE, "--allow", "files-root")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("add the words: files-root", out)
+        if "julos-agent.service:" in out:                         # nur mit systemd
+            self.assertIn(SERVER + "/agent-files/julos-agent-helper.py", out)       # das Wort braucht den root-Helfer
+            # Mit dem Wort sieht der Helfer das echte Dateisystem (sonst waere /home leer und /tmp ein anderes); die anderen Grenzen bleiben
+            self.assertNotIn("ProtectHome=yes", out)
+            self.assertNotIn("PrivateTmp=yes\nProtectKernelModules", out)
+            self.assertIn("ProtectKernelModules=yes", out)
+            self.assertIn("SocketMode=0660", out)
+        rc, out, err = run("--dry-run", "--host", "--server", SERVER, "--code", CODE, "--allow", "updates")
+        if "julos-agent.service:" in out:
+            self.assertIn("ProtectHome=yes", out)                  # ohne das Wort bleibt die engere Sicht
+        rc, out, _ = run("--help")
+        self.assertIn("files-root", out)
+
     def test_unknown_words_are_refused_before_anything_happens(self):
         for bad in ("shell", "updates,root", "updates;id", "UPDATES", "--user"):
             rc, out, err = run("--dry-run", "--host", "--server", SERVER, "--code", CODE, "--allow", bad)

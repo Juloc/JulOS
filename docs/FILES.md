@@ -4,8 +4,9 @@ The Files app (desktop window and phone page "Dateien") shows **places**:
 
 - **Gemeinsamer Ordner** (shared folder): the one folder of the JulOS server (`JULOS_FILES_ROOT`, default `JULOS_UPLOAD_DIR`). Read only: view the list, search by name, download. This is the old behaviour, unchanged; see [ARCHITECTURE.md](ARCHITECTURE.md) for its guarantees.
 - **Every host with an SSH connection**: the files of the SSH user, over **SFTP**, with the credentials you already saved for the connection. List, view text, download, upload (pick or drag and drop), new folder, rename, copy, move (also from host to host through the server) and delete.
+- **"<Host> (Root)"**, only for a host whose agent allows it: the same functions **as root**, through the host agent (no SSH, no password). Off unless you switch it on in three places, see [Root access](#root-access-files-as-root).
 
-A connection that is not SSH (RDP, VNC) is not a place. A host with several SSH connections offers a choice ("Host · Connection"). There is **no root access**: what you can do is what the SSH user can do. Root access is a later, separate step (see [Not built](#not-built-and-decisions)).
+A connection that is not SSH (RDP, VNC) is not a place. A host with several SSH connections offers a choice ("Host · Connection"). On an SSH place what you can do is what the SSH user can do; only the separate place "<Host> (Root)" works as root (below).
 
 ## What it needs
 
@@ -50,9 +51,9 @@ All paths are under `/api/files/`. Errors are `{"error": "<German text>", "code"
 | `POST remote/open` | `{connection, password?, acceptHostKey?}` opens (or keeps alive) the session; `{home, hostKey: known\|remembered\|replaced, fingerprint, algorithm}`. Errors `password_required`, `logon_failed`, `host_key_new`, `host_key_changed`, `unreachable`, `timeout`, `sftp_unavailable` |
 | `POST remote/close` | `{connection}` |
 | `GET remote/list?c=&path=` | entries (`name`, `path`, `kind` = file/directory/link/other, `size`, `modified`, `mode`, `resolved`, `openable`), directories and links to directories first, natural order; `truncated`, `hidden` |
-| `GET remote/text?c=&path=` | `{path, text, truncated, size}` |
-| `GET remote/download?c=&path=` | the file, streamed |
-| `POST remote/prepare` | step 1 of every write: `{action: upload\|mkdir\|rename\|delete\|copy\|move, connection, paths?, dir?, name?, names?, target?}`; checks like the action would, changes nothing; answers `{token, expiresIn, action, host, targetHost?, paths, dir?, name?, names?, files, directories, links, bytes, conflicts, nonEmpty}` (`conflicts`: names that exist at the target and would be replaced; `nonEmpty`: a folder with content is included) |
+| `GET remote/text?c=&path=&token=` | `{path, text, truncated, size}`; the `token` only on a root place |
+| `GET remote/download?c=&path=&token=` | the file, streamed; the `token` only on a root place |
+| `POST remote/prepare` | step 1 of every write (on a root place also of `text` and `download`): `{action: upload\|mkdir\|rename\|delete\|copy\|move\|text\|download, connection, paths?, dir?, name?, names?, target?}`; checks like the action would, changes nothing; answers `{token, expiresIn, action, host, targetHost?, paths, dir?, name?, names?, files, directories, links, bytes, conflicts, nonEmpty}` (`conflicts`: names that exist at the target and would be replaced; `nonEmpty`: a folder with content is included) |
 | `POST remote/upload?c=&dir=&name=&overwrite=1&token=` | raw body; written under a temporary name, then renamed; the token covers the prepared names, each once |
 | `POST remote/mkdir`, `remote/rename` | `{connection, dir, name, token}`, `{connection, path, name, overwrite?, token}` (rename stays in the same folder) |
 | `POST remote/delete`, `remote/copy` | `{connection, paths, recursive?, token}` and `{connection, paths, target: {connection, dir}, move?, overwrite?, token}` (`move: true` needs a `move` prepare); answer `202 {job}` |
@@ -60,6 +61,37 @@ All paths are under `/api/files/`. Errors are `{"error": "<German text>", "code"
 | `GET audit?limit=` | the history |
 
 Copy, move and delete run as **jobs** (at most two running per user; finished ones stay for ten minutes). The page polls the job and can cancel it.
+
+## Root access (files as root)
+
+The place **"<Host> (Root)"** shows and changes the files of a host **as root**, through the host agent ([HOST-AGENT.md](HOST-AGENT.md)). It exists because the SSH user often cannot read or change exactly the files you came for (`/etc`, `/var`, another user's home). It is therefore the most powerful thing in JulOS next to the terminal as root, and built like the host actions: every key must agree, every step is confirmed, nothing happens silently.
+
+**The keys (all of them, checked again on every single request, also between two blocks of a transfer):**
+
+1. The agent of the host is **online** and is version **0.8.0 or later** (`root_offline`, `root_outdated`).
+2. On the page "Hosts", the level of this host is **"Alles"** (`full`; `updates` and `read` do not give files, `root_off`).
+3. The **pause switch** for host actions is not on (`root_paused`; the same switch as for the other actions).
+4. The agent allows it **locally**: the word `files-root` in `/etc/julos-agent/permissions` (installer: `--allow files-root`; `root_not_permitted`). The root helper checks the file once more.
+5. Writing needs `JULOS_FILES_WRITE=on` as everywhere (`write_off`); reading a root file does not.
+
+The place appears in the app only when 1 to 4 hold at that moment (the page knows the agent state); a refusal later says which key is missing. The place's id is the host's id; the name is "<Host> (Root)" and the page marks it red: a banner in the list, a red mark under the path, and a root notice in every confirmation dialog.
+
+**Confirmation (two steps, like F-25).** Every writing action (upload, overwrite, new folder, rename, copy, move, delete) first goes through `POST remote/prepare` and then runs with the one-time token (60 s, bound to session, action and exact request), exactly as for SFTP places; a copy **to** a root place counts as root (the dialog and the audit entry say "<Host> (Root)"). Unlike an SSH place, **reading** also needs this: **download** and **text view** of a root file are prepared (`action: download` or `text`, one file), confirmed in a dialog that names the file and says "as root", and then run with the token. Without a valid token the server answers `confirmation_invalid` and the agent is not asked. The list itself (names, sizes, modes) is not confirmed; it is behind the keys and the session.
+
+**History, fail-closed.** Every write and every read of a root file writes `started` into `files_audit` first; if that fails nothing happens (`audit_failed`). The place is named "<Host> (Root)" in the entry. No content, no token.
+
+**Transport.** The server talks to the agent over the existing agent link, in **blocks of 48 KiB** (Base64 in JSON, so about 64 KiB per message, the agent accepts 70 KiB). One block at a time: the next request goes out only when the previous answer has been taken, so a slow browser slows the transfer instead of filling memory (back pressure); nothing but one block is held. Each block asks for the keys again (cached for 2 s). The agent forwards to the root helper (one connection per request, see HOST-AGENT.md). A lost link, a revoked key or a refusal in the middle ends the transfer with an error and the temporary file is removed; an incomplete download aborts the connection, it never looks complete.
+
+**What the root helper does and never does.** It resolves the parent folder once and then works with file descriptors relative to it and `O_NOFOLLOW` on the last name, so a link swapped in as the last name cannot redirect a write, rename or delete. It **writes only into a new file named `.julos-<12 hex>.part`** (created exclusively, with `pwrite` at the expected offset) and then **renames** it over the target; it keeps the owner and mode of a replaced file (a new file gets 0644), and refuses to replace a link or a folder (`target_is_link`, `type_mismatch`). A link is never followed for changes (listed as a link, never copied, deleted or replaced as a link, never written through); **reading** a link reads the file it points to, as root, like the stat of an SFTP place (F-32). The root `/` is never deleted (`root_forbidden`), and what makes the agent itself is **protected**: `/etc/julos-agent`, `/usr/local/libexec/julos-agent`, `/opt/julos-agent`, `/var/lib/julos-agent` can be listed and read but never changed (`protected_path`), so the agent cannot be used to give itself more rights. The check runs on the path as sent **and again on the real folder after all links are resolved**, so a link elsewhere that points into one of these folders does not get around it (tested). Not covered: a bind mount of such a folder somewhere else.
+
+**Limits and honest edges**
+
+- Root is root: with the word, the level and a confirmed dialog you can delete `/etc` or fill the disk. The confirmation names the path and says "as root"; it does not judge the target. There is no recycle bin.
+- Files on a root place are plain files: no owner, mode or time is copied from another place; a replaced file keeps its own owner and mode.
+- A named pipe or device is listed as "other" and never opened for reading (read refuses everything that is not a regular file).
+- A recursive delete or copy lists a folder first and then works on names (as for SFTP, F-28): a local user who can write in that folder can swap things in between. As root that is worse than as a normal user; do not recurse in folders other users can write to.
+- The installer opens the helper's sandbox for this word (no `ProtectHome`, no private `/tmp`), otherwise the Files app would show an empty `/home` and a private `/tmp`. Without the word the helper keeps the stricter view.
+- Real systemd and a real host were not part of the automated tests (they use the real helper code on a throw-away directory and a fake link); see the CHANGELOG for what was tried by hand.
 
 ## Host to host
 
@@ -75,7 +107,7 @@ Copy, move and delete run as **jobs** (at most two running per user; finished on
 
 ## Not built, and decisions
 
-- **Root access** is a later, separate step: a word `files-root` in the permission file of the root helper (per host opt-in, like `updates` or `services`), a confirmation, and the history, in the model of [HOST-AGENT.md](HOST-AGENT.md). Today nothing here uses root and the agent is not involved at all.
+- **Root access** is built as its own place (see above). Not built there: editing text, permissions and owner changes, symbolic links, a view of the target of a link.
 - **Key authentication** for the files is not offered; the saved connections hold passwords. Decision: use the same credentials as the terminal, add nothing new.
 - **Recycle bin, editing, thumbnails, sorting by size and date, search on hosts**: see [IDEAS.md](IDEAS.md).
 - Decision: the first host key must be confirmed (stricter than the terminal) because a file manager moves more data than a shell you watch.
@@ -84,3 +116,4 @@ Copy, move and delete run as **jobs** (at most two running per user; finished on
 ## Tests
 
 `tests/JulOS.Backend.Tests`: `FileTransferTests` (the logic against an in-memory file system: paths, counting, atomic write, copy, move, delete, links, limits, preview), `SftpPoolTests` (sharing, idle, limits, leaks), `RemoteFilesHttpTests` (the whole server: session, header and origin, host key flow, passwords, listing, text, download, prepare and the bound confirmation, upload, rename, jobs, cancel, history, fail-closed audit, pool closing, write switch), `RealSftpFilesTests` (a real SFTP target of the dev stack: list, read, write, rename, delete, links, errors, a large folder, copy between two sessions, cancel, a changed host key). `tests/frontend/files.test.mjs` covers the page logic.
+- Root access: `tests/agent/test_files_root.py` (the real helper code on a throw-away directory: every verb, blocks, temp file and rename, links, protected paths, wrong offsets, the word checked again; the agent routes `/v1/host/files/*` and refuses without the word), `tests/JulOS.Backend.Tests/RootFilesTests.cs` (the whole server with the **real agent and helper** on a throw-away root: the keys, upload in blocks, replace keeping the mode, rename, copy, delete, read and text only with a confirmation, history, fail-closed history, a key that closes during a transfer, hostile replies, copy between root and an SSH place), `tests/frontend/files.test.mjs` (the places, the root notice in every dialog, the token calls).

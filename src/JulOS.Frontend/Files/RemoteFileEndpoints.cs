@@ -52,7 +52,7 @@ internal static class RemoteFileEndpoints
     private static RemoteEntryDto ToDto(RemoteEntry e) => new(e.Name, e.Path, Kind(e.Kind), e.Size, e.Modified, e.Mode, e.Kind == RemoteKind.Link && e.Resolved is { } r ? Kind(r) : null, e.IsOpenable);
 
     /// <summary>Alles, was ein Endpunkt zum Verbinden braucht.</summary>
-    private sealed record Ctx(SessionIdentity Id, ConnectionRecord Connection);
+    private sealed record Ctx(SessionIdentity Id, ConnectionRecord Connection, RootFiles? Root = null);
 
     private static bool RateLimited(HttpContext ctx, HitCounter hits, string what, int max) =>
         !hits.Allow($"files-{what}:" + ((SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!).UserId, max, Minute);
@@ -62,7 +62,12 @@ internal static class RemoteFileEndpoints
         var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
         if (connection is not { } cid) return (null, Fail("invalid_request"));
         var c = await connections.GetAsync(id.UserId, cid, ctx.RequestAborted);
-        if (c is null) return (null, Fail("connection_not_found"));
+        if (c is null)
+        {
+            // Kein SSH-Zugang mit dieser Kennung: vielleicht der Ort "Root" eines Hosts (die Kennung ist die des Hosts; der Agent des Hosts macht es, docs/FILES.md)
+            var rf = ctx.RequestServices.GetRequiredService<RootFiles>();
+            return await rf.PlaceAsync(id.UserId, cid, ctx.RequestAborted) is { } place ? (new Ctx(id, place, rf), null) : (null, Fail("connection_not_found"));
+        }
         if (c.Kind != "terminal") return (null, Fail("not_ssh"));
         if (!policy.Allows(c.Host)) return (null, Fail("target_not_allowed"));
         return (new Ctx(id, c), null);
@@ -71,6 +76,12 @@ internal static class RemoteFileEndpoints
     /// <summary>Leiht die Sitzung der Verbindung; gibt es keine, verbindet sich der Pool mit dem gespeicherten (oder dem getippten) Passwort.</summary>
     private static async Task<SftpPool.Lease> LeaseAsync(Ctx x, string? typedPassword, string? acceptHostKey, SftpPool pool, ConnectionStore connections, SecretBox box, FileSessionFactory factory, ILogger log, CancellationToken ct)
     {
+        if (x.Root is { } rootFiles)
+        {
+            // Der Ort Root: keine Anmeldung, aber alle Schluessel werden hier und bei jeder Anfrage der Sitzung geprueft
+            if (await rootFiles.GateAsync(x.Id.UserId, x.Connection.Id, ct) is { } closed) throw new RootGateException(closed);
+            return pool.TryAcquire(x.Id.UserId, x.Connection.Id) ?? await pool.AcquireAsync(x.Id.UserId, x.Connection.Id, _ => Task.FromResult<ISftpFileSession>(rootFiles.NewSession(x.Id.UserId, x.Connection.Id)), ct);
+        }
         if (pool.TryAcquire(x.Id.UserId, x.Connection.Id) is { } open) return open;
         var c = x.Connection;
         var password = typedPassword;
@@ -140,6 +151,7 @@ internal static class RemoteFileEndpoints
                 var known = x.Connection.HostKey;
                 var wasOpen = pool.IsOpen(x.Id.UserId, x.Connection.Id);
                 await using var lease = await LeaseAsync(x, body.Password, body.AcceptHostKey, pool, connections, box, factory, log, ctx.RequestAborted);
+                if (x.Root is not null) return Results.Json(new OpenResponse(lease.Session.HomeDirectory, "root", null, null), AppJson.Default.OpenResponse);
                 var key = lease.Session.PresentedHostKey;
                 var state = wasOpen || key is null ? "known" : known is null ? "remembered" : key.Id != known ? "replaced" : "known";
                 return Results.Json(new OpenResponse(lease.Session.HomeDirectory, state, key?.Fingerprint, key?.Algorithm), AppJson.Default.OpenResponse);
@@ -180,7 +192,7 @@ internal static class RemoteFileEndpoints
         });
 
         // Textansicht: hoechstens 1 MiB, nur Text (UTF-8, kein NUL); die Antwort ist JSON mit dem Text als Wert, die Seite setzt ihn als Text ein, nie als HTML
-        app.MapGet("/api/files/remote/text", async (Guid? c, string? path, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, ILogger<FileAuditStore> log) =>
+        app.MapGet("/api/files/remote/text", async (Guid? c, string? path, string? token, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, FileConfirmations conf, ILogger<FileAuditStore> log) =>
         {
             if (RateLimited(ctx, hits, "text", 120)) return Fail("rate_limited");
             var (x, fail) = await ResolveAsync(ctx, c, connections, policy);
@@ -190,7 +202,14 @@ internal static class RemoteFileEndpoints
                 await using var lease = await LeaseAsync(x, null, null, pool, connections, box, factory, log, ctx.RequestAborted);
                 var file = RemotePath.Normalize(path, null);
                 if (file is null || file == "/") return Fail("invalid_path");
+                // Root liest alles: auch Ansehen braucht die Bestaetigung vom Server und steht im Verlauf (started, dann das Ergebnis)
+                if (x.Root is not null)
+                {
+                    if (await RedeemAsync(conf, audit, log, x, token, FileConfirmations.Canon("text", x.Connection.Id, null, [file], null, null), "text", null, false, false, file) is { } refused) return refused;
+                    if (await StartedAsync(audit, log, x, "text", file, 1) is { } stopped) return stopped;
+                }
                 var preview = await FileTransfer.ReadTextAsync(lease.Session, file, FileLimits.Default, ctx.RequestAborted);
+                if (x.Root is not null) await AuditAsync(audit, log, x.Id.UserId, x.Connection, "text", file, "ok", null, 1);
                 return Results.Json(new TextDto(file, preview.Text, preview.Truncated, preview.Size), AppJson.Default.TextDto);
             }
             catch (Exception e) when (e is not OperationCanceledException)
@@ -201,7 +220,7 @@ internal static class RemoteFileEndpoints
         });
 
         // Download im Strom: nie die ganze Datei im Speicher; immer als Anhang und als unbekannter Typ (nie als Seite dieser Adresse)
-        app.MapGet("/api/files/remote/download", async (Guid? c, string? path, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, FilesOptions options, ILogger<FileAuditStore> log) =>
+        app.MapGet("/api/files/remote/download", async (Guid? c, string? path, string? token, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, FilesOptions options, FileConfirmations conf, ILogger<FileAuditStore> log) =>
         {
             if (RateLimited(ctx, hits, "transfer", 60)) return Fail("rate_limited");
             var (x, fail) = await ResolveAsync(ctx, c, connections, policy);
@@ -216,6 +235,11 @@ internal static class RemoteFileEndpoints
                 if (entry is null) return Fail("not_found");
                 if (entry.Kind != RemoteKind.File) return Fail("not_a_directory");
                 if (entry.Size > options.MaxBytes) return Fail("too_large");
+                if (x.Root is not null)
+                {
+                    if (await RedeemAsync(conf, audit, log, x, token, FileConfirmations.Canon("download", x.Connection.Id, null, [file], null, null), "download", null, false, false, file) is { } refused) return refused;
+                    if (await StartedAsync(audit, log, x, "download", file, 1) is { } stopped) return stopped;
+                }
                 await using var stream = await lease.Session.OpenReadAsync(file, ctx.RequestAborted);
                 ctx.Response.ContentType = "application/octet-stream";
                 ctx.Response.Headers.ContentDisposition = RemoteEndpoints.ContentDisposition(RemotePath.NameOf(file));
@@ -240,6 +264,7 @@ internal static class RemoteFileEndpoints
                     return Results.Empty;
                 }
                 if (sent < entry.Size) { await AuditAsync(audit, log, x.Id.UserId, x.Connection, "download", file, "failed", "incomplete"); ctx.Abort(); }
+                else if (x.Root is not null) await AuditAsync(audit, log, x.Id.UserId, x.Connection, "download", file, "ok", null, 1);
                 return Results.Empty;
             }
             catch (Exception e) when (e is not OperationCanceledException && !ctx.Response.HasStarted)
@@ -358,10 +383,12 @@ internal static class RemoteFileEndpoints
         {
             if (RateLimited(ctx, hits, "prepare", 120)) return Fail("rate_limited");
             var action = body.Action;
-            if (action is not ("upload" or "mkdir" or "rename" or "delete" or "copy" or "move")) return Fail("invalid_request");
+            if (action is not ("upload" or "mkdir" or "rename" or "delete" or "copy" or "move" or "download" or "text")) return Fail("invalid_request");
             var (x, fail) = await ResolveAsync(ctx, body.Connection, connections, policy);
             if (x is null) return fail!;
-            var denied = await WriteOnAsync(options, audit, log, x, action, body.Paths is { Length: > 0 } ps ? Describe(ps) : body.Dir);
+            var reads = action is "download" or "text";
+            if (reads && x.Root is null) return Fail("invalid_request");                      // nur der Ort Root verlangt eine Bestaetigung zum Lesen
+            var denied = reads ? null : await WriteOnAsync(options, audit, log, x, action, body.Paths is { Length: > 0 } ps ? Describe(ps) : body.Dir);
             if (denied is not null) return denied;
             await using var leases = new Leases();
             try
@@ -375,6 +402,7 @@ internal static class RemoteFileEndpoints
                 var counts = new TreeCount(0, 0, 0, 0);
                 var conflicts = new List<string>();
                 var nonEmpty = false;
+                var targetRoot = false;
                 switch (action)
                 {
                     case "upload":
@@ -411,6 +439,17 @@ internal static class RemoteFileEndpoints
                         counts = new TreeCount(source.Kind == RemoteKind.File ? 1 : 0, source.Kind == RemoteKind.Directory ? 1 : 0, source.Kind == RemoteKind.Link ? 1 : 0, source.Size);
                         break;
                     }
+                    case "download" or "text":
+                    {
+                        if (body.Paths is not { Length: 1 } || RemotePath.Normalize(body.Paths[0], null) is not { } file || file == "/") return Fail("invalid_path");
+                        var entry = await src.Session.StatAsync(file, follow: true, ctx.RequestAborted);
+                        if (entry is null) return Fail("not_found");
+                        if (entry.Kind != RemoteKind.File) return Fail("not_a_directory");
+                        if (action == "download" && entry.Size > options.MaxBytes) return Fail("too_large");
+                        paths = [file];
+                        counts = new TreeCount(1, 0, 0, entry.Size);
+                        break;
+                    }
                     default:                                                   // delete, copy, move
                     {
                         if (body.Paths is not { Length: > 0 and <= 500 }) return Fail("invalid_request");
@@ -433,6 +472,7 @@ internal static class RemoteFileEndpoints
                         if (dir is null) return Fail("invalid_path");
                         targetConnection = t.Connection;
                         targetHost = same ? null : HostName(tx.Connection);
+                        targetRoot = tx.Root is not null;
                         foreach (var p in paths)
                             if (await dst.Session.StatAsync(RemotePath.Join(dir, RemotePath.NameOf(p)), follow: false, ctx.RequestAborted) is not null) conflicts.Add(RemotePath.NameOf(p));
                         break;
@@ -440,7 +480,7 @@ internal static class RemoteFileEndpoints
                 }
                 var token = conf.Issue(x.Id, FileConfirmations.Canon(action, x.Connection.Id, targetConnection, paths, dir, name), action, nonEmpty, conflicts.Count > 0, names);
                 if (token is null) return Fail("too_many_pending");
-                return Results.Json(new PrepareResponse(token, (int)conf.Lifetime.TotalSeconds, action, HostName(x.Connection), targetHost, paths, dir, name, names, counts.Files, counts.Directories, counts.Links, counts.Bytes, [.. conflicts], nonEmpty), AppJson.Default.PrepareResponse);
+                return Results.Json(new PrepareResponse(token, (int)conf.Lifetime.TotalSeconds, action, HostName(x.Connection), targetHost, paths, dir, name, names, counts.Files, counts.Directories, counts.Links, counts.Bytes, [.. conflicts], nonEmpty, x.Root is not null || (targetConnection is { } tc2 && tc2 != x.Connection.Id && targetRoot)), AppJson.Default.PrepareResponse);
             }
             catch (Exception e) when (e is not OperationCanceledException)
             {

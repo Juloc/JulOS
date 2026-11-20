@@ -20,14 +20,22 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 - Der Helfer hat dazu zwei neue Verben (`apt.repair`, `smart.health`) und `apt.upgrade` kennt `full`; alle ohne freien Wert vom Agenten. Neue Aktion im Verlauf: `updates.repair`; ein `dist-upgrade` steht dort als Ziel `all (full)`.
 
 ### Sicherheit
-- Review der neuen Verben und der Ausgabe als Daten: [docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md), „Host updates“ (F-33 bis F-39, keiner offen). Der Helfer, der Agent und der Server schneiden und bereinigen das Protokoll je für sich, die Seite zeigt es nur als Text.
+- Review der neuen Verben und der Ausgabe als Daten: [docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md), „Host updates“ (F-39 bis F-45, keiner offen). Der Helfer, der Agent und der Server schneiden und bereinigen das Protokoll je für sich, die Seite zeigt es nur als Text.
 
 ### Geändert
-- Der Agent (`tools/julos-agent.py`) und der Helfer (`tools/julos-agent-helper.py`) brauchen für diese Funktionen die neue Fassung: ein älterer Agent kennt `updates.repair` nicht (404) und liefert keine Zusammenfassung; **die Versionsnummer des Agenten wurde auf diesem Zweig nicht angehoben** (das entscheidet das Release), ohne sie aktualisiert sich ein Agent nicht von selbst. Den Helfer bringt nur ein erneuter Lauf von `install-agent.sh` (mit `--allow ...`) auf die Maschine.
-- `sw.js` `pd-v63`, neue Datei `hosttasks.js`.
+- Der Agent (`tools/julos-agent.py`) und der Helfer (`tools/julos-agent-helper.py`) brauchen für diese Funktionen die neue Fassung: ein älterer Agent kennt `updates.repair` nicht (404) und liefert keine Zusammenfassung; **die Versionsnummer des Agenten (0.8.0 seit 0.16.0) wurde auf diesem Zweig nicht angehoben** (das entscheidet das Release), ohne sie aktualisiert sich ein Agent nicht von selbst. Den Helfer bringt nur ein erneuter Lauf von `install-agent.sh` (mit `--allow ...`) auf die Maschine.
+- `sw.js` `pd-v64`, neue Datei `hosttasks.js`.
 
 ### Nicht verifiziert
 - Ein echtes Proxmox 9 mit dem halb aktualisierten Zustand, ein echtes `dist-upgrade` und `dpkg --configure -a`, echte Platten mit `smartctl -j`, ein echtes ZFS mit nicht passendem Modul, der Kernel-Vergleich gegen ein echtes `/boot` und die neuen Oberflächen auf einem Handy: nur mit Fakes und Node-Tests geprüft. Test-Stand im Abschlussbericht des Zweigs.
+
+## [0.16.0] - 2026-11-20
+
+### Neu
+- **Dateien als root auf Hosts** ([docs/FILES.md](docs/FILES.md#root-access-files-as-root), [docs/HOST-AGENT.md](docs/HOST-AGENT.md#files-as-root-files-root-agent-080)): in der Dateien-App erscheint für jeden Host, dessen Agent es erlaubt, der Ort **„<Host> (Root)“**: Auflisten, Text ansehen, Herunterladen, Hochladen, Ordner anlegen, Umbenennen, Kopieren (auch zwischen Root und einem SSH-Ort in beide Richtungen), Verschieben und Löschen **als root**, über den Agenten statt über SSH. **Agent 0.8.0** und das neue Wort **`files-root`** in `/etc/julos-agent/permissions` (Installer: `--allow files-root`; in der Einrichtungsmaske der Host-Seite ein weiterer Haken). Der Ort erscheint nur, wenn der Agent online ist, die Stufe des Hosts **„Alles“** ist, das Wort erlaubt ist und der Agent mindestens 0.8.0 hat; jede Anfrage (auch jeder Block einer Übertragung) prüft das neu, dazu der Pausenschalter der Host-Aktionen und `JULOS_FILES_WRITE=on` für alles Schreibende. Jede schreibende Aktion läuft wie bei F-25 in **zwei Schritten** (prepare, dann Token); **auch Herunterladen und Textansicht** einer Root-Datei verlangen eine Bestätigung (`prepare` mit `download` oder `text`) und stehen im Verlauf, **fail-closed** (ohne Eintrag `started` wird nichts gelesen oder geschrieben). Der Root-Ort ist **auffällig rot** (Hinweis in der Liste, Markierung am Kopf, Root-Hinweis in jedem Bestätigungsdialog; ein Kopieren, das einen Root-Ort berührt, zählt als Root).
+- **Root-Helfer (`tools/julos-agent-helper.py`)** mit neun Dateiverben (`list`, `stat`, `read`, `create`, `write`, `rename`, `delete`, `rmdir`, `mkdir`): schreibt **nur** in neue `.julos-<12 hex>.part`-Dateien (exklusiv angelegt, am genauen Ende) und benennt sie dann um (eine ersetzte Datei behält Besitzer und Rechte, neue 0644); folgt für Änderungen nie einem Link (Datei, Ordner oder Link wird nie durch einen anderen Typ ersetzt); `/` und die Dateien des Agenten (`/etc/julos-agent`, `/usr/local/libexec/julos-agent`, `/opt/julos-agent`, `/var/lib/julos-agent`) werden nie verändert, auch nicht über einen Link im Pfad. Übertragung in **Blöcken von 48 KiB über den Agenten-Link**, ein Block nach dem anderen (Rückdruck, nie eine ganze Datei im Speicher); der Server prüft, was der Agent meldet (Namen, Größen, Base64, Blockgröße). Neue Fehlercodes `root_off`, `root_not_permitted`, `root_offline`, `root_outdated`, `root_paused`, `root_helper`, `protected_path`.
+- **Installer:** `files-root` ist ein bekanntes Wort, das den Root-Helfer verlangt; mit dem Wort startet der Helfer ohne `ProtectHome` und privates `/tmp` (sonst sähe die Dateien-App ein leeres `/home`), ohne das Wort bleibt die engere Sicht.
+- Tests: `tests/agent/test_files_root.py` (der echte Helfer auf einem Wegwerfordner, der Agent mit Wortprüfung), `tests/JulOS.Backend.Tests/RootFilesTests.cs` (der ganze Server mit dem **echten Agenten und Helfer** auf einem Wegwerfordner: Schlüssel, Hochladen in Blöcken, Ersetzen mit Rechten, Löschen, Lesen nur mit Bestätigung, Verlauf, Verlauf fail-closed, Schlüssel schließt mitten in der Übertragung, feindliche Antworten, Kopieren Root und SSH), Erweiterungen von `files.test.mjs`, `hostagent.test.mjs` und `test_installer.py`.
 
 ## [0.15.0] - 2026-11-20
 
@@ -52,6 +60,7 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ### Sicherheit
 - **Review der Dateien über SFTP** ([docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md), Abschnitt „Files over SFTP“, F-24 bis F-32). **Behoben:** Dateinamen, die ein Ziel in einer Ordnerliste meldet, werden nie als Pfad benutzt (`../../x`, `a/b`): ein gekaperter Host konnte sonst beim Kopieren auf einen anderen Host außerhalb des gewählten Ordners schreiben; die Summe der wirklich empfangenen Bytes ist je Kopie begrenzt. Offen und zu entscheiden: eine vom Server ausgegebene, einmalige Bestätigung für schreibende Aktionen (heute nur ein Merker der Seite; Schreiben bleibt standardmäßig aus), Verlauf vor dem Schreiben.
+- **Review des Root-Dateizugriffs** ([docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md), Abschnitt „Root file access“, F-33 bis F-38). **Behoben (F-34):** der Schutz der Dateien des Agenten galt nur für den gesendeten Pfad; ein Link anderswo, der nach `/etc/julos-agent` zeigt, hätte ihn umgangen. Jetzt wird der Ordner nach dem Auflösen aller Links nochmals geprüft (Test). Offen, bewusst: **F-33** (Root über eine Datei-API ist ein sehr großes Recht und nur so stark wie Sitzung und die drei Schalter), F-36, F-37 (siehe Dokument). F-26 und F-29 stehen in der Tabelle jetzt als behoben (sie waren es schon).
 
 ### Geändert
 - Der Fensterinhalt von „Dateien“ am Desktop ist jetzt die gemeinsame App (Orte links); der gemeinsame Ordner (`JULOS_FILES_ROOT`, nur lesen) bleibt als eigener Ort unverändert. Die Fehlerantwort der Seite (`ApiError`) trägt jetzt die ganze Antwort (`data`).
@@ -62,6 +71,7 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 - Logs waren kaum erreichbar (Tasten nur an angezeigten Diensten und Containern): siehe „Logs eines Dienstes aus einer Auswahl“.
 
 ### Grenzen
+- Root-Dateizugriff: nicht an einem echten Host mit systemd und dem echten Root-Helfer-Dienst ausprobiert (der Helfer lief als Code auf einem Wegwerfordner und über den echten Agenten in den Tests), ebenso kein echtes Handy; SELinux/AppArmor nicht bedacht.
 - Nicht geprüft: ein echter Host mit echtem Agenten (nur Test-Agent auf der Entwicklungsmaschine, dazu Testdaten im Browser für Docker, Logs-Auswahl und die Aktionen), ein echtes Handy, Windows Brave.
 
 ## [0.14.0] - 2026-11-20

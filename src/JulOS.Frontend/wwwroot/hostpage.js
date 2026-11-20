@@ -147,7 +147,7 @@ export function initHostPage({ state, api, esc, store, openAction, reloadHosts, 
     btn.disabled = true; msg('');
     try {
       const resp = await api(`/api/hosts/${host.id}/login`, { method: 'PUT', body: loginRequest(fields) });
-      fields.password = ''; login = { resp, error: '' };
+      login = { resp, error: '' };
       await refreshLists();
       if (hostNow() && root) { draw('login'); msg(savedText(resp), true); snack(t('hostlogin.saved')); }
     } catch (err) { msg(err.code ? errText(err.code) : serverMsg(err.message)); }

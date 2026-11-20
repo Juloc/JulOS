@@ -1,5 +1,5 @@
 import { t, tk } from './i18n.js';
-import { noteP, callout, card, listBlock, button, icon } from './hostui.js';
+import { noteP, callout, card, listBlock, button } from './hostui.js';
 
 /* =====================================================================
  * Der Login eines Hosts (docs/HOSTS.md, "Login"): ein Benutzer und ein Passwort fuer Terminal, Dateien und Desktop-Verbindungen dieses Hosts. Reine Funktionen ohne DOM
@@ -67,4 +67,3 @@ export function loginRequest(fields) {
 /** Eine Meldung nach dem Speichern: gespeichert, und wie viele Verbindungen ihren eigenen Benutzer behalten haben */
 export const savedText = (resp) => [t('hostlogin.saved'), resp && resp.pinned ? t('hostlogin.pinned', { n: resp.pinned }) : ''].filter(Boolean).join(' ');
 
-export { icon };

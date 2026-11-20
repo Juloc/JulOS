@@ -1,0 +1,38 @@
+# Backlog and order of work
+
+Kept short on purpose. The owner decides what moves up. New ideas go to [IDEAS.md](IDEAS.md); this page is the order. Last agreed: 2026-11-20 (a week with few tokens: one piece of work at a time, targeted tests, short reports).
+
+## Principle (owner's wish, 2026-11-20)
+
+**Settings live in the app, not in Compose files or environment variables**, wherever that is possible. An environment variable stays as a default or an override for the person who runs the server, but every setting that matters to the owner has a place in the settings page, is stored in the database and takes effect without a restart. The same goes for **updating JulOS itself from the app** (see "Later").
+
+## Now (this week, in this order, one at a time)
+
+1. **Security quick fixes.** (a) The two settings that protect the internet-facing server move into the app (Settings, Security): *trusted proxy addresses* (today `JULOS_TRUSTED_PROXIES`) and *allowed target hosts* (today `JULOS_ALLOWED_HOSTS`), stored in the database, environment variable as the fallback; a clear warning on the settings page while the proxy list is empty. (b) The backup key no longer lies next to the dump by default (F-01). (c) A second factor (TOTP) for actions that change hosts or files, asked once for a short window (F-04). See [SECURITY-REVIEW.md](SECURITY-REVIEW.md).
+2. **Push messages without AI.** New security updates, disk almost full (threshold in the app), failed service or container, agent offline or reboot needed. Web Push over the PWA (VAPID), rules in the settings page, quiet hours, one place to see what was sent. See [ASSISTANT.md](ASSISTANT.md) (alerts) and [HOST-AGENT.md](HOST-AGENT.md).
+3. **Files app as a real explorer.** [FILES-EXPLORER.md](FILES-EXPLORER.md).
+
+## Small things, on the side
+
+- Review the open Dependabot pull requests, merge the safe ones.
+- Try the Docker actions on the Docker VM with a throw-away container (start, stop, restart, pull).
+- Tidy: archive finished side sessions, remove old branches and worktrees.
+
+## Later (each needs its own plan)
+
+- **JulOS updates itself from the app:** shows the new version, release notes, a button; the server pulls the new image through a small, separate helper that has access to the container runtime (never the server itself), with a health check and an automatic way back. Needs a decision on the helper (a sidecar container versus the existing Compose manager of the owner).
+- **Assistant** ([ASSISTANT.md](ASSISTANT.md)): phase 1 read and propose (Codex bridge, API keys, internal MCP tools, notes per host, budget and usage), phase 2 free commands with modes, phase 3 files.
+- **Integrations** ([INTEGRATIONS.md](INTEGRATIONS.md)): Docker through a socket proxy, Proxmox API, Home Assistant API, Synology, Caddy read-only.
+- **Update overview of all hosts** and a **maintenance window** with a report (opt-in, never silent).
+- **One SSH key per host** instead of stored passwords (JulOS makes the key, the agent installs it).
+- **Backup:** encryption with a passphrase, a second target outside the Docker VM.
+- **Sign-in:** passkeys (WebAuthn) and a client certificate at the proxy ([SECURITY-REVIEW.md](SECURITY-REVIEW.md), recommendations).
+- **Windows agent and Windows management**, reminders.
+- **A Home Assistant add-on** instead of an agent (the appliance cannot run an agent).
+- **A mascot in the progress panel** of the Claude mod (parked on request).
+
+## Waiting for the owner
+
+- Look at the new Hosts window and the Files app on the real screen and phone and say what still bothers.
+- Dev VM sound: the owner runs the `apt install` line from [AUDIO.md](AUDIO.md) and signs in again.
+- Dev VM: `claude auth login`.

@@ -8,6 +8,7 @@ using JulOS.Frontend.Files;
 using JulOS.Frontend.Folders;
 using JulOS.Frontend.Hosts;
 using JulOS.Frontend.Modules;
+using JulOS.Frontend.Security;
 using JulOS.Frontend.Settings;
 using JulOS.Frontend.Tools;
 using JulOS.Integrations.Reachability;
@@ -28,6 +29,8 @@ namespace JulOS.Frontend;
 [JsonSerializable(typeof(SetupFinishRequest))]
 [JsonSerializable(typeof(LoginRequest))]
 [JsonSerializable(typeof(LoginResponse))]
+[JsonSerializable(typeof(StepUpRequest))]
+[JsonSerializable(typeof(StepUpResponse))]
 [JsonSerializable(typeof(PasswordChangeRequest))]
 [JsonSerializable(typeof(TotpBeginRequest))]
 [JsonSerializable(typeof(TotpBeginResponse))]
@@ -115,6 +118,21 @@ namespace JulOS.Frontend;
 [JsonSerializable(typeof(FavoriteRequest))]
 [JsonSerializable(typeof(MoveRequest))]
 [JsonSerializable(typeof(LocalImportRequest))]
+[JsonSerializable(typeof(ListDto))]
+[JsonSerializable(typeof(ClientDto))]
+[JsonSerializable(typeof(StepUpDto))]
+[JsonSerializable(typeof(RecoveryDto))]
+[JsonSerializable(typeof(BackupKeyDto))]
+[JsonSerializable(typeof(SecurityResponse))]
+[JsonSerializable(typeof(ListRequest))]
+[JsonSerializable(typeof(BlockedDto))]
+[JsonSerializable(typeof(HostsPreviewResponse))]
+[JsonSerializable(typeof(SecurityError))]
+[JsonSerializable(typeof(StepUpSettingRequest))]
+[JsonSerializable(typeof(BackupKeyRequest))]
+[JsonSerializable(typeof(RecoveryResponse))]
+[JsonSerializable(typeof(SecurityAuditDto))]
+[JsonSerializable(typeof(SecurityAuditResponse))]
 [JsonSerializable(typeof(SettingsResponse))]
 [JsonSerializable(typeof(SettingRequest))]
 [JsonSerializable(typeof(CaddyListing))]

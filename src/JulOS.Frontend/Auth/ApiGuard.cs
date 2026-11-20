@@ -46,6 +46,12 @@ internal sealed class ApiGuard(RequestDelegate next, AuthService auth)
         var identity = await ResolveAsync(ctx, auth, rotate: !ctx.Request.Path.Equals(Remote.RemoteEndpoints.ScreenWebSocketPath));
         if (identity is null) { await Reject(ctx, 401, "Nicht angemeldet."); return; }
         ctx.Items[IdentityKey] = identity;
+        // Aktionen, die Hosts, Dateien oder die Sicherheit aendern, brauchen eine frische Freigabe mit dem zweiten Faktor (Tabelle in StepUpPolicy, F-04)
+        if (StepUpPolicy.Requires(ctx.Request.Method, ctx.Request.Path) && !await auth.StepUpFreshAsync(identity, ctx.RequestAborted))
+        {
+            await Reject(ctx, 403, "Bitte mit dem Code aus der Authenticator-App bestätigen.", StepUpPolicy.Code);
+            return;
+        }
         await next(ctx);
     }
 
@@ -66,10 +72,10 @@ internal sealed class ApiGuard(RequestDelegate next, AuthService auth)
         return string.Equals(uri.Authority, request.Host.Value, StringComparison.OrdinalIgnoreCase);
     }
 
-    public static async Task Reject(HttpContext ctx, int status, string message)
+    public static async Task Reject(HttpContext ctx, int status, string message, string? code = null)
     {
         ctx.Response.StatusCode = status;
         ctx.Response.ContentType = "application/json; charset=utf-8";
-        await ctx.Response.WriteAsync(JsonSerializer.Serialize(new ErrorBody(message), AppJson.Default.ErrorBody), Encoding.UTF8);
+        await ctx.Response.WriteAsync(JsonSerializer.Serialize(new ErrorBody(message, Code: code), AppJson.Default.ErrorBody), Encoding.UTF8);
     }
 }

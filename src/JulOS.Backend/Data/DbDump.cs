@@ -121,13 +121,23 @@ public static partial class DbDump
     public static async Task<(int Total, int Unreadable)> CheckSecretsAsync(NpgsqlDataSource db, SecretBox box, CancellationToken ct = default)
     {
         int total = 0, bad = 0;
-        // Passwoerter der Verbindungen und der Host-Logins (beide mit ihrer Kennung als zugehoerigen Daten verschluesselt)
+        // Passwoerter der Verbindungen und der Host-Logins (beide mit ihrer Kennung als zugehoerigen Daten verschluesselt), danach die TOTP-Geheimnisse
         await using var cmd = db.CreateCommand("select id, secret from connections where secret is not null union all select id, login_secret from hosts where login_secret is not null");
         await using var r = await cmd.ExecuteReaderAsync(ct);
         while (await r.ReadAsync(ct))
         {
             total++;
             if (box.Decrypt((byte[])r["secret"], r.GetGuid(0)) is null) bad++;
+        }
+        await r.CloseAsync();
+        // die TOTP-Geheimnisse der Konten (verschluesselt ab 0.18): ohne den Schluessel gibt es keine Anmeldung
+        await using var totp = db.CreateCommand("select id, totp_secret from users where totp_secret like 'enc1:%'");
+        await using var t = await totp.ExecuteReaderAsync(ct);
+        while (await t.ReadAsync(ct))
+        {
+            total++;
+            try { if (box.Decrypt(Convert.FromBase64String(t.GetString(1)[UserStore.SealedPrefix.Length..]), t.GetGuid(0)) is null) bad++; }
+            catch (FormatException) { bad++; }
         }
         return (total, bad);
     }

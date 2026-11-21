@@ -1,5 +1,6 @@
 import { qrSvg } from './qr.js';
 import { t } from './i18n.js';
+import { showDialog } from './desktop-window.js';
 
 /* Konto: Passwort aendern und Authenticator (TOTP) neu einrichten. Der Dialog #accountDlg steht in index.html und gilt fuer die
  * Handy-Shell (als Sheet) und die Desktop-Oberflaeche. Jede Aenderung verlangt das aktuelle Passwort; der Server beendet danach
@@ -79,5 +80,5 @@ export function initAccount({ api, setMsg }) {
     catch { setMsg(msg, t('account.copyFailed')); }
   });
 
-  return () => { reset(); dlg.showModal(); };
+  return () => { reset(); showDialog(dlg, { system: true, width: 480 }); };
 }

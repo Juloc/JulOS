@@ -4,6 +4,7 @@
  * die gespeicherten Adressen ab. Der API-Schluessel wird nur eingegeben, nie angezeigt: der Server liefert nur "gespeichert: ja oder nein".
  * ===================================================================== */
 import { t, tp, tk } from './i18n.js';
+import { showDialog, focusField, askWindow } from './desktop-window.js';
 import { svcIcon, ICON_KEYS, ICON_LABEL, TEMPLATES, templateById, fromTemplate, originOf, stateClass, stateText, errorText, msText, fmtMetric } from './modules.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -156,7 +157,7 @@ export function openServiceForm({ api, mobile, wireSheet, keyStore, svc, changed
     if (b.dataset.a === 'row') return addRow();
     if (b.dataset.a === 'rm') return b.closest('.wd-row').remove();
     if (b.dataset.a === 'del') {
-      if (!window.confirm(t('widgets.confirmDelete', { name: svc.name }))) return;
+      if (!(await askWindow({ title: t('common.delete') + ' · ' + svc.name, text: t('widgets.confirmDelete', { name: svc.name }), yes: t('common.delete'), no: t('common.cancel'), danger: true }))) return;
       try { await api('/api/modules/services/' + svc.id, { method: 'DELETE' }); close(); await changed(); } catch (err) { msg.textContent = err.message; }
     }
   });
@@ -176,6 +177,6 @@ export function openServiceForm({ api, mobile, wireSheet, keyStore, svc, changed
       api('/api/modules/services/' + saved.id + '/check', { method: 'POST', body: {} }).catch(() => {}).finally(changed);
     } catch (err) { msg.textContent = err.message; }
   });
-  dlg.showModal();
-  val('name').focus();
+  showDialog(dlg, { system: true, width: 520, resizable: true, disposable: true });
+  focusField(dlg, val('name'));
 }

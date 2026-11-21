@@ -363,13 +363,13 @@ public sealed class RemoteFilesHttpTests
     }
 
     [Fact]
-    public async Task A_listing_is_capped_at_2000_entries_and_marked()
+    public async Task A_listing_is_capped_at_10000_entries_and_marked()
     {
         await using var db = await TestDb.CreateAsync();
-        var (app, api, c, _, _) = await OpenHost(db, h => { for (var i = 0; i < 2100; i++) h.File($"/big/f{i:0000}", "x"); });
+        var (app, api, c, _, _) = await OpenHost(db, h => { for (var i = 0; i < 10_100; i++) h.File($"/big/f{i:00000}", "x"); });
         await using var rigGuard = app;
         var (_, body) = await api.Get($"/api/files/remote/list?c={c}&path=/big");
-        Assert.Equal(2000, body.GetProperty("entries").GetArrayLength());
+        Assert.Equal(10_000, body.GetProperty("entries").GetArrayLength());
         Assert.True(body.GetProperty("truncated").GetBoolean());
     }
 
@@ -428,7 +428,8 @@ public sealed class RemoteFilesHttpTests
         var big = await api.Raw(api.Authed(HttpMethod.Get, $"/api/files/remote/download?c={c}&path=/pub/gross.bin"));
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, big.StatusCode);
         Assert.Equal("too_large", Code(ApiKit.J(await big.Content.ReadAsStringAsync())));
-        Assert.Equal(HttpStatusCode.BadRequest, (await api.Raw(api.Authed(HttpMethod.Get, $"/api/files/remote/download?c={c}&path=/pub/ordner"))).StatusCode);
+        var folder = await api.Raw(api.Authed(HttpMethod.Get, $"/api/files/remote/download?c={c}&path=/pub/ordner"));
+        Assert.Equal((HttpStatusCode.BadRequest, "not_a_file"), (folder.StatusCode, Code(ApiKit.J(await folder.Content.ReadAsStringAsync()))));        // ein Ordner: "keine gewoehnliche Datei", nicht "kein Ordner"
         Assert.Equal(HttpStatusCode.NotFound, (await api.Raw(api.Authed(HttpMethod.Get, $"/api/files/remote/download?c={c}&path=/nope"))).StatusCode);
         var odd = await api.Raw(api.Authed(HttpMethod.Get, $"/api/files/remote/download?c={c}&path=" + Uri.EscapeDataString("/pub/ä \"x\".txt")));
         Assert.DoesNotContain("\"x\"", string.Join(";", odd.Content.Headers.ContentDisposition!.ToString().Split(';').Skip(1).Where(p => p.Contains("filename=\""))).Replace("filename=\"_", ""));

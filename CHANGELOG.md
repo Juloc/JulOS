@@ -10,6 +10,11 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 - **„Dateien schreiben“ ist ein Schalter in der App** (Einstellungen, Sicherheit; [docs/FILES.md](docs/FILES.md#switching-writing-on)): Er steht in der Datenbank (`security.filesWrite`), gilt **ohne Neustart**, wird nur mit frischem Authenticator-Code geändert und steht im Sicherheits-Verlauf. `JULOS_FILES_WRITE=on` bleibt als **Rückfall**, solange die App keinen Wert hat („Auf Vorgabe zurücksetzen“ vergisst den Wert der App); der Wert der App gilt in beide Richtungen. Jede schreibende Aktion verlangt weiter die Bestätigung, der Root-Ort seine eigenen Schlüssel, der Pausenschalter bleibt.
 - **Ist Schreiben aus, sagt es die Dateien-App**, statt Tasten stumm auszugrauen: ein Hinweis über der Liste mit der Taste „Zum Schalter“ (öffnet die Einstellungen an der richtigen Stelle), und ein Klick auf Neu, Hochladen, Umbenennen, Löschen, Kopieren oder Ablegen erklärt es in einem Dialog.
 
+### Behoben
+- **Ein Download, den der Server ablehnt, schlug im Browser still fehl.** Die Seite fragt die Adresse jetzt vorher ab (ohne etwas zu lesen) und nennt den Grund: keine Berechtigung (mit dem Benutzernamen und dem Hinweis auf den Root-Ort des Hosts, falls es ihn gibt), Datei größer als die Obergrenze des Servers (mit der Grenze), keine gewöhnliche Datei.
+- **Falsche Meldung „Das ist kein Ordner“** beim Download eines Ordners, Links auf einen Ordner oder einer Sonderdatei: jetzt „keine gewöhnliche Datei“ (`not_a_file`). Ein in die Adressleiste getippter Pfad, der eine Datei ist, meldet „kein Ordner“ statt „nicht gefunden“.
+- **Große Ordner:** Die Liste zeigt bis zu 10 000 statt 2000 Einträge (der Host liefert sie in seiner Reihenfolge, ein Rest fehlte also zufällig); ist der Ordner noch größer, sagt die Statuszeile es deutlicher. Die Meldung bei einer Binärdatei in der Textansicht nennt den Ausweg (Herunterladen).
+
 ## [0.20.0] - 2026-11-20
 
 ### Geändert

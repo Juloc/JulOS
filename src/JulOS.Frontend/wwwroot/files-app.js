@@ -80,6 +80,14 @@ export function mountFiles(box, deps) {
   /** Die Tasten zum Schreiben sind auf einem Host auch bei ausgeschaltetem Schreiben bedienbar: ein Klick erklaert es und fuehrt zum Schalter, statt stumm zu bleiben */
   const canTry = (p = st.place) => !!(p && !C.isLocal(p));
   const writeOff = () => canTry() && !info.write;
+  /** Bei "Zugriff verweigert" auf einem SSH-Ort: als wer, und ob der Root-Ort des Hosts es koennte */
+  C.setErrorHint((code) => {
+    const p = st.place;
+    if (code === 'too_large' && info.maxBytes) return t('files.tooLargeHint', { size: C.fileSize(info.maxBytes) });
+    if (code !== 'denied' || !p || C.isLocal(p) || C.isRoot(p)) return '';
+    const g = places.groups.find((x) => x.places.some((y) => y.id === p.id)), root = g && g.places.find((x) => C.isRoot(x));
+    return root ? t('files.denied.root', { user: p.user || '?', root: root.label }) : t('files.denied.noRoot', { user: p.user || '?' });
+  });
   const openSettings = () => window.dispatchEvent(new CustomEvent('julos:open-security', { detail: { section: 'filesWrite' } }));
   const label = () => (st.place ? st.place.label : t('files.choosePlace'));
   const selEntries = () => st.sel.list().map((p) => st.byPath.get(p)).filter(Boolean);
@@ -571,7 +579,9 @@ export function mountFiles(box, deps) {
   async function download(e) {
     const ok = await readConfirmed('download', e);
     if (!ok) return;
-    const a = document.createElement('a'); a.href = fapi.downloadUrl(st.place, e.path, ok.token); a.download = ''; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove();
+    const url = fapi.downloadUrl(st.place, e.path, ok.token);
+    if (!ok.token) { const problem = await C.downloadProblem(url); if (problem) return say(problem); }          // sonst scheitert der Download still im Browser
+    const a = document.createElement('a'); a.href = url; a.download = ''; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove();
   }
   async function editFile(e, { fallbackDownload = false } = {}) {
     if (st.edit) return;

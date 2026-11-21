@@ -127,7 +127,7 @@ export class Selection {
 /* ---------- Fehler ---------- */
 export const ERR_KEYS = {
   not_found: tk('files.err.not_found'), denied: tk('files.err.denied'), exists: tk('files.err.exists'), not_empty: tk('files.err.not_empty'),
-  not_a_directory: tk('files.err.not_a_directory'), connection_lost: tk('files.err.connection_lost'), failed: tk('files.err.failed'),
+  not_a_directory: tk('files.err.not_a_directory'), not_a_file: tk('files.err.not_a_file'), connection_lost: tk('files.err.connection_lost'), failed: tk('files.err.failed'),
   too_many_items: tk('files.err.too_many_items'), too_deep: tk('files.err.too_deep'), too_large: tk('files.err.too_large'), into_itself: tk('files.err.into_itself'),
   same_place: tk('files.err.same_place'), type_mismatch: tk('files.err.type_mismatch'), target_is_link: tk('files.err.target_is_link'), root_forbidden: tk('files.err.root_forbidden'),
   invalid_name: tk('files.err.invalid_name'), invalid_path: tk('files.err.invalid_path'), invalid_request: tk('files.err.invalid_request'),
@@ -143,7 +143,24 @@ export const ERR_KEYS = {
   root_paused: tk('files.err.root_paused'), root_helper: tk('files.err.root_helper'), protected_path: tk('files.err.protected_path'),
 };
 /** Fehlercode (vom Server) in der Sprache der Oberflaeche; unbekannte Codes werden allgemein gemeldet, nie roh gezeigt */
-export const errText = (code) => t(ERR_KEYS[code] || tk('files.err.failed'));
+let errorHint = () => '';
+/** Die Seite sagt, welcher Zusatz zu einem Fehlercode passt (heute: bei "denied" der Hinweis auf den Root-Ort); fn(code) gibt Text oder '' */
+export const setErrorHint = (fn) => { errorHint = fn || (() => ''); };
+export const errText = (code) => { const hint = errorHint(code); return t(ERR_KEYS[code] || tk('files.err.failed')) + (hint ? ' ' + hint : ''); };
+/**
+ * Vor einem Download: fragt die Adresse ab und bricht nach den Kopfzeilen ab. Ein Download ueber einen Link, den der Server mit einem Fehler beantwortet, schlaegt im Browser still fehl
+ * (oder speichert den Fehlertext als Datei); so bekommt der Nutzer den Grund. Gibt den Text des Fehlers oder null (los). Nur fuer Adressen ohne einmaliges Token. Ein Netzfehler hier zaehlt nicht: der Download selbst darf es versuchen.
+ */
+export async function downloadProblem(url, fetchFn = (...a) => fetch(...a)) {
+  const ctl = new AbortController();
+  try {
+    const r = await fetchFn(url, { credentials: 'same-origin', signal: ctl.signal });
+    if (r.ok) return null;
+    let code = '';
+    try { code = (await r.json()).code || ''; } catch { /* kein JSON: allgemeiner Text */ }
+    return errText(code);
+  } catch { return null; } finally { ctl.abort(); }
+}
 /** Der Text zu einer Ausnahme der Aufrufe: der Code wenn bekannt, sonst die Meldung des Servers oder des Netzes */
 export const errorMessage = (e) => (e && e.code && ERR_KEYS[e.code] ? errText(e.code) : (e && e.message) || t('files.err.failed'));
 

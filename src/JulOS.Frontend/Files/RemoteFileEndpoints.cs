@@ -27,6 +27,8 @@ internal static class RemoteFileEndpoints
     private static readonly TimeSpan Minute = TimeSpan.FromMinutes(1);
     private static readonly ConcurrentDictionary<Guid, int> Streams = new();       // laufende Down- und Uploads je Benutzer
     private const int MaxStreams = 3;
+    /// <summary>So viele Eintraege zeigt eine Liste hoechstens. Der Host liefert sie in seiner Reihenfolge, ein Rest fehlt also zufaellig: darum grosszuegig (so viel wie ein Auftrag je Operation, FileLimits.MaxItems) und mit Hinweis auf der Seite.</summary>
+    private const int ListLimit = 10_000;
 
     private static IResult Fail(string code)
     {
@@ -196,7 +198,14 @@ internal static class RemoteFileEndpoints
                 await using var lease = await LeaseAsync(x, null, null, pool, connections, box, factory, log, ctx.RequestAborted);
                 var dir = RemotePath.Normalize(path, lease.Session.HomeDirectory);
                 if (dir is null) return Fail("invalid_path");
-                var listing = await lease.Session.ListAsync(dir, FileLimits.Default.MaxEntries, ctx.RequestAborted);
+                RemoteListing listing;
+                try { listing = await lease.Session.ListAsync(dir, ListLimit, ctx.RequestAborted); }
+                catch (RemoteFileException ex) when (ex.Error == RemoteFileError.NotFound)
+                {
+                    // SFTP meldet bei einer Datei "nicht gefunden"; fuer die Seite ist es ein Pfad, der kein Ordner ist
+                    if (await lease.Session.StatAsync(dir, follow: true, ctx.RequestAborted) is { Kind: not RemoteKind.Directory }) throw new RemoteFileException(RemoteFileError.NotADirectory, "Das ist kein Ordner.");
+                    throw;
+                }
                 var sorted = listing.Entries.OrderBy(e => e.IsOpenable ? 0 : 1).ThenBy(e => e.Name, Comparer<string>.Create(RemotePath.NaturalCompare)).Select(ToDto).ToArray();
                 return Results.Json(new RemoteListingDto(dir, sorted, listing.Truncated, listing.Hidden), AppJson.Default.RemoteListingDto);
             }
@@ -250,7 +259,7 @@ internal static class RemoteFileEndpoints
                 if (file is null || file == "/") return Fail("invalid_path");
                 var entry = await lease.Session.StatAsync(file, follow: true, ctx.RequestAborted);
                 if (entry is null) return Fail("not_found");
-                if (entry.Kind != RemoteKind.File) return Fail("not_a_directory");
+                if (entry.Kind != RemoteKind.File) return Fail("not_a_file");
                 if (entry.Size > options.MaxBytes) return Fail("too_large");
                 if (x.Root is not null)
                 {
@@ -465,7 +474,7 @@ internal static class RemoteFileEndpoints
                         if (body.Paths is not { Length: 1 } || RemotePath.Normalize(body.Paths[0], null) is not { } file || file == "/") return Fail("invalid_path");
                         var entry = await src.Session.StatAsync(file, follow: true, ctx.RequestAborted);
                         if (entry is null) return Fail("not_found");
-                        if (entry.Kind != RemoteKind.File) return Fail("not_a_directory");
+                        if (entry.Kind != RemoteKind.File) return Fail("not_a_file");
                         if (action == "download" && entry.Size > options.MaxBytes) return Fail("too_large");
                         paths = [file];
                         counts = new TreeCount(1, 0, 0, entry.Size);

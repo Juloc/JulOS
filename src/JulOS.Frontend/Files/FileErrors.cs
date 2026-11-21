@@ -29,6 +29,7 @@ internal static class FileErrors
         ["exists"] = (409, "Es gibt diesen Pfad schon."),
         ["not_empty"] = (409, "Der Ordner ist nicht leer."),
         ["not_a_directory"] = (400, "Das ist kein Ordner."),
+        ["not_a_file"] = (400, "Das ist keine gewöhnliche Datei (ein Ordner, ein Link auf einen Ordner oder eine Sonderdatei)."),
         ["connection_lost"] = (502, "Die Verbindung zum Ziel ist abgerissen."),
         ["failed"] = (502, "Die Operation am Ziel ist fehlgeschlagen."),
         ["too_many_items"] = (413, "Zu viele Einträge für diese Operation."),

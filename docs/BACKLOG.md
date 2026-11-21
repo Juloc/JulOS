@@ -12,6 +12,14 @@ Kept short on purpose. The owner decides what moves up. New ideas go to [IDEAS.m
 2. **Push messages without AI. Done** ([PUSH.md](PUSH.md)). New security updates, disk almost full (threshold in the app), failed service or container, agent offline or reboot needed. Web Push over the PWA (VAPID), rules in the settings page, quiet hours, one place to see what was sent. See [ASSISTANT.md](ASSISTANT.md) (alerts) and [HOST-AGENT.md](HOST-AGENT.md).
 3. **Files app as a real explorer.** Built on the branch `claude/explorer-30d19a`, not released yet: [FILES-EXPLORER.md](FILES-EXPLORER.md) (what is built, the decisions, what was not verified).
 
+## Desktop polish and screens (requested 2026-11-21, owner's words condensed)
+
+- **Explorer repairs (bugs, first):** the column headers and the toolbar look broken (they are buttons that do not look like headers); keyboard focus is lost after every folder change; the sidebar lists terminal tiles (`dev-ssh`, Codex, Claude Code) as places, there must be only **Home** and **Root** per host; the window opens small whatever the screen size.
+- **Connections app grouped by host:** the connections can be told apart per host (a section per host, programs such as Codex and Claude Code under their host, not mixed with plain connections).
+- **Dock:** when it folds away it becomes very thin pills of about 5 px height (one per running program) instead of the current bar; sound of the interface customisable (to be clarified: interface sounds or audio of sessions).
+- **Per device memory:** JulOS remembers per device (browser) which connections and screens are open and how the windows are arranged.
+- **Several browser windows as one or several screens:** JulOS can be opened in more than one browser window; each window is a screen of the same desktop (one big desktop or several screens), programs and windows can be moved seamlessly between the windows. Needs a plan first: one viewer per connection today (a second window takes the stream over), so moving a window means handing the stream over; layout and screen state live on the server per device and user; a window picks its screen (for example `?screen=2`).
+
 ## Small things, on the side
 
 - Review the open Dependabot pull requests, merge the safe ones.

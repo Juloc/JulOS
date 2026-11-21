@@ -11,6 +11,7 @@ public sealed class FilePreviewTests
 
     private static readonly byte[] Png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13];
     private static readonly byte[] Jpg = [0xFF, 0xD8, 0xFF, 0xE0, 0, 16];
+    private static readonly byte[] Zip = [0x50, 0x4B, 0x03, 0x04, 0x14, 0, 0, 0];
     private static readonly byte[] Html = Ascii("<!doctype html><script>alert(1)</script>");
     private static byte[] Ftyp(string brand, params string[] compatible) => Cat([[0, 0, 0, (byte)(16 + 4 * compatible.Length)], Ascii("ftyp"), Ascii(brand), [0, 0, 0, 0], .. compatible.Select(Ascii)]);
 
@@ -22,6 +23,7 @@ public sealed class FilePreviewTests
         ("a.mp4", Ftyp("isom", "mp42")), ("a.m4a", Ftyp("M4A ")), ("a.webm", [0x1A, 0x45, 0xDF, 0xA3, 0x9F]),
         ("a.mp3", Ascii("ID3\x04")), ("a.mp3", [0xFF, 0xFB, 0x90, 0x00]), ("a.ogg", Ascii("OggS\0")), ("a.wav", Cat(Ascii("RIFF"), [1, 2, 3, 4], Ascii("WAVEfmt "))),
         ("a.flac", Ascii("fLaC\0")), ("a.pdf", Ascii("%PDF-1.7\n")), ("a.pdf", Cat(new byte[500], Ascii("%PDF-1.4"))),
+        ("a.docx", Zip), ("a.xlsx", Zip), ("a.csv", Ascii("a;b\n1;2\n")), ("a.csv", Cat([0xFF, 0xFE], [(byte)'a', 0, (byte)',', 0, (byte)'b', 0])), ("a.csv", Cat([0xEF, 0xBB, 0xBF], Ascii("Name,Alter\n"))),
     ];
 
     [Fact]
@@ -32,8 +34,11 @@ public sealed class FilePreviewTests
         Assert.Equal(["image/jpeg", "image/jpeg"], new[] { FilePreview.ByName("a.jpg")!.ContentType, FilePreview.ByName("a.jpeg")!.ContentType });
         Assert.Equal("audio/mp4", FilePreview.ByName("a.m4a")!.ContentType);
         Assert.Equal("application/pdf", FilePreview.ByName("a.pdf")!.ContentType);
-        // HTML, SVG, XML, Skripte, Office, Archive, ohne oder mit leerer Endung: nie
-        foreach (var bad in new[] { "a.html", "a.htm", "a.xhtml", "a.svg", "a.svgz", "a.xml", "a.xsl", "a.js", "a.mjs", "a.json", "a.txt", "a.docx", "a.xlsx", "a.zip", "a.exe", "a.sh", "a.php",
+        // Word, Excel und csv gehen nur fuer den eigenen Abruf der Seite: als unbekannter Typ, nie als Dokument (die Seite zeigt sie selbst)
+        foreach (var n in new[] { "a.docx", "a.XLSX", "a.csv" }) Assert.Equal("application/octet-stream", FilePreview.ByName(n)!.ContentType);
+        Assert.Equal((PreviewKind.Word, PreviewKind.Sheet, PreviewKind.Sheet), (FilePreview.ByName("a.docx")!.Kind, FilePreview.ByName("a.xlsx")!.Kind, FilePreview.ByName("a.csv")!.Kind));
+        // HTML, SVG, XML, Skripte, alte Office-Dateien (OLE), Makros, Archive, ohne oder mit leerer Endung: nie
+        foreach (var bad in new[] { "a.html", "a.htm", "a.xhtml", "a.svg", "a.svgz", "a.xml", "a.xsl", "a.js", "a.mjs", "a.json", "a.txt", "a.doc", "a.xls", "a.docm", "a.xlsm", "a.dotx", "a.zip", "a.exe", "a.sh", "a.php",
                      "a", "a.", ".", "", "png", "a.png.html", "a.html.", "a.png ", "a.pn\0g" })
             Assert.Null(FilePreview.ByName(bad));
         Assert.Null(FilePreview.ByName(null));
@@ -46,7 +51,7 @@ public sealed class FilePreviewTests
         foreach (var (name, head) in Good) Assert.True(FilePreview.MatchesContent(FilePreview.ByName(name)!, head), name);
         // HTML, Skript, SVG und Text unter jeder Endung der Liste: nein
         var pages = new[] { Html, Ascii("<svg xmlns='http://www.w3.org/2000/svg' onload='alert(1)'/>"), Ascii("<?xml version='1.0'?><svg/>"), Ascii("alert(1)"), [], [0] };
-        foreach (var ext in new[] { "png", "jpg", "gif", "webp", "avif", "mp4", "webm", "mp3", "ogg", "wav", "flac", "m4a", "pdf" })
+        foreach (var ext in new[] { "png", "jpg", "gif", "webp", "avif", "mp4", "webm", "mp3", "ogg", "wav", "flac", "m4a", "pdf", "docx", "xlsx" })
             foreach (var page in pages) Assert.False(FilePreview.MatchesContent(FilePreview.ByName("a." + ext)!, page), ext + ": " + Encoding.ASCII.GetString(page));
         // ein Typ unter fremder Endung: nein (ein PNG heisst nicht .jpg)
         Assert.False(FilePreview.MatchesContent(FilePreview.ByName("a.jpg")!, Png));
@@ -59,6 +64,30 @@ public sealed class FilePreviewTests
     }
 
     private const int HeadHole = 1100;
+
+    [Fact]
+    public void Word_and_Excel_must_be_zip_files_and_csv_must_be_text_and_never_the_other_way_round()
+    {
+        // ein ZIP unter docx/xlsx ja; alles andere nicht: ein altes OLE-Dokument (.doc/.xls unter neuer Endung), HTML, ein PDF, ein leeres ZIP ohne Dateien (PK 05 06), Text
+        foreach (var ext in new[] { "docx", "xlsx" })
+        {
+            var t = FilePreview.ByName("a." + ext)!;
+            Assert.True(FilePreview.MatchesContent(t, Zip));
+            foreach (var bad in new[] { new byte[] { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1 }, Html, Ascii("%PDF-1.7"), [0x50, 0x4B, 0x05, 0x06, 0, 0, 0, 0], Ascii("a,b\n1,2"), [] })
+                Assert.False(FilePreview.MatchesContent(t, bad), ext);
+        }
+        // csv: Text ja (auch mit UTF-8-Kennung, auch UTF-16 mit Kennung), Binaeres nein; ein ZIP oder PNG mit Nullbytes ist kein csv
+        var csv = FilePreview.ByName("a.csv")!;
+        Assert.False(FilePreview.MatchesContent(csv, Zip));
+        Assert.False(FilePreview.MatchesContent(csv, Png));
+        Assert.False(FilePreview.MatchesContent(csv, [(byte)'a', 0, (byte)'b']));       // UTF-16 ohne Kennung: unklar, nicht gezeigt
+        Assert.True(FilePreview.MatchesContent(csv, Html));                              // Text ist harmlos: textContent, und die Antwort ist nie ein Dokument (HTTP-Test)
+        // Groessen wie bei Bild und PDF; auch auf Root-Orten (der Abruf ist kein Strom)
+        const long mib = 1024 * 1024;
+        Assert.Equal("preview_too_large", FilePreview.Refuse("a.docx", 51 * mib, false, 50 * mib, 2048 * mib));
+        Assert.Null(FilePreview.Refuse("a.xlsx", 50 * mib, true, 50 * mib, 2048 * mib));
+        Assert.Null(FilePreview.Refuse("a.csv", 1, true, 50 * mib, 2048 * mib));
+    }
 
     [Fact]
     public void Size_limits_apply_to_images_and_pdf_and_root_places_only_show_images_and_pdf()

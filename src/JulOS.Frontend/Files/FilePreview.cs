@@ -5,7 +5,7 @@ using JulOS.Integrations.Files;
 
 namespace JulOS.Frontend.Files;
 
-internal enum PreviewKind { Image, Video, Audio, Pdf }
+internal enum PreviewKind { Image, Video, Audio, Pdf, Word, Sheet }
 
 /// <summary>Ein Typ, den die Vorschau zeigen darf: die Endung (klein), die Art und der Content-Type, den DER SERVER setzt (nie einer aus dem Dateiinhalt).</summary>
 internal sealed record PreviewType(string Extension, PreviewKind Kind, string ContentType);
@@ -32,7 +32,9 @@ internal static class FilePreview
         ("webp", PreviewKind.Image, "image/webp"), ("avif", PreviewKind.Image, "image/avif"),
         ("mp4", PreviewKind.Video, "video/mp4"), ("webm", PreviewKind.Video, "video/webm"),
         ("mp3", PreviewKind.Audio, "audio/mpeg"), ("ogg", PreviewKind.Audio, "audio/ogg"), ("wav", PreviewKind.Audio, "audio/wav"), ("flac", PreviewKind.Audio, "audio/flac"), ("m4a", PreviewKind.Audio, "audio/mp4"),
-        ("pdf", PreviewKind.Pdf, "application/pdf"));
+        ("pdf", PreviewKind.Pdf, "application/pdf"),
+        // Word und Excel (und csv) zeigt die Seite selbst aus dem Abruf (fetch): der Server liefert sie als unbekannten Typ, nie als Dokument; entpackt wird nur im Browser, mit eigener Grenze (files-viewer.js)
+        ("docx", PreviewKind.Word, "application/octet-stream"), ("xlsx", PreviewKind.Sheet, "application/octet-stream"), ("csv", PreviewKind.Sheet, "application/octet-stream"));
 
     private static Dictionary<string, PreviewType> Build(params (string Ext, PreviewKind Kind, string Type)[] all) => all.ToDictionary(t => t.Ext, t => new PreviewType(t.Ext, t.Kind, t.Type), StringComparer.Ordinal);
 
@@ -72,6 +74,9 @@ internal static class FilePreview
         return false;
     }
 
+    /// <summary>Sieht der Anfang nach Text aus (csv)? Kein Nullbyte, ausser bei UTF-16 mit Kennung (Excels "Unicode-Text"). Ein Text ist harmlos: er geht nur als textContent in die Seite, die Antwort ist nie ein Dokument.</summary>
+    private static bool IsText(ReadOnlySpan<byte> head) => Starts(head, [0xFF, 0xFE]) || Starts(head, [0xFE, 0xFF]) || head.IndexOf((byte)0) < 0;
+
     /// <summary>Passt der Anfang der Datei zur Endung? Wie ein Browser den Inhalt erkennen wuerde, aber streng: stimmt es nicht, wird die Datei nicht ausgeliefert.</summary>
     public static bool MatchesContent(PreviewType type, ReadOnlySpan<byte> head) => type.Extension switch
     {
@@ -88,6 +93,9 @@ internal static class FilePreview
         "wav" => At(head, 0, "RIFF") && At(head, 8, "WAVE"),
         "flac" => At(head, 0, "fLaC"),
         "pdf" => head.IndexOf("%PDF-"u8) is >= 0 and < HeadSize,
+        // docx und xlsx sind ZIP-Dateien (Kopf eines lokalen Eintrags); die Pruefung des Inhalts und die Grenze fuer das Entpackte macht der Browser, der Server entpackt nie
+        "docx" or "xlsx" => Starts(head, [0x50, 0x4B, 0x03, 0x04]),
+        "csv" => IsText(head),
         _ => false,
     };
 

@@ -1,15 +1,17 @@
 /* =====================================================================
- * Vorschau der Dateien-App (docs/FILES-VIEWER.md, Teil C): Bild, Video, Audio und PDF in einem Fenster (Desktop) oder Vollbild-Blatt (Handy).
+ * Vorschau der Dateien-App (docs/FILES-VIEWER.md, Teil C): Bild, Video, Audio, PDF, Word, Excel und csv in einem Fenster (Desktop) oder Vollbild-Blatt (Handy).
  * Die Daten kommen NUR von den Vorschau-Adressen des Servers (GET /api/files/preview, /api/files/remote/preview; Sitzung noetig). Der Server liefert nur eine feste Liste von Typen, mit
  * festem Content-Type, nosniff und strenger CSP; hier wird nie Inhalt als Seite behandelt: Bild und Medien als <img>/<video>/<audio>, ein PDF mit pdf.js (vendored, eigene Seite,
- * Leinwand, kein Skript, kein eval) und nichts landet in innerHTML. Blob-Adressen und Strome werden beim Wechseln und Schliessen freigegeben.
- * Root-Orte: nur Bild und PDF, nach der Bestaetigung (prepare "preview", Token gilt einmal): die Datei wird einmal geholt und aus einem Blob gezeigt.
+ * Leinwand, kein Skript, kein eval), ein Word-Dokument als bereinigter, von docx-preview gebauter Baum NUR in einem iframe mit sandbox (kein Skript, keine Herkunft) und eigener CSP, eine Tabelle
+ * nur ueber textContent. Sonst landet nichts aus einer Datei in innerHTML. Blob-Adressen und Strome werden beim Wechseln und Schliessen freigegeben.
+ * Root-Orte: alles ausser Video und Audio, nach der Bestaetigung (prepare "preview", Token gilt einmal): die Datei wird einmal geholt und aus einem Blob gezeigt.
  * Oben die reine Logik (Typ nach Endung, Grenzen, Nachbarn, Zoom), darunter die Oberflaeche.
  * ===================================================================== */
-import { t } from './i18n.js';
+import { t, getLang } from './i18n.js';
 import * as C from './files-core.js';
 import { h, icon, modal, noteEl } from './files-ui.js';
 import { safeName } from './files-explorer.js';
+import { LIMITS, zipStats, zipRefusal, parseCsv, decodeText, cutTable, colName, fmtCell, dropTag, keepAttr, cleanCss, cssLengthPx, frameDoc } from './viewer-office.js';
 
 /* ---------- reine Logik ---------- */
 /** Dieselbe feste Liste wie am Server (Files/FilePreview.cs); der Server prueft sie noch einmal und zusaetzlich den Anfang der Datei */
@@ -18,8 +20,10 @@ const KINDS = {
   mp4: 'video', webm: 'video',
   mp3: 'audio', ogg: 'audio', wav: 'audio', flac: 'audio', m4a: 'audio',
   pdf: 'pdf',
+  docx: 'word', xlsx: 'sheet', csv: 'sheet',
+  doc: 'legacy', xls: 'legacy',       // alte Word- und Excel-Dateien (OLE): nicht auf der Liste des Servers, die Vorschau nennt nur den Grund
 };
-/** 'image' | 'video' | 'audio' | 'pdf' nach der Endung des Namens, sonst null (SVG, HTML, unbekannt: nie in der Vorschau) */
+/** 'image' | 'video' | 'audio' | 'pdf' | 'word' | 'sheet' | 'legacy' nach der Endung des Namens, sonst null (SVG, HTML, unbekannt: nie in der Vorschau) */
 export function viewKind(name) {
   const n = String(name || ''), dot = n.lastIndexOf('.');
   return dot < 0 || dot === n.length - 1 ? null : KINDS[n.slice(dot + 1).toLowerCase()] || null;
@@ -33,6 +37,7 @@ const streamed = (kind) => kind === 'video' || kind === 'audio';
 export function refusal(name, size, { root = false, previewBytes = 0, maxBytes = 0 } = {}) {
   const kind = viewKind(name);
   if (!kind) return 'preview_type';
+  if (kind === 'legacy') return 'preview_legacy';
   if (root && streamed(kind)) return 'preview_root_type';
   const hard = maxBytes > 0 ? maxBytes : Infinity;
   const limit = streamed(kind) ? hard : Math.min(previewBytes > 0 ? previewBytes : Infinity, hard);
@@ -79,7 +84,7 @@ async function problem(r) {
   try { code = (await r.json()).code || ''; } catch { /* kein JSON */ }
   return fail(code || 'failed');
 }
-/** Holt die Datei (nur Bild und PDF, nie Video) als Blob; onProgress(Prozent|null). Bricht mit signal ab. */
+/** Holt die Datei (nie Video oder Audio) als Blob; onProgress(Prozent|null). Bricht mit signal ab. */
 async function fetchBlob(url, signal, onProgress) {
   let r;
   try { r = await fetch(url, { credentials: 'same-origin', signal }); }
@@ -140,13 +145,45 @@ async function loadPdfjs() {
   return pdfjs;
 }
 
+
+const scripts = new Map();
+/** Ein vendored Skript (Pfad relativ zu dieser Datei) einmal als normales Skript laden: docx-preview und jszip sind UMD-Dateien, die eine globale Variable setzen; die CSP erlaubt Skripte der eigenen Herkunft */
+function loadScript(path) {
+  if (!scripts.has(path)) {
+    const p = new Promise((ok, bad) => {
+      const s = document.createElement('script');
+      s.src = new URL(path, import.meta.url).href; s.onload = ok; s.onerror = () => bad(fail('failed'));
+      document.head.appendChild(s);
+    });
+    p.catch(() => scripts.delete(path));
+    scripts.set(path, p);
+  }
+  return scripts.get(path);
+}
+/** docx-preview (mit jszip, normale Skripte) und read-excel-file (ein ES-Modul, mit tools/vendor-read-excel-file.sh gebaut) erst beim ersten Word- oder Excel-Dokument (Versionen und Pruefsummen: vendor/README.md) */
+async function loadDocx() { await loadScript('./vendor/jszip/jszip.min.js'); await loadScript('./vendor/docx-preview/docx-preview.min.js'); return globalThis.docx; }
+let xlsxLib = null;
+async function loadXlsx() { xlsxLib ||= import('./vendor/read-excel-file/read-excel-file.mjs').then((m) => m.readXlsx); xlsxLib.catch(() => { xlsxLib = null; }); return xlsxLib; }
+
+/** Entfernt aus dem von docx-preview gebauten Baum alles, was laden, ausfuehren oder Eingaben nehmen koennte (Regeln: viewer-office.js); ein Link bleibt Text, sein Ziel steht als Hinweis (title) */
+function sanitize(root) {
+  for (const el of [...root.querySelectorAll('*')]) {
+    if (!root.contains(el)) continue;                                       // war in einem schon entfernten Element
+    const tag = el.localName.toLowerCase();
+    if (dropTag(tag)) { el.remove(); continue; }
+    if (tag === 'style') el.textContent = cleanCss(el.textContent);
+    if (tag === 'a') { const href = el.getAttribute('href') || ''; if (/^(https?:|mailto:)/i.test(href)) el.setAttribute('title', href.slice(0, 300)); }
+    for (const a of [...el.attributes]) if (!keepAttr(a.name, a.value)) el.removeAttribute(a.name);
+  }
+}
+
 const registry = new Map();      // je Dateien-App ein Vorschau-Fenster: ein weiterer Aufruf zeigt die neue Datei im offenen Fenster
 
 /**
  * Zeigt eine Datei in der Vorschau.
  * ctx: { id (Kennung der Dateien-App), kit, place, entry, entries (die Liste, aus der das Bild kommt), limits () -> { previewBytes, maxBytes },
  *   guard(fn) (ruft fn auf und oeffnet bei geschlossener Sitzung den Ort neu), confirm(entry) -> { token } | null (Root: Bestaetigung der Datei, sonst { token: undefined }),
- *   download(entry), say(text) }
+ *   download(entry), edit(entry) (nur wenn sich die Datei bearbeiten laesst: eine csv auf einem Host), say(text) }
  * Gibt das Versprechen des Fensters zurueck (endet beim Schliessen).
  */
 export async function openViewer(ctx) {
@@ -166,10 +203,11 @@ function createViewer(first) {
   const kit = first.kit;
   const meta = h('p', { class: 'f-sub fv-meta' });
   const bar = h('div', { class: 'fv-bar' });
+  const note = h('p', { class: 'f-sub fv-note', role: 'status' });
   const stage = h('div', { class: 'fv-stage', tabindex: '0' });
   const dlg = modal({
     title: '', kit, id: 'view', root: C.isRoot(first.place), win: { width: Math.min(960, innerWidth - 40), height: Math.min(700, innerHeight - 110), resizable: true },
-    content: [meta, bar, stage],
+    content: [meta, bar, note, stage],
     actions: [
       { id: 'download', label: t('desktopFiles.download'), kind: 'ghost', keepOpen: true, onclick: () => cur.download(cur.entry) },
       { id: 'close', label: t('common.close'), kind: 'primary' },
@@ -181,11 +219,12 @@ function createViewer(first) {
   function release() { seq++; if (ctl) ctl.abort(); ctl = null; cleanup(); cleanup = () => {}; }
 
   /** Eine Meldung statt des Inhalts (Fehler, Warten); die Taste "Herunterladen" bleibt */
-  const message = (text, kind = '') => { bar.replaceChildren(); stage.className = 'fv-stage fv-msg'; stage.replaceChildren(noteEl(text, kind)); };
+  const message = (text, kind = '') => { bar.replaceChildren(); note.textContent = ''; stage.className = 'fv-stage fv-msg'; stage.replaceChildren(noteEl(text, kind)); };
 
   async function show(ctx) {
     cur = ctx;
     release();
+    note.textContent = '';
     const my = seq, entry = ctx.entry, place = ctx.place, kind = viewKind(entry.name), root = C.isRoot(place);
     ctl = new AbortController();
     const signal = ctl.signal;
@@ -195,7 +234,7 @@ function createViewer(first) {
     metaText();
     stage.setAttribute('aria-label', t('files.view.label', { name: safeName(entry.name) }));
     const why = refusal(entry.name, entry.size, { root, ...(ctx.limits ? ctx.limits() : {}) });
-    if (why) return message(C.errText(why), 'warn');
+    if (why) return message(C.errText(why), why === 'preview_legacy' ? '' : 'warn');
     message(t('files.view.loading'));
     const stale = () => closed || my !== seq;
     let token;
@@ -211,6 +250,8 @@ function createViewer(first) {
       let shownKind;
       if (kind === 'image') shownKind = await showImage(ctx, url, signal, progress, stale, metaText);
       else if (kind === 'pdf') shownKind = await showPdf(ctx, url, signal, progress, stale);
+      else if (kind === 'word') shownKind = await showWord(ctx, url, signal, progress, stale);
+      else if (kind === 'sheet') shownKind = await showSheet(ctx, url, signal, progress, stale);
       else shownKind = await showMedia(ctx, kind, url, signal, stale);
       if (!stale() && shownKind) { shown = true; stage.focus({ preventScroll: true }); }
     } catch (e) {
@@ -363,6 +404,101 @@ function createViewer(first) {
     stage.addEventListener('wheel', (e) => { if (e.ctrlKey) { e.preventDefault(); setZoom(stepZoom(zoom, e.deltaY < 0 ? 1 : -1)); } }, { passive: false });
     const prevClean = cleanup;
     cleanup = () => { clearTimeout(timer); ro.disconnect(); io.disconnect(); stage.removeEventListener('scroll', onScroll); stage.removeEventListener('keydown', keys); for (const p of pages) if (p.task) p.task.cancel(); holder.replaceChildren(); prevClean(); };
+    return true;
+  }
+
+  /* ----- Word: docx-preview baut die Seiten mit DOM-Aufrufen in ein abgetrenntes Element; der bereinigte Baum wird als Text in ein iframe mit sandbox (ohne Skripte, ohne Herkunft) und eigener CSP
+         gesetzt. Links sind kein Link (Ziel als Hinweis), Bilder kommen nur aus der Datei (data:). Vorher prueft die Seite das ZIP-Verzeichnis (Grenze fuer das Entpackte). ----- */
+  async function showWord(ctx, url, signal, progress, stale) {
+    const [lib, blob] = await Promise.all([loadDocx().catch(() => { throw fail('', t('files.view.docxFailed')); }), ctx.guard(() => fetchBlob(url, signal, progress))]);
+    if (stale()) return false;
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const bad = zipRefusal(zipStats(bytes), 'word');
+    if (bad) throw fail('', bad === 'unpacked' ? t('files.view.unpacked') : t('files.view.zipInvalid'));
+    const body = document.createElement('div'), styles = document.createElement('div');          // nie im Dokument
+    try { await lib.renderAsync(bytes, body, styles, { className: 'docx', inWrapper: true, ignoreFonts: true, useBase64URL: true, renderAltChunks: false, renderComments: false, renderChanges: false, breakPages: true, ignoreLastRenderedPageBreak: true }); }
+    catch { throw fail('', t('files.view.docxFailed')); }
+    if (stale()) return false;
+    sanitize(body); sanitize(styles);
+    const html = body.innerHTML, css = [...styles.querySelectorAll('style')].map((x) => x.textContent).join('\n');
+    const section = body.querySelector('section');
+    const pageW = cssLengthPx(section && section.style.width);
+    const frame = h('iframe', { class: 'fv-frame', sandbox: '', referrerpolicy: 'no-referrer', title: safeName(ctx.entry.name) });
+    let fit = true, z = 1, timer = 0;
+    const label = h('span', { class: 'fv-zoom', role: 'status' });
+    const apply = () => {
+      const k = fit ? Math.min(1, Math.max(0.1, (stage.clientWidth - 16) / (pageW + 60))) : z;
+      frame.srcdoc = frameDoc({ css, body: html, zoom: k });
+      label.textContent = Math.round(k * 100) + ' %';
+      return k;
+    };
+    const setFit = () => { fit = true; apply(); };
+    const step = (dir) => { const k = fit ? Math.min(1, (stage.clientWidth - 16) / (pageW + 60)) : z; fit = false; z = clampZoom(stepZoom(k, dir)); apply(); };
+    bar.replaceChildren(vbtn('zoomOut', t('files.view.zoomOut'), () => step(-1)), vbtn('fit', t('files.view.fitWidth'), setFit), vbtn('zoomIn', t('files.view.zoomIn'), () => step(1)), label);
+    stage.className = 'fv-stage fv-word';
+    stage.replaceChildren(frame);
+    apply();
+    const ro = new ResizeObserver(() => { if (fit) { clearTimeout(timer); timer = setTimeout(apply, 150); } });
+    ro.observe(stage);
+    cleanup = () => { clearTimeout(timer); ro.disconnect(); frame.removeAttribute('srcdoc'); };
+    return true;
+  }
+
+  /* ----- Excel und csv: nur Werte (bei Formeln ihr Ergebnis), jedes Blatt ein Reiter, hoechstens LIMITS.rows Zeilen und LIMITS.cols Spalten; alle Zellen ueber textContent ----- */
+  async function showSheet(ctx, url, signal, progress, stale) {
+    const csv = /\.csv$/i.test(ctx.entry.name);
+    const [lib, blob] = await Promise.all([csv ? null : loadXlsx().catch(() => { throw fail('', t('files.view.xlsxFailed')); }), ctx.guard(() => fetchBlob(url, signal, progress))]);
+    if (stale()) return false;
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let sheets;
+    if (csv) {
+      const r = parseCsv(decodeText(bytes));
+      sheets = [{ name: '', rows: r.rows, totalRows: r.totalRows, totalCols: r.totalCols, cut: r.totalRows > r.rows.length || r.totalCols > LIMITS.cols }];
+    } else {
+      const bad = zipRefusal(zipStats(bytes), 'sheet');
+      if (bad) throw fail('', bad === 'unpacked' ? t('files.view.unpacked') : t('files.view.zipInvalid'));
+      let out;
+      try { out = await lib(bytes); }
+      catch (e) { throw fail('', e && e.code === 'XLS_FILE_NOT_SUPPORTED' ? C.errText('preview_legacy') : t('files.view.xlsxFailed')); }
+      sheets = (Array.isArray(out) ? out : []).map((s) => ({ name: String(s.sheet || ''), ...cutTable(s.data) }));
+    }
+    if (!sheets.length) throw fail('', t('files.view.xlsxFailed'));
+    if (stale()) return false;
+    const lang = getLang();
+    let drawn = 0, current = -1;
+    const tabs = h('div', { class: 'fv-tabs', role: 'tablist', 'aria-label': t('files.view.sheets') });
+    const tabEls = sheets.map((s, i) => h('button', { type: 'button', class: 'fv-tab', role: 'tab', 'aria-selected': 'false', title: s.name, onclick: () => select(i) }, s.name || '1'));
+    tabs.append(...tabEls);
+    bar.replaceChildren(...(sheets.length > 1 ? [tabs] : []), ...(csv && ctx.edit ? [h('span', { class: 'fv-gap' }), vbtn('', t('common.edit'), () => ctx.edit(ctx.entry), t('common.edit'))] : []));
+    stage.className = 'fv-stage fv-sheet';
+    function select(i) {
+      if (i === current) return;
+      current = i; const my = ++drawn, sh = sheets[i];
+      tabEls.forEach((el, j) => { el.setAttribute('aria-selected', String(j === i)); el.classList.toggle('on', j === i); });
+      const cols = Math.min(sh.totalCols, LIMITS.cols);
+      note.textContent = sh.cut ? t('files.view.sheetCut', { rows: sh.rows.length, totalRows: sh.totalRows, cols, totalCols: sh.totalCols })
+        : t('files.view.sheetInfo', { rows: sh.totalRows, cols: sh.totalCols });
+      stage.scrollTo(0, 0);
+      if (!sh.totalRows || !cols) { stage.replaceChildren(noteEl(t('files.view.sheetEmpty'))); return; }
+      const head = h('tr', {}, h('th', { class: 'fv-corner', scope: 'col' }));
+      for (let c = 0; c < cols; c++) head.append(h('th', { scope: 'col', text: colName(c) }));
+      const tbody = h('tbody');
+      stage.replaceChildren(h('table', { class: 'fv-table', 'aria-label': sh.name || safeName(ctx.entry.name) }, h('thead', {}, head), tbody));
+      let at = 0;
+      const chunk = () => {                                                   // 300 Zeilen je Bild: eine volle Tabelle (5000 x 50) blockiert die Seite nicht
+        if (my !== drawn || stale()) return;
+        for (const end = Math.min(sh.rows.length, at + 300); at < end; at++) {
+          const tr = h('tr', {}, h('th', { scope: 'row', class: 'fv-rowno', text: String(at + 1) }));
+          const row = sh.rows[at];
+          for (let c = 0; c < cols; c++) { const v = row[c], text = fmtCell(v, lang); tr.append(h('td', { class: typeof v === 'number' ? 'num' : '', title: text.length > 40 ? text : undefined, text })); }
+          tbody.append(tr);
+        }
+        if (at < sh.rows.length) requestAnimationFrame(chunk);
+      };
+      chunk();
+    }
+    select(0);
+    cleanup = () => { drawn++; };
     return true;
   }
 

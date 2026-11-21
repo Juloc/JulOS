@@ -37,3 +37,21 @@ Files in this folder are copied unchanged from the npm package named in each sec
 | `pdfjs/wasm/LICENSE_OPENJPEG` | `a6af136f3e15038a666b61f376612a07d9a4e48cb7c01adbf3e33b3f14ab49b6` |
 | `pdfjs/wasm/LICENSE_PDFJS_JBIG2` | `aad3cce09842e00e9e11ad5e8fef8cc02fbc3a3768fe2f007443b9cee37aaee5` |
 | `pdfjs/wasm/LICENSE_PDFJS_OPENJPEG` | `717fc62da03292dbb4dd0c8280bd4ce7bb8550dcf31d772bc93455fb50313425` |
+
+## Word and Excel viewer (`docx-preview/`, `jszip/`, `read-excel-file/`)
+
+- Used by `files-viewer.js` (Word and Excel preview of the Files app, read only). Loaded only when a `.docx`, `.xlsx` or `.csv` is opened; not in the service worker's start list, the fetch handler caches them at first use. docx-preview and jszip are copied unchanged from the npm packages (UMD builds, loaded as plain scripts, they set the globals `docx` and `JSZip`); the registry integrity of each tarball was checked against the SHA-512 of the downloaded file, 2026-11-21.
+- **docx-preview 0.4.1** (Apache-2.0, `sha512-Dv4g+LeE0swHpPvNC0lAT0YsR5Zq5pAxw7d3vHQ8EChBLgIrqqe9VPL5nVt2HBJap8bEZbXUI0TJob7kBeNU9w==`, npm `docx-preview`, last release 2026-09). 75 KB. Draws the pages of a Word file with DOM calls into a detached element; the viewer then cleans that tree and shows it only inside a sandboxed iframe without scripts (see `docs/FILES-VIEWER.md`). Options in use: `renderAltChunks: false` (embedded HTML would become an iframe), `ignoreFonts: true`, `useBase64URL: true` (images as `data:` addresses, nothing as a `blob:` URL).
+- **jszip 3.10.2** (MIT or GPL-3.0, used under the MIT terms, `sha512-3l+rb15IOWtUhU0H5MFqES/T6Kh7abYwjosBey/vD6hDt8zoEffkSC5Ws5SGtgVw3gBx2NEbhTeSW1+kWkpyTQ==`, npm `jszip`). 98 KB. The ZIP reader docx-preview needs (it takes the global `JSZip`); it also brings its own copy of pako (MIT and Zlib).
+- **read-excel-file 9.3.20** (MIT, npm `read-excel-file`, last release 2026-11), **built here** into one ES module `read-excel-file.mjs` (43 KB, 14 KB gzip) by `tools/vendor-read-excel-file.sh` from the pinned `tools/vendor-read-excel-file/package.json` and `package-lock.json` (`npm ci --ignore-scripts`, esbuild 0.28.2, the build is reproducible: the same hash twice; nothing of npm or esbuild reaches the image). Inlined: `saxen` 11.2.0 (XML) and `fflate` 0.8.3 (ZIP), both MIT; the licence texts of the three are in `LICENSE.txt`. **Why built and not the package's own `bundle/read-excel-file.min.js`:** that bundle (and `read-excel-file/universal`) unpacks every sheet over about 0.5 MB of XML with fflate's asynchronous `unzip`, which starts a Web Worker from a `blob:` URL; the page CSP (`worker-src 'self'`) forbids that, so all but small spreadsheets would fail. `tools/vendor-read-excel-file/entry.js` calls the same library code with the synchronous `unzipSync` on the main thread (the viewer refuses a file whose ZIP directory says it unpacks to more than 64 MiB first). It returns the cached result of every formula, no formats; `.xls` (OLE) is refused with an error code. To update: change the versions in `package.json`, `npm install --package-lock-only` there, run the script, copy the new hashes here.
+- **Not taken:** SheetJS `xlsx` (npm stops at 0.18.5 with known prototype-pollution and ReDoS reports; the fixed versions are only on the vendor's own site), `mammoth` (BSD-2, plain HTML but no page layout).
+- **Not shipped:** source maps, the ES module builds of docx-preview, the type files.
+
+| File | SHA-256 |
+|---|---|
+| `docx-preview/docx-preview.min.js` | `c4a133c65a112799e35b143c572dfff9e923a3bf39b5fd3b07a06aa0f8f530c2` |
+| `docx-preview/LICENSE` | `8668bf4417d161e4eb4d47d6044526e4914d9eb3c748573d9bb7e87708c1253f` |
+| `jszip/jszip.min.js` | `7f839b2d4688b845c105ebf5d2f9803075f91ea0fe72bdaac176c3a04dd3d2c1` |
+| `jszip/LICENSE.markdown` | `566c953c6090b1218ca6217dd7359d45dde46581968586dc607d59a78af6a9c4` |
+| `read-excel-file/read-excel-file.mjs` | `4767a7dea97a848b2dca79029b2fdf9c62ccfd64e07040843936fd90f421bec9` |
+| `read-excel-file/LICENSE.txt` | `6ac09f10f78f481848c39c96c993d5a30e64f96c35fc17046fd1776ca0d8042a` |

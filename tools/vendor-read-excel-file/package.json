@@ -1,0 +1,13 @@
+{
+  "name": "julos-vendor-read-excel-file",
+  "private": true,
+  "description": "Only used by tools/vendor-read-excel-file.sh to build the vendored Excel reader. Nothing of this is in the runtime image.",
+  "type": "module",
+  "dependencies": {
+    "fflate": "0.8.3",
+    "read-excel-file": "9.3.20"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

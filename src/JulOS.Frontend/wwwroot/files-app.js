@@ -722,18 +722,18 @@ export function mountFiles(box, deps) {
     if (!ok.token) { const problem = await C.downloadProblem(url); if (problem) return say(problem); }          // sonst scheitert der Download still im Browser
     const a = document.createElement('a'); a.href = url; a.download = ''; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove();
   }
-  /** Vorschau (files-viewer.js): Bild, Video, Audio, PDF; das Fenster bleibt an dem Ort, aus dem die Datei kam, auch wenn die App danach woanders hin wechselt */
+  /** Vorschau (files-viewer.js): Bild, Video, Audio, PDF, Word, Excel, csv; das Fenster bleibt an dem Ort, aus dem die Datei kam, auch wenn die App danach woanders hin wechselt */
   function viewFile(e) {
     const place = st.place;
-    return openViewer({ id: me, kit, place, entry: e, entries: st.shown, limits: () => info, guard: (fn) => guarded(fn, place), confirm: (x) => readConfirmed('preview', x, place), download: (x) => download(x, place), say });
+    return openViewer({ id: me, kit, place, entry: e, entries: st.shown, limits: () => info, guard: (fn) => guarded(fn, place), confirm: (x) => readConfirmed('preview', x, place), download: (x) => download(x, place), edit: C.isLocal(place) ? null : (x) => editFile(x, { place }), say });
   }
-  async function editFile(e, { fallbackDownload = false } = {}) {
-    const place = st.place, key = `edit:${place && place.id}:${e.path}`;
+  async function editFile(e, { fallbackDownload = false, place = st.place } = {}) {
+    const key = `edit:${place && place.id}:${e.path}`;
     const open = st.edits.get(key);
     if (open) { if (open.focus) open.focus(); return; }          // dieselbe Datei ist schon offen (oder wird gerade gelesen): ihr Fenster nach vorn, nicht noch eins
     st.edits.set(key, {});
     try {
-      const ok = await readConfirmed('text', e);
+      const ok = await readConfirmed('text', e, place);
       if (!ok) return;
       let r;
       try { r = await guarded(() => fapi.text(place, e.path, ok.token), place); }

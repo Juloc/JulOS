@@ -57,3 +57,25 @@ dialog.m3sheet.f-viewer .fv-btn { min-width: 44px; height: 44px; }
   dialog.m3sheet.f-viewer .fv-btn { min-width: 40px; }
   .fv-count { padding: 0 4px; }
 }
+
+/* Word: das Rahmenfenster (sandbox, ohne Skripte) fuellt die Flaeche, es scrollt selbst */
+.fv-word { padding: 0; overflow: hidden; }
+.fv-frame { flex: 1 1 auto; width: 100%; height: 100%; min-height: 0; border: 0; background: #7d7f86; border-radius: 9px; }
+
+/* Excel und csv: Tabelle mit Kopfzeile (Spaltenbuchstaben) und Zeilennummern, die beim Scrollen stehen bleiben; Text nur ueber textContent */
+.fv-note { flex: 0 0 auto; margin: 0 0 6px; font-size: 12.5px; color: var(--fv-muted); }
+.fv-note:empty { display: none; }
+.dw-body > .fv-note { flex: 0 0 auto; }
+.fv-tabs { display: flex; gap: 2px; flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
+.fv-tab { flex: none; max-width: 220px; height: 34px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0; background: none; color: var(--fv-muted); font: inherit; font-size: 13.5px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fv-tab:hover { background: var(--fv-hover); }
+.fv-tab.on { color: var(--fv-fg); border-bottom-color: var(--fv-accent); font-weight: 600; }
+.fv-tab:focus-visible { outline: 2px solid var(--fv-accent); outline-offset: -2px; }
+.fv-sheet { display: block; }
+.fv-table { border-collapse: separate; border-spacing: 0; font-size: 13px; font-variant-numeric: tabular-nums; }
+.fv-table th, .fv-table td { padding: 3px 8px; border-right: 1px solid var(--fv-line); border-bottom: 1px solid var(--fv-line); background: var(--m3-surface, var(--dk-panel, transparent)); }
+.fv-table td { max-width: 28em; white-space: pre-wrap; overflow-wrap: anywhere; vertical-align: top; }
+.fv-table td.num { text-align: right; }
+.fv-table thead th { position: sticky; top: 0; z-index: 2; font-weight: 600; color: var(--fv-muted); background: var(--fv-stage); text-align: center; }
+.fv-table .fv-rowno { position: sticky; left: 0; z-index: 1; min-width: 2.6em; font-weight: 500; color: var(--fv-muted); background: var(--fv-stage); text-align: right; }
+.fv-table thead .fv-corner { left: 0; z-index: 3; }

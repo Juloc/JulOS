@@ -11,6 +11,14 @@ public sealed record FilesOptions(bool Write, long MaxBytes, int MaxSessionsPerU
 {
     public const long DefaultMaxMb = 2048;
     public const int DefaultSessions = 4;
+    /// <summary>Die Vorschau zeigt ein Bild oder PDF hoechstens bis zu dieser Groesse (MiB); die Einstellung der App (SecurityConfig.FilesPreviewMb) gilt vor JULOS_FILES_PREVIEW_MB.</summary>
+    public const int DefaultPreviewMb = 50, MaxPreviewMb = 1024;
+
+    public static bool ValidPreviewMb(int mb) => mb is >= 1 and <= MaxPreviewMb;
+
+    /// <summary>JULOS_FILES_PREVIEW_MB; null, wenn nicht gesetzt oder unbrauchbar (dann gilt der Standard).</summary>
+    public static int? ParsePreviewMb(string? value) =>
+        int.TryParse(value?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var v) && ValidPreviewMb(v) ? v : null;
 
     public static readonly FilesOptions Default = new(false, DefaultMaxMb * 1024 * 1024, DefaultSessions, TimeSpan.FromSeconds(60));
 

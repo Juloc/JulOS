@@ -204,6 +204,7 @@ dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj    # 
 | `JULOS_FILES_ROOT` | the one folder the read-only shared-folder place of the Files app shows, default `JULOS_UPLOAD_DIR`; `off` disables that place |
 | `JULOS_FILES_WRITE` | **fallback** (the switch lives in the app, Settings, Security, "Write files"): `on` allows writing on hosts over SFTP (upload, rename, move, copy, delete, new folder); default and anything else `off` (reading stays on), see [FILES.md](FILES.md) |
 | `JULOS_FILES_MAX_MB` | largest file and largest operation of the Files app, default 2048 (1 to 65536) |
+| `JULOS_FILES_PREVIEW_MB` | **fallback** (the limit lives in the app, Settings, Security): the biggest image or PDF the Files preview shows, default 50 (1 to 1024); see [FILES.md](FILES.md#preview-the-narrow-inline-answer) |
 | `JULOS_FILES_MAX_SESSIONS` | open SFTP connections per user, default 4 (1 to 16); an unused one closes after 60 s |
 | `JULOS_SERVICES`, `JULOS_CADDY`, `JULOS_DDNS` | `off` (default), `read` or `control` (Caddy has no `control` yet): the optional modules; their other settings (`JULOS_SERVICES_HOSTS`, `JULOS_CADDYFILE`, `JULOS_CADDY_ADMIN_URL`, `JULOS_CADDY_ADMIN_AUTH_FILE`, `JULOS_CADDY_TLS_CONNECT`, `JULOS_CADDY_LOG_FILE`, `JULOS_DDNS_*`) are in [MODULES.md](MODULES.md) |
 | `JULOS_NETTOOLS` | `off` switches the network tools (ping, DNS, port test) off; default on, see [ARCHITECTURE.md](ARCHITECTURE.md) |

@@ -13,9 +13,11 @@ internal sealed record ClientDto(string Address, string Peer, bool Forwarded);
 internal sealed record StepUpDto(bool Enabled, int Minutes);
 internal sealed record RecoveryDto(string State, DateTimeOffset? CreatedAt, DateTimeOffset? ConfirmedAt, bool Replacing);
 internal sealed record BackupKeyDto(bool CopyKey, string Source, bool Wrapped, bool CanProtect, RecoveryDto Recovery);
-internal sealed record SecurityResponse(ListDto Proxies, ListDto Hosts, bool ProxiesUnset, ClientDto Client, StepUpDto StepUp, BackupKeyDto BackupKey, string ConfirmMode = "check", FilesWriteDto? FilesWrite = null);
+internal sealed record SecurityResponse(ListDto Proxies, ListDto Hosts, bool ProxiesUnset, ClientDto Client, StepUpDto StepUp, BackupKeyDto BackupKey, string ConfirmMode = "check", FilesWriteDto? FilesWrite = null, FilesPreviewDto? FilesPreview = null);
 internal sealed record FilesWriteDto(bool Enabled, string Source);
 internal sealed record FilesWriteRequest(bool? Enabled);
+internal sealed record FilesPreviewDto(int Mb, string Source);
+internal sealed record FilesPreviewRequest(int? Mb);
 internal sealed record ListRequest(string[]? Entries, bool? Confirm = null);
 internal sealed record BlockedDto(string Name, string Host);
 internal sealed record HostsPreviewResponse(BlockedDto[] Blocked);
@@ -73,7 +75,7 @@ internal static class SecurityEndpoints
             return Results.Json(new SecurityResponse(new ListDto(cfg.Proxies.Entries, cfg.Proxies.Source), new ListDto(cfg.Hosts.Entries, cfg.Hosts.Source), cfg.ProxiesUnset, Client(ctx),
                 new StepUpDto(cfg.StepUp.Enabled, cfg.StepUp.Minutes),
                 new BackupKeyDto(plan.CopyKey, plan.Source, plan.Wrapped is not null, box.Enabled, new RecoveryDto(r.State, r.CreatedAt, r.ConfirmedAt, r.Replacing)),
-                ConfirmPolicy.Name(cfg.ConfirmMode), new FilesWriteDto(cfg.FilesWrite.Enabled, cfg.FilesWrite.Source)),
+                ConfirmPolicy.Name(cfg.ConfirmMode), new FilesWriteDto(cfg.FilesWrite.Enabled, cfg.FilesWrite.Source), new FilesPreviewDto(cfg.FilesPreviewMb.Value, cfg.FilesPreviewMb.Source)),
                 AppJson.Default.SecurityResponse);
         });
 
@@ -172,6 +174,20 @@ internal static class SecurityEndpoints
             if (body.Enabled is { } on) await cfg.SetFilesWriteAsync(on, ctx.RequestAborted); else await cfg.ResetFilesWriteAsync(ctx.RequestAborted);
             await Audit(audit, ctx, "files_write.set", $"{(cfg.FilesWrite.Enabled ? "an" : "aus")} ({cfg.FilesWrite.Source})");
             return Results.Json(new FilesWriteDto(cfg.FilesWrite.Enabled, cfg.FilesWrite.Source), AppJson.Default.FilesWriteDto);
+        });
+
+        // ---- Groesse, bis zu der die Vorschau der Dateien-App ein Bild oder PDF zeigt (docs/FILES.md): Mb null = die Einstellung der App vergessen, dann gilt JULOS_FILES_PREVIEW_MB oder 50 ----
+        app.MapPut("/api/security/files-preview", async (FilesPreviewRequest body, HttpContext ctx, SecurityConfig cfg, SecurityAuditStore audit, HitCounter hits) =>
+        {
+            if (Limited(ctx, hits)) return Error(429, "Zu viele Anfragen, bitte kurz warten.", "rate_limited");
+            if (body.Mb is { } mb)
+            {
+                if (!FilesOptions.ValidPreviewMb(mb)) return Error(400, "Angaben fehlen.");     // ein feststehender Text, den die Seite schon uebersetzt (1 bis 1024 MiB)
+                await cfg.SetFilesPreviewMbAsync(mb, ctx.RequestAborted);
+            }
+            else await cfg.ResetFilesPreviewMbAsync(ctx.RequestAborted);
+            await Audit(audit, ctx, "files_preview.set", $"{cfg.FilesPreviewMb.Value} MiB ({cfg.FilesPreviewMb.Source})");
+            return Results.Json(new FilesPreviewDto(cfg.FilesPreviewMb.Value, cfg.FilesPreviewMb.Source), AppJson.Default.FilesPreviewDto);
         });
 
         // ---- Schluessel im Backup und Wiederherstellungsschluessel (F-01) ----

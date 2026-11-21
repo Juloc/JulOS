@@ -134,3 +134,36 @@ test('Zwischenablage, Ziehen, getippter Pfad, Auswahlgroesse', () => {
   assert.equal(X.parseTypedPath(' /a/b/../c/ ', false), '/a/c'); assert.equal(X.parseTypedPath('', false), '/'); assert.equal(X.parseTypedPath('a\\b', true), 'a/b'); assert.equal(X.parseTypedPath('~/x', false), '~/x'); assert.equal(X.parseTypedPath('/../..', false), '/');
   assert.deepEqual(X.selectionStats([f('a', { size: 5 }), f('b', { size: 7 }), d('c')]), { count: 3, files: 2, dirs: 1, bytes: 12 });
 });
+
+test('Seitenleiste und Fenstergroesse: Breite begrenzt, Zustand nur true, Fenster 70 Prozent der Flaeche mit Mindestgroesse', () => {
+  assert.deepEqual(X.normalizeSide(null), { w: 200, off: false });
+  assert.deepEqual(X.normalizeSide({ w: 20, off: 'ja' }), { w: X.SIDE_MIN, off: false });
+  assert.deepEqual(X.normalizeSide({ w: 9999, off: true }), { w: X.SIDE_MAX, off: true });
+  assert.deepEqual(X.normalizeSide({ w: 'x' }), { w: 200, off: false });
+  assert.deepEqual(X.filesWindowSize({ w: 1920, h: 1000 }), { w: 1344, h: 700 });
+  assert.deepEqual(X.filesWindowSize({ w: 1200, h: 700 }), { w: 860, h: 540 });                      // 70 % waeren kleiner als das Minimum
+  assert.deepEqual(X.filesWindowSize({ w: 800, h: 480 }), { w: 800, h: 480 });                       // nie groesser als die Flaeche
+});
+
+test('Adressleiste: Brotkruemel fallen von links weg, der letzte bleibt; Vorschlaege aus dem Elternordner nach Anfang', () => {
+  const w = [60, 50, 50, 50];                                           // Wurzel, a, b, c (mit Trenner)
+  assert.equal(X.visibleCrumbCount(w, 500, 30), 4);                      // alles passt: keine "<"-Taste noetig
+  assert.equal(X.visibleCrumbCount(w, 210, 30), 4);                      // 60+50+50+50 = 210 passt gerade
+  assert.equal(X.visibleCrumbCount(w, 200, 30), 3);                      // eins zu wenig: der Anfang fällt weg, dafür steht die Taste
+  assert.equal(X.visibleCrumbCount(w, 180, 30), 3);
+  assert.equal(X.visibleCrumbCount(w, 130, 30), 2);
+  assert.equal(X.visibleCrumbCount(w, 110, 30), 1);
+  assert.equal(X.visibleCrumbCount(w, 20, 30), 1);                       // der aktuelle Ordner bleibt immer, auch wenn er nicht passt
+  assert.equal(X.visibleCrumbCount([80], 10, 30), 1);
+  assert.deepEqual(X.splitTyped('/a/b/c', false), { dir: '/a/b', prefix: 'c' });
+  assert.deepEqual(X.splitTyped('/a/b/', false), { dir: '/a/b', prefix: '' });
+  assert.deepEqual(X.splitTyped('/', false), { dir: '/', prefix: '' });
+  assert.deepEqual(X.splitTyped('/a/bc', true), { dir: 'a', prefix: 'bc' });
+  assert.deepEqual(X.splitTyped('/Do', true), { dir: '', prefix: 'Do' });
+  assert.equal(X.splitTyped('~/x', false), null);
+  const list = [d('Documents'), d('docs'), f('do.txt'), d('.dotdir'), d('Downloads'), d('other'), { ...d('lnk'), kind: 'link', resolved: 'directory' }];
+  assert.deepEqual(X.filterSuggestions(list, 'do'), ['docs', 'Documents', 'Downloads']);   // nur Ordner, nach Anfang, ohne Punkt-Ordner
+  assert.deepEqual(X.filterSuggestions(list, '.'), ['.dotdir']);
+  assert.deepEqual(X.filterSuggestions(list, '', 2), ['docs', 'Documents']);
+  assert.deepEqual(X.filterSuggestions(list, 'zzz'), []);
+});

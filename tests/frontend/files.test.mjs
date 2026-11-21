@@ -35,30 +35,47 @@ test('neue Namen wie am Server: einfach, ohne Schraegstrich und Steuerzeichen, h
   assert.ok(!C.validName('a'.repeat(256)));
 });
 
-test('Orte: nur SSH-Verbindungen, nach Host gruppiert, mehrere SSH-Verbindungen eines Hosts mit Auswahl', () => {
+test('Orte: nur SSH-Verbindungen, nach Host gruppiert, je Host nur Home (Programm-Kacheln und weitere Verbindungen sind keine Orte)', () => {
   const hosts = [{ id: 'h1', name: 'Server A' }, { id: 'h2', name: 'Nur Desktop' }, { id: 'h3', name: 'Server C' }];
   const connections = [
-    { id: 'c1', kind: 'terminal', name: 'Shell', hostId: 'h1', host: 'srv-a', username: 'jul', hasPassword: true },
+    { id: 'c4', kind: 'terminal', name: 'Claude', program: 'claude', hostId: 'h1', host: 'srv-a', port: 22, username: 'jul', hasPassword: false },
+    { id: 'c1', kind: 'terminal', name: 'Shell', hostId: 'h1', host: 'srv-a', port: 22, username: 'jul', hasPassword: true },
     { id: 'c2', kind: 'desktop', name: 'RDP', hostId: 'h2', host: 'srv-b', username: 'jul' },
     { id: 'c3', kind: 'vnc', name: 'VNC', hostId: 'h2', host: 'srv-b', username: 'jul' },
-    { id: 'c4', kind: 'terminal', name: 'Claude', hostId: 'h1', host: 'srv-a', username: 'jul', hasPassword: false },
     { id: 'c5', kind: 'terminal', name: 'C', hostId: 'h3', host: 'srv-c', username: '', hasPassword: false },
     { id: 'c6', kind: 'terminal', name: 'Lose', hostId: 'gibtsnicht', host: 'x' },
   ];
   const p = C.buildPlaces({ connections, hosts, info: { local: true } });
   assert.equal(p.local.label, 'Gemeinsamer Ordner');
   assert.deepEqual(p.groups.map((g) => g.name), ['Server A', 'Server C', 'Lose']);                 // Hosts ohne SSH (nur RDP/VNC) fehlen
-  assert.deepEqual(p.flat.map((x) => x.id), ['c1', 'c4', 'c5', 'c6']);
-  assert.ok(!p.flat.some((x) => ['c2', 'c3'].includes(x.id)));
-  assert.deepEqual(p.groups[0].places.map((x) => x.label), ['Server A · Shell', 'Server A · Claude']);   // Auswahl bei mehreren
-  assert.equal(p.groups[1].places[0].label, 'Server C');                                              // ein Eintrag: so heisst der Ort wie der Host
+  assert.deepEqual(p.groups.map((g) => g.places.map((x) => x.id)), [['c1'], ['c5'], ['c6']]);      // Claude-Kachel c4 ist kein Ort, die einfache Shell c1 ist Home
+  assert.deepEqual(p.flat.map((x) => x.id), ['c1', 'c5', 'c6']);
+  assert.equal(p.groups[0].places[0].label, 'Server A');                                          // der Ort heisst wie der Host
   assert.equal(p.flat[0].address, 'jul@srv-a');
   assert.equal(p.groups[1].places[0].address, 'srv-c');
   assert.equal(C.findPlace(p, 'local').id, 'local');
-  assert.equal(C.findPlace(p, 'c4').name, 'Claude');
+  assert.equal(C.findPlace(p, 'c4'), null);
   assert.equal(C.findPlace(p, 'nope'), null);
   assert.equal(C.buildPlaces({ connections, hosts, info: { local: false } }).local, null);
   assert.deepEqual(C.buildPlaces().flat, []);
+});
+
+test('Orte: Home waehlt die Verbindung mit dem Login des Hosts, dann die erste einfache; Programme nur, wenn es nichts anderes gibt; andere Benutzer kommen in others', () => {
+  const c = (id, extra = {}) => ({ id, kind: 'terminal', name: id, host: 'srv', port: 22, username: 'jul', ...extra });
+  // einfach vor Programm, Host-Login vor eigenem Login, sonst die Reihenfolge der Liste
+  assert.equal(C.pickHomeConnections([c('a', { program: 'codex' }), c('b'), c('d', { loginSource: 'host' })]).home.id, 'd');
+  assert.equal(C.pickHomeConnections([c('a', { program: 'codex' }), c('b'), c('d')]).home.id, 'b');
+  assert.equal(C.pickHomeConnections([c('a', { program: 'claude' }), c('b', { program: 'codex' })]).home.id, 'a');
+  assert.deepEqual(C.pickHomeConnections([]), { home: null, others: [] });
+  // gleiche Anmeldung (Benutzer, Adresse, Port) ist derselbe Ort; ein anderer Benutzer oder Port ist ein weiterer
+  const r = C.pickHomeConnections([c('a'), c('tmux', { keepAlive: true }), c('root', { username: 'root' }), c('claude', { program: 'claude' }), c('root2', { username: 'root', program: 'codex' }), c('p', { port: 2222 })]);
+  assert.equal(r.home.id, 'a');
+  assert.deepEqual(r.others.map((x) => x.id), ['root', 'p']);
+  const hosts = [{ id: 'h1', name: 'Server A' }];
+  const p = C.buildPlaces({ hosts, connections: [c('a', { hostId: 'h1' }), c('root', { hostId: 'h1', username: 'root' })] });
+  assert.deepEqual(p.groups[0].places.map((x) => x.id), ['a']);
+  assert.deepEqual(p.groups[0].others.map((x) => [x.id, x.label]), [['root', 'Server A · root']]);
+  assert.equal(C.findPlace(p, 'root').user, 'root');                                               // auch ein anderer Benutzer ist ein Ort (angeheftete Ordner finden ihn)
 });
 
 test('Eintraege: beide Quellen in eine Form, Meldungen zu Dateien, Ordnern, Links', () => {

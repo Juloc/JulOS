@@ -419,6 +419,15 @@ html.desktop .sv .sv-menu [data-only="phone"] { display: none; }
 .dk-chip.sel { background: var(--dk-soft); border-color: var(--dk-accent-ring) !important; color: var(--dk-accent-text); font-weight: 600; }
 .dk-gh { margin: 14px 0 6px; font-size: 13.5px; display: flex; align-items: center; color: var(--dk-t1); }
 .dk-gh .dk-sub { margin-left: 8px; font-weight: 400; color: var(--dk-sub); font-size: 12px; }
+/* Verbindungen nach Host: der Kopf eines Abschnitts ist die Taste zum Ein- und Ausklappen, "Programme" ein Unterabschnitt */
+.dk-hsec { margin: 0 0 6px; }
+.dk-gh-t { display: flex; align-items: center; gap: 0; width: 100%; padding: 6px 8px 6px 4px !important; border-radius: 10px; text-align: left; color: var(--dk-t1); font-size: 13.5px; }
+.dk-gh-t:hover { background: var(--dk-hover-lo); }
+.dk-gh-t:focus-visible { outline: 2px solid var(--dk-accent-ring); outline-offset: -2px; }
+.dk-gh-t > svg.dk-i { width: 16px; height: 16px; margin-right: 6px; color: var(--dk-hint); }
+.dk-gh-t b { font-weight: 650; }
+.dk-gh-t .dk-count { margin-left: auto; min-width: 22px; padding: 1px 7px; border-radius: 99px; background: var(--dk-hover-lo); color: var(--dk-sub); font-size: 11.5px; text-align: center; }
+.dk-ph { margin: 10px 0 6px 4px; font-size: 11.5px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; color: var(--dk-hint); }
 .dk-host .dk-hh { display: flex; align-items: center; gap: 8px; }
 .dk-host .dk-hm { margin: 4px 0 8px; font-size: 12.5px; }
 .dk-host .dk-hl { margin: 0 0 2px; }

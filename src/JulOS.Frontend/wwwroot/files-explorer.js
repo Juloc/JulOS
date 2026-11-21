@@ -219,9 +219,24 @@ export function actionForKey(e) {
     case 'Escape': return 'clear';
     case 'ArrowUp': case 'ArrowDown': case 'ArrowLeft': case 'ArrowRight': case 'Home': case 'End': case 'PageUp': case 'PageDown': return 'move';
     case 'ContextMenu': return 'menu';
+    case 'F4': return 'address';
     case 'F10': return e.shiftKey ? 'menu' : null;
     default: return null;
   }
+}
+
+/* ---------- Seitenleiste und Fenstergroesse (pro Geraet, localStorage) ---------- */
+export const SIDE_DEFAULT = 200, SIDE_MIN = 140, SIDE_MAX = 360;
+/** Breite und Zustand der Seitenleiste aus einem unbekannten Wert: { w, off } */
+export function normalizeSide(raw) {
+  const v = raw && typeof raw === 'object' ? raw : {};
+  const w = Number(v.w);
+  return { w: Number.isFinite(w) ? Math.max(SIDE_MIN, Math.min(SIDE_MAX, Math.round(w))) : SIDE_DEFAULT, off: v.off === true };
+}
+/** Die Groesse des Dateien-Fensters beim ersten Oeffnen: 70 % der freien Flaeche, mindestens 860 x 540, hoechstens die Flaeche (area: { w, h }) */
+export function filesWindowSize(area, min = { w: 860, h: 540 }) {
+  const fit = (a, lo) => Math.max(1, Math.min(a, Math.max(lo, Math.round(a * 0.7))));
+  return { w: fit(area.w, min.w), h: fit(area.h, min.h) };
 }
 
 /* ---------- Ansicht und Pins (Einstellung "files" auf dem Server) ---------- */
@@ -322,4 +337,37 @@ export function selectionStats(entries) {
   let files = 0, dirs = 0, bytes = 0;
   for (const e of entries) { if (isDir(e)) dirs++; else { files++; bytes += e.size || 0; } }
   return { count: entries.length, files, dirs, bytes };
+}
+
+/* ---------- Adressleiste: Brotkruemel kuerzen, Vorschlaege beim Tippen ---------- */
+/**
+ * Wie viele Brotkruemel (vom Ende gezaehlt) in die Breite `avail` passen. widths: Breite jedes Kruemels samt Trenner, der Anfang zuerst. more: Breite der Taste "<" fuer die verdeckten Ebenen
+ * (sie steht nur, wenn etwas fehlt). Der aktuelle Ordner (der letzte) bleibt immer sichtbar, auch wenn er allein nicht passt; was wegfaellt, faellt von links weg.
+ */
+export function visibleCrumbCount(widths, avail, more = 0) {
+  const n = widths.length;
+  let sum = 0, k = 0;
+  for (let i = n - 1; i >= 0; i--) {
+    const need = sum + widths[i] + (i > 0 ? more : 0);
+    if (need > avail && k > 0) break;
+    sum += widths[i]; k++;
+  }
+  return Math.max(1, k);
+}
+/** Der getippte Pfad in Elternordner und Anfang des letzten Teils: "/a/b/c" -> { dir: "/a/b", prefix: "c" }, "/a/b/" -> { dir: "/a/b", prefix: "" }. null bei "~"-Pfaden (die loest der Server auf). */
+export function splitTyped(text, local) {
+  const s = String(text ?? '').replace(/\\/g, '/');
+  if (s.trim().startsWith('~')) return null;
+  const i = s.lastIndexOf('/');
+  const dirText = i < 0 ? '' : s.slice(0, i + 1);
+  return { dir: parseTypedPath(dirText, local), prefix: i < 0 ? s.trim() : s.slice(i + 1) };
+}
+/** Die Unterordner (nur Ordner, auch Links auf Ordner), deren Name mit `prefix` beginnt (Gross- und Kleinschreibung egal); Namen mit Punkt am Anfang nur, wenn der Anfang auch mit Punkt beginnt. Hoechstens `limit`, nach Namen. */
+export function filterSuggestions(entries, prefix, limit = 8) {
+  const p = String(prefix || '').toLowerCase(), dots = p.startsWith('.');
+  return entries
+    .filter((e) => e.openable && e.name.toLowerCase().startsWith(p) && (dots || !e.name.startsWith('.')))
+    .map((e) => e.name)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+    .slice(0, limit);
 }

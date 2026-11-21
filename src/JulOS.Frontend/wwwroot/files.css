@@ -19,12 +19,21 @@
 .fapp *, .fapp *::before, .fapp *::after { box-sizing: border-box; }
 .fapp svg.f-ic, .f-menu svg.f-ic { width: 20px; height: 20px; fill: currentColor; flex: 0 0 auto; }
 .fapp button { font: inherit; color: inherit; }
+/* Am Desktop gilt die allgemeine Tastenform der Seite (rund, 44 px hoch, farbig, style.css) nicht in der Dateien-App: Tasten sind flach, jede Klasse unten setzt ihr Aussehen selbst. :where haelt die Gewichtung bei der der allgemeinen Regel, die spaetere Reihenfolge gewinnt */
+:where(.fdesk) button { min-height: 0; padding: 0; border: 0; border-radius: 0; background: none; letter-spacing: normal; font-weight: inherit; touch-action: auto; }
 .fapp [hidden] { display: none !important; }
 
 /* Desktop: Baum links, Inhalt rechts */
-.fapp.fdesk { flex: 1; display: grid; grid-template-columns: 220px minmax(0, 1fr); height: 100%; --f-row-h: 26px; }
+.fapp.fdesk { flex: 1; display: grid; grid-template-columns: min(var(--fside, 200px), 34%) minmax(0, 1fr); height: 100%; position: relative; --f-row-h: 26px; }
 .fdesk.v-comfy { --f-row-h: 36px; }
-.fdesk .f-side { padding: 8px 6px 14px; border-right: 1px solid var(--f-line); overflow-y: auto; }
+.fdesk .f-side { padding: 8px 6px 14px; border-right: 1px solid var(--f-line); overflow-y: auto; overflow-x: hidden; min-width: 0; }
+.fdesk.side-off .f-side { visibility: hidden; padding: 0; border: 0; overflow: hidden; }
+.fdesk.side-off .f-sidegrip { display: none; }
+/* Griff zum Ziehen der Breite: ein schmaler Streifen ueber der Trennlinie, sichtbar erst beim Ueberfahren, Ziehen und Fokus */
+.f-sidegrip { position: absolute; z-index: 6; top: 0; bottom: 0; left: calc(min(var(--fside, 200px), 34%) - 3px); width: 7px; cursor: col-resize; outline: none; display: flex; justify-content: center; }
+.f-sidegrip::after { content: ""; width: 2px; background: transparent; transition: background .12s; }
+.f-sidegrip:hover::after, .f-sidegrip:focus-visible::after, .fdesk.side-drag .f-sidegrip::after { background: var(--f-accent); }
+.fdesk.side-drag, .fdesk.side-drag * { cursor: col-resize !important; user-select: none; }
 .fkit .f-side { display: none; }
 .fdesk .f-place { display: none !important; }
 .f-main { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; container: fmain / inline-size; }
@@ -49,31 +58,66 @@
 .f-tn-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .f-picker .f-tn { min-height: 44px; font-size: 15px; }
 
-/* Werkzeugleiste: Zurueck, Vor, Hoch, Adresse, Suche, Ansicht, Neu, Hochladen */
+/* Werkzeugleiste: Seitenleiste, Zurueck, Vor, Hoch, Neu laden, Adresse, Suche, Ansicht, Neu, Hochladen. Alle Tasten gleich: flach, 32 px, 6 px Rundung, Hover und Fokusring */
 .f-top { flex: 0 0 auto; }
-.f-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px; min-width: 0; }
+.f-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 6px 8px; min-width: 0; }
 .f-nav, .f-acts { display: flex; align-items: center; gap: 2px; }
 .f-acts { margin-left: auto; }
-.fapp .f-tool, .fapp .f-tbtn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; min-width: 32px; padding: 0 7px; border: 0; border-radius: 8px; background: none; color: var(--f-fg); cursor: pointer; }
+.fapp .f-tool, .fapp .f-tbtn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; min-width: 32px; padding: 0 7px; border: 0; border-radius: 6px; background: none; color: var(--f-fg); cursor: pointer; flex: 0 0 auto; }
+.fapp .f-tbtn svg.f-ic:last-child:not(:first-child) { width: 16px; height: 16px; margin-left: -2px; color: var(--f-muted); }
 .fapp .f-tool:hover:not(:disabled), .fapp .f-tbtn:hover:not(:disabled) { background: var(--f-hover); }
+.fapp .f-tool:active:not(:disabled), .fapp .f-tbtn:active:not(:disabled) { background: var(--f-sel); }
 .fapp .f-tool:focus-visible, .fapp .f-tbtn:focus-visible { outline: 2px solid var(--f-accent); outline-offset: 1px; }
 .fapp .f-tool:disabled, .fapp .f-tbtn:disabled { opacity: .35; cursor: default; }
 .f-lbl { font-size: 13px; }
-@container fmain (max-width: 900px) { .f-lbl { display: none; } .f-search { flex-basis: 150px; } }
-.f-addr { display: flex; align-items: center; gap: 1px; flex: 1 1 240px; min-width: 140px; height: 32px; padding: 0 4px; border: 1px solid var(--f-line); border-radius: 8px; background: var(--f-field); overflow-x: auto; white-space: nowrap; scrollbar-width: none; cursor: text; }
-.f-addr::-webkit-scrollbar { display: none; }
-.f-addr.editing { border-color: var(--f-accent); }
-.f-addr svg.f-ic { width: 14px; height: 14px; color: var(--f-muted); }
-.f-addr-hint { padding: 0 8px; color: var(--f-muted); }
+@container fmain (max-width: 900px) { .f-lbl { display: none; } .fapp .f-tbtn svg.f-ic:last-child:not(:first-child) { display: none; } .f-search { flex-basis: 150px; } }
+/* Adressleiste: Brotkruemel links, rechts immer freier Platz zum Hineinklicken (die Leiste fuellt die Breite, die Teile nicht); schmal faellt der Anfang weg ("<"-Taste) */
+.f-addr { position: relative; display: flex; align-items: center; flex: 1 1 240px; min-width: 56px; height: 32px; padding: 0 4px; border: 1px solid var(--f-line); border-radius: 6px; background: var(--f-field); white-space: nowrap; cursor: text; }
+.f-addr:focus-within, .f-addr.editing { border-color: var(--f-accent); }
+.f-addr svg.f-ic { width: 14px; height: 14px; color: var(--f-muted); flex: 0 0 auto; }
+.f-crumbs { display: flex; align-items: center; min-width: 0; flex: 0 1 auto; overflow: hidden; }
+.f-ci { display: inline-flex; align-items: center; flex: 0 0 auto; }
+.f-ci:last-child { flex: 0 1 auto; min-width: 0; }
+.f-ci.nosep > svg.f-ic { display: none; }
+.f-addr-gap { flex: 1 1 40px; min-width: 24px; align-self: stretch; }
+.f-addr-hint { padding: 0 8px; color: var(--f-muted); font-size: 13px; }
 .f-addr-in { all: unset; flex: 1; min-width: 0; padding: 0 8px; font-size: 13px; color: var(--f-fg); }
-.f-crumb { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 7px; border: 0; border-radius: 6px; background: none; color: var(--f-muted); cursor: pointer; font-size: 13px; }
-.f-crumb:hover { background: var(--f-hover); color: var(--f-fg); }
-.f-crumb.cur { color: var(--f-fg); font-weight: 600; }
-.f-crumb svg.f-ic { width: 16px; height: 16px; }
-.f-search { display: flex !important; flex-direction: row !important; align-items: center; gap: 8px; flex: 0 1 190px; height: 32px; margin: 0 !important; padding: 0 10px; border-radius: 8px; border: 1px solid var(--f-line); background: var(--f-field); }
+.fapp .f-addr-x { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: 0; border-radius: 4px; background: none; color: var(--f-muted); cursor: pointer; }
+.fapp .f-addr-x:hover { background: var(--f-hover); color: var(--f-fg); }
+.f-sug { position: absolute; z-index: 30; left: -1px; right: -1px; top: calc(100% + 4px); padding: 4px; border: 1px solid var(--f-line); border-radius: 8px; background: var(--f-pop); box-shadow: 0 8px 24px rgba(0, 0, 0, .25); backdrop-filter: blur(18px); cursor: default; }
+.f-sug-i { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: 6px; font-size: 13px; color: var(--f-fg); overflow: hidden; }
+.f-sug-i span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.f-sug-i svg.f-ic { color: var(--f-dir); width: 16px; height: 16px; }
+.f-sug-i:hover, .f-sug-i.on { background: var(--f-hover); }
+.f-sug-i.on { background: var(--f-sel); }
+.f-top { position: relative; z-index: 5; }
+.fapp .f-crumb { flex: 0 0 auto; min-width: 0; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 7px; border: 0; border-radius: 4px; background: none; color: var(--f-muted); cursor: pointer; font-size: 13px; }
+.fapp .f-crumb:hover { background: var(--f-hover); color: var(--f-fg); }
+.fapp .f-crumb:focus-visible { outline: 2px solid var(--f-accent); outline-offset: -2px; }
+.fapp .f-crumb.cur { color: var(--f-fg); font-weight: 600; }
+.fapp .f-crumb svg.f-ic { width: 16px; height: 16px; }
+.f-ci:last-child .f-crumb { flex: 0 1 auto; }
+.f-crumb > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fapp .f-crumb-more { padding: 0 4px; color: var(--f-fg); }
+.f-search { display: flex !important; flex-direction: row !important; align-items: center; gap: 8px; flex: 0 1 200px; height: 32px; margin: 0 !important; padding: 0 10px; border-radius: 6px; border: 1px solid var(--f-line); background: var(--f-field); }
 .f-search svg.f-ic { width: 16px; height: 16px; color: var(--f-muted); }
 .f-search input { all: unset; flex: 1; min-width: 0; font-size: 13px; }
+.f-search input::placeholder { color: var(--f-muted); }
 .f-search:focus-within { border-color: var(--f-accent); }
+/* Desktop: eine Zeile, nichts bricht um. Ab 900 px Beschriftungen, darunter Symbole; unter 760 px ist die Suche ein Symbol (das Feld klappt beim Anklicken auf); unter 520 px steckt der Rest im Menue "..." */
+.fdesk .f-bar { flex-wrap: nowrap; }
+.fdesk .f-more { display: none; }
+@container fmain (max-width: 760px) {
+  .fdesk .f-search { flex: 0 0 32px; padding: 0; justify-content: center; cursor: pointer; overflow: hidden; }
+  .fdesk .f-search input { flex: 0 0 0; width: 0; }
+  .fdesk .f-search:focus-within, .fdesk .f-search:has(input:not(:placeholder-shown)) { flex: 0 1 190px; padding: 0 10px; justify-content: flex-start; cursor: text; }
+  .fdesk .f-search:focus-within input, .fdesk .f-search:has(input:not(:placeholder-shown)) input { flex: 1; width: auto; }
+}
+@container fmain (max-width: 520px) {
+  .fdesk .f-acts > :not(.f-more) { display: none !important; }
+  .fdesk .f-more { display: inline-flex; }
+  .fdesk .f-nav .f-ref { display: none; }
+}
 .f-banner { padding: 0 10px; }
 .fapp.f-is-root .f-top { box-shadow: inset 0 -3px 0 var(--f-bad); }
 
@@ -82,19 +126,21 @@
 .f-view.busy { opacity: .55; }
 .fdesk .f-view { user-select: none; -webkit-user-select: none; }
 .f-cols, .fdesk .f-row { display: grid; grid-template-columns: minmax(var(--cn, 240px), 1fr) var(--cd, 140px) var(--ct, 110px) var(--cs, 80px); align-items: center; }
-.f-cols { position: sticky; top: 0; z-index: 3; height: 28px; background: var(--f-head); border-bottom: 1px solid var(--f-line); font-size: 12px; min-width: min-content; }
+/* Spaltenkoepfe: flacher Text in der Farbe der Beschriftung, kein Knopf; der Pfeil zeigt die Sortierung, die Trennlinie liegt am Griff */
+.f-cols { position: sticky; top: 0; z-index: 3; height: 30px; background: var(--f-head); border-bottom: 1px solid var(--f-line); font-size: 12px; min-width: min-content; }
 .f-colw { position: relative; display: flex; min-width: 0; height: 100%; }
-.f-col { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; padding: 0 8px; border: 0; background: none; color: var(--f-muted); cursor: pointer; text-align: left; }
-.f-col:hover { background: var(--f-hover); }
-.f-col.on { color: var(--f-fg); font-weight: 600; }
-.f-col svg.f-ic { width: 14px; height: 14px; }
+.f-col { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; padding: 0 8px; color: var(--f-muted); font-weight: 500; letter-spacing: .01em; cursor: pointer; text-align: left; user-select: none; outline: none; }
+.f-col-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.f-col:hover { color: var(--f-fg); }
+.f-col.on { color: var(--f-fg); }
+.f-col:focus-visible { outline: 2px solid var(--f-accent); outline-offset: -2px; }
+.f-col svg.f-ic { width: 14px; height: 14px; flex: 0 0 auto; }
 .f-colw.c-size .f-col { justify-content: flex-end; }
-.f-grip { position: absolute; right: -4px; top: 3px; bottom: 3px; width: 8px; cursor: col-resize; z-index: 2; display: flex; justify-content: center; }
+.f-grip { position: absolute; right: -4px; top: 6px; bottom: 6px; width: 8px; cursor: col-resize; z-index: 2; display: flex; justify-content: center; outline: none; }
 .f-colw.c-size .f-grip { right: 0; }
 .f-grip::after { content: ""; width: 1px; background: var(--f-line); }
 .f-grip:hover::after, .f-grip:focus-visible::after { background: var(--f-accent); width: 2px; }
-.f-grip:focus-visible { outline: none; }
-.f-list { outline: none; min-height: calc(100% - 28px); padding-bottom: 12px; min-width: min-content; }
+.f-list { outline: none; min-height: calc(100% - 30px); padding-bottom: 12px; min-width: min-content; }
 .fdesk .f-list.tiles { min-height: 100%; }
 .fdesk .f-row { height: var(--f-row-h); border-radius: 4px; cursor: default; margin: 0 4px; }
 .fdesk .f-row .c { padding: 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; min-width: 0; }
@@ -125,6 +171,7 @@
 .f-list.tiles .f-name { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; text-align: center; }
 .f-empty { padding: 40px 16px; text-align: center; color: var(--f-muted); }
 .f-list .f-empty { grid-column: 1 / -1; }
+.f-fail:focus { outline: none; }
 .f-fail { color: var(--f-bad); display: flex; flex-direction: column; gap: 12px; align-items: center; }
 /* Statusleiste */
 .f-stat { flex: 0 0 auto; display: flex; justify-content: space-between; gap: 12px; padding: 5px 12px; border-top: 1px solid var(--f-line); font-size: 12px; color: var(--f-muted); }
@@ -135,7 +182,7 @@
 
 /* Handy: eigene Liste, untere Aktionsleiste */
 .fkit .f-bar { padding: 8px 0; row-gap: 6px; }
-.fkit .f-top { position: sticky; top: 0; z-index: 3; background: var(--m3-surface, var(--f-surface)); }
+.fkit .f-top { position: sticky; top: 0; z-index: 3; background: color-mix(in srgb, var(--m3-surface, var(--f-surface)) 55%, transparent); backdrop-filter: blur(14px); border-radius: var(--m3-shape-md, 12px); }
 .fkit .f-place { order: 1; flex: 1 1 0; min-width: 0; justify-content: flex-start; height: 40px; padding: 0 14px; display: inline-flex; align-items: center; gap: 8px; }
 .fkit .f-nav { order: 2; }
 .fkit .f-addr { order: 3; flex: 1 0 100%; }

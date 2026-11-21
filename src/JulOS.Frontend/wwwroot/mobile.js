@@ -5,9 +5,9 @@ import { GROUPS, rowsFor, aboutValues } from './settings.js';
 import { t, tp, tk, fmtNumber, fmtTime, fmtDay, getPref, LANG_CHOICES } from './i18n.js';
 import { looksLikeAddress } from './quick.js';
 import { tileKind, KIND_KEY, withProgram } from './terminal-programs.js';
-import { favouriteList, recentList, filterByFolder, groupByFolder, folderIconSvg, folderName, setFavorite } from './folders.js';
+import { favouriteList, recentList, filterByFolder, folderIconSvg, folderName, setFavorite } from './folders.js';
 import { hostCardHtml, menuOpen } from './hostview.js';
-import { connectionState, dotClass as hostDot, stateText } from './hosts.js';
+import { connectionState, dotClass as hostDot, stateText, hostSections, hostStatusText, toggleClosed, readClosed, writeClosed } from './hosts.js';
 import { barText, barPercent, barTone, chipText, panelHtml, finishNotice } from './hosttasks.js';
 import { jobFinal } from './hostactions.js';
 import { icon as huIcon, button as huButton } from './hostui.js';
@@ -513,15 +513,19 @@ function renderServices() {
 }
 function renderGrid() {
   const list = filtered(), L = connLabels(conns(), hosts());
-  const grouped = view.folder === 'all' && !view.q.trim() && folders().length;     // mit Ordnern: unter ihren Ueberschriften
   const none = !conns().length
     ? `<div class="m3-card"><div class="m3-empty"><span class="ei">${icon('desktop')}</span><span class="et">${t('mobile.noConnectionYet')}</span><p>${t('mobile.noConnectionHelp')}</p><button type="button" class="mb m3-btn filled m3-state" data-act="add">${icon('add')}${t('shell.newConnection')}</button></div></div>`
     : `<div class="m3-card"><div class="m3-empty"><span class="ei">${icon('search')}</span><span class="et">${t('mobile.noMatch')}</span><p>${t('mobile.noMatchHelp')}</p>${activeFilters().length || view.q ? `<button type="button" class="mb m3-btn tonal m3-state" data-act="resetfilters">${t('mobile.resetFilters')}</button>` : ''}</div></div>`;
-  $('#mGrid').innerHTML = grouped && list.length
-    ? groupByFolder(folders(), list).map((g) => `<h2 class="m3-sec">${g.folder ? folderIconSvg(g.folder.icon) : ''}<span>${esc(g.folder ? g.folder.name : t('mobile.noFolder'))}</span></h2><div class="grid2">${g.connections.map((c) => tileHtml(c, c.favorite, L)).join('')}</div>`).join('')
-    : list.length
-    ? `<div class="grid2">${list.map((c) => tileHtml(c, c.favorite, L)).join('')}</div>`
-    : none;
+  // Ein Abschnitt je Host: Kopf mit Zustand (online, Agent) zum Ein- und Ausklappen (pro Geraet gemerkt, bei einer Suche alles offen), darunter die Verbindungen und getrennt die Programme (Claude Code, Codex)
+  const closed = readClosed(localStorage), searching = !!view.q.trim();
+  const grid = (arr) => `<div class="grid2">${arr.map((c) => tileHtml(c, c.favorite, L)).join('')}</div>`;
+  const block = (g) => {
+    const open = searching || !closed.includes(g.key), n = g.plain.length + g.programs.length, name = g.host ? g.host.name : t('desktop.noHost');
+    const head = `<button type="button" class="mb m3-hsec-h m3-state" data-act="hostclose" data-key="${esc(g.key)}" aria-expanded="${open}" aria-label="${esc(name)}"><span class="chev">${icon('chevron_right')}</span>${g.host ? `<span class="hdot ${hostDot(g.host.online)}"></span>` : ''}<span class="ht"><b>${esc(name)}</b><small>${g.host ? esc(hostStatusText(g.host)) : ''}</small></span><span class="hc">${n}</span></button>`;
+    if (!open) return `<section class="m3-hsec closed">${head}</section>`;
+    return `<section class="m3-hsec">${head}${g.plain.length ? grid(g.plain) : ''}${g.programs.length ? `<h3 class="m3-subsec">${t('mobile.programs')}</h3>${grid(g.programs)}` : ''}</section>`;
+  };
+  $('#mGrid').innerHTML = list.length ? hostSections(hosts(), list, { hideEmpty: true }).map(block).join('') : none;
   // Sieht die Suche nach einer Adresse aus: schnell verbinden, ohne zu speichern
   if (looksLikeAddress(view.q)) $('#mGrid').insertAdjacentHTML('beforeend', `<button type="button" class="mb m3-btn tonal block m3-state" data-act="quickq" style="margin-top:var(--m3-sp-3)">${icon('bolt')}${esc(t('mobile.quickTo', { addr: view.q.trim() }))}</button>`);
 }
@@ -684,6 +688,7 @@ function onClick(e) {
   else if (act === 'mod') openModSheet(a.dataset.mod);
   else if (act === 'allacts') { view.allActs = !view.allActs; renderHome(); }
   else if (act === 'last') { const c = lastConnection(); if (c) ctx.connect(c); }
+  else if (act === 'hostclose') { writeClosed(localStorage, toggleClosed(readClosed(localStorage), a.dataset.key)); renderGrid(); }
   else if (act === 'filter') filterSheet();
   else if (act === 'rmfilter') { const k = a.dataset.key; if (k === 'kind') view.kind = 'all'; else if (k === 'folder') view.folder = 'all'; else view.host = ''; renderServices(); }
   else if (act === 'resetfilters') { view.kind = 'all'; view.folder = 'all'; view.host = ''; view.q = ''; const q = $('#mSearch'); if (q) q.value = ''; renderServices(); }

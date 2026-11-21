@@ -5,7 +5,7 @@ import { Sessions } from './sessions.js';
 import { looksLikeAddress } from './quick.js';
 import { filterByFolder, groupByFolder, recentList, folderIconSvg, folderName, setFavorite } from './folders.js';
 import { remoteMenuNames, remoteMenuItems, remoteMenuLabel, sessionMenu } from './desktop-remote.js';
-import { connectionState, dotClass, stateText, groupConnections } from './hosts.js';
+import { connectionState, dotClass, stateText, hostSections, hostStatusText, toggleClosed, readClosed, writeClosed } from './hosts.js';
 import { t, tk, fmtNumber, fmtDate, fmtTime, fmtDay, getPref, LANG_CHOICES } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
 import { tileKind } from './terminal-programs.js';
@@ -13,6 +13,7 @@ import { hostCardHtml, menuOpen } from './hostview.js';
 import { barText, barPercent, barTone, chipText, panelHtml, finishNotice } from './hosttasks.js';
 import { jobFinal } from './hostactions.js';
 import { loginUser, loginSaved } from './hostlogin.js';
+import { filesWindowSize } from './files-explorer.js';
 
 /* =====================================================================
  * Desktop-Oberflaeche (breite Bildschirme mit Maus): Menueleiste, Dock, Launcher, Home-Fenster und ein Fenster
@@ -977,23 +978,34 @@ function renderServices(m) {
   if (hostFilter.id && !hosts.some((h) => h.id === hostFilter.id)) hostFilter.id = '';
   if (!['all', 'fav', 'recent', 'none'].includes(folderFilter.id) && !folders.some((f) => f.id === folderFilter.id)) folderFilter.id = 'all';
   const shown = filterByFolder(conns, folderFilter.id, folders).filter((c) => !hostFilter.id || c.hostId === hostFilter.id);
-  const byFolder = folders.length > 0 && folderFilter.id === 'all' && (folderFilter.by || 'folder') === 'folder';
+  const byFolder = folders.length > 0 && folderFilter.id === 'all' && folderFilter.by === 'folder';       // Standard: ein Abschnitt je Host; nach Ordnern nur auf Wunsch
   // Die Auswahl des Hosts gibt es erst, wenn es mehr als einen gibt; die Gruppenkoepfe zeigen den Zustand des Hosts
   const chips = hosts.length > 1 ? `<div class="dk-chips" role="group" aria-label="${t('desktop.chooseHost')}">${[{ id: '', name: t('desktop.allHosts') }, ...hosts].map((h) => `<button type="button" class="dk-b dk-chip${h.id === hostFilter.id ? ' sel' : ''}" data-hostfilter="${ctx.esc(h.id)}" aria-pressed="${h.id === hostFilter.id}">${h.id ? `<span class="dk-sd ${dotClass(h.online)}"></span>` : ''}${ctx.esc(h.name)}</button>`).join('')}</div>` : '';
   // Ordner, Favoriten, zuletzt benutzt: die Auswahl gibt es, sobald es einen Ordner, einen Favoriten oder eine Benutzung gibt
   const fchip = (id, label, svg) => `<button type="button" class="dk-b dk-chip${folderFilter.id === id ? ' sel' : ''}" data-folderfilter="${ctx.esc(id)}" aria-pressed="${folderFilter.id === id}">${svg ? `<span class="dk-fi2">${svg}</span>` : ''}${ctx.esc(label)}</button>`;
   const fchips = folders.length || conns.some((c) => c.favorite || c.lastUsedAt)
     ? `<div class="dk-chips" role="group" aria-label="${t('desktop.folder')}">${fchip('all', t('desktop.all'), '')}${fchip('fav', t('desktop.favorites'), folderIconSvg('star'))}${fchip('recent', t('desktop.recent'), '')}${folders.map((f) => fchip(f.id, f.name, folderIconSvg(f.icon))).join('')}${folders.length ? fchip('none', t('desktop.noFolder'), '') : ''}`
-      + `${folders.length && hosts.length > 1 && folderFilter.id === 'all' ? `<button type="button" class="dk-b dk-chip" data-groupby="${byFolder ? 'host' : 'folder'}" title="${t('desktop.switchGrouping')}">${byFolder ? t('desktop.groupedByFolder') : t('desktop.groupedByHost')}</button>` : ''}</div>` : '';
-  const heads = (g) => (byFolder
-    ? `<h4 class="dk-gh">${g.folder ? `<span class="dk-fi2">${folderIconSvg(g.folder.icon)}</span>` : ''}${ctx.esc(g.folder ? g.folder.name : t('desktop.noFolder'))}</h4>`
-    : hosts.length > 1 ? `<h4 class="dk-gh"><span class="dk-sd ${dotClass(g.host && g.host.online)}"></span>${ctx.esc(g.host ? g.host.name : t('desktop.noHost'))} <span class="dk-sub">${g.host ? ctx.esc(stateText(g.host.online)) : ''}</span></h4>` : '');
-  const groups = byFolder ? groupByFolder(folders, shown) : groupConnections(hosts, shown).filter((g) => !hostFilter.id || (g.host && g.host.id === hostFilter.id));
+      + `${folders.length && folderFilter.id === 'all' ? `<button type="button" class="dk-b dk-chip" data-groupby="${byFolder ? 'host' : 'folder'}" title="${t('desktop.switchGrouping')}">${byFolder ? t('desktop.groupedByFolder') : t('desktop.groupedByHost')}</button>` : ''}</div>` : '';
+  const folderHead = (g) => `<h4 class="dk-gh">${g.folder ? `<span class="dk-fi2">${folderIconSvg(g.folder.icon)}</span>` : ''}${ctx.esc(g.folder ? g.folder.name : t('desktop.noFolder'))}</h4>`;
+  // Ein Abschnitt je Host: Kopf mit Zustand (online, Agent), darunter die Verbindungen und, getrennt, die Programme (Claude Code, Codex); ein Klick auf den Kopf klappt zu (pro Geraet gemerkt)
+  const closed = readClosed(localStorage);
+  const hostBlock = (g) => {
+    const open = !closed.includes(g.key), n = g.plain.length + g.programs.length;
+    const head = `<h4 class="dk-gh"><button type="button" class="dk-b dk-gh-t" data-hostclose="${ctx.esc(g.key)}" aria-expanded="${open}" aria-label="${ctx.esc((g.host ? g.host.name : t('desktop.noHost')) + ' – ' + t(open ? 'desktop.collapse' : 'desktop.expand'))}">${ic(open ? 'chev' : 'right')}${g.host ? `<span class="dk-sd ${dotClass(g.host.online)}"></span>` : ''}<b>${ctx.esc(g.host ? g.host.name : t('desktop.noHost'))}</b><span class="dk-sub">${g.host ? ctx.esc(hostStatusText(g.host)) : ''}</span><span class="dk-count">${n}</span></button></h4>`;
+    if (!open) return `<section class="dk-hsec closed">${head}</section>`;
+    const list = (arr) => `<div class="dk-list">${arr.map(serviceRow).join('')}</div>`;
+    const body = !n ? `<p class="dk-lead">${t('desktop.noConnectionsOnHost')}</p>`
+      : `${g.plain.length ? (g.programs.length ? `<h5 class="dk-ph">${t('desktop.services')}</h5>` : '') + list(g.plain) : ''}${g.programs.length ? `<h5 class="dk-ph">${t('desktop.programs')}</h5>` + list(g.programs) : ''}`;
+    return `<section class="dk-hsec">${head}${body}</section>`;
+  };
+  const filtered = folderFilter.id !== 'all' || !!hostFilter.id;
+  const sections = hostSections(hosts, shown, { hideEmpty: filtered }).filter((g) => !hostFilter.id || (g.host && g.host.id === hostFilter.id));
   m.innerHTML = `<h3 style="margin-top:14px">${t('desktop.services')} <button type="button" class="dk-b dk-btn" style="margin-left:auto" data-act="folders">${ic('folder')}${t('desktop.folder')}</button><button type="button" class="dk-b dk-btn pri" data-act="add">${ic('plus')}${t('desktop.addConnection')}</button></h3>
     ${fchips}${chips}
     ${conns.length ? '' : `<p class="dk-lead">${t('desktop.noConnections')}</p>`}
-    ${groups.map((g) => `${heads(g)}
-      <div class="dk-list">${g.connections.map(serviceRow).join('') || `<p class="dk-lead">${t('desktop.noConnectionsOnHost')}</p>`}</div>`).join('')}`;
+    ${byFolder
+    ? groupByFolder(folders, shown).map((g) => `${folderHead(g)}<div class="dk-list">${g.connections.map(serviceRow).join('') || `<p class="dk-lead">${t('desktop.noConnectionsOnHost')}</p>`}</div>`).join('')
+    : sections.map(hostBlock).join('')}`;
 }
 
 /** Hosts: Rechner und Server als Karten (Zustand, Art des Agenten, Kennzahlen, Hinweise, Verbindungen); hier wird auch der Agent je Host eingerichtet. Karte: hostview.js */
@@ -1063,7 +1075,7 @@ function renderSettings(m) {
   }
 }
 function onMainClick(e) {
-  const t = e.target.closest('[data-conn],[data-edit],[data-extra],[data-act],[data-go],[data-app],[data-dockmode],[data-scheme],[data-lang],[data-hostfilter],[data-folderfilter],[data-groupby],[data-fav],[data-hostedit],[data-hostagent],[data-hostinfo],[data-hcact]'); if (!t) return;
+  const t = e.target.closest('[data-conn],[data-edit],[data-extra],[data-act],[data-go],[data-app],[data-dockmode],[data-scheme],[data-lang],[data-hostfilter],[data-folderfilter],[data-groupby],[data-hostclose],[data-fav],[data-hostedit],[data-hostagent],[data-hostinfo],[data-hcact]'); if (!t) return;
   const find = (id) => ctx.state.connections.find((c) => c.id === id);
   const host = (id) => ctx.state.hosts.find((h) => h.id === id);
   if (t.dataset.lang) { if (t.dataset.lang !== getPref()) setLanguage(t.dataset.lang); }
@@ -1072,6 +1084,7 @@ function onMainClick(e) {
   else if (t.dataset.hostfilter !== undefined) { hostFilter.id = t.dataset.hostfilter; renderHome(); }
   else if (t.dataset.folderfilter !== undefined) { folderFilter.id = t.dataset.folderfilter; renderHome(); }
   else if (t.dataset.groupby) { folderFilter.by = t.dataset.groupby; renderHome(); }
+  else if (t.dataset.hostclose !== undefined) { const mm = wins.get('home')?.main, y = mm ? mm.scrollTop : 0; writeClosed(localStorage, toggleClosed(readClosed(localStorage), t.dataset.hostclose)); renderHome(); if (mm) mm.scrollTop = y; }
   else if (t.dataset.fav) { const c = find(t.dataset.fav); c && setFavorite(ctx.api, c, !c.favorite).then(() => renderHome(), (err) => notify(serverMsg(err.message))); }
   else if (t.dataset.act === 'folders') ctx.folders();
   else if (t.dataset.hostedit || t.dataset.hostagent) { const h = host(t.dataset.hostedit || t.dataset.hostagent); h && ctx.editHost(h); }
@@ -1105,7 +1118,7 @@ async function openFiles(path, focusSearch) {
   if (old) { old.minimized ? restoreWin(old) : focusWin(old); if (path !== undefined && old.files) old.files.go(path); if (focusSearch) $('.f-search input', old.el)?.focus(); return old; }
   const a = appById('files');
   const w = createWindow({ id: 'files', title: t('desktop.files'), icon: `<span class="dk-ti" style="--g1:${a.g[0]};--g2:${a.g[1]};width:22px;height:22px;border-radius:7px">${ic(a.ic)}</span>`,
-    rect: defaultRect('files', 860, 540, 40, 24), minW: 560, minH: 340, cls: 'dk-files' });
+    rect: (() => { const v = viewport(), sz = filesWindowSize({ w: v.w - 40, h: v.h - BAR_H - dockReserve() }); return defaultRect('files', sz.w, sz.h, 20, 12); })(), minW: 560, minH: 340, cls: 'dk-files' });   // 70 % der Flaeche, mindestens 860 x 540; eine gemerkte Groesse (rect.files) gilt weiter
   w.body.innerHTML = `<div class="dk-fempty">${t('common.loading')}</div>`;
   try {
     const m = await import('./desktop-files.js');

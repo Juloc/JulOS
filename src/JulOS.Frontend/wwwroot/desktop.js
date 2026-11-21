@@ -14,6 +14,7 @@ import { barText, barPercent, barTone, chipText, panelHtml, finishNotice } from 
 import { jobFinal } from './hostactions.js';
 import { loginUser, loginSaved } from './hostlogin.js';
 import { filesWindowSize } from './files-explorer.js';
+import { setDialogHost } from './desktop-window.js';
 
 /* =====================================================================
  * Desktop-Oberflaeche (breite Bildschirme mit Maus): Menueleiste, Dock, Launcher, Home-Fenster und ein Fenster
@@ -258,15 +259,19 @@ function createWindow(opts) {
   const extra = el('div', 'dk-wx'); if (opts.head) extra.appendChild(opts.head); head.appendChild(extra);
   const ctl = el('div', 'dk-wc');
   const bMin = btn('', ic('minus'), t('desktop.minimize')), bMax = btn('', ic('square'), t('desktop.maximize')), bCl = btn('dk-cl', ic('x'), t('common.close'));
-  ctl.append(bMin, bMax, bCl); head.appendChild(ctl);
+  if (opts.dialog) ctl.append(bCl); else ctl.append(bMin, bMax, bCl);        // ein Dialog-Fenster kennt weder Minimieren noch Maximieren (und keinen Dock-Eintrag)
+  head.appendChild(ctl);
   const body = el('div', 'dk-wb');
   e.append(head, body);
-  for (const d of ['n', 's', 'w', 'e', 'nw', 'ne', 'sw', 'se']) { const z = el('div', 'dk-rz ' + d); z.dataset.dir = d; e.appendChild(z); }
+  if (!opts.dialog || opts.resizable) for (const d of ['n', 's', 'w', 'e', 'nw', 'ne', 'sw', 'se']) { const z = el('div', 'dk-rz ' + d); z.dataset.dir = d; e.appendChild(z); }
+  w.dialog = !!opts.dialog; w.owner = opts.owner || null;
+  if (opts.dialog) e.tabIndex = -1;
   w.el = e; w.body = body; w.head = head; w.bMax = bMax;
-  const saved = ls.get('rect.' + (opts.rectKey || opts.id), null);
+  const saved = opts.dialog ? null : ls.get('rect.' + (opts.rectKey || opts.id), null);
   const rect = fitRect(saved || opts.rect, opts.minW || 320, opts.minH || 220);
   if (opts.cascade) { rect.x += opts.cascade; rect.y += opts.cascade; Object.assign(rect, fitRect(rect, opts.minW || 320, opts.minH || 220)); }
-  Object.assign(e.style, { left: rect.x + 'px', top: rect.y + 'px', width: rect.w + 'px', height: rect.h + 'px' });
+  Object.assign(e.style, { left: rect.x + 'px', top: rect.y + 'px', width: rect.w + 'px', height: opts.autoHeight ? 'auto' : rect.h + 'px' });
+  if (opts.autoHeight) e.style.maxHeight = (viewport().h - BAR_H - dockReserve()) + 'px';
   root.appendChild(e); wins.set(opts.id, w);
   // Rahmen des neuen Fensters zeigt die Animation nur einmal; danach darf keine Animation die Transform-Matrix halten (Maus-Koordinaten)
   e.addEventListener('animationend', (ev) => { if (ev.target === e) e.style.animation = 'none'; });
@@ -274,19 +279,31 @@ function createWindow(opts) {
   e.addEventListener('pointerdown', () => focusWin(w), true);
   bMin.addEventListener('click', () => minimizeWin(w));
   bMax.addEventListener('click', () => toggleMax(w));
-  bCl.addEventListener('click', () => closeWin(w));
-  head.addEventListener('dblclick', (ev) => { if (!ev.target.closest('button, input')) toggleMax(w); });
+  bCl.addEventListener('click', () => { if (!w.dialog) closeWin(w); else if (!w.opts.onRequestClose || w.opts.onRequestClose()) closeWin(w, true); });   // Dialog: Schliessen ist eine Abbruch-Anfrage, die der Dialog ablehnen darf
+  if (!opts.dialog) head.addEventListener('dblclick', (ev) => { if (!ev.target.closest('button, input')) toggleMax(w); });
   wireDrag(w, head); wireResize(w);
   focusWin(w);
   renderDock();
   return w;
 }
 
+/** Das Fenster ganz oben in der Kette "gehoert zu" (ein Dialog-Fenster nennt das Fenster, das es geoeffnet hat) */
+function rootOf(w) { while (w.owner && wins.has(w.owner.id)) w = w.owner; return w; }
+/** Die Dialog-Fenster eines Fensters (und deren Dialoge), in der Reihenfolge des Anlegens */
+const descendants = (x) => [...wins.values()].filter((o) => o.owner === x).flatMap((o) => [o, ...descendants(o)]);
+/** Stapelfolge einer Kette: der Eigentuemer, dann seine Dialoge; der Zweig mit dem Fenster, das nach vorn kommt, jeweils zuletzt (ein Fenster liegt nie unter seinem eigenen Dialog) */
+function stackOrder(x, branch) {
+  const kids = [...wins.values()].filter((o) => o.owner === x && !o.minimized).sort((a, b) => (branch.has(a) ? 1 : 0) - (branch.has(b) ? 1 : 0));
+  return [x, ...kids.flatMap((k) => stackOrder(k, branch))];
+}
 function focusWin(w) {
   if (w.minimized) return;
-  w.el.style.zIndex = ++zTop;
+  const branch = new Set(); for (let o = w; o; o = o.owner && wins.has(o.owner.id) ? o.owner : null) branch.add(o);
+  for (const o of stackOrder(rootOf(w), branch)) o.el.style.zIndex = ++zTop;
   for (const o of wins.values()) o.el.classList.toggle('active', o === w);
   if (w.opts.onFocus) w.opts.onFocus(w);       // Sitzungsfenster: die Sitzung wird die aktive (Tasten gehen an sie)
+  // Ein Dialog-Fenster sperrt nichts, nimmt aber den Fokus in sich auf, damit Tab und Escape dort wirken (Klick auf die Titelleiste eingeschlossen)
+  if (w.dialog && !w.el.contains(document.activeElement)) w.el.focus({ preventScroll: true });
   renderBar();
 }
 function minimizeWin(w) {
@@ -302,12 +319,17 @@ function toggleMax(w) {
   w.maximized = !w.maximized; w.el.classList.toggle('max', w.maximized);
   w.bMax.innerHTML = ic(w.maximized ? 'restore' : 'square'); w.bMax.setAttribute('aria-label', w.maximized ? t('desktop.restore') : t('desktop.maximize'));
 }
-function closeWin(w) {
+/** Schliesst ein Fenster samt seinen Dialog-Fenstern. Ohne force fragt jeder Dialog erst (onRequestClose: false = bleibt offen, zum Beispiel der Editor mit ungespeicherten Aenderungen); dann bleibt auch das Fenster offen. */
+function closeWin(w, force = false) {
   if (!wins.has(w.id)) return;
+  for (const k of [...wins.values()].filter((o) => o.owner === w)) {
+    if (!force && k.opts.onRequestClose && !k.opts.onRequestClose()) { focusWin([k, ...descendants(k)].sort((a, b) => a.el.style.zIndex - b.el.style.zIndex).pop()); return; }     // der Dialog hat abgelehnt (zum Beispiel eine Rueckfrage geoeffnet): das vorderste Fenster seines Zweigs zeigen
+    closeWin(k, true);
+  }
   w.opts.onClose && w.opts.onClose(w);
   w.el.remove(); wins.delete(w.id); renderDock(); renderBar();
 }
-const saveRect = (w) => { if (!w.maximized) ls.set('rect.' + w.id, { x: w.el.offsetLeft, y: w.el.offsetTop, w: w.el.offsetWidth, h: w.el.offsetHeight }); };
+const saveRect = (w) => { if (!w.maximized && !w.dialog) ls.set('rect.' + w.id, { x: w.el.offsetLeft, y: w.el.offsetTop, w: w.el.offsetWidth, h: w.el.offsetHeight }); };
 
 function wireDrag(w, head) {
   head.addEventListener('pointerdown', (ev) => {
@@ -352,9 +374,38 @@ window.addEventListener('resize', () => {
   for (const w of wins.values()) {
     if (w.maximized) continue;
     const r = fitRect({ x: w.el.offsetLeft, y: w.el.offsetTop, w: w.el.offsetWidth, h: w.el.offsetHeight }, w.opts.minW || 320, w.opts.minH || 220);
-    Object.assign(w.el.style, { left: r.x + 'px', top: r.y + 'px', width: r.w + 'px', height: r.h + 'px' });
+    Object.assign(w.el.style, { left: r.x + 'px', top: r.y + 'px', width: r.w + 'px' });
+    if (w.opts.autoHeight) w.el.style.maxHeight = (viewport().h - BAR_H - dockReserve()) + 'px'; else w.el.style.height = r.h + 'px';
   }
 });
+
+/* ---------- Fenster-Fabrik fuer Dialoge (desktop-window.js, docs/FILES-EXPLORER.md): ein Fenster derselben Art, aber ohne Dock-Eintrag, Minimieren und Maximieren ---------- */
+let dlgSeq = 0;
+/**
+ * Legt ein Dialog-Fenster an: mittig ueber dem Fenster, das es geoeffnet hat (owner: ein Element darin; sonst das Fenster mit dem Fokus oder das vordere), leicht versetzt bei mehreren.
+ * Hoehe 0 = so hoch wie der Inhalt. onRequestClose(): darf das Fenster zu? (Schliessen-Taste und Schliessen des Eigentuemers fragen so); onClose(): es ist zu. Gibt null zurueck, solange der Desktop nicht steht.
+ */
+function dialogFrame({ title, w = 480, h = 0, resizable = false, owner = null, cls = '', onClose, onRequestClose }) {
+  if (!root) return null;
+  const from = owner || document.activeElement;
+  const front = [...wins.values()].filter((o) => !o.minimized).sort((a, b) => b.el.style.zIndex - a.el.style.zIndex)[0] || null;
+  const ownerWin = [...wins.values()].find((o) => from && from.nodeType && o.el.contains(from)) || (owner ? null : [...wins.values()].find((o) => o.el.classList.contains('active'))) || front;
+  const n = [...wins.values()].filter((o) => o.dialog && o.owner === ownerWin).length;
+  const v = viewport();
+  w = Math.min(w, v.w - 40); if (h) h = Math.min(h, v.h - BAR_H - dockReserve());
+  const cx = ownerWin ? ownerWin.el.offsetLeft + ownerWin.el.offsetWidth / 2 : v.w / 2, cy = ownerWin ? ownerWin.el.offsetTop + ownerWin.el.offsetHeight / 2 : (BAR_H + v.h) / 2;
+  const win = createWindow({ id: 'dlg:' + (++dlgSeq), title, dialog: true, resizable, owner: ownerWin, cls: 'dk-dlgwin ' + cls, rect: { x: cx - w / 2, y: cy - (h || 260) / 2, w, h: h || 260 },
+    minW: resizable ? 360 : 0, minH: resizable ? 240 : 0, autoHeight: !h, onClose, onRequestClose });
+  const label = win.head.querySelector('.dk-wt span');
+  return {
+    el: win.el, body: win.body,
+    setTitle(x) { if (typeof x === 'string') label.textContent = x; else label.replaceChildren(x); win.el.setAttribute('aria-label', label.textContent); },
+    /** Nach dem Einfuellen des Inhalts: mittig ueber den Eigentuemer setzen (erst jetzt ist die Hoehe bekannt), jedes weitere Fenster etwas versetzt */
+    place() { const r = fitRect({ x: cx - win.el.offsetWidth / 2 + 26 * n, y: cy - win.el.offsetHeight / 2 + 26 * n, w: win.el.offsetWidth, h: win.el.offsetHeight }, 0, 0); Object.assign(win.el.style, { left: r.x + 'px', top: r.y + 'px' }); },
+    focus: () => focusWin(win),
+    close: () => closeWin(win, true),
+  };
+}
 
 /* =====================================================================
  *  Menueleiste
@@ -364,7 +415,7 @@ const MENU_LABELS = { Desktop: tk('desktop.desktop'), Hosts: tk('desktop.hosts')
 const MENUS = () => ({
   Desktop: [
     { label: t('desktop.openStart'), icon: 'home', run: () => openHome() },
-    { label: t('desktop.minimizeAll'), icon: 'minus', run: () => wins.forEach(minimizeWin) },
+    { label: t('desktop.minimizeAll'), icon: 'minus', run: () => wins.forEach((w) => !w.dialog && minimizeWin(w)) },
     { label: t('desktop.showAll'), icon: 'restore', run: () => wins.forEach((w) => w.minimized && restoreWin(w)) },
     { label: t('desktop.sessionsSideBySide'), icon: 'grid', run: () => tileSessions(), disabled: sessWins.size < 2 },
     { label: t('desktop.sessionsOverlap'), icon: 'restore', run: () => cascadeSessions(), disabled: sessWins.size < 2 },
@@ -1251,10 +1302,11 @@ export function isRunning(c) { return Sessions.find(c.id).length > 0; }
  * ===================================================================== */
 export async function init(context) {
   ctx = context;
-  await new Promise((done) => {
-    const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'desktop.css'; l.onload = l.onerror = done; document.head.appendChild(l);
-  });
+  await Promise.all(['desktop.css', 'dialogwin.css'].map((href) => new Promise((done) => {
+    const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; l.onload = l.onerror = done; document.head.appendChild(l);
+  })));
   document.documentElement.classList.add('desktop');
+  setDialogHost(dialogFrame);
   // Die Wahl Hell / Dunkel / System (auch vom Handy oder vom Server) steht in den Einstellungen: nur die Knoepfe nachziehen, der Fokus bleibt
   document.addEventListener('julos:scheme', () => {
     const cur = getScheme();
@@ -1302,7 +1354,7 @@ export function hostInfoChanged() {
 export function reset() {
   if (!root) return;
   closeMenu(); closeLauncher();
-  for (const w of [...wins.values()]) { w.opts.onClose = null; closeWin(w); }
+  for (const w of [...wins.values()]) { if (!w.dialog) w.opts.onClose = null; closeWin(w, true); }     // ein Dialog-Fenster meldet beim Schliessen "abgebrochen" (sein Versprechen endet)
   sessWins.clear(); taskWins.clear(); renderTaskChip();
   modules = { caddy: false, ddns: false, services: false }; applyModules();
   heimCtl?.destroy(); heimCtl = null; import('./heimnetz.js').then((h) => h.resetHeimnetz());

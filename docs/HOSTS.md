@@ -125,7 +125,7 @@ One card for phone and desktop (`hostview.js`, styles `hostui.css`, building blo
 | Actions | the one calm main action **Details**; the menu has **Paketlisten aktualisieren**, **Updates installieren**, **Neu starten**, **Ausschalten**, **Logs ansehen** (greyed out with the reason and the way to unlock when the level, the pause or the local word forbids it; each goes through the confirmed flow), then **Agent verwalten** and **Bearbeiten** |
 | Empty | a host without an agent explains what the agent brings and offers **Agent einrichten**; an agent that reports no capabilities (for example an older desktop agent) says "Dieser Agent liefert noch keine Systemwerte" with the button **Agent aktualisieren / einrichten**; a disconnected agent says that values return when it reports in. Which sections show data follows the `caps` the agent reports, not its platform name |
 
-Pictures (placeholder names and addresses, light and dark, phone and desktop, before and after): [host-ui-screens](host-ui-screens/).
+
 
 The numbers come from the cards' own memory (at most one read per host every 55 seconds, only while a card is drawn); nothing here polls the server more than before.
 

@@ -1,3 +1,5 @@
+> Archive: this plan is done (phone interface, 0.11.0). Kept as a record; the living reference is `docs/ui-kit.html`.
+
 # Phone interface: what was hard to understand, what was done
 
 Status 2026-11-19: the audit and the plan were turned into six small steps (one commit each, see the end). The phone shell (`?phone`, 375 to 430 px) and, where the same parts apply,
@@ -10,7 +12,6 @@ python3 -m http.server 8123 --bind 127.0.0.1
 # then http://127.0.0.1:8123/docs/ui-kit.html in the repo root
 ```
 
-Screenshots before and after each step are in [mobile-ux-screens/](mobile-ux-screens/) (412 x 915 phone, 1280 x 800 desktop, light and dark; file names start with the step number, `0-before-*` is the state before).
 
 ## What was seen (the audit)
 
@@ -50,7 +51,7 @@ Screenshots before and after each step are in [mobile-ux-screens/](mobile-ux-scr
 
 ## Desktop interface: windows, size and the shared parts
 
-The Start window (`Start`, `Hosts`, `Einstellungen`, ...) opens at about 82 % of the screen: at least 960 x 640, at most 1280 x 860 (`homeSize` in `desktop.js`); a size you drag it to is remembered. **Host details are not a dialog**: on the desktop they are a view of the Start window (`nav.view = 'host'`, history and arrow back like the other views) with the sections as a side list; on the phone they are their own page (`#pg-host`, a hidden destination of the shell: the bar keeps "Hosts" selected, the back arrow goes one step back in the history) with the sections as tabs that stay under the bar. Only the confirmation of an action stays a small sheet. The two share `hostui.css`, which takes its colours from the surface it sits on (`--m3-*` on the phone, the contrast-checked `--dk-*` on the desktop), so light and dark follow the scheme without its own colour choices; body text is never smaller than 13 px. Before and after pictures: `docs/host-ui-screens/`.
+The Start window (`Start`, `Hosts`, `Einstellungen`, ...) opens at about 82 % of the screen: at least 960 x 640, at most 1280 x 860 (`homeSize` in `desktop.js`); a size you drag it to is remembered. **Host details are not a dialog**: on the desktop they are a view of the Start window (`nav.view = 'host'`, history and arrow back like the other views) with the sections as a side list; on the phone they are their own page (`#pg-host`, a hidden destination of the shell: the bar keeps "Hosts" selected, the back arrow goes one step back in the history) with the sections as tabs that stay under the bar. Only the confirmation of an action stays a small sheet. The two share `hostui.css`, which takes its colours from the surface it sits on (`--m3-*` on the phone, the contrast-checked `--dk-*` on the desktop), so light and dark follow the scheme without its own colour choices; body text is never smaller than 13 px.
 
 ## Not verified (no real device)
 

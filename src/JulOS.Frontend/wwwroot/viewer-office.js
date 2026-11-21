@@ -177,6 +177,8 @@ export function frameDoc({ css, body, zoom = 1 }) {
   const z = Math.min(8, Math.max(0.1, Number(zoom) || 1));
   return '<!doctype html><html><head><meta charset="utf-8">'
     + `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">`
-    + `<style>html{background:#7d7f86}body{margin:0}.docx-wrapper{zoom:${z};align-items:center;align-items:safe center}</style>`
-    + '<style>' + cleanCss(css) + '</style></head><body>' + body + '</body></html>';
+    + '<style>' + cleanCss(css) + '</style>'
+    // zuletzt, damit es die Stile des Dokuments uebertrifft; Seiten mit auto-Rand: mittig, und bei Zoom ueber die Breite erreichbar (zentrierendes align-items schneidet die linke Seite ab)
+    + `<style>html{background:#7d7f86}body{margin:0}html .docx-wrapper{zoom:${z};align-items:flex-start}html .docx-wrapper>section.docx{margin-left:auto;margin-right:auto;flex:none}</style>`
+    + '</head><body>' + body + '</body></html>';
 }

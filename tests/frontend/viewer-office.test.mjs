@@ -143,7 +143,7 @@ test('Word-Ausgabe: CSS und Rahmendokument ohne Ausbruch, Nachladen oder Skript'
   assert.ok(doc.indexOf('Content-Security-Policy') < doc.indexOf('<style>') && doc.indexOf('Content-Security-Policy') < doc.indexOf('<body>'), 'die CSP steht vor allem anderen');
   assert.match(doc, /default-src 'none'; img-src data:; style-src 'unsafe-inline'/);
   assert.ok(!/script-src|connect-src/.test(doc.split('</head>')[0].replace(/default-src 'none'/, '')));
-  assert.match(doc, /\.docx-wrapper\{zoom:0\.5;/);
+  assert.match(doc, /\.docx-wrapper\{zoom:0\.5;align-items:flex-start\}/);
   assert.match(frameDoc({ css: '', body: '', zoom: 'abc' }), /zoom:1;/);
   assert.match(frameDoc({ css: '', body: '', zoom: 1000 }), /zoom:8;/);
   assert.equal(Math.round(cssLengthPx('595.3pt')), 794);

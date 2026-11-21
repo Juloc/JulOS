@@ -74,7 +74,7 @@ dialog.m3sheet.f-viewer .fv-btn { min-width: 44px; height: 44px; }
 .fv-sheet { display: block; }
 .fv-table { border-collapse: separate; border-spacing: 0; font-size: 13px; font-variant-numeric: tabular-nums; }
 .fv-table th, .fv-table td { padding: 3px 8px; border-right: 1px solid var(--fv-line); border-bottom: 1px solid var(--fv-line); background: var(--m3-surface, var(--dk-panel, transparent)); }
-.fv-table td { max-width: 28em; white-space: pre-wrap; overflow-wrap: anywhere; vertical-align: top; }
+.fv-table td { max-width: 32em; white-space: pre; overflow: hidden; text-overflow: ellipsis; vertical-align: top; }
 .fv-table td.num { text-align: right; }
 .fv-table thead th { position: sticky; top: 0; z-index: 2; font-weight: 600; color: var(--fv-muted); background: var(--fv-stage); text-align: center; }
 .fv-table .fv-rowno { position: sticky; left: 0; z-index: 1; min-width: 2.6em; font-weight: 500; color: var(--fv-muted); background: var(--fv-stage); text-align: right; }

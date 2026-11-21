@@ -490,7 +490,7 @@ function createViewer(first) {
         for (const end = Math.min(sh.rows.length, at + 300); at < end; at++) {
           const tr = h('tr', {}, h('th', { scope: 'row', class: 'fv-rowno', text: String(at + 1) }));
           const row = sh.rows[at];
-          for (let c = 0; c < cols; c++) { const v = row[c]; tr.append(h('td', { class: typeof v === 'number' ? 'num' : '', text: fmtCell(v, lang) })); }
+          for (let c = 0; c < cols; c++) { const v = row[c], text = fmtCell(v, lang); tr.append(h('td', { class: typeof v === 'number' ? 'num' : '', title: text.length > 40 ? text : undefined, text })); }
           tbody.append(tr);
         }
         if (at < sh.rows.length) requestAnimationFrame(chunk);

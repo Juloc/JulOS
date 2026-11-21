@@ -150,6 +150,7 @@ export const ERR_KEYS = {
   invalid_name: tk('files.err.invalid_name'), invalid_path: tk('files.err.invalid_path'), invalid_request: tk('files.err.invalid_request'),
   not_text: tk('files.err.not_text'), write_off: tk('files.err.write_off'), confirmation_invalid: tk('files.err.confirmation_invalid'), confirmation_expired: tk('files.err.confirmation_expired'),
   confirmation_mismatch: tk('files.err.confirmation_mismatch'), confirm_required: tk('files.err.confirm_required'), typed_mismatch: tk('files.err.typed_mismatch'), too_many_pending: tk('files.err.too_many_pending'), audit_failed: tk('files.err.audit_failed'),
+  preview_type: tk('files.err.preview_type'), preview_content: tk('files.err.preview_content'), preview_too_large: tk('files.err.preview_too_large'), preview_root_type: tk('files.err.preview_root_type'),
   connection_not_found: tk('files.err.connection_not_found'), not_ssh: tk('files.err.not_ssh'), target_not_allowed: tk('files.err.target_not_allowed'),
   password_required: tk('files.err.password_required'), password_unreadable: tk('files.err.password_unreadable'), logon_failed: tk('files.err.logon_failed'),
   unreachable: tk('files.err.unreachable'), timeout: tk('files.err.timeout'), sftp_unavailable: tk('files.err.sftp_unavailable'),

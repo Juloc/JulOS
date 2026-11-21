@@ -6,6 +6,8 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+## [0.21.0] - 2026-11-21
+
 ### Neu
 - **„Dateien schreiben“ ist ein Schalter in der App** (Einstellungen, Sicherheit; [docs/FILES.md](docs/FILES.md#switching-writing-on)): Er steht in der Datenbank (`security.filesWrite`), gilt **ohne Neustart**, wird nur mit frischem Authenticator-Code geändert und steht im Sicherheits-Verlauf. `JULOS_FILES_WRITE=on` bleibt als **Rückfall**, solange die App keinen Wert hat („Auf Vorgabe zurücksetzen“ vergisst den Wert der App); der Wert der App gilt in beide Richtungen. Jede schreibende Aktion verlangt weiter die Bestätigung, der Root-Ort seine eigenen Schlüssel, der Pausenschalter bleibt.
 - **Ist Schreiben aus, sagt es die Dateien-App**, statt Tasten stumm auszugrauen: ein Hinweis über der Liste mit der Taste „Zum Schalter“ (öffnet die Einstellungen an der richtigen Stelle), und ein Klick auf Neu, Hochladen, Umbenennen, Löschen, Kopieren oder Ablegen erklärt es in einem Dialog.

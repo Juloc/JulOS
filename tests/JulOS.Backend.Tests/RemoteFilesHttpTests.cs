@@ -1142,6 +1142,35 @@ public sealed class RemoteFilesHttpTests
     }
 
     [Fact]
+    public async Task Word_Excel_and_csv_come_as_an_unknown_type_with_the_locked_down_headers_and_only_if_the_start_matches()
+    {
+        await using var db = await TestDb.CreateAsync();
+        var zip = Blob([0x50, 0x4B, 0x03, 0x04, 0x14, 0, 0, 0], 2000);
+        var (app, api, c, host, _) = await OpenHost(db, h => h.File("/pub/brief.docx", zip).File("/pub/Zahlen.XLSX", zip).File("/pub/liste.csv", "<script>alert(1)</script>;b\n1;2\n")
+            .File("/pub/alt.docx", Blob([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1], 500)).File("/pub/seite.xlsx", "<html><script>alert(1)</script></html>").File("/pub/bin.csv", Blob([0x89, 0x50, 0x4E, 0x47, 0, 0], 500))
+            .File("/pub/alt.doc", zip).File("/pub/alt.xls", zip).File("/pub/makro.xlsm", zip));
+        await using var guard = app;
+        var ct = TestContext.Current.CancellationToken;
+        foreach (var name in new[] { "brief.docx", "Zahlen.XLSX", "liste.csv" })
+        {
+            var r = await api.Raw(api.Authed(HttpMethod.Get, PreviewUrl(c, "/pub/" + name)));
+            Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+            Assert.Equal("application/octet-stream", r.Content.Headers.ContentType!.MediaType);           // nie ein Dokument, auch ein csv mit HTML darin nicht
+            Assert.Equal("nosniff", r.Headers.GetValues("X-Content-Type-Options").Single());
+            Assert.StartsWith("sandbox;", r.Headers.GetValues("Content-Security-Policy").Single());
+            Assert.Equal("no-store", r.Headers.CacheControl!.ToString());
+            Assert.Equal(name, r.Content.Headers.ContentDisposition!.FileName);
+            Assert.Equal(name == "liste.csv" ? 32 : 2000, (await r.Content.ReadAsByteArrayAsync(ct)).Length);
+        }
+        // falscher Anfang (altes Office-Dokument unter neuer Endung, HTML als xlsx, Binaeres als csv): nicht ausgeliefert; alte und Makro-Endungen stehen nicht auf der Liste
+        foreach (var bad in new[] { "alt.docx", "seite.xlsx", "bin.csv" })
+            Assert.Equal((HttpStatusCode.UnsupportedMediaType, "preview_content"), await Refusal(await api.Raw(api.Authed(HttpMethod.Get, PreviewUrl(c, "/pub/" + bad)))));
+        foreach (var bad in new[] { "alt.doc", "alt.xls", "makro.xlsm" })
+            Assert.Equal((HttpStatusCode.UnsupportedMediaType, "preview_type"), await Refusal(await api.Raw(api.Authed(HttpMethod.Get, PreviewUrl(c, "/pub/" + bad)))));
+        Assert.Equal(0, host.OpenStreams);
+    }
+
+    [Fact]
     public async Task A_preview_answers_ranges_with_206_by_seeking_the_host_stream_and_never_beyond_the_file()
     {
         await using var db = await TestDb.CreateAsync();

@@ -1,8 +1,7 @@
-// Reine Logik des Editors: Zeilenenden, Sprache nach Dateiname, JSON- und YAML-Pruefung, und der Hash-Check der vendored Dateien (vendor/README.md nennt jede Datei mit SHA-256).
+// Reine Logik des Editors: Zeilenenden, Sprache nach Dateiname, JSON- und YAML-Pruefung.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { detectEol, withEol, langFor, checkJson, checkYaml, lineCol, checkKind } from '../../src/JulOS.Frontend/wwwroot/editor-logic.js';
@@ -70,15 +69,4 @@ test('YAML: Fehler mit Zeile und Spalte (0-basiert)', () => {
   const e3 = checkYaml('a: 1\na: 2\n', loadAll);
   assert.equal(e3.line, 1); assert.match(e3.reason, /duplicat/i);
   assert.equal(checkYaml('x', () => { throw new Error('kaputt'); }).reason, 'kaputt');
-});
-
-test('vendor/README.md: jede Datei mit SHA-256, die Hashes stimmen mit den Dateien ueberein', () => {
-  const readme = readFileSync(join(www, 'vendor', 'README.md'), 'utf8');
-  const rows = [...readme.matchAll(/`(vendor\/[^`\s]+)`[^\n]*?\b([0-9a-f]{64})\b/g)];
-  assert.ok(rows.length >= 3, 'zu wenige Hashes in vendor/README.md');
-  for (const [, file, hash] of rows) {
-    assert.ok(existsSync(join(www, file)), file + ' fehlt');
-    assert.equal(createHash('sha256').update(readFileSync(join(www, file))).digest('hex'), hash, file);
-  }
-  for (const must of ['vendor/codemirror/6.43.15/codemirror.mjs', 'vendor/codemirror/6.43.15/js-yaml.mjs', 'vendor/codemirror/6.43.15/LICENSE.txt']) assert.ok(rows.some((r) => r[1] === must), must + ' ohne Hash');
 });

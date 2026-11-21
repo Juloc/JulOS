@@ -908,6 +908,8 @@ export default {
   "files.upload.sentence": "{n} nach {host} hochladen, in den Ordner {dir}.",
   "files.upload.title": "Hochladen",
   "files.writeOff": "Auf diesem Server ist das Schreiben aus (JULOS_FILES_WRITE). Du kannst ansehen und herunterladen.",
+  "files.addr.cancel": "Eingabe verwerfen (Esc)",
+  "files.addr.hidden": "Verdeckte Ebenen",
   "files.addr.label": "Pfad eingeben",
   "files.clip.copy.one": "{n} Eintrag kopiert. Wähle einen Ordner und füge ein.",
   "files.clip.copy.other": "{n} Einträge kopiert. Wähle einen Ordner und füge ein.",

@@ -908,6 +908,8 @@ export default {
   "files.upload.sentence": "Upload {n} to {host}, into the folder {dir}.",
   "files.upload.title": "Upload",
   "files.writeOff": "Writing is off on this server (JULOS_FILES_WRITE). You can view and download.",
+  "files.addr.cancel": "Discard (Esc)",
+  "files.addr.hidden": "Hidden levels",
   "files.addr.label": "Type a path",
   "files.clip.copy.one": "{n} item copied. Pick a folder and paste.",
   "files.clip.copy.other": "{n} items copied. Pick a folder and paste.",

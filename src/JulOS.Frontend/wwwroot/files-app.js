@@ -66,7 +66,9 @@ export function mountFiles(box, deps) {
   const btnNew = tl('add', t('files.menu.new'), () => newMenu(btnNew), { 'aria-haspopup': 'menu' });
   const btnUpload = tl('upload', t('files.upload.action'), () => fileInput.click());
   const btnHist = tb('history', t('files.history'), () => showHistory());
-  const bar = h('div', { class: 'f-bar' }, h('div', { class: 'f-nav' }, kit ? null : [btnSide, btnBack, btnFwd], btnUp, btnRef), kit ? placeBtn : null, addr, searchBox, h('div', { class: 'f-acts' }, btnView, btnNew, btnUpload, btnHist));
+  const btnMore = tb('dots', t('files.menu.more'), () => moreMenu(btnMore), { 'aria-haspopup': 'menu' });     // Desktop, schmales Fenster: Aktualisieren, Ansicht, Neu, Hochladen und Verlauf in einem Menue
+  btnMore.classList.add('f-more'); btnRef.classList.add('f-ref');
+  const bar = h('div', { class: 'f-bar' }, h('div', { class: 'f-nav' }, kit ? null : [btnSide, btnBack, btnFwd], btnUp, btnRef), kit ? placeBtn : null, addr, searchBox, h('div', { class: 'f-acts' }, btnView, btnNew, btnUpload, btnHist, kit ? null : btnMore));
   const banner = h('div', { class: 'f-banner', role: 'status' });
   const selbar = h('div', { class: 'f-selbar', hidden: true, role: 'toolbar', 'aria-label': t('files.selection') });
   const view = h('div', { class: 'f-view' });
@@ -257,34 +259,94 @@ export function mountFiles(box, deps) {
     banner.hidden = !banner.childNodes.length;
     renderAddr();
   }
-  /** Der Pfad als klickbare Teile (jeder Teil ist auch ein Ziel zum Ablegen); ein Klick daneben macht ihn zum Textfeld */
+  /**
+   * Der Pfad als Brotkruemel (wie im Explorer): jeder Teil ist klickbar und ein Ziel zum Ablegen, rechts bleibt immer freier Platz, in den man klickt, um den Pfad als Text zu bearbeiten.
+   * Wird die Leiste schmaler, faellt der Anfang weg: er steht dann in einer "<"-Taste mit Menue der verdeckten Ebenen, der aktuelle Ordner bleibt sichtbar (X.visibleCrumbCount).
+   */
+  let refit = () => {}, fitW = -1;
+  const GAP_MIN = 40, MORE_W = 30;
   function renderAddr() {
-    addr.classList.remove('editing'); addr.replaceChildren();
+    addr.classList.remove('editing'); addr.replaceChildren(); refit = () => {};
     if (!st.place) { addr.append(h('span', { class: 'f-addr-hint', text: t('files.choosePlace') })); return; }
     const parts = C.crumbsOf(st.path, st.place);
-    const seg = (c, i, text, ic) => {
-      const b = h('button', { type: 'button', class: 'f-crumb' + (i === parts.length - 1 ? ' cur' : ''), 'aria-current': i === parts.length - 1 ? 'location' : undefined, onclick: (e) => { e.stopPropagation(); go(c.path); }, ...keepFocus }, ic ? icon(ic) : null, h('span', { text: X.safeName(text) }));
+    const rootText = kit ? '/' : label(), rootIcon = C.isRoot(st.place) ? 'root' : C.isLocal(st.place) ? 'folder' : 'dns';
+    const seg = (c, i) => {
+      const b = h('button', { type: 'button', class: 'f-crumb' + (i === parts.length - 1 ? ' cur' : ''), 'aria-current': i === parts.length - 1 ? 'location' : undefined, onclick: (e) => { e.stopPropagation(); go(c.path); }, ...keepFocus },
+        i === 0 && !kit ? icon(rootIcon) : null, h('span', { text: X.safeName(i === 0 ? rootText : c.label) }));
       if (!kit) dropTarget(b, () => ({ place: st.place, dir: c.path }));
       return b;
     };
-    parts.forEach((c, i) => {
-      if (i) addr.append(icon('chevR'));
-      addr.append(seg(c, i, i === 0 ? (kit ? '/' : label()) : c.label, i === 0 && !kit ? (C.isRoot(st.place) ? 'root' : C.isLocal(st.place) ? 'folder' : 'dns') : null));
-    });
-    addr.scrollLeft = addr.scrollWidth;
+    let hiddenN = 0;
+    const more = h('button', { type: 'button', class: 'f-crumb f-crumb-more', hidden: true, 'aria-haspopup': 'menu', 'aria-label': t('files.addr.hidden'), title: t('files.addr.hidden'), ...keepFocus,
+      onclick: (e) => {
+        e.stopPropagation();
+        const items = parts.slice(0, hiddenN).reverse().map((c, k, all) => ({ id: 'c' + k, label: X.safeName(c === parts[0] ? rootText : c.label), icon: c === parts[0] ? rootIcon : 'folder', run: () => go(c.path) }));
+        openMenu({ kit, anchor: more, label: t('files.addr.hidden'), items });
+      } }, icon('chevL'));
+    const trail = h('div', { class: 'f-crumbs' });
+    const items = parts.map((c, i) => { const w = h('span', { class: 'f-ci' }, i ? icon('chevR') : null, seg(c, i)); trail.append(w); return w; });
+    addr.append(more, trail, h('div', { class: 'f-addr-gap' }));
+    refit = () => {
+      if (!addr.clientWidth) return;
+      for (const w of items) { w.hidden = false; w.classList.remove('nosep'); }
+      more.hidden = true;
+      const avail = addr.clientWidth - 10 - GAP_MIN;
+      const k = X.visibleCrumbCount(items.map((w) => w.offsetWidth), avail, MORE_W);
+      hiddenN = items.length - k;
+      items.forEach((w, i) => { w.hidden = i < hiddenN; });
+      if (hiddenN) items[hiddenN].classList.add('nosep');
+      more.hidden = !hiddenN;
+    };
+    refit();
   }
+  if (typeof ResizeObserver === 'function') {
+    const ro = new ResizeObserver(() => { if (addr.clientWidth !== fitW) { fitW = addr.clientWidth; refit(); } });
+    ro.observe(addr); addr.__ro = ro;
+  }
+  /** Text-Modus: voller Pfad markiert; X (und Esc) verwirft; beim Tippen Vorschlaege (Unterordner des getippten Elternpfads, aus dem geladenen Ordner oder einer gewoehnlichen Listenanfrage); Enter geht zum Pfad */
   function editAddr() {
     if (!st.place || addr.classList.contains('editing')) return;
-    const local = C.isLocal(st.place);
-    const input = h('input', { type: 'text', class: 'f-addr-in', value: local ? '/' + st.path : st.path, autocomplete: 'off', spellcheck: 'false', autocapitalize: 'off', 'aria-label': t('files.addr.label') });
-    addr.classList.add('editing'); addr.replaceChildren(input);
-    let done = false;
-    const finish = async (ok) => { if (done) return; done = true; const v = input.value; renderAddr(); if (ok && v.trim() !== st.path) await load(X.parseTypedPath(v, local), { quiet: true }); focusList(); };
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); finish(true); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); } });
+    const local = C.isLocal(st.place), place = st.place;
+    const input = h('input', { type: 'text', class: 'f-addr-in', value: local ? '/' + st.path : st.path, autocomplete: 'off', spellcheck: 'false', autocapitalize: 'off', role: 'combobox', 'aria-expanded': 'false', 'aria-autocomplete': 'list', 'aria-label': t('files.addr.label') });
+    const x = h('button', { type: 'button', class: 'f-addr-x', title: t('files.addr.cancel'), 'aria-label': t('files.addr.cancel'), onmousedown: (e) => e.preventDefault(), onclick: () => finish(false) }, icon('close'));
+    const sug = h('div', { class: 'f-sug', role: 'listbox', hidden: true });
+    addr.classList.add('editing'); addr.replaceChildren(input, x, sug);
+    let done = false, list2 = [], at = -1, seq = 0, timer = null;
+    const cache = new Map();
+    const finish = async (ok, to) => {
+      if (done) return; done = true; clearTimeout(timer);
+      const target = to !== undefined ? to : X.parseTypedPath(input.value, local);
+      renderAddr();
+      if (ok && target !== st.path) await load(target, { quiet: true });
+      focusList();
+    };
+    const paintSug = () => {
+      sug.replaceChildren(...list2.map((s2, i) => { const el = h('div', { class: 'f-sug-i' + (i === at ? ' on' : ''), role: 'option', 'aria-selected': String(i === at) }, icon('folder'), h('span', { text: X.safeName(s2.name) })); el.addEventListener('mousedown', (e) => e.preventDefault()); el.addEventListener('click', () => finish(true, s2.path)); return el; }));
+      sug.hidden = !list2.length; input.setAttribute('aria-expanded', String(!!list2.length));
+    };
+    const refresh = async () => {
+      const sp = X.splitTyped(input.value, local); const my = ++seq;
+      if (!sp) { list2 = []; paintSug(); return; }
+      let entries = cache.get(sp.dir);
+      if (!entries) {
+        if (sp.dir === st.path && st.place === place) entries = st.entries;
+        else { try { entries = (await guarded(() => fapi.list(place, sp.dir), place)).entries; } catch { entries = []; } }
+        cache.set(sp.dir, entries);
+      }
+      if (my !== seq || done) return;
+      list2 = X.filterSuggestions(entries, sp.prefix).map((name) => ({ name, path: C.joinPath(sp.dir, name, place) })); at = -1; paintSug();
+    };
+    input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(refresh, 90); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); finish(true, at >= 0 && list2[at] ? list2[at].path : undefined); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+      else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && list2.length) { e.preventDefault(); at = e.key === 'ArrowDown' ? (at + 1 >= list2.length ? -1 : at + 1) : (at - 1 < -1 ? list2.length - 1 : at - 1); paintSug(); }
+      else if (e.key === 'Tab' && list2.length && !e.shiftKey) { e.preventDefault(); const pick = list2[at >= 0 ? at : 0]; input.value = pick.path + (pick.path.endsWith('/') ? '' : '/'); if (local && !input.value.startsWith('/')) input.value = '/' + input.value; at = -1; refresh(); }
+    });
     input.addEventListener('blur', () => finish(false));
-    input.focus(); input.select();
+    input.focus(); input.select(); refresh();
   }
-  addr.addEventListener('click', (e) => { if (e.target === addr) editAddr(); });
+  addr.addEventListener('click', (e) => { if (e.target === addr || e.target.classList.contains('f-addr-gap')) editAddr(); });
 
   async function go(path) { if (st.place) { await load(path); focusList(); } }
   const goUp = () => { if (!st.place || !st.path || st.path === '/') return undefined; st.pendingSelect = st.path; return go(C.parentOf(st.path, st.place)); };   // wie im Explorer: der Ordner, aus dem man kommt, ist danach gewaehlt
@@ -292,9 +354,10 @@ export function mountFiles(box, deps) {
   async function goForward() { if (!st.fwd.length) return; const to = st.fwd.pop(); const was = st.path; if (await load(to, { record: false })) st.back.push(was); else st.fwd.push(to); renderNav(); focusList(); }
 
   /* ----- Menues Ansicht und Neu ----- */
-  function viewMenu(anchor) {
+  function viewMenu(anchor) { openMenu({ kit, anchor, label: t('files.menu.view'), items: viewItems() }); }
+  function viewItems() {
     const v = prefs.view, r = (id, text, on, patch) => ({ id, label: text, checked: on, radio: true, run: () => setView(patch) });
-    openMenu({ kit, anchor, label: t('files.menu.view'), items: [
+    return [
       r('list', t('files.view.list'), v.mode === 'list', { mode: 'list' }), r('tiles', t('files.view.tiles'), v.mode === 'tiles', { mode: 'tiles' }),
       { sep: true },
       r('compact', t('files.view.compact'), v.density === 'compact', { density: 'compact' }), r('comfy', t('files.view.comfy'), v.density === 'comfy', { density: 'comfy' }),
@@ -304,6 +367,16 @@ export function mountFiles(box, deps) {
       r('asc', t('files.view.asc'), v.sortDir === 'asc', { sortDir: 'asc' }), r('desc', t('files.view.desc'), v.sortDir === 'desc', { sortDir: 'desc' }),
       { sep: true },
       { id: 'hidden', label: t('files.view.hidden'), checked: v.showHidden, run: () => setView({ showHidden: !v.showHidden }) },
+    ];
+  }
+  function moreMenu(anchor) {
+    const w = canWrite();
+    openMenu({ kit, anchor, label: t('files.menu.more'), items: [
+      { id: 'refresh', label: t('files.refresh'), icon: 'refresh', shortcut: 'F5', disabled: !st.place, run: () => reload() },
+      { sep: true }, { heading: t('files.menu.view') }, ...viewItems(),
+      { sep: true }, ...newItems(),
+      { id: 'upload', label: t('files.upload.action'), icon: 'upload', disabled: !w, title: w ? undefined : noWriteTitle(), run: () => fileInput.click() },
+      ...(st.place && !C.isLocal(st.place) ? [{ id: 'history', label: t('files.history'), icon: 'history', run: () => showHistory() }] : []),
     ] });
   }
   const COL_KEYS = { name: tk('files.col.name'), date: tk('files.col.date'), type: tk('files.col.type'), size: tk('files.col.size') };
@@ -895,7 +968,7 @@ export function mountFiles(box, deps) {
     /** Oeffnet einen Ort (oder den ersten Host, den es gibt) */
     enter: (id, path) => { const p = C.findPlace(places, id); if (p) return enter(p, path); },
     reload: () => (st.place ? reload() : Promise.resolve()),
-    destroy() { st.dead = true; clearInterval(keepAlive); flushPrefs(); closeMenu(); if (st.place && !C.isLocal(st.place)) fapi.close(st.place.id); box.replaceChildren(); },
+    destroy() { st.dead = true; if (addr.__ro) addr.__ro.disconnect(); clearInterval(keepAlive); flushPrefs(); closeMenu(); if (st.place && !C.isLocal(st.place)) fapi.close(st.place.id); box.replaceChildren(); },
     state: st,
   };
 }

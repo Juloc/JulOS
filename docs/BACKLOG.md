@@ -18,6 +18,7 @@ Kept short on purpose. The owner decides what moves up. New ideas go to [IDEAS.m
 - **Connections app grouped by host:** the connections can be told apart per host (a section per host, programs such as Codex and Claude Code under their host, not mixed with plain connections).
 - **Dock:** when it folds away it becomes very thin pills of about 5 px height (one per running program), unfolding when hovered; **icons of the programs come automatically** from the programs, and the **surface is customisable** (theme, accent, wallpaper, dock, icons).
 - **Per device memory and several browser windows as one big desktop, seamless, with windows across the border, mouse buttons 4 and 5 and keyboard snapping like Windows:** planned in [MULTI-SCREEN.md](MULTI-SCREEN.md) (decisions of 2026-11-21), four steps, step 1 is the window manager in one browser window.
+- **Dialogs as windows, a real editor and a viewer in the Files app (owner's wishes 2026-11-21):** dialogs and confirmations open as movable, non-blocking windows (phone keeps its sheets), an editor for YAML, JSON and the like (CodeMirror 6, vendored), and viewing of images, video, audio, PDF, Word and Excel through a new narrow preview endpoint. Plan with inventory, library comparison, security model and five releasable steps (windows, remaining dialogs, preview, editor, Word and Excel): [FILES-VIEWER.md](FILES-VIEWER.md); six open questions at its end. Starts after the explorer repairs are released.
 
 ## Small things, on the side
 

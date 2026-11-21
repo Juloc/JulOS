@@ -231,12 +231,6 @@
 .f-dlg.f-edit { width: min(96vw, 960px); max-width: 96vw; height: min(86vh, 780px); flex-direction: column; }
 .f-dlg.f-edit[open] { display: flex; }
 .f-edit .f-sub { flex: 0 0 auto; }
-.f-ed-title { display: inline-flex; align-items: baseline; gap: 10px; min-width: 0; }
-.f-ed-name { overflow: hidden; text-overflow: ellipsis; }
-.f-ed-mark { font-size: 12px; font-weight: 600; color: #b86a0c; padding: 1px 8px; border-radius: 999px; background: rgba(184, 106, 12, .15); }
-.f-ed { flex: 1; min-height: 0; display: flex; border: 1px solid var(--f-line); border-radius: 10px; overflow: hidden; background: rgba(127, 127, 127, .08); }
-.f-ed-gutter { flex: 0 0 auto; margin: 0; padding: 10px 8px 10px 10px; overflow: hidden; text-align: right; color: var(--f-muted); user-select: none; font: .8rem/1.5 ui-monospace, Menlo, Consolas, monospace; background: rgba(127, 127, 127, .1); border-right: 1px solid var(--f-line); min-width: 3.2em; }
-.f-ed-text { flex: 1; min-width: 0; border: 0; outline: none; resize: none; padding: 10px; background: transparent; color: var(--f-fg); font: .8rem/1.5 ui-monospace, Menlo, Consolas, monospace; white-space: pre; overflow: auto; tab-size: 4; }
 .f-edit .f-dlg-btns { flex: 0 0 auto; margin-top: 10px; }
 
 /* Meldungen */

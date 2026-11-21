@@ -66,3 +66,4 @@ Npgsql (PostgreSQL-Treiber fuer .NET), PostgreSQL License.
 Konscious.Security.Cryptography.Argon2 (Passwort-Hash), MIT License.
 .NET und ASP.NET Core (Laufzeit), MIT License, .NET Foundation und Mitwirkende.
 PostgreSQL (Datenbank, getrennter Container), PostgreSQL License.
+CodeMirror 6 (Editor der Dateien-App: @codemirror/state, view, commands, language, search, lint, autocomplete, lang-yaml, lang-json, lang-markdown, lang-javascript, lang-python, lang-xml, legacy-modes und die Parser @lezer/*), MIT License, Marijn Haverbeke und Mitwirkende; js-yaml (YAML-Pruefung), MIT License, Vitaly Puzrin und Mitwirkende. Mitgeliefert als vorgebaute Dateien in vendor/codemirror/ (Quelle, Versionen, Pruefsummen: vendor/README.md; die Lizenztexte aller Pakete: vendor/codemirror/6.43.15/LICENSE.txt).

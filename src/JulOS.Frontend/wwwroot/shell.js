@@ -607,6 +607,7 @@ const openHostInfo = (h, panel) => (D ? D.openHost(h, panel) : M && M.openHost(h
 const openAccount = initAccount({ api, setMsg });
 securityUi = initSecurity({ api, esc });
 const openSecurity = () => securityUi.open();
+window.addEventListener('julos:open-security', (e) => securityUi.open(e.detail && e.detail.section));            // die Dateien-App fuehrt von "Schreiben ist aus" direkt zum Schalter
 const openNetTools = initNetTools({ api, setMsg, connections: () => state.connections });
 const openAlerts = initAlerts({ api, setMsg, esc, deviceLabel: () => describeAgent(navigator.userAgent), openHost: (id) => { const h = state.hosts.find((x) => x.id === id); if (h) openHostInfo(h); } });
 // Ein Tipp auf eine Push-Meldung oeffnet die App auf der Seite des Hosts (/#host=<Kennung>): beim Start, bei offener App ueber hashchange und die Nachricht des Service Workers

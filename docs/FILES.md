@@ -18,13 +18,11 @@ A connection that is not SSH (RDP, VNC) is not a place. **Per host there is one 
 
 ### Switching writing on
 
-Everything that changes something (upload, overwrite, rename, move, copy, delete, new folder, and the `prepare` before it) is refused with `403 write_off` until you set
+Everything that changes something (upload, overwrite, rename, move, copy, delete, new folder, and the `prepare` before it) is refused with `403 write_off` until you switch it on **in the app**: Settings, Security, **"Write files"** (`PUT /api/security/files-write`, stored in `instance_settings` as `security.filesWrite`, changed only with a fresh authenticator code like every security setting, written to the security history). It takes effect on the next request, **without a restart**.
 
-```
-JULOS_FILES_WRITE=on
-```
+The environment variable `JULOS_FILES_WRITE=on` (server container) is only the **fallback**: it counts while the app has no value ("Reset to default" in the app forgets the app's value again). The value of the app wins in both directions: the app can switch writing off although the environment says `on`. A typo in the variable (anything but `on` or `off`, including `true` or `1`) is **off**, and never switches writing on. The settings page shows where the current value comes from (app, environment, default).
 
-in the environment of the server container (Compose `environment:` or your `.env`, then recreate the container). The default and any other value (including `true` or `1`) is **off**, and a typo never switches writing on. With writing off the page shows a note and hides the write buttons; reading, viewing and downloading still work. A refused attempt is written to the history.
+With writing off the page does **not** grey out the buttons silently: a note above the list says so and has the button **"Zum Schalter"** (it opens Settings, Security, at this switch), and a click on a write action (New, Upload, Rename, Delete, Cut/Copy, drop of files) explains it in a dialog with the same button. Reading, viewing and downloading still work. A refused attempt is written to the history. The switch changes nothing about the safeguards: every action still needs its confirmation (`prepare`, token, 60 s), the root place its own keys (below), and the pause switch stays.
 
 Other settings: `JULOS_FILES_MAX_MB` (largest file and largest operation, default 2048, range 1 to 65536) and `JULOS_FILES_MAX_SESSIONS` (open SFTP connections per user, default 4, range 1 to 16).
 
@@ -76,7 +74,7 @@ The place **"<Host> (Root)"** shows and changes the files of a host **as root**,
 2. On the page "Hosts", the level of this host is **"Alles"** (`full`; `updates` and `read` do not give files, `root_off`).
 3. The **pause switch** for host actions is not on (`root_paused`; the same switch as for the other actions).
 4. The agent allows it **locally**: the word `files-root` in `/etc/julos-agent/permissions` (installer: `--allow files-root`; `root_not_permitted`). The root helper checks the file once more.
-5. Writing needs `JULOS_FILES_WRITE=on` as everywhere (`write_off`); reading a root file does not.
+5. Writing needs the switch "Write files" as everywhere (`write_off`); reading a root file does not.
 
 The place appears in the app only when 1 to 4 hold at that moment (the page knows the agent state); a refusal later says which key is missing. The place's id is the host's id; the name is "<Host> (Root)" and the page marks it red: a banner in the list, a red mark under the path, and a root notice in every confirmation dialog.
 
@@ -105,9 +103,24 @@ The place appears in the app only when 1 to 4 hold at that moment (the page know
 
 - Copy does not keep permissions, owner or modification time; links and special files are skipped (and counted in the result).
 - Rename onto an existing file uses `posix-rename`; a server without it falls back to delete and rename (not atomic). Existence checks before a write are not atomic either; they are a courtesy, the server of the host stays the judge.
-- A text file larger than 1 MiB shows its beginning and is not editable. Text up to 1 MiB opens in the simple editor ([FILES-EXPLORER.md](FILES-EXPLORER.md#4-editor)); saving is the confirmed upload of the whole file (`prepare upload`, then `remote/upload` with the token, overwrite shown in the sheet), so the editor adds no endpoint and no new right.
+- A text file larger than 1 MiB shows its beginning and is not editable (it can still be downloaded). A file that is not valid UTF-8 or has binary data is not shown as text (`not_text`): download it. Text up to 1 MiB opens in the simple editor ([FILES-EXPLORER.md](FILES-EXPLORER.md#4-editor)); saving is the confirmed upload of the whole file (`prepare upload`, then `remote/upload` with the token, overwrite shown in the sheet), so the editor adds no endpoint and no new right.
 - The target path of a link is not shown (no `readlink` in the SFTP library).
-- Listing a directory with more than 2000 entries shows the first 2000.
+- Listing a directory with more than **10 000** entries shows 10 000 of them **in the order the host returns them** (not sorted: the rest is missing at random) and says so in the status line; the root place lists at most 2000 (limit of the agent). Entries with control characters in the name are hidden and counted.
+
+## When something cannot be viewed or downloaded
+
+Every case has its own message with the reason and the way out (the page translates the code):
+
+| Case | Code | What the page says / the way out |
+|---|---|---|
+| The SSH user may not read it (another user's file, `/root`, a folder `700`) | `denied` | "The SSH user is not allowed to do that." plus the user's name, and: the place "<Host> (Root)" in the tree can do it (as root, with a confirmation) if the host has one; otherwise the keys that make it appear (level "Alles", word `files-root`). |
+| A file larger than `JULOS_FILES_MAX_MB` (default 2 GiB; it is a limit per file and per operation, it also holds for a download) | `too_large` | "The file is larger than allowed" plus the limit of this server and the variable that changes it (there is no setting in the app for it yet). |
+| A folder, a link to a folder, a special file (pipe, socket, device) or a broken link as the object of a download | `not_a_file` (a broken link: `not_found`) | "This is not an ordinary file ... cannot be downloaded." (formerly the misleading "not a folder"). |
+| Text view of a binary file or a file that is not UTF-8 | `not_text` | "not a text file ... downloading works"; a double click on such a file downloads it. |
+| A path typed in the address bar that is a file | `not_a_directory` | "That is not a folder." (SFTP says "not found" for it; the server asks again with `stat`). |
+| More entries than the list shows | (`truncated` in the answer) | the status line says only the first n are shown and the folder has more. |
+
+**Downloads are checked before the browser starts them.** A download is a plain link to the stream, and a browser answers an error of such a link with a silent failed download (or saves the error text as a file). The page therefore first asks the same address and stops after the headers (`downloadProblem`, nothing is read), and shows the reason if the server refuses; only then it starts the download. On the root place this check is not made (the confirmation token is valid once); there `prepare` already checks type and size and gives the same codes.
 
 ## Not built, and decisions
 
@@ -119,5 +132,5 @@ The place appears in the app only when 1 to 4 hold at that moment (the page know
 
 ## Tests
 
-`tests/JulOS.Backend.Tests`: `FileTransferTests` (the logic against an in-memory file system: paths, counting, atomic write, copy, move, delete, links, limits, preview), `SftpPoolTests` (sharing, idle, limits, leaks), `RemoteFilesHttpTests` (the whole server: session, header and origin, host key flow, passwords, listing, text, download, prepare and the bound confirmation, upload, rename, jobs, cancel, history, fail-closed audit, pool closing, write switch), `RealSftpFilesTests` (a real SFTP target of the dev stack: list, read, write, rename, delete, links, errors, a large folder, copy between two sessions, cancel, a changed host key). `tests/frontend/files.test.mjs` covers the page logic, `tests/frontend/files-explorer.test.mjs` the explorer logic (selection, type to jump, sort, names, pins).
+`tests/JulOS.Backend.Tests`: `FileTransferTests` (the logic against an in-memory file system: paths, counting, atomic write, copy, move, delete, links, limits, preview), `SftpPoolTests` (sharing, idle, limits, leaks), `RemoteFilesHttpTests` (the whole server: session, header and origin, host key flow, passwords, listing, text, download, prepare and the bound confirmation, upload, rename, jobs, cancel, history, fail-closed audit, pool closing, write switch), `RealSftpFilesTests` (a real SFTP target of the dev stack: list, read, write, rename, delete, links, errors, a large folder, copy between two sessions, cancel, a changed host key). `tests/frontend/files.test.mjs` covers the page logic, `tests/frontend/files-download.test.mjs` the check before a download and the hint for `denied`, `tests/frontend/files-explorer.test.mjs` the explorer logic (selection, type to jump, sort, names, pins).
 - Root access: `tests/agent/test_files_root.py` (the real helper code on a throw-away directory: every verb, blocks, temp file and rename, links, protected paths, wrong offsets, the word checked again; the agent routes `/v1/host/files/*` and refuses without the word), `tests/JulOS.Backend.Tests/RootFilesTests.cs` (the whole server with the **real agent and helper** on a throw-away root: the keys, upload in blocks, replace keeping the mode, rename, copy, delete, read and text only with a confirmation, history, fail-closed history, a key that closes during a transfer, hostile replies, copy between root and an SSH place), `tests/frontend/files.test.mjs` (the places, the root notice in every dialog, the token calls).

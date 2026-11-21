@@ -3,7 +3,7 @@ using System.Globalization;
 namespace JulOS.Backend.Logic;
 
 /// <summary>
-/// Einstellungen der Dateien-App fuer Hosts per SFTP (docs/FILES.md). Write: JULOS_FILES_WRITE=on schaltet das Schreiben ein (hochladen, umbenennen, verschieben, kopieren, loeschen, Ordner anlegen); Standard
+/// Einstellungen der Dateien-App fuer Hosts per SFTP (docs/FILES.md). Write: JULOS_FILES_WRITE=on ist nur der RUECKFALL fuer das Schreiben (hochladen, umbenennen, verschieben, kopieren, loeschen, Ordner anlegen); der Schalter lebt in der App (SecurityConfig.FilesWrite, Einstellungen, Sicherheit) und gilt vor ihm. Standard
 /// ist aus (Lesen bleibt an). MaxBytes: JULOS_FILES_MAX_MB, die Obergrenze je Datei und je Operation (Standard 2048). MaxSessionsPerUser: JULOS_FILES_MAX_SESSIONS, gleichzeitig offene SFTP-Verbindungen
 /// je Benutzer (Standard 4); Idle: so lange bleibt eine unbenutzte Verbindung offen (60 s).
 /// </summary>

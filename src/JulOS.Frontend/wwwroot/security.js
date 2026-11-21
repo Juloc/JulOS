@@ -53,7 +53,7 @@ export function keyInfo(b) {
 
 const EVENTS = {
   'proxies.set': tk('sec.ev.proxies_set'), 'proxies.reset': tk('sec.ev.proxies_reset'), 'hosts.set': tk('sec.ev.hosts_set'), 'hosts.reset': tk('sec.ev.hosts_reset'),
-  'confirm_mode.set': tk('sec.ev.confirm_mode_set'), 'step_up.set': tk('sec.ev.step_up_set'), 'step_up.ok': tk('sec.ev.step_up_ok'), 'step_up.failed': tk('sec.ev.step_up_failed'),
+  'confirm_mode.set': tk('sec.ev.confirm_mode_set'), 'files_write.set': tk('sec.ev.files_write_set'), 'step_up.set': tk('sec.ev.step_up_set'), 'step_up.ok': tk('sec.ev.step_up_ok'), 'step_up.failed': tk('sec.ev.step_up_failed'),
   'backup_key.set': tk('sec.ev.backup_key_set'), 'recovery.new': tk('sec.ev.recovery_new'), 'recovery.confirm': tk('sec.ev.recovery_confirm'),
 };
 
@@ -114,6 +114,14 @@ export function securityMarkup(state, ui, esc) {
     ${cm === 'click' ? `<p class="sec-warn" role="status">${esc(t('sec.confirmClickWarn'))}</p>` : ''}
     <div class="dlg-btns">${btn('save-confirm', t('common.save'), 'primary')}</div>${msg('confirm')}</section>`;
 
+  const fw = ui.filesWrite ?? (state.filesWrite && state.filesWrite.enabled) ?? false, fwSrc = (state.filesWrite && state.filesWrite.source) || 'default';
+  const filesWrite = `<section class="sec-sec" id="secSecFilesWrite"><h3>${esc(t('sec.filesWrite'))}</h3>
+    <p class="hint">${esc(t('sec.filesWriteHelp'))}</p>
+    <label class="sec-check"><span><input id="secFilesWrite" type="checkbox"${fw ? ' checked' : ''}> ${esc(t('sec.filesWriteOn'))}</span></label>
+    <p class="hint">${esc(t('sec.source', { source: sourceText(fwSrc) }))}</p>
+    ${fw ? `<p class="hint" role="status">${esc(t('sec.filesWriteWarn'))}</p>` : ''}
+    <div class="dlg-btns">${btn('save-files-write', t('common.save'), 'primary')}${fwSrc === 'app' ? btn('reset-files-write', t('sec.reset')) : ''}</div>${msg('filesWrite')}</section>`;
+
   const bk = state.backupKey, ki = keyInfo(bk), ri = recoveryInfo(bk.recovery, bk.canProtect);
   const recBox = ui.recoveryKey
     ? `<div class="sec-key"><p class="hint">${esc(t('sec.recShown'))}</p><code class="mono" id="secRecKey">${esc(ui.recoveryKey)}</code>
@@ -131,17 +139,17 @@ export function securityMarkup(state, ui, esc) {
   const audit = (ui.audit || []).length
     ? `<section class="sec-sec"><h3>${esc(t('sec.audit'))}</h3><ul class="sec-audit">${ui.audit.map((e) => { const l = auditLine(e); return `<li><span>${esc(l.at)}</span> <b>${esc(l.what)}</b> ${esc(l.who)}${l.detail ? ' · ' + esc(l.detail) : ''}</li>`; }).join('')}</ul></section>` : '';
 
-  return proxies + hosts + step + confirm + backup + audit;
+  return proxies + hosts + step + confirm + filesWrite + backup + audit;
 }
 
 /** Bindet den Dialog #securityDlg. api ist die Funktion mit Freigabe-Wiederholung (shell.js), setMsg und esc kommen von dort. Gibt zurueck: { open, warn } (warn: den Hinweis fuer den Start-Bildschirm pruefen). */
 export function initSecurity({ api, esc }) {
   const $ = (s) => document.querySelector(s);
   const dlg = $('#securityDlg'), body = $('#secBody');
-  let state = null;
+  let state = null, scrollTo = '';
   let ui = fresh();
 
-  function fresh() { return { proxyText: '', hostText: '', step: null, confirmMode: null, blocked: null, blockedAsk: false, proxyAsk: '', recoveryKey: '', copyKey: undefined, audit: [], msg: {}, error: '' }; }
+  function fresh() { return { proxyText: '', hostText: '', step: null, confirmMode: null, filesWrite: undefined, blocked: null, blockedAsk: false, proxyAsk: '', recoveryKey: '', copyKey: undefined, audit: [], msg: {}, error: '' }; }
   const say = (k, text, ok = false) => { ui.msg[k] = { text, ok }; render(); };
   const render = () => { body.innerHTML = securityMarkup(state, ui, esc); };
 
@@ -151,11 +159,12 @@ export function initSecurity({ api, esc }) {
       const a = await api('/api/security/audit?limit=10').catch(() => ({ entries: [] }));
       ui.audit = a.entries || [];
       if (!keepText) { ui.proxyText = listText(state.proxies.entries); ui.hostText = listText(state.hosts.entries); }
-      ui.step = { ...state.stepUp }; ui.copyKey = undefined; ui.confirmMode = state.confirmMode || 'check';
+      ui.step = { ...state.stepUp }; ui.copyKey = undefined; ui.filesWrite = undefined; ui.confirmMode = state.confirmMode || 'check';
       ui.error = '';
     } catch (e) { ui.error = e.message; }
     render();
     if (state) { unset = !!state.proxiesUnset; syncHint(); }
+    if (scrollTo) { const el = body.querySelector('#' + scrollTo); scrollTo = ''; if (el) el.scrollIntoView({ block: 'start' }); }
   }
 
   // Eingaben merken, damit ein Neuzeichnen sie nicht loescht
@@ -166,6 +175,7 @@ export function initSecurity({ api, esc }) {
   body.addEventListener('change', (e) => {
     if (e.target.id === 'secStepOn') { ui.step = { ...ui.step, enabled: e.target.checked }; render(); }
     else if (e.target.name === 'secConfirm') { ui.confirmMode = e.target.value; render(); }
+    else if (e.target.id === 'secFilesWrite') { ui.filesWrite = e.target.checked; render(); }
     else if (e.target.id === 'secCopyKey') { ui.copyKey = e.target.checked; render(); }
   });
 
@@ -211,6 +221,14 @@ export function initSecurity({ api, esc }) {
       try { await put('/api/security/confirm-mode', { mode: ui.confirmMode }); await load(); say('confirm', t('sec.saved'), true); }
       catch (e) { say('confirm', e.message); }
     },
+    'save-files-write': async () => {
+      try { await put('/api/security/files-write', { enabled: ui.filesWrite ?? !!(state.filesWrite && state.filesWrite.enabled) }); await load(); say('filesWrite', t('sec.saved'), true); }
+      catch (e) { say('filesWrite', e.message); }
+    },
+    'reset-files-write': async () => {
+      try { await put('/api/security/files-write', { enabled: null }); await load(); say('filesWrite', t('sec.resetDone'), true); }
+      catch (e) { say('filesWrite', e.message); }
+    },
     'save-backup': async () => {
       try { await put('/api/security/backup-key', { copyKey: ui.copyKey ?? state.backupKey.copyKey }); await load(); say('backup', t('sec.saved'), true); }
       catch (e) { say('backup', e.message); }
@@ -252,6 +270,7 @@ export function initSecurity({ api, esc }) {
     $('#secHintClose').addEventListener('click', () => { unset = false; syncHint(); });
   }
 
-  function open() { reset(); render(); dlg.showModal(); load(); }
+  /** section: die Kennung eines Abschnitts, zu dem nach dem Laden gescrollt wird (die Dateien-App fuehrt so zum Schalter "Dateien schreiben") */
+  function open(section) { reset(); scrollTo = section === 'filesWrite' ? 'secSecFilesWrite' : ''; render(); dlg.showModal(); load(); }
   return { open, check: refreshHint, setHomeShown: (on) => { homeShown = on; syncHint(); } };
 }

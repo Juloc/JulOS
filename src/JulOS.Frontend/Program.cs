@@ -131,7 +131,7 @@ builder.Services.AddHostedService<HostSamplerWorker>();
 // Dateien (nur lesen): genau ein Ordner, Standard der Upload-Ordner; "off" schaltet ab
 builder.Services.AddSingleton(new FileBrowser(builder.Configuration["JULOS_FILES_ROOT"] ?? builder.Configuration["JULOS_UPLOAD_DIR"] ?? "/uploads"));
 // Dateien auf Hosts per SFTP (docs/FILES.md): die gespeicherten SSH-Zugaenge, kurzlebige Sitzungen im Pool, Auftraege (kopieren, verschieben, loeschen), Verlauf.
-// Schreiben ist standardmaessig aus: JULOS_FILES_WRITE=on schaltet es ein; JULOS_FILES_MAX_MB und JULOS_FILES_MAX_SESSIONS begrenzen.
+// Schreiben ist standardmaessig aus; der Schalter lebt in der App (SecurityConfig), JULOS_FILES_WRITE=on ist nur der Rueckfall; JULOS_FILES_MAX_MB und JULOS_FILES_MAX_SESSIONS begrenzen.
 builder.Services.AddSingleton(sp => FilesOptions.Parse(builder.Configuration["JULOS_FILES_WRITE"], builder.Configuration["JULOS_FILES_MAX_MB"], builder.Configuration["JULOS_FILES_MAX_SESSIONS"],
     m => sp.GetRequiredService<ILoggerFactory>().CreateLogger("JulOS.Files").LogWarning("{Message}", m)));
 builder.Services.AddSingleton(FileSessionFactory.Default);

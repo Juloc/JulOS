@@ -138,6 +138,8 @@ namespace JulOS.Frontend;
 [JsonSerializable(typeof(StepUpSettingRequest))]
 [JsonSerializable(typeof(ConfirmModeRequest))]
 [JsonSerializable(typeof(ConfirmModeDto))]
+[JsonSerializable(typeof(FilesWriteDto))]
+[JsonSerializable(typeof(FilesWriteRequest))]
 [JsonSerializable(typeof(BackupKeyRequest))]
 [JsonSerializable(typeof(RecoveryResponse))]
 [JsonSerializable(typeof(SecurityAuditDto))]

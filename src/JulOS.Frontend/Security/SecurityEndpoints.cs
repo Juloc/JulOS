@@ -13,7 +13,9 @@ internal sealed record ClientDto(string Address, string Peer, bool Forwarded);
 internal sealed record StepUpDto(bool Enabled, int Minutes);
 internal sealed record RecoveryDto(string State, DateTimeOffset? CreatedAt, DateTimeOffset? ConfirmedAt, bool Replacing);
 internal sealed record BackupKeyDto(bool CopyKey, string Source, bool Wrapped, bool CanProtect, RecoveryDto Recovery);
-internal sealed record SecurityResponse(ListDto Proxies, ListDto Hosts, bool ProxiesUnset, ClientDto Client, StepUpDto StepUp, BackupKeyDto BackupKey, string ConfirmMode = "check");
+internal sealed record SecurityResponse(ListDto Proxies, ListDto Hosts, bool ProxiesUnset, ClientDto Client, StepUpDto StepUp, BackupKeyDto BackupKey, string ConfirmMode = "check", FilesWriteDto? FilesWrite = null);
+internal sealed record FilesWriteDto(bool Enabled, string Source);
+internal sealed record FilesWriteRequest(bool? Enabled);
 internal sealed record ListRequest(string[]? Entries, bool? Confirm = null);
 internal sealed record BlockedDto(string Name, string Host);
 internal sealed record HostsPreviewResponse(BlockedDto[] Blocked);
@@ -71,7 +73,7 @@ internal static class SecurityEndpoints
             return Results.Json(new SecurityResponse(new ListDto(cfg.Proxies.Entries, cfg.Proxies.Source), new ListDto(cfg.Hosts.Entries, cfg.Hosts.Source), cfg.ProxiesUnset, Client(ctx),
                 new StepUpDto(cfg.StepUp.Enabled, cfg.StepUp.Minutes),
                 new BackupKeyDto(plan.CopyKey, plan.Source, plan.Wrapped is not null, box.Enabled, new RecoveryDto(r.State, r.CreatedAt, r.ConfirmedAt, r.Replacing)),
-                ConfirmPolicy.Name(cfg.ConfirmMode)),
+                ConfirmPolicy.Name(cfg.ConfirmMode), new FilesWriteDto(cfg.FilesWrite.Enabled, cfg.FilesWrite.Source)),
                 AppJson.Default.SecurityResponse);
         });
 
@@ -161,6 +163,15 @@ internal static class SecurityEndpoints
             await cfg.SetConfirmModeAsync(ConfirmPolicy.ParseMode(body.Mode), ctx.RequestAborted);
             await Audit(audit, ctx, "confirm_mode.set", ConfirmPolicy.Name(cfg.ConfirmMode));
             return Results.Json(new ConfirmModeDto(ConfirmPolicy.Name(cfg.ConfirmMode)), AppJson.Default.ConfirmModeDto);
+        });
+
+        // ---- Schreiben in der Dateien-App (docs/FILES.md): Enabled null = die Einstellung der App vergessen, dann gilt JULOS_FILES_WRITE ----
+        app.MapPut("/api/security/files-write", async (FilesWriteRequest body, HttpContext ctx, SecurityConfig cfg, SecurityAuditStore audit, HitCounter hits) =>
+        {
+            if (Limited(ctx, hits)) return Error(429, "Zu viele Anfragen, bitte kurz warten.", "rate_limited");
+            if (body.Enabled is { } on) await cfg.SetFilesWriteAsync(on, ctx.RequestAborted); else await cfg.ResetFilesWriteAsync(ctx.RequestAborted);
+            await Audit(audit, ctx, "files_write.set", $"{(cfg.FilesWrite.Enabled ? "an" : "aus")} ({cfg.FilesWrite.Source})");
+            return Results.Json(new FilesWriteDto(cfg.FilesWrite.Enabled, cfg.FilesWrite.Source), AppJson.Default.FilesWriteDto);
         });
 
         // ---- Schluessel im Backup und Wiederherstellungsschluessel (F-01) ----

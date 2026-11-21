@@ -363,13 +363,13 @@ public sealed class RemoteFilesHttpTests
     }
 
     [Fact]
-    public async Task A_listing_is_capped_at_2000_entries_and_marked()
+    public async Task A_listing_is_capped_at_10000_entries_and_marked()
     {
         await using var db = await TestDb.CreateAsync();
-        var (app, api, c, _, _) = await OpenHost(db, h => { for (var i = 0; i < 2100; i++) h.File($"/big/f{i:0000}", "x"); });
+        var (app, api, c, _, _) = await OpenHost(db, h => { for (var i = 0; i < 10_100; i++) h.File($"/big/f{i:00000}", "x"); });
         await using var rigGuard = app;
         var (_, body) = await api.Get($"/api/files/remote/list?c={c}&path=/big");
-        Assert.Equal(2000, body.GetProperty("entries").GetArrayLength());
+        Assert.Equal(10_000, body.GetProperty("entries").GetArrayLength());
         Assert.True(body.GetProperty("truncated").GetBoolean());
     }
 
@@ -428,13 +428,51 @@ public sealed class RemoteFilesHttpTests
         var big = await api.Raw(api.Authed(HttpMethod.Get, $"/api/files/remote/download?c={c}&path=/pub/gross.bin"));
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, big.StatusCode);
         Assert.Equal("too_large", Code(ApiKit.J(await big.Content.ReadAsStringAsync())));
-        Assert.Equal(HttpStatusCode.BadRequest, (await api.Raw(api.Authed(HttpMethod.Get, $"/api/files/remote/download?c={c}&path=/pub/ordner"))).StatusCode);
+        var folder = await api.Raw(api.Authed(HttpMethod.Get, $"/api/files/remote/download?c={c}&path=/pub/ordner"));
+        Assert.Equal((HttpStatusCode.BadRequest, "not_a_file"), (folder.StatusCode, Code(ApiKit.J(await folder.Content.ReadAsStringAsync()))));        // ein Ordner: "keine gewoehnliche Datei", nicht "kein Ordner"
         Assert.Equal(HttpStatusCode.NotFound, (await api.Raw(api.Authed(HttpMethod.Get, $"/api/files/remote/download?c={c}&path=/nope"))).StatusCode);
         var odd = await api.Raw(api.Authed(HttpMethod.Get, $"/api/files/remote/download?c={c}&path=" + Uri.EscapeDataString("/pub/ä \"x\".txt")));
         Assert.DoesNotContain("\"x\"", string.Join(";", odd.Content.Headers.ContentDisposition!.ToString().Split(';').Skip(1).Where(p => p.Contains("filename=\""))).Replace("filename=\"_", ""));
     }
 
     // ---------- Schreiben ----------
+
+    [Fact]
+    public async Task The_write_switch_set_in_the_app_works_without_a_restart_and_the_reset_falls_back_to_the_environment()
+    {
+        await using var db = await TestDb.CreateAsync();
+        var (app, api, c, host, _) = await OpenHost(db, h => h.Dir("/p"), write: null);                       // Umgebung: nichts gesetzt, also aus
+        await using var rigGuard = app;
+        var off = (await api.Get("/api/security")).Body.GetProperty("filesWrite");
+        Assert.Equal((false, "default"), (off.GetProperty("enabled").GetBoolean(), off.GetProperty("source").GetString()));
+        Assert.False((await api.Get("/api/files/info")).Body.GetProperty("write").GetBoolean());
+        Assert.Equal("write_off", Code((await api.Post("/api/files/remote/mkdir", new { connection = c, dir = "/p", name = "n" })).Body));
+
+        var on = await api.Json(HttpMethod.Put, "/api/security/files-write", new { enabled = true });
+        Assert.Equal((HttpStatusCode.OK, true, "app"), (on.Status, on.Body.GetProperty("enabled").GetBoolean(), on.Body.GetProperty("source").GetString()));
+        Assert.True((await api.Get("/api/files/info")).Body.GetProperty("write").GetBoolean());       // gleich, ohne Neustart
+        Assert.Equal(HttpStatusCode.OK, (await api.Write("/api/files/remote/mkdir", new { connection = c, dir = "/p", name = "n" })).Status);     // die Bestaetigung bleibt (prepare, Token)
+        Assert.Contains(host.Log, l => l.StartsWith("mkdir "));
+
+        var back = await api.Json(HttpMethod.Put, "/api/security/files-write", new { enabled = (bool?)null });                                     // zurueck auf die Umgebung
+        Assert.Equal((false, "default"), (back.Body.GetProperty("enabled").GetBoolean(), back.Body.GetProperty("source").GetString()));
+        Assert.Equal("write_off", Code((await api.Post("/api/files/remote/mkdir", new { connection = c, dir = "/p", name = "m" })).Body));
+        Assert.Equal(2, await db.ScalarAsync<long>("select count(*) from security_audit where event = 'files_write.set'"));
+    }
+
+    [Fact]
+    public async Task The_write_switch_of_the_app_beats_the_environment_in_both_directions()
+    {
+        await using var db = await TestDb.CreateAsync();
+        var (app, api, c, _, _) = await OpenHost(db, h => h.Dir("/p"), write: "on");                         // Umgebung: an
+        await using var rigGuard = app;
+        var env = (await api.Get("/api/security")).Body.GetProperty("filesWrite");
+        Assert.Equal((true, "env"), (env.GetProperty("enabled").GetBoolean(), env.GetProperty("source").GetString()));
+        Assert.Equal(HttpStatusCode.OK, (await api.Json(HttpMethod.Put, "/api/security/files-write", new { enabled = false })).Status);
+        Assert.Equal("write_off", Code((await api.Post("/api/files/remote/mkdir", new { connection = c, dir = "/p", name = "n" })).Body));       // die App sagt aus, die Umgebung an: die App gilt
+        Assert.Equal(HttpStatusCode.OK, (await api.Json(HttpMethod.Put, "/api/security/files-write", new { enabled = (bool?)null })).Status);
+        Assert.Equal(HttpStatusCode.OK, (await api.Write("/api/files/remote/mkdir", new { connection = c, dir = "/p", name = "n" })).Status);      // wieder die Umgebung
+    }
 
     [Fact]
     public async Task With_writing_off_every_write_is_refused_changes_nothing_and_is_written_to_the_history()

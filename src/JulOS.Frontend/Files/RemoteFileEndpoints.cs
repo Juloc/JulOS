@@ -19,7 +19,7 @@ internal sealed class FileSessionFactory(Func<ISftpFileSession> create)
 
 /// <summary>
 /// Dateien auf Hosts per SFTP (docs/FILES.md): die gespeicherten SSH-Zugangsdaten einer Verbindung, der Host-Schluessel wie beim Terminal (aber auch der erste muss bestaetigt werden),
-/// alles hinter der Sitzung. Lesen immer, Schreiben nur mit JULOS_FILES_WRITE=on und nur mit "confirm" in der Anfrage (die Seite fragt vorher). Jede schreibende Aktion und jeder Fehler
+/// alles hinter der Sitzung. Lesen immer, Schreiben nur, wenn der Schalter "Dateien schreiben" an ist (App, sonst JULOS_FILES_WRITE=on), und nur mit "confirm" in der Anfrage (die Seite fragt vorher). Jede schreibende Aktion und jeder Fehler
 /// kommt in den Verlauf (files_audit), nie ein Inhalt oder Passwort. Alle Pfade sind absolut und werden hier normalisiert; Wirkung hat nur, was der SSH-Benutzer darf.
 /// </summary>
 internal static class RemoteFileEndpoints
@@ -27,6 +27,8 @@ internal static class RemoteFileEndpoints
     private static readonly TimeSpan Minute = TimeSpan.FromMinutes(1);
     private static readonly ConcurrentDictionary<Guid, int> Streams = new();       // laufende Down- und Uploads je Benutzer
     private const int MaxStreams = 3;
+    /// <summary>So viele Eintraege zeigt eine Liste hoechstens. Der Host liefert sie in seiner Reihenfolge, ein Rest fehlt also zufaellig: darum grosszuegig (so viel wie ein Auftrag je Operation, FileLimits.MaxItems) und mit Hinweis auf der Seite.</summary>
+    private const int ListLimit = 10_000;
 
     private static IResult Fail(string code)
     {
@@ -148,8 +150,8 @@ internal static class RemoteFileEndpoints
     public static void MapRemoteFiles(this IEndpointRouteBuilder app)
     {
         // Was die Seite wissen muss: gibt es den lokalen Ort, darf geschrieben werden, wie gross darf etwas sein
-        app.MapGet("/api/files/info", (FileBrowser local, FilesOptions options) =>
-            Results.Json(new FilesInfoDto(local.Enabled, options.Write, options.MaxBytes), AppJson.Default.FilesInfoDto));
+        app.MapGet("/api/files/info", (FileBrowser local, FilesOptions options, SecurityConfig security) =>
+            Results.Json(new FilesInfoDto(local.Enabled, security.FilesWrite.Enabled, options.MaxBytes), AppJson.Default.FilesInfoDto));
 
         // Oeffnet (oder haelt offen) die SFTP-Sitzung einer Verbindung. Mit "password" wird getippt (nie gespeichert, nie geloggt), mit "acceptHostKey" ein neuer oder geaenderter Schluessel bestaetigt.
         app.MapPost("/api/files/remote/open", async (OpenRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, ILogger<FileAuditStore> log,
@@ -196,7 +198,14 @@ internal static class RemoteFileEndpoints
                 await using var lease = await LeaseAsync(x, null, null, pool, connections, box, factory, log, ctx.RequestAborted);
                 var dir = RemotePath.Normalize(path, lease.Session.HomeDirectory);
                 if (dir is null) return Fail("invalid_path");
-                var listing = await lease.Session.ListAsync(dir, FileLimits.Default.MaxEntries, ctx.RequestAborted);
+                RemoteListing listing;
+                try { listing = await lease.Session.ListAsync(dir, ListLimit, ctx.RequestAborted); }
+                catch (RemoteFileException ex) when (ex.Error == RemoteFileError.NotFound)
+                {
+                    // SFTP meldet bei einer Datei "nicht gefunden"; fuer die Seite ist es ein Pfad, der kein Ordner ist
+                    if (await lease.Session.StatAsync(dir, follow: true, ctx.RequestAborted) is { Kind: not RemoteKind.Directory }) throw new RemoteFileException(RemoteFileError.NotADirectory, "Das ist kein Ordner.");
+                    throw;
+                }
                 var sorted = listing.Entries.OrderBy(e => e.IsOpenable ? 0 : 1).ThenBy(e => e.Name, Comparer<string>.Create(RemotePath.NaturalCompare)).Select(ToDto).ToArray();
                 return Results.Json(new RemoteListingDto(dir, sorted, listing.Truncated, listing.Hidden), AppJson.Default.RemoteListingDto);
             }
@@ -250,7 +259,7 @@ internal static class RemoteFileEndpoints
                 if (file is null || file == "/") return Fail("invalid_path");
                 var entry = await lease.Session.StatAsync(file, follow: true, ctx.RequestAborted);
                 if (entry is null) return Fail("not_found");
-                if (entry.Kind != RemoteKind.File) return Fail("not_a_directory");
+                if (entry.Kind != RemoteKind.File) return Fail("not_a_file");
                 if (entry.Size > options.MaxBytes) return Fail("too_large");
                 if (x.Root is not null)
                 {
@@ -294,12 +303,12 @@ internal static class RemoteFileEndpoints
         });
 
         // Upload im Strom (roher Koerper): erst unter einem temporaeren Namen, dann umbenennen. Ein vorhandenes Ziel nur mit overwrite=1; confirm=1 sagt, dass die Seite gefragt hat.
-        app.MapPost("/api/files/remote/upload", async (Guid? c, string? dir, string? name, string? overwrite, string? token, string? acknowledged, string? typed, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, FilesOptions options, FileConfirmations conf, ILogger<FileAuditStore> log) =>
+        app.MapPost("/api/files/remote/upload", async (Guid? c, string? dir, string? name, string? overwrite, string? token, string? acknowledged, string? typed, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, FilesOptions options, SecurityConfig security, FileConfirmations conf, ILogger<FileAuditStore> log) =>
         {
             if (RateLimited(ctx, hits, "transfer", 60)) return Fail("rate_limited");
             var (x, fail) = await ResolveAsync(ctx, c, connections, policy);
             if (x is null) return fail!;
-            var denied = await WriteOnAsync(options, audit, log, x, "upload", dir);
+            var denied = await WriteOnAsync(security, audit, log, x, "upload", dir);
             if (denied is not null) return denied;
             if (!RemotePath.ValidName(name)) return Fail("invalid_name");
             if (ctx.Request.ContentLength is > 0 and var len && len > options.MaxBytes) return Fail("too_large");
@@ -332,12 +341,12 @@ internal static class RemoteFileEndpoints
             finally { LeaveStream(x.Id.UserId); }
         });
 
-        app.MapPost("/api/files/remote/mkdir", async (MkdirRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, FilesOptions options, FileConfirmations conf, ILogger<FileAuditStore> log) =>
+        app.MapPost("/api/files/remote/mkdir", async (MkdirRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, FilesOptions options, SecurityConfig security, FileConfirmations conf, ILogger<FileAuditStore> log) =>
         {
             if (RateLimited(ctx, hits, "write", 120)) return Fail("rate_limited");
             var (x, fail) = await ResolveAsync(ctx, body.Connection, connections, policy);
             if (x is null) return fail!;
-            var denied = await WriteOnAsync(options, audit, log, x, "mkdir", body.Dir);
+            var denied = await WriteOnAsync(security, audit, log, x, "mkdir", body.Dir);
             if (denied is not null) return denied;
             if (!RemotePath.ValidName(body.Name)) return Fail("invalid_name");
             string? target = null;
@@ -362,12 +371,12 @@ internal static class RemoteFileEndpoints
         });
 
         // Umbenennen im selben Ordner (Verschieben in einen anderen Ordner ist "copy" mit move=true)
-        app.MapPost("/api/files/remote/rename", async (RenameRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, FilesOptions options, FileConfirmations conf, ILogger<FileAuditStore> log) =>
+        app.MapPost("/api/files/remote/rename", async (RenameRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, FilesOptions options, SecurityConfig security, FileConfirmations conf, ILogger<FileAuditStore> log) =>
         {
             if (RateLimited(ctx, hits, "write", 120)) return Fail("rate_limited");
             var (x, fail) = await ResolveAsync(ctx, body.Connection, connections, policy);
             if (x is null) return fail!;
-            var denied = await WriteOnAsync(options, audit, log, x, "rename", body.Path);
+            var denied = await WriteOnAsync(security, audit, log, x, "rename", body.Path);
             if (denied is not null) return denied;
             if (!RemotePath.ValidName(body.Name)) return Fail("invalid_name");
             try
@@ -409,7 +418,7 @@ internal static class RemoteFileEndpoints
             if (x is null) return fail!;
             var reads = action is "download" or "text";
             if (reads && x.Root is null) return Fail("invalid_request");                      // nur der Ort Root verlangt eine Bestaetigung zum Lesen
-            var denied = reads ? null : await WriteOnAsync(options, audit, log, x, action, body.Paths is { Length: > 0 } ps ? Describe(ps) : body.Dir);
+            var denied = reads ? null : await WriteOnAsync(security, audit, log, x, action, body.Paths is { Length: > 0 } ps ? Describe(ps) : body.Dir);
             if (denied is not null) return denied;
             await using var leases = new Leases();
             try
@@ -465,7 +474,7 @@ internal static class RemoteFileEndpoints
                         if (body.Paths is not { Length: 1 } || RemotePath.Normalize(body.Paths[0], null) is not { } file || file == "/") return Fail("invalid_path");
                         var entry = await src.Session.StatAsync(file, follow: true, ctx.RequestAborted);
                         if (entry is null) return Fail("not_found");
-                        if (entry.Kind != RemoteKind.File) return Fail("not_a_directory");
+                        if (entry.Kind != RemoteKind.File) return Fail("not_a_file");
                         if (action == "download" && entry.Size > options.MaxBytes) return Fail("too_large");
                         paths = [file];
                         counts = new TreeCount(1, 0, 0, entry.Size);
@@ -514,12 +523,12 @@ internal static class RemoteFileEndpoints
             }
         });
 
-        app.MapPost("/api/files/remote/delete", async (DeleteRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, FileJobs jobs, HitCounter hits, FilesOptions options, FileConfirmations conf, ILogger<FileAuditStore> log) =>
+        app.MapPost("/api/files/remote/delete", async (DeleteRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, FileJobs jobs, HitCounter hits, FilesOptions options, SecurityConfig security, FileConfirmations conf, ILogger<FileAuditStore> log) =>
         {
             if (RateLimited(ctx, hits, "write", 120)) return Fail("rate_limited");
             var (x, fail) = await ResolveAsync(ctx, body.Connection, connections, policy);
             if (x is null) return fail!;
-            var denied = await WriteOnAsync(options, audit, log, x, "delete", Describe(body.Paths));
+            var denied = await WriteOnAsync(security, audit, log, x, "delete", Describe(body.Paths));
             if (denied is not null) return denied;
             if (body.Paths is not { Length: > 0 and <= 500 }) return Fail("invalid_request");
             var paths = NormalizeAll(body.Paths);
@@ -541,13 +550,13 @@ internal static class RemoteFileEndpoints
         });
 
         // Kopieren und Verschieben, auch von Host zu Host: der Server liest per SFTP von der Quelle und schreibt per SFTP aufs Ziel (im Strom, erst unter temporaerem Namen)
-        app.MapPost("/api/files/remote/copy", async (CopyRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, FileJobs jobs, HitCounter hits, FilesOptions options, FileConfirmations conf, ILogger<FileAuditStore> log) =>
+        app.MapPost("/api/files/remote/copy", async (CopyRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, FileJobs jobs, HitCounter hits, FilesOptions options, SecurityConfig security, FileConfirmations conf, ILogger<FileAuditStore> log) =>
         {
             if (RateLimited(ctx, hits, "write", 120)) return Fail("rate_limited");
             var action = body.Move == true ? "move" : "copy";
             var (x, fail) = await ResolveAsync(ctx, body.Connection, connections, policy);
             if (x is null) return fail!;
-            var denied = await WriteOnAsync(options, audit, log, x, action, Describe(body.Paths));
+            var denied = await WriteOnAsync(security, audit, log, x, action, Describe(body.Paths));
             if (denied is not null) return denied;
             if (body.Paths is not { Length: > 0 and <= 500 } || body.Target is not { } t) return Fail("invalid_request");
             var paths = NormalizeAll(body.Paths);
@@ -628,10 +637,10 @@ internal static class RemoteFileEndpoints
         return AuditAsync(audit, log, j.UserId, c, action, path, result, d, items, host);
     }
 
-    /// <summary>Schreiben nur mit JULOS_FILES_WRITE=on. Eine Ablehnung wegen des Schalters kommt in den Verlauf.</summary>
-    private static async Task<IResult?> WriteOnAsync(FilesOptions options, FileAuditStore audit, ILogger log, Ctx x, string action, string? path)
+    /// <summary>Schreiben nur, wenn es in den Einstellungen (Sicherheit) oder mit JULOS_FILES_WRITE=on eingeschaltet ist. Eine Ablehnung wegen des Schalters kommt in den Verlauf.</summary>
+    private static async Task<IResult?> WriteOnAsync(SecurityConfig security, FileAuditStore audit, ILogger log, Ctx x, string action, string? path)
     {
-        if (options.Write) return null;
+        if (security.FilesWrite.Enabled) return null;
         await AuditAsync(audit, log, x.Id.UserId, x.Connection, action, path, "denied", "write_off");
         return Fail("write_off");
     }

@@ -139,7 +139,7 @@ The host abilities: `GET /api/hosts/{id}/status`, `/updates`, `/services`, `/doc
 A Windows agent, groups or tenants, roles, and sharing a host between users. The agent's Unix-socket mode still serves the machine the
 server runs on: a host without an agent uses it, as before, so several hosts on different machines each need their own agent.
 
-Every SSH connection of a host is also a place in the **Files app**: browse, view, download and (with `JULOS_FILES_WRITE=on`) change the files of the SSH user over SFTP, with the host login (or the connection's own); see [FILES.md](FILES.md).
+Every SSH connection of a host is also a place in the **Files app**: browse, view, download and (writing only after you switch it on in Settings, Security) change the files of the SSH user over SFTP, with the host login (or the connection's own); see [FILES.md](FILES.md).
 
 ## Updates and background tasks
 

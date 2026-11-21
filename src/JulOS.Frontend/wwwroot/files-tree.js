@@ -9,7 +9,7 @@ import { h, icon } from './files-ui.js';
 import { safeName } from './files-explorer.js';
 
 /** Die Knoten des Baums in Reihenfolge: { id, level, type: 'host'|'place'|'pin', label, ic, place?, pin?, expandable, open, root? } */
-export function buildTree(places, pins, closed) {
+export function buildTree(places, pins, closed, currentId = '') {
   const out = [];
   const pinsOf = (ids) => pins.filter((p) => ids.includes(p.place));
   const addPins = (ids, level, byId) => {
@@ -27,10 +27,13 @@ export function buildTree(places, pins, closed) {
     if (open) addPins([places.local.id], 2, byId);
   }
   for (const g of places.groups) {
-    const ids = g.places.map((p) => p.id), id = 'host:' + g.id, open = !closed.includes(id);
-    out.push({ id, level: 1, type: 'host', label: g.name, ic: 'dns', expandable: true, open, place: g.places.find((p) => !C.isRoot(p)) || g.places[0] });
+    const ids = [...g.places, ...(g.others || [])].map((p) => p.id), id = 'host:' + g.id, open = !closed.includes(id);
+    out.push({ id, level: 1, type: 'host', label: g.name, ic: 'dns', expandable: true, open, place: g.places.find((p) => !C.isRoot(p)) || g.places[0], host: g });
     if (!open) continue;
-    for (const p of g.places) out.push({ id: 'place:' + p.id, level: 2, type: 'place', label: C.isRoot(p) ? t('files.tree.root') : g.places.filter((x) => !C.isRoot(x)).length > 1 ? p.name : t('files.tree.home'), ic: C.isRoot(p) ? 'root' : 'home', place: p, root: C.isRoot(p) });
+    for (const p of g.places) out.push({ id: 'place:' + p.id, level: 2, type: 'place', label: C.isRoot(p) ? t('files.tree.root') : t('files.tree.home'), ic: C.isRoot(p) ? 'root' : 'home', place: p, root: C.isRoot(p) });
+    // Ein Ort mit anderer Anmeldung steht nur da, solange er offen ist (geoeffnet ueber das Menue des Hosts)
+    const other = (g.others || []).find((p) => p.id === currentId);
+    if (other) out.push({ id: 'place:' + other.id, level: 2, type: 'place', label: other.user || other.name, ic: 'home', place: other });
     addPins(ids, 2, byId);
   }
   return out;
@@ -43,7 +46,7 @@ export function buildTree(places, pins, closed) {
 export function renderTree(box, o) {
   const had = box.querySelector('[tabindex="0"]');
   const keepId = had && had.dataset.id, hadFocus = !!had && had === document.activeElement;
-  const nodes = buildTree(o.places, o.pins, o.closed);
+  const nodes = buildTree(o.places, o.pins, o.closed, o.current.place ? o.current.place.id : '');
   const tree = h('div', { class: 'f-tree', role: 'tree', 'aria-label': t('desktopFiles.places') });
   const isCur = (n) => {
     if (!o.current.place) return false;

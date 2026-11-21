@@ -53,8 +53,11 @@ export function mountFiles(box, deps) {
   const side = h('nav', { class: 'f-side', 'aria-label': t('desktopFiles.places') });
   const main = h('div', { class: 'f-main' });
   const placeBtn = h('button', { type: 'button', class: 'f-place ' + (kit ? 'm3-btn tonal mb m3-state' : 'dk-btn'), 'aria-haspopup': 'dialog' });
-  const tb = (name, label, onclick, extra = {}) => h('button', { type: 'button', class: 'f-tool ' + (kit ? 'm3-iconbtn m3-state mb' : ''), title: label, 'aria-label': label, onclick, ...extra }, icon(name));
-  const tl = (name, label, onclick, extra = {}) => (kit ? tb(name, label, onclick, extra) : h('button', { type: 'button', class: 'f-tbtn', title: label, onclick, ...extra }, icon(name), h('span', { class: 'f-lbl', text: label })));
+  // Am Desktop nimmt ein Mausklick auf eine Taste der Leiste der Liste den Fokus nicht weg (wie im Explorer); Tab und Enter gehen weiter
+  const keepFocus = kit ? {} : { onmousedown: (e) => e.preventDefault() };
+  const tb = (name, label, onclick, extra = {}) => h('button', { type: 'button', class: 'f-tool ' + (kit ? 'm3-iconbtn m3-state mb' : ''), title: label, 'aria-label': label, onclick, ...keepFocus, ...extra }, icon(name));
+  const tl = (name, label, onclick, extra = {}) => (kit ? tb(name, label, onclick, extra) : h('button', { type: 'button', class: 'f-tbtn', title: label, onclick, ...keepFocus, ...extra }, icon(name), h('span', { class: 'f-lbl', text: label }), extra['aria-haspopup'] ? icon('more') : null));
+  const btnSide = tb('sidebar', t('files.sidebar.toggle'), () => setSide({ off: !side$.off }), { 'aria-pressed': 'true' });
   const btnBack = tb('back', t('common.back'), () => goBack()), btnFwd = tb('forward', t('files.forward'), () => goForward()), btnUp = tb('up', t('desktopFiles.up'), () => goUp()), btnRef = tb('refresh', t('files.refresh'), () => reload());
   const addr = h('div', { class: 'f-addr', role: 'group', 'aria-label': t('desktopFiles.path') });
   const searchBox = h('label', { class: 'f-search' }, icon('search'), h('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', 'aria-label': t('desktopFiles.searchByName') }));
@@ -63,7 +66,7 @@ export function mountFiles(box, deps) {
   const btnNew = tl('add', t('files.menu.new'), () => newMenu(btnNew), { 'aria-haspopup': 'menu' });
   const btnUpload = tl('upload', t('files.upload.action'), () => fileInput.click());
   const btnHist = tb('history', t('files.history'), () => showHistory());
-  const bar = h('div', { class: 'f-bar' }, h('div', { class: 'f-nav' }, kit ? null : [btnBack, btnFwd], btnUp, btnRef), kit ? placeBtn : null, addr, searchBox, h('div', { class: 'f-acts' }, btnView, btnNew, btnUpload, btnHist));
+  const bar = h('div', { class: 'f-bar' }, h('div', { class: 'f-nav' }, kit ? null : [btnSide, btnBack, btnFwd], btnUp, btnRef), kit ? placeBtn : null, addr, searchBox, h('div', { class: 'f-acts' }, btnView, btnNew, btnUpload, btnHist));
   const banner = h('div', { class: 'f-banner', role: 'status' });
   const selbar = h('div', { class: 'f-selbar', hidden: true, role: 'toolbar', 'aria-label': t('files.selection') });
   const view = h('div', { class: 'f-view' });
@@ -72,8 +75,31 @@ export function mountFiles(box, deps) {
   const fileInput = h('input', { type: 'file', multiple: true, hidden: true });
   const drop = h('div', { class: 'f-drop', hidden: true }, icon('upload'), h('span', { text: t('files.dropHere') }));
   main.append(h('div', { class: 'f-top' }, bar, banner), view, selbar, stat, drop, fileInput);
-  root.append(side, main);
+  const sideGrip = h('div', { class: 'f-sidegrip', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': t('files.sidebar.resize'), tabindex: '0' });
+  root.append(side, main, ...(kit ? [] : [sideGrip]));
   box.appendChild(root);
+
+  /* ----- Seitenleiste (Desktop): Breite ziehbar, einklappbar; beides pro Geraet gemerkt (localStorage, nicht auf dem Server) ----- */
+  const SIDE_LS = 'pd.files.side';
+  let side$ = X.normalizeSide((() => { try { return JSON.parse(localStorage.getItem(SIDE_LS)); } catch { return null; } })());
+  function setSide(patch, save = true) {
+    side$ = X.normalizeSide({ ...side$, ...patch });
+    root.style.setProperty('--fside', side$.off ? '0px' : side$.w + 'px'); root.classList.toggle('side-off', side$.off);
+    btnSide.setAttribute('aria-pressed', String(!side$.off));
+    if (save) { try { localStorage.setItem(SIDE_LS, JSON.stringify(side$)); } catch { /* egal */ } }
+  }
+  if (!kit) {
+    setSide({}, false);
+    sideGrip.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); sideGrip.setPointerCapture(e.pointerId); root.classList.add('side-drag');
+      const x0 = e.clientX, w0 = side$.w;
+      const move = (ev) => setSide({ w: w0 + ev.clientX - x0 }, false);
+      const up = () => { sideGrip.removeEventListener('pointermove', move); sideGrip.removeEventListener('pointerup', up); sideGrip.removeEventListener('pointercancel', up); root.classList.remove('side-drag'); setSide({}); };
+      sideGrip.addEventListener('pointermove', move); sideGrip.addEventListener('pointerup', up); sideGrip.addEventListener('pointercancel', up);
+    });
+    sideGrip.addEventListener('dblclick', () => setSide({ w: X.SIDE_DEFAULT }));
+    sideGrip.addEventListener('keydown', (e) => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); setSide({ w: side$.w + (e.key === 'ArrowRight' ? 16 : -16) }); } });
+  }
 
   const canWrite = (p = st.place) => !!(p && !C.isLocal(p) && info.write);
   const writable = () => canWrite();
@@ -86,7 +112,7 @@ export function mountFiles(box, deps) {
     const v = prefs.view;
     root.classList.toggle('v-tiles', v.mode === 'tiles'); root.classList.toggle('v-comfy', v.density === 'comfy'); root.classList.toggle('v-hide', !v.showHidden);
     root.style.setProperty('--cn', v.cols.name + 'px'); root.style.setProperty('--cd', v.cols.date + 'px'); root.style.setProperty('--ct', v.cols.type + 'px'); root.style.setProperty('--cs', v.cols.size + 'px');
-    btnView.replaceChildren(icon(v.mode === 'tiles' ? 'tiles' : 'list'), ...(kit ? [] : [h('span', { class: 'f-lbl', text: t('files.menu.view') })]));
+    btnView.replaceChildren(icon(v.mode === 'tiles' ? 'tiles' : 'list'), ...(kit ? [] : [h('span', { class: 'f-lbl', text: t('files.menu.view') }), icon('more')]));
   }
   const setView = (patch) => { prefs = { ...prefs, view: X.normalizeView({ ...prefs.view, ...patch }) }; savePrefs(); applyView(); if (st.place) { applyList(); renderList(); } };
 
@@ -109,11 +135,12 @@ export function mountFiles(box, deps) {
     refreshPlaces();
     const holder = h('div', { class: 'f-picker' });
     const dlg = modal({ title: t('files.choosePlace'), kit, content: [holder], actions: [{ id: 'x', label: t('common.close'), kind: 'ghost' }] });
-    const paint2 = () => renderTree(holder, { ...treeOptions((p, path) => { dlg.close(); enter(p, path); }), onToggle: (id) => { prefs = { ...prefs, closed: X.toggleClosed(prefs.closed, id) }; savePrefs(); paint2(); }, onMenu: (e, n) => { treeMenu(e, n, paint2); } });
+    const paint2 = () => renderTree(holder, { ...treeOptions((p, path) => { dlg.close(); enter(p, path); }), onToggle: (id) => { prefs = { ...prefs, closed: X.toggleClosed(prefs.closed, id) }; savePrefs(); paint2(); }, onMenu: (e, n) => { treeMenu(e, n, paint2, () => dlg.close()); } });
     paint2();
     if (!places.local && !places.groups.length) holder.replaceChildren(h('p', { class: 'f-empty', text: t('files.noPlaces') }));
   }
-  function treeMenu(e, n, repaint = renderSide) {
+  function treeMenu(e, n, repaint = renderSide, done = () => {}) {
+    if (n.type === 'host') { hostMenu(e, n, done); return; }
     if (n.type !== 'pin') return;
     const pin = n.pin, samePlace = prefs.pins.filter((p) => p.place === pin.place), at = samePlace.findIndex((p) => X.pinKey(p) === X.pinKey(pin));
     openMenu({ kit, x: e.clientX, y: e.clientY, label: X.safeName(n.label), items: [
@@ -125,7 +152,15 @@ export function mountFiles(box, deps) {
       { id: 'unpin', label: t('files.menu.unpin'), icon: 'pin', run: () => { prefs = { ...prefs, pins: X.removePin(prefs.pins, pin.place, pin.path) }; savePrefs(); repaint(); renderSide(); } },
     ] });
   }
-  const hostIdOf = (place) => { const g = places.groups.find((x) => x.places.some((p) => p.id === place.id)); return g ? g.id : ''; };
+  /** Menue eines Hosts in der Seitenleiste: Home, Root und die Verbindungen mit anderer Anmeldung ("Als anderer Benutzer oeffnen") */
+  function hostMenu(e, n, done) {
+    const g = n.host; if (!g) return;
+    const run = (p) => () => { done(); enter(p); };
+    const items = g.places.map((p) => ({ id: 'p-' + p.id, label: C.isRoot(p) ? t('files.tree.root') : t('files.tree.home'), icon: C.isRoot(p) ? 'root' : 'home', run: run(p) }));
+    if (g.others && g.others.length) items.push({ sep: true }, { heading: t('files.menu.asOther') }, ...g.others.map((p) => ({ id: 'o-' + p.id, label: p.user ? `${p.user} (${p.name})` : p.name, icon: 'dns', run: run(p) })));
+    openMenu({ kit, x: e.clientX, y: e.clientY, label: X.safeName(g.name), items });
+  }
+  const hostIdOf = (place) => { const g = places.groups.find((x) => [...x.places, ...(x.others || [])].some((p) => p.id === place.id)); return g ? g.id : ''; };
   function pinHere(place, path, name) {
     const nm = name || C.nameOf(path) || '/';
     const open = hostIdOf(place) ? 'host:' + hostIdOf(place) : 'local';
@@ -161,6 +196,7 @@ export function mountFiles(box, deps) {
     st.place = place; store.set(place.id); st.query = ''; st.filter = ''; searchInput.value = '';
     renderNav(); renderSide();
     await load(path !== undefined ? path : C.isLocal(place) ? '' : (st.home.get(place.id) || '/'));
+    focusList();
   }
 
   /* ----- Liste laden und zeigen ----- */
@@ -185,7 +221,7 @@ export function mountFiles(box, deps) {
       return false;
     } finally { if (my === st.seq) view.classList.remove('busy'); }
   }
-  const reload = () => (st.place ? load(st.path, { record: false }) : Promise.resolve());
+  const reload = async () => { if (st.place) { await load(st.path, { record: false }); focusList(); } };
   function applyList() {
     let items = st.entries;
     if (st.filter) { const q = st.filter.toLowerCase(); items = items.filter((e) => e.name.toLowerCase().includes(q)); }
@@ -194,8 +230,13 @@ export function mountFiles(box, deps) {
     st.sel.setPaths(st.shown.map((e) => e.path));
   }
   function showFailure(text, retry) {
-    view.replaceChildren(h('div', { class: 'f-empty f-fail', role: 'alert' }, h('p', { text }), btn(t('files.retry'), kit ? 'm3-btn tonal mb m3-state' : 'dk-btn', retry)));
+    const plan = focusPlan();
+    // Der Fehlerblock nimmt den Fokus auf, damit Zurueck, Hoch und F5 auch hier gelten (die Liste gibt es dann nicht)
+    const fail = h('div', { class: 'f-empty f-fail', role: 'alert', tabindex: '-1' }, h('p', { text }), btn(t('files.retry'), kit ? 'm3-btn tonal mb m3-state' : 'dk-btn', retry));
+    fail.addEventListener('keydown', (e) => { if (e.target === fail) onKey(e); });
+    view.replaceChildren(fail); list = null; st.rows = new Map();
     statL.textContent = ''; statR.textContent = '';
+    if (!kit && (plan.list || plan.settle)) { const w = box.closest('.dk-win'); if (!w || w.classList.contains('active')) fail.focus({ preventScroll: true }); }
   }
 
   /* ----- Werkzeugleiste und Adressleiste ----- */
@@ -222,7 +263,7 @@ export function mountFiles(box, deps) {
     if (!st.place) { addr.append(h('span', { class: 'f-addr-hint', text: t('files.choosePlace') })); return; }
     const parts = C.crumbsOf(st.path, st.place);
     const seg = (c, i, text, ic) => {
-      const b = h('button', { type: 'button', class: 'f-crumb' + (i === parts.length - 1 ? ' cur' : ''), 'aria-current': i === parts.length - 1 ? 'location' : undefined, onclick: (e) => { e.stopPropagation(); go(c.path); } }, ic ? icon(ic) : null, h('span', { text: X.safeName(text) }));
+      const b = h('button', { type: 'button', class: 'f-crumb' + (i === parts.length - 1 ? ' cur' : ''), 'aria-current': i === parts.length - 1 ? 'location' : undefined, onclick: (e) => { e.stopPropagation(); go(c.path); }, ...keepFocus }, ic ? icon(ic) : null, h('span', { text: X.safeName(text) }));
       if (!kit) dropTarget(b, () => ({ place: st.place, dir: c.path }));
       return b;
     };
@@ -245,10 +286,10 @@ export function mountFiles(box, deps) {
   }
   addr.addEventListener('click', (e) => { if (e.target === addr) editAddr(); });
 
-  async function go(path) { if (st.place) await load(path); }
-  const goUp = () => (st.place && st.path && st.path !== '/' ? go(C.parentOf(st.path, st.place)) : undefined);
-  async function goBack() { if (!st.back.length) return; const to = st.back.pop(); const was = st.path; if (await load(to, { record: false })) st.fwd.push(was); else st.back.push(to); renderNav(); }
-  async function goForward() { if (!st.fwd.length) return; const to = st.fwd.pop(); const was = st.path; if (await load(to, { record: false })) st.back.push(was); else st.fwd.push(to); renderNav(); }
+  async function go(path) { if (st.place) { await load(path); focusList(); } }
+  const goUp = () => { if (!st.place || !st.path || st.path === '/') return undefined; st.pendingSelect = st.path; return go(C.parentOf(st.path, st.place)); };   // wie im Explorer: der Ordner, aus dem man kommt, ist danach gewaehlt
+  async function goBack() { if (!st.back.length) return; const to = st.back.pop(); const was = st.path; if (await load(to, { record: false })) st.fwd.push(was); else st.back.push(to); renderNav(); focusList(); }
+  async function goForward() { if (!st.fwd.length) return; const to = st.fwd.pop(); const was = st.path; if (await load(to, { record: false })) st.back.push(was); else st.fwd.push(to); renderNav(); focusList(); }
 
   /* ----- Menues Ansicht und Neu ----- */
   function viewMenu(anchor) {
@@ -294,9 +335,11 @@ export function mountFiles(box, deps) {
   }
   function renderHeader() {
     const v = prefs.view;
-    const hd = h('div', { class: 'f-cols', role: 'presentation' }, X.SORT_COLS.map((c) => {
-      const on = v.sortCol === c;
-      const b = h('button', { type: 'button', class: 'f-col' + (on ? ' on' : ''), 'aria-sort': on ? (v.sortDir === 'asc' ? 'ascending' : 'descending') : 'none', onclick: () => setView(X.nextSort(v, c)) }, h('span', { text: colName(c) }), on ? icon(v.sortDir === 'asc' ? 'chevU' : 'chevD') : null);
+    // Die Koepfe sind sortierbare Spaltenkoepfe (flacher Text), keine Tasten: Klick, Enter oder Leertaste sortieren
+    const hd = h('div', { class: 'f-cols', role: 'row' }, X.SORT_COLS.map((c) => {
+      const on = v.sortCol === c, sort = () => setView(X.nextSort(prefs.view, c));
+      const b = h('div', { class: 'f-col' + (on ? ' on' : ''), role: 'columnheader', tabindex: '0', 'data-col': c, 'aria-sort': on ? (v.sortDir === 'asc' ? 'ascending' : 'descending') : 'none', onclick: sort,
+        onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); sort(); } } }, h('span', { class: 'f-col-t', text: colName(c) }), on ? icon(v.sortDir === 'asc' ? 'chevU' : 'chevD') : null);
       const grip = h('span', { class: 'f-grip', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': t('files.col.resize', { name: colName(c) }), tabindex: '0', 'data-col': c });
       return h('div', { class: 'f-colw c-' + c }, b, grip);
     }));
@@ -316,7 +359,24 @@ export function mountFiles(box, deps) {
     grip.addEventListener('click', (e) => e.stopPropagation());
     grip.addEventListener('keydown', (e) => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); set(prefs.view.cols[c] + (e.key === 'ArrowRight' ? 12 : -12), true); } });
   }
+  /** Wohin der Fokus nach dem Neuzeichnen soll: in die Liste (war er dort, oder nirgends), auf denselben Spaltenkopf (war er dort), sonst bleibt er, wo er ist */
+  function focusPlan() {
+    const a = document.activeElement;
+    if (a && a.classList && a.classList.contains('f-col') && view.contains(a)) return { col: a.dataset.col };
+    if (view.contains(a)) return { list: true };
+    if (!a || a === document.body || !a.isConnected) return { settle: true };
+    return {};
+  }
+  /** Bringt den Fokus nach einer Navigation zurueck in die Liste, wenn er sonst verloren waere (kein Fenster der Seite hat ihn) und dieses Fenster vorn ist */
+  function settleFocus() {
+    if (st.dead || kit) return;
+    const w = box.closest('.dk-win');
+    if (w && !w.classList.contains('active')) return;
+    const a = document.activeElement;
+    if (!a || a === document.body || !a.isConnected) focusList();
+  }
   function renderList() {
+    const plan = focusPlan();
     view.replaceChildren(); st.rows = new Map(); list = null;
     if (!st.place) {
       view.append(h('div', { class: 'f-empty' }, h('p', { text: t('files.chooseHint') }), kit ? h('button', { type: 'button', class: 'm3-btn tonal mb m3-state', onclick: pickPlace }, t('files.choosePlace')) : null));
@@ -330,6 +390,9 @@ export function mountFiles(box, deps) {
     view.append(list);
     wireList();
     paint();
+    if (plan.col) { const hd = view.querySelector(`.f-col[data-col="${plan.col}"]`); if (hd) hd.focus({ preventScroll: true }); }
+    else if (plan.list) focusList();
+    else if (plan.settle) settleFocus();
   }
   function paint() {
     for (const [p, el] of st.rows) {
@@ -484,7 +547,7 @@ export function mountFiles(box, deps) {
       case 'address': editAddr(); break;
       case 'search': searchInput.focus(); searchInput.select(); break;
       case 'newFolder': newFolder(); break;
-      case 'menu': { const f = st.sel.focus && st.rows.get(st.sel.focus); const r = (f || list).getBoundingClientRect(); contextMenu({ clientX: r.left + 40, clientY: r.bottom, preventDefault() {} }, !!f, f); break; }
+      case 'menu': { const f = st.sel.focus && st.rows.get(st.sel.focus); const r = (f || list || view).getBoundingClientRect(); contextMenu({ clientX: r.left + 40, clientY: r.bottom, preventDefault() {} }, !!f, f); break; }
       default: used = false;
     }
     if (used) e.preventDefault();

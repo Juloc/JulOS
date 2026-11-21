@@ -134,3 +134,13 @@ test('Zwischenablage, Ziehen, getippter Pfad, Auswahlgroesse', () => {
   assert.equal(X.parseTypedPath(' /a/b/../c/ ', false), '/a/c'); assert.equal(X.parseTypedPath('', false), '/'); assert.equal(X.parseTypedPath('a\\b', true), 'a/b'); assert.equal(X.parseTypedPath('~/x', false), '~/x'); assert.equal(X.parseTypedPath('/../..', false), '/');
   assert.deepEqual(X.selectionStats([f('a', { size: 5 }), f('b', { size: 7 }), d('c')]), { count: 3, files: 2, dirs: 1, bytes: 12 });
 });
+
+test('Seitenleiste und Fenstergroesse: Breite begrenzt, Zustand nur true, Fenster 70 Prozent der Flaeche mit Mindestgroesse', () => {
+  assert.deepEqual(X.normalizeSide(null), { w: 200, off: false });
+  assert.deepEqual(X.normalizeSide({ w: 20, off: 'ja' }), { w: X.SIDE_MIN, off: false });
+  assert.deepEqual(X.normalizeSide({ w: 9999, off: true }), { w: X.SIDE_MAX, off: true });
+  assert.deepEqual(X.normalizeSide({ w: 'x' }), { w: 200, off: false });
+  assert.deepEqual(X.filesWindowSize({ w: 1920, h: 1000 }), { w: 1344, h: 700 });
+  assert.deepEqual(X.filesWindowSize({ w: 1200, h: 700 }), { w: 860, h: 540 });                      // 70 % waeren kleiner als das Minimum
+  assert.deepEqual(X.filesWindowSize({ w: 800, h: 480 }), { w: 800, h: 480 });                       // nie groesser als die Flaeche
+});

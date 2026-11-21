@@ -9,7 +9,8 @@
  * Alles, was vom Server oder Ziel kommt (Namen, Pfade, Text), wird nie als HTML eingesetzt: die Oberflaeche setzt es mit textContent.
  * ===================================================================== */
 import { t, tp, tk, fmtNumber, fmtDate } from './i18n.js';
-import { loginUser, loginSaved } from './hostlogin.js';
+import { loginUser, loginSaved, usesHostLogin } from './hostlogin.js';
+import { programOf } from './terminal-programs.js';
 import { confirmView, auditConfirmText } from './confirm.js';
 
 export const LOCAL_ID = 'local';
@@ -59,31 +60,47 @@ export function rootAvailable(agent) {
   return true;
 }
 
+/** Die Anmeldung einer Verbindung als ein Schluessel: gleicher Benutzer, Adresse und Port heissen gleiche Dateien */
+const loginKey = (c) => `${loginUser(c)}@${c.host}:${c.port || ''}`;
+
 /**
- * Aus den Verbindungen und Hosts die Orte: SSH-Verbindungen (Art "terminal") sind Dateiorte, RDP und VNC nicht. Gruppiert nach Host; hat ein Host mehrere SSH-Verbindungen, bekommt
- * jede die Beschriftung "Host · Verbindung", sonst heisst der Ort wie der Host. Dazu je Host mit freigegebenem Agenten der Ort "Host (Root)" (seine Kennung ist die des Hosts).
+ * Welche SSH-Verbindungen eines Hosts als Dateiort taugen. Eine Terminal-Kachel mit Programm (Claude Code, Codex, eigener Befehl) ist kein eigener Ort: sie nutzt dieselbe Anmeldung wie die
+ * einfache Terminal-Verbindung. Die erste Wahl ist die Verbindung mit dem Login des Hosts, dann die erste einfache Terminal-Verbindung; gibt es nur Programm-Kacheln, dient die erste von ihnen.
+ * Gibt { home, others }: others sind Verbindungen mit einer anderen Anmeldung (anderer Benutzer), je Anmeldung eine (die einfache zuerst).
+ */
+export function pickHomeConnections(terminals) {
+  const rank = (c) => (programOf(c) === 'shell' ? 0 : 2) + (usesHostLogin(c) ? 0 : 1);
+  const sorted = terminals.map((c, i) => ({ c, i })).sort((a, b) => rank(a.c) - rank(b.c) || a.i - b.i).map((x) => x.c);
+  if (!sorted.length) return { home: null, others: [] };
+  const home = sorted[0], seen = new Set([loginKey(home)]), others = [];
+  for (const c of sorted.slice(1)) { const k = loginKey(c); if (!seen.has(k)) { seen.add(k); others.push(c); } }
+  return { home, others };
+}
+
+/**
+ * Aus den Verbindungen und Hosts die Orte: SSH-Verbindungen (Art "terminal") sind Dateiorte, RDP und VNC nicht. Gruppiert nach Host; je Host gibt es nur "Home" (eine SSH-Verbindung, siehe
+ * pickHomeConnections, der Ort heisst wie der Host) und, wo der Agent es freigibt, "Host (Root)" (seine Kennung ist die des Hosts). Verbindungen mit anderer Anmeldung stehen in `others`
+ * ("Als anderer Benutzer oeffnen"), heissen "Host · Benutzer" und sind trotzdem Orte (flat), damit angeheftete Ordner und gemerkte Orte sie finden.
  * Hosts ohne SSH-Verbindung und ohne Root-Zugang kommen nicht vor.
  */
 export function buildPlaces({ connections = [], hosts = [], info = {} } = {}) {
   const ssh = connections.filter((c) => c && c.kind === 'terminal');
   const byHost = new Map();
-  for (const h of hosts) byHost.set(h.id, { id: h.id, name: h.name, places: [], root: rootAvailable(h.agent) });
+  for (const h of hosts) byHost.set(h.id, { id: h.id, name: h.name, conns: [], root: rootAvailable(h.agent) });
   for (const c of ssh) {
-    if (!byHost.has(c.hostId)) byHost.set(c.hostId, { id: c.hostId, name: c.name, places: [] });
-    byHost.get(c.hostId).places.push(c);
+    if (!byHost.has(c.hostId)) byHost.set(c.hostId, { id: c.hostId, name: c.name, conns: [] });
+    byHost.get(c.hostId).conns.push(c);
   }
   const groups = [];
   for (const g of byHost.values()) {
-    if (!g.places.length && !g.root) continue;
-    const many = g.places.length > 1;
-    const places = g.places.map((c) => ({
-      id: c.id, kind: 'ssh', name: c.name, host: g.name, user: loginUser(c) || '', hasPassword: loginSaved(c), address: `${loginUser(c) ? loginUser(c) + '@' : ''}${c.host}`,
-      label: many ? `${g.name} · ${c.name}` : g.name,
-    }));
+    if (!g.conns.length && !g.root) continue;
+    const { home, others } = pickHomeConnections(g.conns);
+    const mk = (c, label) => ({ id: c.id, kind: 'ssh', name: c.name, host: g.name, user: loginUser(c) || '', hasPassword: loginSaved(c), address: `${loginUser(c) ? loginUser(c) + '@' : ''}${c.host}`, label });
+    const places = home ? [mk(home, g.name)] : [];
     if (g.root) places.push({ id: g.id, kind: 'root', name: g.name, host: `${g.name} (Root)`, user: 'root', hasPassword: true, address: t('files.rootAddress'), label: `${g.name} (Root)` });
-    groups.push({ id: g.id, name: g.name, places });
+    groups.push({ id: g.id, name: g.name, places, others: others.map((c) => mk(c, `${g.name} · ${loginUser(c) || c.name}`)) });
   }
-  const flat = groups.flatMap((g) => g.places);
+  const flat = groups.flatMap((g) => [...g.places, ...g.others]);
   return { local: info.local ? { id: LOCAL_ID, kind: 'local', name: t('files.local'), label: t('files.local'), host: t('files.local') } : null, groups, flat };
 }
 export const findPlace = (places, id) => (id === LOCAL_ID ? places.local : places.flat.find((p) => p.id === id)) || null;

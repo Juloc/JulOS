@@ -1,7 +1,7 @@
 // Hilfen fuer Hosts (hosts.js): Zustand, Gruppierung, Texte. Reine Logik, kein Browser noetig.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { serviceState, connectionState, dotClass, stateText, groupConnections, hostDetail, agentSummary, hostById } from '../../src/JulOS.Frontend/wwwroot/hosts.js';
+import { serviceState, connectionState, dotClass, stateText, groupConnections, hostDetail, agentSummary, hostById, isProgramTile, hostSections, toggleClosed, readClosed, writeClosed, CLOSED_KEY, hostStatusText } from '../../src/JulOS.Frontend/wwwroot/hosts.js';
 
 const host = (id, extra = {}) => ({ id, name: 'H' + id, online: false, services: [], ...extra });
 const conn = (id, hostId) => ({ id, hostId, name: 'C' + id });
@@ -54,4 +54,29 @@ test('host details and the agent sentence', () => {
 test('ein Host-Agent: der Satz zum Agenten bleibt gleich, Modus und Faehigkeiten stehen in hostinfo.js', () => {
   const h = host('a', { agent: { online: true, version: '0.5.0', platform: 'linux-host', outdated: false, kind: 'host', caps: ['sysinfo', 'updates'], control: 'read' } });
   assert.equal(agentSummary(h), 'Agent verbunden – Agent 0.5.0, linux-host');
+});
+
+test('Verbindungen nach Host: normale Verbindungen und Programm-Kacheln getrennt, leere Hosts nur ohne Filter', () => {
+  const hosts = [host('a'), host('b')];
+  const t = (id, hostId, extra = {}) => ({ id, hostId, kind: 'terminal', name: 'C' + id, ...extra });
+  const conns = [t(1, 'a'), t(2, 'a', { program: 'claude' }), t(3, 'a', { program: 'codex' }), t(4, 'a', { keepAlive: true }), { id: 5, hostId: 'a', kind: 'desktop' }, t(6, 'weg', { program: 'custom' })];
+  assert.deepEqual(conns.map((c) => isProgramTile(c)), [false, true, true, false, false, true]);   // tmux (keepAlive) und Desktops sind normale Verbindungen
+  const s = hostSections(hosts, conns);
+  assert.deepEqual(s.map((x) => [x.key, x.plain.map((c) => c.id), x.programs.map((c) => c.id)]), [['a', [1, 4, 5], [2, 3]], ['b', [], []], ['', [], [6]]]);
+  assert.equal(s[2].host, null);
+  assert.deepEqual(hostSections(hosts, conns, { hideEmpty: true }).map((x) => x.key), ['a', '']);
+});
+
+test('Eingeklappte Hosts: umschalten, lesen und schreiben ohne Fehler bei kaputten Daten', () => {
+  assert.deepEqual(toggleClosed(['a'], 'b'), ['a', 'b']);
+  assert.deepEqual(toggleClosed(['a', 'b'], 'a'), ['b']);
+  const mem = new Map(), store = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, v) };
+  assert.deepEqual(readClosed(store), []);
+  writeClosed(store, ['x', 'y']);
+  assert.deepEqual(readClosed(store), ['x', 'y']);
+  mem.set(CLOSED_KEY, '{kaputt'); assert.deepEqual(readClosed(store), []);
+  mem.set(CLOSED_KEY, JSON.stringify(['a', 3, null, 'b'])); assert.deepEqual(readClosed(store), ['a', 'b']);
+  assert.deepEqual(readClosed({ getItem() { throw new Error('gesperrt'); } }), []);
+  assert.equal(hostStatusText({ online: true, agent: { online: true } }), 'online · Agent verbunden');
+  assert.equal(hostStatusText({ online: false, agent: null }), 'offline · Kein Agent');
 });

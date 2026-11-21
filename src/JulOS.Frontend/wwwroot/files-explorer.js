@@ -224,6 +224,20 @@ export function actionForKey(e) {
   }
 }
 
+/* ---------- Seitenleiste und Fenstergroesse (pro Geraet, localStorage) ---------- */
+export const SIDE_DEFAULT = 200, SIDE_MIN = 140, SIDE_MAX = 360;
+/** Breite und Zustand der Seitenleiste aus einem unbekannten Wert: { w, off } */
+export function normalizeSide(raw) {
+  const v = raw && typeof raw === 'object' ? raw : {};
+  const w = Number(v.w);
+  return { w: Number.isFinite(w) ? Math.max(SIDE_MIN, Math.min(SIDE_MAX, Math.round(w))) : SIDE_DEFAULT, off: v.off === true };
+}
+/** Die Groesse des Dateien-Fensters beim ersten Oeffnen: 70 % der freien Flaeche, mindestens 860 x 540, hoechstens die Flaeche (area: { w, h }) */
+export function filesWindowSize(area, min = { w: 860, h: 540 }) {
+  const fit = (a, lo) => Math.max(1, Math.min(a, Math.max(lo, Math.round(a * 0.7))));
+  return { w: fit(area.w, min.w), h: fit(area.h, min.h) };
+}
+
 /* ---------- Ansicht und Pins (Einstellung "files" auf dem Server) ---------- */
 export const DEFAULT_COLS = { name: 240, date: 140, type: 110, size: 80 };
 export const COL_MIN = 60, COL_MAX = 800;

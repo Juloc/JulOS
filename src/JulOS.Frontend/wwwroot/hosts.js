@@ -4,6 +4,7 @@
  * ===================================================================== */
 
 import { t, fmtDate } from './i18n.js';
+import { programOf } from './terminal-programs.js';
 
 /** 'up' (erreichbar), 'down' oder 'unknown' (nicht geprueft: Erlaubnisliste oder noch keine Antwort) */
 export function serviceState(host, connectionId) {
@@ -26,6 +27,32 @@ export function groupConnections(hosts, connections) {
   const orphans = connections.filter((c) => !hosts.some((h) => h.id === c.hostId));
   if (orphans.length) groups.push({ host: null, connections: orphans });
   return groups;
+}
+
+/** Eine Terminal-Kachel mit Programm (Claude Code, Codex, eigener Befehl); die einfache Terminal-Verbindung (Shell, auch mit tmux) ist keine */
+export const isProgramTile = (c) => !!c && c.kind === 'terminal' && programOf(c) !== 'shell';
+
+/**
+ * Die Verbindungen-Ansicht: ein Abschnitt je Host (in der Reihenfolge der Hosts, Verbindungen ohne Host zuletzt mit host: null), darin die normalen Verbindungen (plain) und
+ * getrennt davon die Programm-Kacheln (programs). hideEmpty laesst Hosts ohne passende Verbindung weg (bei einem Filter oder der Suche).
+ */
+export function hostSections(hosts, connections, { hideEmpty = false } = {}) {
+  return groupConnections(hosts, connections)
+    .filter((g) => !hideEmpty || g.connections.length)
+    .map((g) => ({ host: g.host, key: g.host ? g.host.id : '', plain: g.connections.filter((c) => !isProgramTile(c)), programs: g.connections.filter(isProgramTile) }));
+}
+
+/** Eingeklappte Hosts (Kennungen): ein Klick klappt zu oder auf; pro Geraet in localStorage gemerkt (Schluessel unten), die Hilfen hier kennen keinen Browser */
+export const CLOSED_KEY = 'pd.hostsClosed';
+export const toggleClosed = (list, key) => (list.includes(key) ? list.filter((x) => x !== key) : [...list, key]);
+export function readClosed(storage) {
+  try { const v = JSON.parse(storage.getItem(CLOSED_KEY)); return Array.isArray(v) ? v.filter((x) => typeof x === 'string').slice(0, 200) : []; } catch { return []; }
+}
+export function writeClosed(storage, list) { try { storage.setItem(CLOSED_KEY, JSON.stringify(list.slice(0, 200))); } catch { /* egal */ } }
+/** Der Zustand eines Hosts in einem Satz fuer die Kopfzeile: online oder offline, dazu der Agent (verbunden, getrennt, keiner) */
+export function hostStatusText(h) {
+  const a = h && h.agent;
+  return `${t(h && h.online ? 'hosts.online' : 'hosts.offline')} · ${!a ? t('hosts.noAgent') : t(a.online ? 'hosts.agentOnline' : 'hosts.agentOffline')}`;
 }
 
 /** Rechnername und Betriebssystem, soweit der Agent sie gemeldet hat */

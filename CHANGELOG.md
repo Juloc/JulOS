@@ -4,6 +4,14 @@ Alle wichtigen Änderungen an JulOS. Das Format folgt [Keep a Changelog](https:/
 [Semantic Versioning](https://semver.org/lang/de/). Solange die Hauptversion 0 ist, kann sich noch vieles ändern.
 Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASING.md).
 
+## [Unveröffentlicht]
+
+### Behoben
+- **Explorer repariert** ([docs/FILES-EXPLORER.md](docs/FILES-EXPLORER.md), „Repairs“): Der **Tastaturfokus** bleibt nach jedem Navigationsschritt in der Liste (Doppelklick in einen Ordner, Rückschritt, Zurück und Vor, Ortswechsel, Neu laden, getippte Adresse, Menü, Dialog und Editor schließen), sodass `Enter`, `F2`, `Entf`, Pfeile, Buchstabensprung und `Strg+C/X/V` sofort wirken; die **Spaltenköpfe** sind flache, sortierbare Köpfe statt Knöpfe, die **Werkzeugleiste** hat gleiche flache Knöpfe (32 px, vorher wirkten sie durch die allgemeine Knopfform der Seite 44 px hoch und rund), Adressleiste und Suchfeld sind bündig, **Ansicht** und **Neu** sind Menü-Knöpfe, bei schmalem Fenster wird nichts abgeschnitten; das Fenster öffnet mit **70 % der Fläche** (mindestens 860 × 540); die **Seitenleiste** ist 200 px schmal, in der Breite ziehbar und einklappbar (pro Gerät gemerkt) und zeigt je Host nur **Home** und **Root** (Terminal-Kacheln mit Codex oder Claude Code und weitere SSH-Verbindungen desselben Hosts sind keine Orte mehr; ein anderer Benutzer steht im Menü des Hosts unter „Als anderer Benutzer öffnen“).
+
+### Geändert
+- **Verbindungen nach Host** ([docs/HOSTS.md](docs/HOSTS.md)): Desktop-Fenster und Handy-Seite zeigen **einen Abschnitt je Host** (Name, online, Agent, Anzahl) mit seinen Verbindungen und getrennt darunter den **Programmen** (Claude Code, Codex); der Kopf klappt den Host ein und aus (pro Gerät gemerkt); Verbindungen ohne Host stehen in „Ohne Host“. Suche, Filter und Favoriten bleiben; die Gruppierung nach Ordner gibt es auf dem Desktop auf Wunsch weiter, auf dem Handy bleibt der Ordner ein Filter.
+
 ## [0.20.0] - 2026-11-20
 
 ### Geändert

@@ -1,0 +1,24 @@
+/* Dialoge als Fenster (desktop-window.js): nur der Desktop laedt diese Datei (desktop.js). Das Fenster selbst ist ein gewoehnliches .dk-win aus desktop.css;
+ * hier steht, was ein Dialog anders hat: schlichtere Titelleiste, Inhalt mit Rand, Tastenreihe, Root rot. Alle Farben sind Variablen aus desktop.css (Hell und Dunkel). */
+.dk-dlgwin { background: var(--dk-dlg); max-width: calc(100vw - 16px); outline: none; }
+.dk-dlgwin .dk-wh { height: 40px; }
+.dk-dlgwin .dk-wh .dk-wt { font-size: 14px; }
+.dk-dlgwin .dk-wx { display: none; }
+.dk-dlgwin .dk-wc { margin-left: auto; }
+.dk-dlgwin.active { box-shadow: var(--dk-shadow), 0 0 0 1.5px var(--dk-accent-ring); }
+/* Root: ein Dialog zu einem Root-Ort ist schon an der Titelleiste zu erkennen, auch wenn er hinter anderen Fenstern wieder auftaucht */
+.dk-dlgwin.dw-root .dk-wh { background: var(--dk-bad-bg); }
+.dk-dlgwin.dw-root .dk-wh .dk-wt { color: var(--dk-bad-text); }
+.dk-dlgwin.dw-root { border-color: var(--dk-bad-text); }
+
+/* Inhalt: dieselben Klassen wie im Dialog (.f-dlg aus files.css), nur ohne feste Breite; die Tasten stehen unten und scrollen nicht mit */
+.dw-body.f-dlg { width: auto; max-width: none; flex: 1; min-height: 0; display: flex; flex-direction: column; box-sizing: border-box; padding: 2px 20px 16px; overflow: auto; color: var(--dk-t1); }
+.dw-body.f-dlg.f-edit { height: auto; max-width: none; }
+.dw-body > * { flex: none; }
+.dw-body .f-ed { flex: 1 1 auto; min-height: 0; }
+.dw-body > .f-ed, .dw-body > .f-hist, .dw-body > .f-picker { flex: 1 1 auto; min-height: 0; }
+.dw-body .f-hist { max-height: none; }
+.dw-btns { position: sticky; bottom: -16px; margin: 14px -20px -16px; padding: 10px 20px 14px; justify-content: flex-end; background: var(--dk-dlg); }
+.dw-btns button { flex: 0 1 auto; min-height: 36px; padding: 0 20px; }
+.dw-body .f-countdown { margin: 6px 0 0; font-size: 12px; color: var(--dk-hint); }
+.dw-body .f-countdown.late { color: var(--dk-bad-text); font-weight: 600; }

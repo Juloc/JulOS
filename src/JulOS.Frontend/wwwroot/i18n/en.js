@@ -742,6 +742,7 @@ export default {
   "files.chooseHint": "Choose a place: the shared folder of the server or a host with SSH access.",
   "files.choosePlace": "Choose a place",
   "files.clearSelection": "Clear selection",
+  "files.confirm.countdown": "The confirmation is valid for another {s} s.",
   "files.copy.confirm": "Copy",
   "files.copy.overwriteWarning": "These names already exist at the target and would be replaced ({n}): {names}",
   "files.copy.sentence": "From {from} this will be copied: {path}, to {to} into the folder {dir}.",

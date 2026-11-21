@@ -29,7 +29,7 @@ export function mountFiles(box, deps) {
   const fapi = C.makeFilesApi(api, deps.createXhr ? { createXhr: deps.createXhr } : undefined);
   let info = { local: false, write: false, maxBytes: 0 };
   let places = C.buildPlaces({ info });
-  const st = { place: null, path: '', entries: [], shown: [], byPath: new Map(), truncated: false, hidden: 0, sel: new X.ListSelection(), back: [], fwd: [], seq: 0, query: '', filter: '', home: new Map(), dead: false, multi: false, rows: new Map(), loaded: false, edit: false, pendingSelect: null };
+  const st = { place: null, path: '', entries: [], shown: [], byPath: new Map(), truncated: false, hidden: 0, sel: new X.ListSelection(), back: [], fwd: [], seq: 0, query: '', filter: '', home: new Map(), dead: false, multi: false, rows: new Map(), loaded: false, edits: new Map(), pendingSelect: null };
   const store = { get: () => { try { return localStorage.getItem('pd.files.place'); } catch { return null; } }, set: (v) => { try { localStorage.setItem('pd.files.place', v); } catch { /* egal */ } } };
   const say = (text) => notify(text);
 
@@ -154,7 +154,7 @@ export function mountFiles(box, deps) {
   function pickPlace() {
     refreshPlaces();
     const holder = h('div', { class: 'f-picker' });
-    const dlg = modal({ title: t('files.choosePlace'), kit, content: [holder], actions: [{ id: 'x', label: t('common.close'), kind: 'ghost' }] });
+    const dlg = modal({ title: t('files.choosePlace'), kit, win: { width: 420 }, content: [holder], actions: [{ id: 'x', label: t('common.close'), kind: 'ghost' }] });
     const paint2 = () => renderTree(holder, { ...treeOptions((p, path) => { dlg.close(); enter(p, path); }), onToggle: (id) => { prefs = { ...prefs, closed: X.toggleClosed(prefs.closed, id) }; savePrefs(); paint2(); }, onMenu: (e, n) => { treeMenu(e, n, paint2, () => dlg.close()); } });
     paint2();
     if (!places.local && !places.groups.length) holder.replaceChildren(h('p', { class: 'f-empty', text: t('files.noPlaces') }));
@@ -695,7 +695,7 @@ export function mountFiles(box, deps) {
     if (e.kind === 'file') rows.push([t('files.props.size'), `${C.fileSize(e.size)} (${e.size} B)`]);
     if (e.modified) rows.push([t('files.props.modified'), C.fmtModified(e.modified)]);
     if (e.mode !== undefined && e.mode !== null && e.mode !== '') rows.push([t('files.props.mode'), String(e.mode)]);
-    modal({ title: t('files.props.title'), kit, id: 'props', content: [rowsEl(rows)], actions: [{ id: 'x', label: t('common.close'), kind: 'primary' }] });
+    modal({ title: t('files.props.title'), kit, id: 'props', key: `props:${st.place && st.place.id}:${e.path}`, content: [rowsEl(rows)], actions: [{ id: 'x', label: t('common.close'), kind: 'primary' }] });
   }
 
   /* ----- Oeffnen, Lesen, Herunterladen, Editor ----- */
@@ -720,10 +720,12 @@ export function mountFiles(box, deps) {
     const a = document.createElement('a'); a.href = url; a.download = ''; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove();
   }
   async function editFile(e, { fallbackDownload = false } = {}) {
-    if (st.edit) return;
-    st.edit = true;
+    const place = st.place, key = `edit:${place && place.id}:${e.path}`;
+    const open = st.edits.get(key);
+    if (open) { if (open.focus) open.focus(); return; }          // dieselbe Datei ist schon offen (oder wird gerade gelesen): ihr Fenster nach vorn, nicht noch eins
+    st.edits.set(key, {});
     try {
-      const place = st.place, ok = await readConfirmed('text', e);
+      const ok = await readConfirmed('text', e);
       if (!ok) return;
       let r;
       try { r = await guarded(() => fapi.text(place, e.path, ok.token), place); }
@@ -736,11 +738,12 @@ export function mountFiles(box, deps) {
       const cut = !!r.truncated;
       const why = !info.write ? t('files.writeOff') : cut ? t('files.edit.readOnlyCut', { size: C.fileSize(X.EDIT_MAX_BYTES) }) : '';
       const ed = openEditor({
-        kit, name: e.name, path: e.path, text: r.text, sizeText: C.fileSize(r.size), readOnly: !canWrite(place) || cut, why,
+        kit, key, name: e.name, path: e.path, text: r.text, sizeText: C.fileSize(r.size), readOnly: !canWrite(place) || cut, why,
         onSave: async (text) => { const res = await saveText(place, e, text, base); if (res) base = res.stat; return !!res; },
       });
+      st.edits.set(key, ed);
       await ed.promise;
-    } finally { st.edit = false; }
+    } finally { st.edits.delete(key); }
   }
   /** Speichern: pruefen, ob die Datei sich auf dem Host geaendert hat, dann prepare, der Dialog, der Upload mit dem Token */
   async function saveText(place, e, text, base) {
@@ -938,7 +941,7 @@ export function mountFiles(box, deps) {
   /* ----- Verlauf ----- */
   async function showHistory() {
     const holder = h('div', { class: 'f-hist' }, h('p', { text: t('hostinfo.stLoading') }));
-    const dlg = modal({ title: t('files.history'), kit, id: 'hist', content: [holder], actions: [{ id: 'x', label: t('common.close'), kind: 'primary' }] });
+    const dlg = modal({ title: t('files.history'), kit, id: 'hist', key: 'hist', win: { width: 580, height: 540, resizable: true }, content: [holder], actions: [{ id: 'x', label: t('common.close'), kind: 'primary' }] });
     try {
       const r = await fapi.audit(40);
       const rows = r.entries.map(C.auditLine);

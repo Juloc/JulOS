@@ -6,6 +6,11 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+### Neu
+- **Dialoge der Dateien-App sind auf dem Desktop Fenster** ([docs/FILES-EXPLORER.md](docs/FILES-EXPLORER.md#dialogs-are-windows-unreleased)): Bestätigungen, Namensabfrage, Fortschritt, Host-Schlüssel, Passwort, Eigenschaften, Verlauf und der Editor sperren den Desktop nicht mehr. Sie sind bewegliche Fenster im Fenstermanager (mehrere gleichzeitig, mit ihrem Fenster nach vorn geholt und immer darüber, Fokus hinein und beim Schließen zurück, `Esc` schließt nur das Fenster mit dem Fokus). Der Editor ist ein eigenes, in der Größe veränderbares Fenster, eins je Datei. Auf dem Handy bleibt alles wie bisher (Blatt).
+- **Schutz bei Bestätigungen:** Schließen, `Esc`, Schließen des Eigentümer-Fensters und Abmelden **bestätigen nie**, sie brechen ab; der Titel nennt Aktion und Host, ein Root-Ort hat eine rote Titelleiste, der Fokus steht auf „Abbrechen“ (`Enter` bestätigt nie), eine Anzeige zählt die 60 Sekunden herunter, danach bleibt „Ausführen“ aus. Die Zweischritt-Logik mit dem Token ist unverändert.
+- Neu: `desktop-window.js`, `dialogwin.css`, `tests/frontend/dialogwin.test.mjs`. Noch nicht umgezogen (Schritt 2 des Plans, [docs/FILES-VIEWER.md](docs/FILES-VIEWER.md)): die festen Dialoge aus `index.html` wie die Bestätigung der Host-Aktionen und die Abfrage des zweiten Faktors.
+
 ## [0.21.0] - 2026-11-21
 
 ### Neu

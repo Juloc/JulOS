@@ -11,6 +11,7 @@ import * as X from './files-explorer.js';
 import { h, icon, modal, confirmDialog, inputDialog, progressDialog, btn, rowsEl, noteEl } from './files-ui.js';
 import { openMenu, closeMenu } from './files-menu.js';
 import { openEditor } from './files-editor.js';
+import { viewKind, openViewer } from './files-viewer.js';
 import { renderTree } from './files-tree.js';
 
 export { icon, h, modal, confirmDialog, inputDialog, progressDialog };
@@ -664,6 +665,7 @@ export function mountFiles(box, deps) {
     const one = sel.length === 1 ? sel[0] : null, w = canTry(), tip = w ? undefined : noWriteTitle(), k = ctrl(), sc = (s) => (kit ? '' : s);
     const items = [];
     if (one) items.push({ id: 'open', label: t('files.menu.open'), icon: one.openable ? 'open' : 'blank', shortcut: sc('Enter'), run: () => openEntry(one) });
+    if (one && C.isFileLike(one) && viewKind(one.name)) items.push({ id: 'view', label: t('files.view.menu'), icon: 'view', run: () => viewFile(one) });
     if (one && C.isFileLike(one)) items.push({ id: 'download', label: t('desktopFiles.download'), icon: 'download', run: () => download(one) });
     items.push({ sep: true },
       { id: 'cut', label: t('files.menu.cut'), icon: 'cut', shortcut: sc(`${k}+X`), disabled: !w, title: tip, run: () => doClip('cut') },
@@ -702,22 +704,28 @@ export function mountFiles(box, deps) {
   function openEntry(e) {
     if (e.openable) return go(e.path);
     if (!C.isFileLike(e)) return undefined;
+    if (viewKind(e.name)) return viewFile(e);
     if (!C.isLocal(st.place) && X.editable(e)) return editFile(e, { fallbackDownload: true });
     return download(e);
   }
   /** Auf einem Root-Ort liest der Server nur mit einer Bestaetigung (prepare, Dialog, Token); sonst gibt es kein Token. Gibt { token } oder null (abgebrochen oder Fehler). */
-  async function readConfirmed(action, e) {
-    if (!C.isRoot(st.place)) return { token: undefined };
-    const prep = await prepare(action, { paths: [e.path] });
+  async function readConfirmed(action, e, place = st.place) {
+    if (!C.isRoot(place)) return { token: undefined };
+    const prep = await prepare(action, { paths: [e.path] }, place);
     if (!prep || !(await confirmDialog(kit, C.readModel(action, prep), { expiresIn: prep.expiresIn }))) return null;
     return { token: prep.token };
   }
-  async function download(e) {
-    const ok = await readConfirmed('download', e);
+  async function download(e, place = st.place) {
+    const ok = await readConfirmed('download', e, place);
     if (!ok) return;
-    const url = fapi.downloadUrl(st.place, e.path, ok.token);
+    const url = fapi.downloadUrl(place, e.path, ok.token);
     if (!ok.token) { const problem = await C.downloadProblem(url); if (problem) return say(problem); }          // sonst scheitert der Download still im Browser
     const a = document.createElement('a'); a.href = url; a.download = ''; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove();
+  }
+  /** Vorschau (files-viewer.js): Bild, Video, Audio, PDF; das Fenster bleibt an dem Ort, aus dem die Datei kam, auch wenn die App danach woanders hin wechselt */
+  function viewFile(e) {
+    const place = st.place;
+    return openViewer({ id: me, kit, place, entry: e, entries: st.shown, limits: () => info, guard: (fn) => guarded(fn, place), confirm: (x) => readConfirmed('preview', x, place), download: (x) => download(x, place), say });
   }
   async function editFile(e, { fallbackDownload = false } = {}) {
     const place = st.place, key = `edit:${place && place.id}:${e.path}`;

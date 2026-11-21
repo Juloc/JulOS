@@ -343,12 +343,12 @@ const finish = (model, prep) => {
   return prep && prep.root ? { ...m, root: true, rootNote: t('files.root.dialogNote'), danger: true } : m;
 };
 
-/** Lesen als root (Download und Textansicht): bestaetigt wird die Datei, sie wird danach vom Server als root gelesen und im Verlauf vermerkt */
+/** Lesen als root (Download, Textansicht und Vorschau): bestaetigt wird die Datei, sie wird danach vom Server als root gelesen und im Verlauf vermerkt */
 export function readModel(action, prep) {
   const path = pathsText(prep.paths);
   return finish({
     title: t(action === 'download' ? tk('files.read.titleDownload') : tk('files.read.titleText')),
-    sentence: t(action === 'download' ? tk('files.read.sentenceDownload') : tk('files.read.sentenceText'), { host: prep.host, path }),
+    sentence: t(action === 'download' ? tk('files.read.sentenceDownload') : action === 'preview' ? tk('files.read.sentencePreview') : tk('files.read.sentenceText'), { host: prep.host, path }),
     rows: [[t('files.rowHost'), prep.host], [t('files.rowPath'), path], [t('files.rowCount'), countText(prep)]],
     confirm: t(action === 'download' ? tk('files.read.confirmDownload') : tk('files.read.confirmText')),
     danger: false,

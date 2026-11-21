@@ -324,6 +324,79 @@ public sealed partial class AgentLinkTests
     }
 
     [Fact]
+    public async Task A_root_preview_needs_its_own_confirmation_shows_only_images_and_pdf_once_without_ranges_and_stands_in_the_history()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db, settings: new Dictionary<string, string> { ["JULOS_FILES_WRITE"] = "on", ["JULOS_FILES_PREVIEW_MB"] = "1" });
+        await using var r = await RootRigAsync(db, app);
+        byte[] png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, .. Enumerable.Range(0, 130_000).Select(i => (byte)(i % 251))];
+        await File.WriteAllBytesAsync(r.Bridge!.P("bild.png"), png);
+        await File.WriteAllBytesAsync(r.Bridge.P("gross.png"), [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, .. new byte[1_100_000]]);
+        await File.WriteAllBytesAsync(r.Bridge.P("film.mp4"), [0, 0, 0, 24, (byte)'f', (byte)'t', (byte)'y', (byte)'p', .. new byte[100]]);
+        await File.WriteAllTextAsync(r.Bridge.P("seite.html"), "<script>alert(1)</script>");
+        await File.WriteAllTextAsync(r.Bridge.P("falsch.png"), "<html><script>alert(1)</script></html>");
+        Directory.CreateDirectory(r.Bridge.P("ordner.png"));
+        string Url(string path, string? token = null) => $"/api/files/remote/preview?c={r.Host}&path={Uri.EscapeDataString(path)}" + (token is null ? "" : "&token=" + token);
+        int Reads() => r.Bridge.Log.Count(l => l.Path.EndsWith("/read"));
+        async Task<(HttpStatusCode, string)> Code(string url) { var x = await FGet(r, url); return (x.Status, CodeOf(x.Body)); }
+        Task<(string? Token, JsonElement Body, HttpStatusCode Status)> Prepare(string path, string action = "preview") => FPrepare(r, new { action, connection = r.Host, paths = new[] { path } });
+
+        // ohne Token und mit erfundenem: abgelehnt, der Agent bekommt keinen read
+        foreach (var tok in new string?[] { null, "erfunden" }) Assert.Equal((HttpStatusCode.Forbidden, "confirmation_invalid"), await Code(Url("/bild.png", tok)));
+        Assert.Equal(0, Reads());
+        // schon beim Vorbereiten abgelehnt (nur Name und Groesse, nichts gelesen): Video, Seite, zu gross, Ordner
+        var video = await Prepare("/film.mp4");
+        Assert.Equal((HttpStatusCode.UnsupportedMediaType, "preview_root_type"), (video.Status, CodeOf(video.Body)));
+        Assert.Equal("preview_type", CodeOf((await Prepare("/seite.html")).Body));
+        Assert.Equal("preview_too_large", CodeOf((await Prepare("/gross.png")).Body));
+        Assert.Equal("not_a_file", CodeOf((await Prepare("/ordner.png")).Body));
+        Assert.Equal("not_found", CodeOf((await Prepare("/gibt-es-nicht.png")).Body));
+        Assert.Equal(0, Reads());
+        // die Ausfuehrung prueft es selbst noch einmal, auch mit einem gueltigen Token fuer etwas anderes
+        var (tText, _, _) = await Prepare("/bild.png", "text");
+        Assert.Equal("confirmation_mismatch", CodeOf((await FGet(r, Url("/bild.png", tText))).Body));                              // ein Token fuer "text" gilt nicht fuer die Vorschau
+        var (tOther, _, _) = await Prepare("/bild.png");
+        Assert.Equal("confirmation_mismatch", CodeOf((await FGet(r, Url("/falsch.png", tOther))).Body));                           // und nicht fuer eine andere Datei
+        Assert.Equal(0, Reads());
+        var (tVideo, _, _) = await Prepare("/bild.png");
+        Assert.Equal((HttpStatusCode.UnsupportedMediaType, "preview_root_type"), await Code(Url("/film.mp4", tVideo)));            // Video auf Root nie, auch nicht mit Token einer Datei
+        Assert.Equal(0, Reads());
+
+        // richtig: einmal, ganz (ein Range-Kopf wird ignoriert), feste Kopfzeilen, in Bloecken gelesen
+        var (token, prep, _) = await Prepare("/bild.png");
+        Assert.True(prep.GetProperty("root").GetBoolean());
+        Assert.Equal((1, (long)png.Length), (prep.GetProperty("files").GetInt32(), prep.GetProperty("bytes").GetInt64()));
+        var req = Send(HttpMethod.Get, Url("/bild.png", token), r.Cookie); req.Headers.TryAddWithoutValidation("Range", "bytes=10-19");
+        var ok = await r.Http.SendAsync(req);
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+        Assert.Equal("image/png", ok.Content.Headers.ContentType!.MediaType);
+        Assert.Equal("none", ok.Headers.GetValues("Accept-Ranges").Single());
+        Assert.Null(ok.Content.Headers.ContentRange);
+        Assert.Equal("nosniff", ok.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.StartsWith("sandbox;", ok.Headers.GetValues("Content-Security-Policy").Single());
+        Assert.StartsWith("inline;", ok.Content.Headers.ContentDisposition!.ToString());
+        Assert.Equal(png, await ok.Content.ReadAsByteArrayAsync());
+        Assert.True(Reads() >= 3);
+        Assert.Equal("confirmation_invalid", CodeOf((await FGet(r, Url("/bild.png", token))).Body));                                // einmal gueltig
+
+        // der Anfang passt nicht zur Endung: abgelehnt, die Bestaetigung ist verbraucht, der Fehler steht im Verlauf
+        var (tFake, _, _) = await Prepare("/falsch.png");
+        Assert.Equal((HttpStatusCode.UnsupportedMediaType, "preview_content"), await Code(Url("/falsch.png", tFake)));
+        Assert.Equal("confirmation_invalid", CodeOf((await FGet(r, Url("/falsch.png", tFake))).Body));
+        Assert.Equal(2, await AuditCount(db, "action = 'preview' and result = 'started'"));
+        Assert.Equal(1, await AuditCount(db, "action = 'preview' and result = 'ok'"));
+        Assert.Equal(1, await AuditCount(db, "action = 'preview' and result = 'failed' and detail = 'preview_content'"));
+        Assert.Equal(0, await AuditCount(db, "action = 'preview' and path like '%gross%' and result = 'started'"));
+
+        // ohne Eintrag im Verlauf wird nichts gelesen
+        var (tNoLog, _, _) = await Prepare("/bild.png");
+        await db.ExecAsync("drop table files_audit");
+        var before = Reads();
+        Assert.Equal((HttpStatusCode.InternalServerError, "audit_failed"), await Code(Url("/bild.png", tNoLog)));
+        Assert.Equal(before, Reads());
+    }
+
+    [Fact]
     public async Task The_agents_own_files_the_root_and_links_are_protected_and_the_codes_reach_the_page()
     {
         await using var db = await TestDb.CreateAsync();

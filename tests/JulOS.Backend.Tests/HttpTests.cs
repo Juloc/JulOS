@@ -88,7 +88,7 @@ public sealed class HttpTests
         Assert.True(me.GetProperty("setupNeeded").GetBoolean());
         Assert.True((await Json(await c.GetAsync("/api/setup/status"))).GetProperty("needed").GetBoolean());
 
-        foreach (var path in new[] { "/api/auth/sessions", "/api/connections", "/api/system/overview", "/api/files/list", "/api/files/search?q=a", "/api/files/download?path=a", "/api/irgendwas" })
+        foreach (var path in new[] { "/api/auth/sessions", "/api/connections", "/api/system/overview", "/api/files/list", "/api/files/search?q=a", "/api/files/download?path=a", "/api/files/preview?path=a.png", "/api/irgendwas" })
             Assert.Equal(HttpStatusCode.Unauthorized, (await c.GetAsync(path)).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await c.SendAsync(Post("/api/auth/logout", new { }))).StatusCode);
 
@@ -172,6 +172,56 @@ public sealed class HttpTests
             }
             Assert.Equal(HttpStatusCode.MethodNotAllowed, (await c.SendAsync(new HttpRequestMessage(HttpMethod.Delete, "/api/files/download?path=seite.html") { Headers = { { "X-JulOS", "1" }, { "Origin", "http://localhost" }, { "Cookie", cookie } } })).StatusCode);
             Assert.True(File.Exists(Path.Combine(root, "seite.html")));
+        }
+        finally { dir.Delete(true); }
+    }
+
+    [Fact]
+    public async Task The_shared_folder_preview_shows_only_listed_types_inline_with_locked_headers_and_never_leaves_the_root()
+    {
+        var dir = Directory.CreateTempSubdirectory("julos-http-preview-");
+        try
+        {
+            var root = Directory.CreateDirectory(Path.Combine(dir.FullName, "root")).FullName;
+            byte[] png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, .. Enumerable.Range(0, 5000).Select(i => (byte)(i % 251))];
+            File.WriteAllBytes(Path.Combine(root, "bild.png"), png);
+            File.WriteAllBytes(Path.Combine(dir.FullName, "aussen.png"), png);
+            File.WriteAllText(Path.Combine(root, "seite.html"), "<script>alert(1)</script>");
+            File.WriteAllText(Path.Combine(root, "grafik.svg"), "<svg onload=alert(1)/>");
+            File.WriteAllText(Path.Combine(root, "falsch.png"), "<html><script>alert(1)</script></html>");
+            File.CreateSymbolicLink(Path.Combine(root, "raus.png"), Path.Combine(dir.FullName, "aussen.png"));
+            Directory.CreateDirectory(Path.Combine(root, "ordner.png"));
+
+            await using var db = await TestDb.CreateAsync();
+            await using var app = new Server(db, root);
+            var c = app.Client();
+            var (cookie, _, _) = await SetupAsync(c);
+            var ct = TestContext.Current.CancellationToken;
+
+            var r = await c.SendAsync(Get("/api/files/preview?path=bild.png", cookie), ct);
+            Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+            Assert.Equal("image/png", r.Content.Headers.ContentType!.MediaType);
+            Assert.Equal("nosniff", r.Headers.GetValues("X-Content-Type-Options").Single());
+            Assert.StartsWith("sandbox;", r.Headers.GetValues("Content-Security-Policy").Single());          // die eigene Regel, nicht die der Seite
+            Assert.StartsWith("inline;", r.Content.Headers.ContentDisposition!.ToString());
+            Assert.Equal("no-store", r.Headers.CacheControl!.ToString());
+            Assert.Equal(png, await r.Content.ReadAsByteArrayAsync(ct));
+
+            var part = Get("/api/files/preview?path=bild.png", cookie); part.Headers.TryAddWithoutValidation("Range", "bytes=10-19");
+            var p = await c.SendAsync(part, ct);
+            Assert.Equal(HttpStatusCode.PartialContent, p.StatusCode);
+            Assert.Equal($"bytes 10-19/{png.Length}", p.Content.Headers.ContentRange!.ToString());
+            Assert.Equal(png[10..20], await p.Content.ReadAsByteArrayAsync(ct));
+            var past = Get("/api/files/preview?path=bild.png", cookie); past.Headers.TryAddWithoutValidation("Range", "bytes=99999-");
+            Assert.Equal(HttpStatusCode.RequestedRangeNotSatisfiable, (await c.SendAsync(past, ct)).StatusCode);
+
+            async Task<(HttpStatusCode, string)> Refusal(string path) { var x = await c.SendAsync(Get("/api/files/preview?path=" + path, cookie), ct); return (x.StatusCode, (await Json(x)).GetProperty("code").GetString()!); }
+            Assert.Equal((HttpStatusCode.UnsupportedMediaType, "preview_type"), await Refusal("seite.html"));
+            Assert.Equal((HttpStatusCode.UnsupportedMediaType, "preview_type"), await Refusal("grafik.svg"));
+            Assert.Equal((HttpStatusCode.UnsupportedMediaType, "preview_content"), await Refusal("falsch.png"));
+            foreach (var bad in new[] { "../aussen.png", "%2e%2e/aussen.png", "raus.png", "/etc/hostname.png", "ordner.png", "gibt-es-nicht.png" })
+                Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Get("/api/files/preview?path=" + bad, cookie), ct)).StatusCode);
+            Assert.Equal(HttpStatusCode.MethodNotAllowed, (await c.SendAsync(Post("/api/files/preview?path=bild.png", new { }, cookie: cookie), ct)).StatusCode);
         }
         finally { dir.Delete(true); }
     }

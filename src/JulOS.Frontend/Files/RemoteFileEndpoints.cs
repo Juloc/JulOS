@@ -27,14 +27,11 @@ internal static class RemoteFileEndpoints
     private static readonly TimeSpan Minute = TimeSpan.FromMinutes(1);
     private static readonly ConcurrentDictionary<Guid, int> Streams = new();       // laufende Down- und Uploads je Benutzer
     private const int MaxStreams = 3;
+    private static readonly ConcurrentDictionary<Guid, int> PreviewStreams = new();   // laufende Vorschau-Stroeme je Benutzer (ein Video fragt mit mehreren Range-Anfragen)
     /// <summary>So viele Eintraege zeigt eine Liste hoechstens. Der Host liefert sie in seiner Reihenfolge, ein Rest fehlt also zufaellig: darum grosszuegig (so viel wie ein Auftrag je Operation, FileLimits.MaxItems) und mit Hinweis auf der Seite.</summary>
     private const int ListLimit = 10_000;
 
-    private static IResult Fail(string code)
-    {
-        var (status, text) = FileErrors.Describe(code);
-        return Results.Text(JsonSerializer.Serialize(new FileErrorBody(text, code), AppJson.Default.FileErrorBody), "application/json", Encoding.UTF8, status);
-    }
+    private static IResult Fail(string code) => FileErrors.Result(code);
 
     private static IResult Fail(Exception e)
     {
@@ -137,6 +134,9 @@ internal static class RemoteFileEndpoints
         return await hostLogins.SetPasswordAsync(x.Id.UserId, host.Id, login.Username, box.Encrypt(password, host.Id), [LoginResolver.Address(c.Host)], ct);
     }
 
+    /// <summary>Bis zu dieser Groesse zeigt die Vorschau ein Bild oder PDF (Einstellung der App, sonst JULOS_FILES_PREVIEW_MB, sonst 50 MiB).</summary>
+    internal static long PreviewBytes(SecurityConfig security) => security.FilesPreviewMb.Value * 1024L * 1024L;
+
     private static string HostName(ConnectionRecord c) => c.Name;
 
     private static async Task AuditAsync(FileAuditStore audit, ILogger log, Guid user, ConnectionRecord c, string action, string? path, string result, string? detail = null, int? items = null, string? host = null)
@@ -151,7 +151,7 @@ internal static class RemoteFileEndpoints
     {
         // Was die Seite wissen muss: gibt es den lokalen Ort, darf geschrieben werden, wie gross darf etwas sein
         app.MapGet("/api/files/info", (FileBrowser local, FilesOptions options, SecurityConfig security) =>
-            Results.Json(new FilesInfoDto(local.Enabled, security.FilesWrite.Enabled, options.MaxBytes), AppJson.Default.FilesInfoDto));
+            Results.Json(new FilesInfoDto(local.Enabled, security.FilesWrite.Enabled, options.MaxBytes, PreviewBytes(security)), AppJson.Default.FilesInfoDto));
 
         // Oeffnet (oder haelt offen) die SFTP-Sitzung einer Verbindung. Mit "password" wird getippt (nie gespeichert, nie geloggt), mit "acceptHostKey" ein neuer oder geaenderter Schluessel bestaetigt.
         app.MapPost("/api/files/remote/open", async (OpenRequest body, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, ILogger<FileAuditStore> log,
@@ -302,6 +302,56 @@ internal static class RemoteFileEndpoints
             finally { LeaveStream(x.Id.UserId); }
         });
 
+        // Vorschau (docs/FILES-VIEWER.md): Bild, Video, Audio und PDF von einer festen Liste, mit eigenem Antwortmodell (inline, fester Typ, nosniff, strenge CSP), nie eine Seite. Der Anfang der Datei muss zur Endung passen.
+        // Range (206) fuer Hosts; ein Root-Ort liest nur mit der Bestaetigung (prepare mit "preview", einmal gueltig), zeigt nur Bild und PDF bis zur Grenze, ohne Range, und steht fail-closed im Verlauf.
+        app.MapGet("/api/files/remote/preview", async (Guid? c, string? path, string? token, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, FilesOptions options, SecurityConfig security, FileConfirmations conf, ILogger<FileAuditStore> log) =>
+        {
+            if (RateLimited(ctx, hits, "preview", 240)) return Fail("rate_limited");
+            var (x, fail) = await ResolveAsync(ctx, c, connections, policy);
+            if (x is null) return fail!;
+            var file = RemotePath.Normalize(path, null);
+            if (file is null || file == "/") return Fail("invalid_path");
+            var root = x.Root is not null;
+            async Task<IResult> Refuse(string code) { await AuditAsync(audit, log, x.Id.UserId, x.Connection, "preview", file, "failed", code); return Fail(code); }
+            // Typ und Root-Regel nach dem Namen, bevor irgendetwas verbunden wird
+            if (FilePreview.Refuse(RemotePath.NameOf(file), 0, root, 0, options.MaxBytes) is { } notShown) return await Refuse(notShown);
+            var type = FilePreview.ByName(RemotePath.NameOf(file))!;
+            if (!TryEnterStream(x.Id.UserId, PreviewStreams, FilePreview.MaxStreams)) return Fail("busy");
+            try
+            {
+                await using var lease = await LeaseAsync(x, null, null, pool, connections, box, factory, log, ctx.RequestAborted);
+                var entry = await lease.Session.StatAsync(file, follow: true, ctx.RequestAborted);
+                if (entry is null) return Fail("not_found");
+                if (entry.Kind != RemoteKind.File) return Fail("not_a_file");
+                if (FilePreview.Refuse(RemotePath.NameOf(file), entry.Size, root, PreviewBytes(security), options.MaxBytes) is { } refused0) return await Refuse(refused0);
+                if (root)
+                {
+                    var (refused, level) = await RedeemAsync(conf, audit, log, x, token, FileConfirmations.Canon("preview", x.Connection.Id, null, [file], null, null), "preview", null, false, false, file);
+                    if (refused is not null) return refused;
+                    if (await StartedAsync(audit, log, x, "preview", file, 1, null, level) is { } stopped) return stopped;
+                }
+                await using var stream = await lease.Session.OpenReadAsync(file, ctx.RequestAborted);
+                var (bad, head) = await FilePreview.ReadHeadAsync(stream, type, entry.Size, ctx.RequestAborted);
+                if (bad is not null) return await Refuse(bad);
+                var range = FilePreview.ResolveRange(ctx.Request.Headers.Range.ToString(), ctx.Request.Headers.ContainsKey("If-Range"), entry.Size, allowed: !root);
+                if (range.Unsatisfiable) return FilePreview.NotSatisfiable(ctx, entry.Size);
+                var failed = await FilePreview.WriteAsync(ctx, stream, head, type, RemotePath.NameOf(file), range, entry.Size, ranges: !root, FileLimits.Default.BufferSize);
+                if (failed is not null)
+                {
+                    await AuditAsync(audit, log, x.Id.UserId, x.Connection, "preview", file, "failed", failed);
+                    return ctx.Response.HasStarted ? Results.Empty : Fail(failed);
+                }
+                if (root) await AuditAsync(audit, log, x.Id.UserId, x.Connection, "preview", file, "ok", null, 1);
+                return Results.Empty;
+            }
+            catch (Exception e) when (e is not OperationCanceledException && !ctx.Response.HasStarted)
+            {
+                await AuditAsync(audit, log, x.Id.UserId, x.Connection, "preview", path, "failed", FileErrors.Code(e));
+                return Fail(e);
+            }
+            finally { LeaveStream(x.Id.UserId, PreviewStreams); }
+        });
+
         // Upload im Strom (roher Koerper): erst unter einem temporaeren Namen, dann umbenennen. Ein vorhandenes Ziel nur mit overwrite=1; confirm=1 sagt, dass die Seite gefragt hat.
         app.MapPost("/api/files/remote/upload", async (Guid? c, string? dir, string? name, string? overwrite, string? token, string? acknowledged, string? typed, HttpContext ctx, ConnectionStore connections, HostPolicy policy, SftpPool pool, SecretBox box, FileSessionFactory factory, FileAuditStore audit, HitCounter hits, FilesOptions options, SecurityConfig security, FileConfirmations conf, ILogger<FileAuditStore> log) =>
         {
@@ -413,10 +463,10 @@ internal static class RemoteFileEndpoints
         {
             if (RateLimited(ctx, hits, "prepare", 120)) return Fail("rate_limited");
             var action = body.Action;
-            if (action is not ("upload" or "mkdir" or "rename" or "delete" or "copy" or "move" or "download" or "text")) return Fail("invalid_request");
+            if (action is not ("upload" or "mkdir" or "rename" or "delete" or "copy" or "move" or "download" or "text" or "preview")) return Fail("invalid_request");
             var (x, fail) = await ResolveAsync(ctx, body.Connection, connections, policy);
             if (x is null) return fail!;
-            var reads = action is "download" or "text";
+            var reads = action is "download" or "text" or "preview";
             if (reads && x.Root is null) return Fail("invalid_request");                      // nur der Ort Root verlangt eine Bestaetigung zum Lesen
             var denied = reads ? null : await WriteOnAsync(security, audit, log, x, action, body.Paths is { Length: > 0 } ps ? Describe(ps) : body.Dir);
             if (denied is not null) return denied;
@@ -469,13 +519,15 @@ internal static class RemoteFileEndpoints
                         counts = new TreeCount(source.Kind == RemoteKind.File ? 1 : 0, source.Kind == RemoteKind.Directory ? 1 : 0, source.Kind == RemoteKind.Link ? 1 : 0, source.Size);
                         break;
                     }
-                    case "download" or "text":
+                    case "download" or "text" or "preview":
                     {
                         if (body.Paths is not { Length: 1 } || RemotePath.Normalize(body.Paths[0], null) is not { } file || file == "/") return Fail("invalid_path");
                         var entry = await src.Session.StatAsync(file, follow: true, ctx.RequestAborted);
                         if (entry is null) return Fail("not_found");
                         if (entry.Kind != RemoteKind.File) return Fail("not_a_file");
                         if (action == "download" && entry.Size > options.MaxBytes) return Fail("too_large");
+                        // Vorschau: Typ, Root-Regel und Groesse schon hier (nur Name und stat, es wird nichts gelesen); den Inhalt gleicht erst die Ausfuehrung ab
+                        if (action == "preview" && FilePreview.Refuse(RemotePath.NameOf(file), entry.Size, x.Root is not null, PreviewBytes(security), options.MaxBytes) is { } why) return Fail(why);
                         paths = [file];
                         counts = new TreeCount(1, 0, 0, entry.Size);
                         break;
@@ -672,14 +724,14 @@ internal static class RemoteFileEndpoints
         }
     }
 
-    private static bool TryEnterStream(Guid user)
+    private static bool TryEnterStream(Guid user, ConcurrentDictionary<Guid, int>? counter = null, int max = MaxStreams)
     {
         var ok = false;
-        Streams.AddOrUpdate(user, _ => { ok = true; return 1; }, (_, n) => { if (n < MaxStreams) { ok = true; return n + 1; } return n; });
+        (counter ?? Streams).AddOrUpdate(user, _ => { ok = true; return 1; }, (_, n) => { if (n < max) { ok = true; return n + 1; } return n; });
         return ok;
     }
 
-    private static void LeaveStream(Guid user) => Streams.AddOrUpdate(user, 0, (_, n) => Math.Max(0, n - 1));
+    private static void LeaveStream(Guid user, ConcurrentDictionary<Guid, int>? counter = null) => (counter ?? Streams).AddOrUpdate(user, 0, (_, n) => Math.Max(0, n - 1));
 
     /// <summary>Mehrere geliehene Sitzungen, die zusammen zurueckgegeben werden.</summary>
     private sealed class Leases : IAsyncDisposable

@@ -6,6 +6,10 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+### Neu
+- **Vorschau-Endpoint der Dateien-App (nur Server, noch ohne Oberfläche)** ([docs/FILES.md](docs/FILES.md#preview-the-narrow-inline-answer), [docs/FILES-VIEWER.md](docs/FILES-VIEWER.md)): `GET /api/files/preview` (Gemeinsamer Ordner) und `GET /api/files/remote/preview` (Hosts per SFTP und Root-Orte) liefern **Bild, Video, Audio und PDF inline**, als enges, eigenes Antwortmodell neben dem Download, der weiter nie eine Seite zeigt. Der Typ kommt aus einer **festen Liste nach der Endung** (png, jpg, gif, webp, avif; mp4, webm; mp3, ogg, wav, flac, m4a; pdf), nie aus der Datei, und die **ersten Bytes müssen zur Endung passen**; HTML, SVG, XML, Skripte und alles Unbekannte werden verweigert (`preview_type`, `preview_content`), nie ausgeliefert. Jede Antwort trägt `nosniff`, `Content-Security-Policy: sandbox; default-src 'none'; …`, `no-store`, `Cross-Origin-Resource-Policy` und `Content-Disposition: inline`. Auf dem Gemeinsamen Ordner und auf Hosts gibt es **`Range`** (`206`, `416`; der SFTP-Strom wird positioniert, nie im Speicher gehalten); Vorschauen haben einen **eigenen Strom-Zähler** (6 je Benutzer). **Root-Orte:** nur Bild und PDF (Video und Audio bleiben ein Download), mit der Bestätigung wie beim Download (`prepare` mit `action: preview`, einmal gültig, kein `Range`) und Verlauf (`started` zuerst, fail-closed).
+- **Grenze der Vorschau als Einstellung:** Bilder und PDF bis **50 MiB**, einstellbar mit `PUT /api/security/files-preview` (`security.filesPreviewMb`, frischer Authenticator-Code, ohne Neustart, im Sicherheits-Verlauf); `JULOS_FILES_PREVIEW_MB` ist nur der Rückfall. `GET /api/security` zeigt `filesPreview`, `GET /api/files/info` zeigt `previewBytes`. Tests: Typliste, Abgleich der ersten Bytes, Range, Header, Grenze, Root-Bestätigung.
+
 ## [0.21.0] - 2026-11-21
 
 ### Neu

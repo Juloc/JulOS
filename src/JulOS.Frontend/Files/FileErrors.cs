@@ -1,3 +1,5 @@
+using System.Text;
+using System.Text.Json;
 using JulOS.Integrations.Files;
 using JulOS.Integrations.Ssh;
 
@@ -51,6 +53,10 @@ internal static class FileErrors
         ["invalid_path"] = (400, "Ungültiger Pfad."),
         ["invalid_request"] = (400, "Ungültige Anfrage."),
         ["not_text"] = (415, "Das ist keine Textdatei."),
+        ["preview_type"] = (415, "Diesen Dateityp zeigt die Vorschau nicht (nur Bild, Video, Audio und PDF; HTML, SVG und XML nie)."),
+        ["preview_content"] = (415, "Der Inhalt passt nicht zur Endung, die Vorschau zeigt die Datei nicht."),
+        ["preview_too_large"] = (413, "Die Datei ist für die Vorschau zu groß."),
+        ["preview_root_type"] = (415, "Auf einem Root-Ort zeigt die Vorschau nur Bilder und PDF; Video und Audio lassen sich nur herunterladen."),
         ["write_off"] = (403, "Schreiben ist nicht eingeschaltet (Einstellungen, Sicherheit, „Dateien schreiben“)."),
         ["confirmation_invalid"] = (403, "Die Bestätigung ist unbekannt oder schon benutzt."),
         ["confirmation_expired"] = (403, "Die Bestätigung ist abgelaufen."),
@@ -76,6 +82,13 @@ internal static class FileErrors
         ["job_not_found"] = (404, "Auftrag nicht gefunden."),
         ["cancelled"] = (499, "Abgebrochen."),
     };
+
+    /// <summary>Die Antwort zu einem Code: Status und JSON <c>{error, code}</c>.</summary>
+    public static IResult Result(string code)
+    {
+        var (status, text) = Describe(code);
+        return Results.Text(JsonSerializer.Serialize(new FileErrorBody(text, code), AppJson.Default.FileErrorBody), "application/json", Encoding.UTF8, status);
+    }
 
     public static (int Status, string Text) Describe(string code) => Table.TryGetValue(code, out var v) ? v : Table["failed"];
 

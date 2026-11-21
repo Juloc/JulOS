@@ -24,7 +24,7 @@ public sealed class RemoteFilesHttpTests
     private static readonly string TestKey = Convert.ToBase64String(new byte[32].Select((_, i) => (byte)(i + 7)).ToArray());
     private const string StoredPassword = "Gespeichert-Passwort-123", TypedPassword = "Getippt-Passwort-456";
 
-    private sealed class Rig(TestDb db, string? write = "on", string? maxMb = null, string? allowed = null, List<string>? log = null, TimeSpan? confirmLifetime = null) : WebApplicationFactory<Program>
+    private sealed class Rig(TestDb db, string? write = "on", string? maxMb = null, string? allowed = null, List<string>? log = null, TimeSpan? confirmLifetime = null, string? previewMb = null) : WebApplicationFactory<Program>
     {
         public readonly Queue<FakeFileSession> Hosts = new();
         public readonly List<FakeFileSession> Created = [];
@@ -37,6 +37,7 @@ public sealed class RemoteFilesHttpTests
             if (write is not null) builder.UseSetting("JULOS_FILES_WRITE", write);
             if (maxMb is not null) builder.UseSetting("JULOS_FILES_MAX_MB", maxMb);
             if (allowed is not null) builder.UseSetting("JULOS_ALLOWED_HOSTS", allowed);
+            if (previewMb is not null) builder.UseSetting("JULOS_FILES_PREVIEW_MB", previewMb);
             builder.ConfigureServices(s => s.AddTransient<IStartupFilter, LoopbackFilter>());
             builder.ConfigureTestServices(s =>
             {
@@ -128,7 +129,7 @@ public sealed class RemoteFilesHttpTests
         await using var db = await TestDb.CreateAsync();
         await using var app = new Rig(db);
         var http = app.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
-        foreach (var url in new[] { "/api/files/info", "/api/files/remote/list?c=" + Guid.NewGuid(), "/api/files/remote/text?c=" + Guid.NewGuid() + "&path=/x", "/api/files/remote/download?c=" + Guid.NewGuid() + "&path=/x", "/api/files/audit" })
+        foreach (var url in new[] { "/api/files/info", "/api/files/remote/list?c=" + Guid.NewGuid(), "/api/files/remote/text?c=" + Guid.NewGuid() + "&path=/x", "/api/files/remote/download?c=" + Guid.NewGuid() + "&path=/x", "/api/files/remote/preview?c=" + Guid.NewGuid() + "&path=/x.png", "/api/files/preview?path=x.png", "/api/files/audit" })
             Assert.Equal(HttpStatusCode.Unauthorized, (await http.GetAsync(url)).StatusCode);
         var (api, _, _) = await SignedIn(app, db);
         var id = await Connection(api, "A");
@@ -311,9 +312,9 @@ public sealed class RemoteFilesHttpTests
 
     // ---------- Lesen ----------
 
-    private static async Task<(Rig App, Client Api, Guid C, FakeFileSession Host, Guid User)> OpenHost(TestDb db, Action<FakeFileSession>? seed = null, string? write = "on", string? maxMb = null, TimeSpan? confirmLifetime = null)
+    private static async Task<(Rig App, Client Api, Guid C, FakeFileSession Host, Guid User)> OpenHost(TestDb db, Action<FakeFileSession>? seed = null, string? write = "on", string? maxMb = null, TimeSpan? confirmLifetime = null, string? previewMb = null)
     {
-        var app = new Rig(db, write, maxMb, confirmLifetime: confirmLifetime);
+        var app = new Rig(db, write, maxMb, confirmLifetime: confirmLifetime, previewMb: previewMb);
         var (api, user, _) = await SignedIn(app, db);
         var c = await Connection(api, "A");
         var host = new FakeFileSession();
@@ -1067,6 +1068,207 @@ public sealed class RemoteFilesHttpTests
         Assert.Equal(1, app.Pool.CountFor(user));
         Assert.Equal(HttpStatusCode.NoContent, (await api.Json(HttpMethod.Post, "/api/auth/logout", new { })).Status);
         Assert.Equal((0, 1), (app.Pool.CountFor(user), third.Disposed));
+    }
+
+    // ---------- Vorschau (docs/FILES-VIEWER.md) ----------
+
+    private static readonly byte[] PngHead = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
+    /// <summary>Ein Inhalt mit gueltigem Anfang und einer Laufnummer als Rest (jedes Byte ist an seiner Stelle erkennbar).</summary>
+    private static byte[] Blob(byte[] head, int size) { var d = new byte[size]; head.CopyTo(d, 0); for (var i = head.Length; i < size; i++) d[i] = (byte)(i % 251); return d; }
+
+    private static string PreviewUrl(Guid c, string path, string? token = null) => $"/api/files/remote/preview?c={c}&path={Uri.EscapeDataString(path)}" + (token is null ? "" : "&token=" + token);
+
+    private static async Task<(HttpStatusCode Status, string Code)> Refusal(HttpResponseMessage r) => (r.StatusCode, Code(ApiKit.J(await r.Content.ReadAsStringAsync())));
+
+    [Fact]
+    public async Task A_preview_shows_only_listed_types_inline_with_a_fixed_type_and_locked_down_headers()
+    {
+        await using var db = await TestDb.CreateAsync();
+        var png = Blob(PngHead, 3000);
+        var mp4 = Blob([0, 0, 0, 24, (byte)'f', (byte)'t', (byte)'y', (byte)'p', (byte)'i', (byte)'s', (byte)'o', (byte)'m'], 5000);
+        var (app, api, c, host, _) = await OpenHost(db, h => h.File("/pub/bild.png", png).File("/pub/Film.MP4", mp4).File("/pub/ä \"x\".pdf", Blob(Encoding.ASCII.GetBytes("%PDF-1.7\n"), 500))
+            .File("/pub/seite.html", "<script>alert(1)</script>").File("/pub/grafik.svg", "<svg onload=alert(1)/>").File("/pub/daten.xml", "<a/>").File("/pub/skript.js", "alert(1)").File("/pub/ohne", "x")
+            .File("/pub/falsch.png", "<html><script>alert(1)</script></html>").File("/pub/leer.png", "").Dir("/pub/ordner.png")
+            .Link("/pub/link.png", "/pub/bild.png").Link("/pub/kaputt.png", "/nowhere"));
+        await using var guard = app;
+        var ct = TestContext.Current.CancellationToken;
+
+        var r = await api.Raw(api.Authed(HttpMethod.Get, PreviewUrl(c, "/pub/bild.png")));
+        Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        Assert.Equal("image/png", r.Content.Headers.ContentType!.MediaType);
+        Assert.Equal("nosniff", r.Headers.GetValues("X-Content-Type-Options").Single());
+        var csp = r.Headers.GetValues("Content-Security-Policy").Single();
+        Assert.StartsWith("sandbox;", csp);
+        Assert.Contains("default-src 'none'", csp);
+        Assert.DoesNotContain("script-src", csp);
+        Assert.Equal("no-store", r.Headers.CacheControl!.ToString());
+        Assert.Equal("same-origin", r.Headers.GetValues("Cross-Origin-Resource-Policy").Single());
+        Assert.Equal("bytes", r.Headers.GetValues("Accept-Ranges").Single());
+        Assert.StartsWith("inline;", r.Content.Headers.ContentDisposition!.ToString());
+        Assert.Equal("bild.png", r.Content.Headers.ContentDisposition!.FileName);
+        Assert.Equal(png, await r.Content.ReadAsByteArrayAsync(ct));
+        Assert.Equal(0, host.OpenStreams);
+
+        // die Endung sagt den Typ (Gross/Klein egal), nie der Inhalt; ein Name mit Anfuehrungszeichen stoert den Kopf nicht
+        var film = await api.Raw(api.Authed(HttpMethod.Get, PreviewUrl(c, "/pub/Film.MP4")));
+        Assert.Equal("video/mp4", film.Content.Headers.ContentType!.MediaType);
+        Assert.Equal(mp4, await film.Content.ReadAsByteArrayAsync(ct));
+        var odd = await api.Raw(api.Authed(HttpMethod.Get, PreviewUrl(c, "/pub/ä \"x\".pdf")));
+        Assert.Equal("application/pdf", odd.Content.Headers.ContentType!.MediaType);
+        Assert.DoesNotContain("\"x\"", odd.Content.Headers.ContentDisposition!.ToString().Split(';')[1]);
+        // ein Link auf eine Datei wird gelesen wie beim Download (die Rechte des SSH-Benutzers bleiben die Grenze), ein kaputter Link und ein Ordner nicht
+        Assert.Equal(png, await (await api.Raw(api.Authed(HttpMethod.Get, PreviewUrl(c, "/pub/link.png")))).Content.ReadAsByteArrayAsync(ct));
+        Assert.Equal(("kaputt", HttpStatusCode.NotFound), ("kaputt", (await api.Raw(api.Authed(HttpMethod.Get, PreviewUrl(c, "/pub/kaputt.png")))).StatusCode));
+        Assert.Equal((HttpStatusCode.BadRequest, "not_a_file"), await Refusal(await api.Raw(api.Authed(HttpMethod.Get, PreviewUrl(c, "/pub/ordner.png")))));
+
+        // Seiten, SVG, XML, Skripte, keine Endung: nie, und die Datei wird nicht einmal geoeffnet
+        host.Log.Clear();
+        foreach (var bad in new[] { "seite.html", "grafik.svg", "daten.xml", "skript.js", "ohne" })
+        {
+            var refused = await api.Raw(api.Authed(HttpMethod.Get, PreviewUrl(c, "/pub/" + bad)));
+            Assert.Equal((HttpStatusCode.UnsupportedMediaType, "preview_type"), await Refusal(refused));
+            Assert.Null(refused.Content.Headers.ContentDisposition);                       // nie ein inline-Anhang an einer Fehlerantwort
+            Assert.Equal("application/json", refused.Content.Headers.ContentType!.MediaType);
+        }
+        Assert.DoesNotContain(host.Log, l => l.StartsWith("read "));
+        // eine Seite unter der Endung .png und eine leere Datei: der Anfang passt nicht
+        Assert.Equal((HttpStatusCode.UnsupportedMediaType, "preview_content"), await Refusal(await api.Raw(api.Authed(HttpMethod.Get, PreviewUrl(c, "/pub/falsch.png")))));
+        Assert.Equal((HttpStatusCode.UnsupportedMediaType, "preview_content"), await Refusal(await api.Raw(api.Authed(HttpMethod.Get, PreviewUrl(c, "/pub/leer.png")))));
+        Assert.Equal(0, host.OpenStreams);
+        Assert.Equal(HttpStatusCode.BadRequest, (await api.Raw(api.Authed(HttpMethod.Get, PreviewUrl(c, "../etc/x.png")))).StatusCode);
+        // Fehler stehen im Verlauf (kein Inhalt)
+        Assert.Equal(7, await db.ScalarAsync<long>("select count(*) from files_audit where action = 'preview' and result = 'failed'"));
+    }
+
+    [Fact]
+    public async Task A_preview_answers_ranges_with_206_by_seeking_the_host_stream_and_never_beyond_the_file()
+    {
+        await using var db = await TestDb.CreateAsync();
+        var data = Blob(Encoding.ASCII.GetBytes("OggS\0"), 600_000);                    // ueber mehrere Stuecke, Anfang im ersten KiB und dahinter
+        var (app, api, c, host, _) = await OpenHost(db, h => h.File("/pub/lied.ogg", data));
+        await using var guard = app;
+        var ct = TestContext.Current.CancellationToken;
+        async Task<HttpResponseMessage> Get(string? range)
+        {
+            var req = api.Authed(HttpMethod.Get, PreviewUrl(c, "/pub/lied.ogg"));
+            if (range is not null) req.Headers.TryAddWithoutValidation("Range", range);
+            return await api.Raw(req);
+        }
+        async Task Expect(string range, long from, long to)
+        {
+            var r = await Get(range);
+            Assert.Equal(HttpStatusCode.PartialContent, r.StatusCode);
+            Assert.Equal($"bytes {from}-{to}/{data.Length}", r.Content.Headers.ContentRange!.ToString());
+            Assert.Equal(to - from + 1, r.Content.Headers.ContentLength);
+            Assert.Equal(data[(int)from..(int)(to + 1)], await r.Content.ReadAsByteArrayAsync(ct));
+            Assert.Equal("audio/ogg", r.Content.Headers.ContentType!.MediaType);
+            Assert.Equal("nosniff", r.Headers.GetValues("X-Content-Type-Options").Single());
+            Assert.StartsWith("sandbox", r.Headers.GetValues("Content-Security-Policy").Single());
+        }
+        await Expect("bytes=0-99", 0, 99);                                    // im gelesenen Anfang
+        await Expect("bytes=10-2000", 10, 2000);                              // ueber das Ende des Anfangs hinaus
+        await Expect("bytes=300000-300099", 300000, 300099);                  // mitten drin
+        await Expect("bytes=599000-", 599000, data.Length - 1);
+        await Expect("bytes=-1000", data.Length - 1000, data.Length - 1);
+        await Expect("bytes=500000-9999999", 500000, data.Length - 1);
+        await Expect("bytes=0-", 0, data.Length - 1);
+        // ohne Range die ganze Datei, 200
+        var whole = await Get(null);
+        Assert.Equal(HttpStatusCode.OK, whole.StatusCode);
+        Assert.Equal(data, await whole.Content.ReadAsByteArrayAsync(ct));
+        // mehrere Bereiche und If-Range: die ganze Datei
+        Assert.Equal(HttpStatusCode.OK, (await Get("bytes=0-1,5-9")).StatusCode);
+        var ifRange = api.Authed(HttpMethod.Get, PreviewUrl(c, "/pub/lied.ogg")); ifRange.Headers.TryAddWithoutValidation("Range", "bytes=5-9"); ifRange.Headers.TryAddWithoutValidation("If-Range", "\"x\"");
+        Assert.Equal(HttpStatusCode.OK, (await api.Raw(ifRange)).StatusCode);
+        // hinter dem Ende: 416 mit der Laenge, kein Inhalt
+        var past = await Get($"bytes={data.Length}-");
+        Assert.Equal(HttpStatusCode.RequestedRangeNotSatisfiable, past.StatusCode);
+        Assert.Equal($"bytes */{data.Length}", past.Content.Headers.ContentRange!.ToString());
+        Assert.Empty(await past.Content.ReadAsByteArrayAsync(ct));
+        Assert.Equal(0, host.OpenStreams);
+    }
+
+    [Fact]
+    public async Task The_preview_limit_is_a_setting_that_holds_for_images_and_pdf_but_not_for_ranged_media()
+    {
+        await using var db = await TestDb.CreateAsync();
+        var (app, api, c, host, _) = await OpenHost(db, h => h.File("/pub/gross.png", Blob(PngHead, 2 * 1024 * 1024)).File("/pub/klein.png", Blob(PngHead, 900_000))
+            .File("/pub/gross.pdf", Blob(Encoding.ASCII.GetBytes("%PDF-1.4"), 2 * 1024 * 1024)).File("/pub/gross.mp3", Blob(Encoding.ASCII.GetBytes("ID3"), 2 * 1024 * 1024)), previewMb: "1");
+        await using var guard = app;
+        async Task<HttpStatusCode> Status(string name) => (await api.Raw(api.Authed(HttpMethod.Get, PreviewUrl(c, "/pub/" + name)))).StatusCode;
+
+        // Umgebung (Rueckfall): 1 MiB
+        var info = (await api.Get("/api/files/info")).Body;
+        Assert.Equal(1024 * 1024, info.GetProperty("previewBytes").GetInt64());
+        var big = await api.Raw(api.Authed(HttpMethod.Get, PreviewUrl(c, "/pub/gross.png")));
+        Assert.Equal((HttpStatusCode.RequestEntityTooLarge, "preview_too_large"), await Refusal(big));
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, await Status("gross.pdf"));
+        Assert.Equal(HttpStatusCode.OK, await Status("klein.png"));
+        Assert.Equal(HttpStatusCode.OK, await Status("gross.mp3"));                                  // Audio kommt in Teilen: nicht an der Grenze
+        // die Einstellung der App gilt vor der Umgebung, ohne Neustart
+        var set = await api.Json(HttpMethod.Put, "/api/security/files-preview", new { mb = 3 });
+        Assert.Equal((HttpStatusCode.OK, 3, "app"), (set.Status, set.Body.GetProperty("mb").GetInt32(), set.Body.GetProperty("source").GetString()));
+        Assert.Equal(3 * 1024 * 1024, (await api.Get("/api/files/info")).Body.GetProperty("previewBytes").GetInt64());
+        Assert.Equal(HttpStatusCode.OK, await Status("gross.png"));
+        var shown = (await api.Get("/api/security")).Body.GetProperty("filesPreview");
+        Assert.Equal((3, "app"), (shown.GetProperty("mb").GetInt32(), shown.GetProperty("source").GetString()));
+        // unbrauchbare Werte werden abgelehnt, nichts aendert sich
+        foreach (var bad in new[] { 0, -5, 1025, 100000 }) Assert.Equal(HttpStatusCode.BadRequest, (await api.Json(HttpMethod.Put, "/api/security/files-preview", new { mb = bad })).Status);
+        Assert.Equal(3, (await api.Get("/api/security")).Body.GetProperty("filesPreview").GetProperty("mb").GetInt32());
+        // zurueck auf die Umgebung
+        var back = await api.Json(HttpMethod.Put, "/api/security/files-preview", new { mb = (int?)null });
+        Assert.Equal((1, "env"), (back.Body.GetProperty("mb").GetInt32(), back.Body.GetProperty("source").GetString()));
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, await Status("gross.png"));
+    }
+
+    [Fact]
+    public async Task The_preview_limit_defaults_to_50_MiB_and_a_bad_environment_value_falls_back_to_it()
+    {
+        Assert.Null(JulOS.Backend.Logic.FilesOptions.ParsePreviewMb(null));
+        foreach (var bad in new[] { "", "abc", "0", "-1", "1025", "1.5", "50MB" }) Assert.Null(JulOS.Backend.Logic.FilesOptions.ParsePreviewMb(bad));
+        Assert.Equal(7, JulOS.Backend.Logic.FilesOptions.ParsePreviewMb(" 7 "));
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Rig(db, previewMb: "lots");
+        var (api, _, _) = await SignedIn(app, db);
+        Assert.Equal(50L * 1024 * 1024, (await api.Get("/api/files/info")).Body.GetProperty("previewBytes").GetInt64());
+        var shown = (await api.Get("/api/security")).Body.GetProperty("filesPreview");
+        Assert.Equal((50, "default"), (shown.GetProperty("mb").GetInt32(), shown.GetProperty("source").GetString()));
+    }
+
+    [Fact]
+    public async Task Previews_have_their_own_stream_count_and_free_it_when_they_end()
+    {
+        await using var db = await TestDb.CreateAsync();
+        var (app, api, c, host, _) = await OpenHost(db, h => h.File("/pub/film.webm", Blob([0x1A, 0x45, 0xDF, 0xA3], 100_000)).File("/pub/a.bin", "x"));
+        await using var guard = app;
+        var gate = new TaskCompletionSource();
+        host.BeforeRead = (_, _) => gate.Task;                                                      // haelt jede Vorschau beim Oeffnen fest
+        var open = Enumerable.Range(0, FilePreviewLimit).Select(_ => api.Raw(api.Authed(HttpMethod.Get, PreviewUrl(c, "/pub/film.webm")))).ToList();
+        await Task.Delay(300, TestContext.Current.CancellationToken);
+        // die siebte wird abgewiesen, ein Download (anderer Zaehler, 3) laeuft weiter
+        var seventh = await api.Raw(api.Authed(HttpMethod.Get, PreviewUrl(c, "/pub/film.webm")));
+        Assert.Equal((HttpStatusCode.TooManyRequests, "busy"), await Refusal(seventh));
+        gate.SetResult();
+        foreach (var t in open) Assert.Equal(HttpStatusCode.OK, (await t).StatusCode);
+        host.BeforeRead = null;
+        Assert.Equal(HttpStatusCode.OK, (await api.Raw(api.Authed(HttpMethod.Get, PreviewUrl(c, "/pub/film.webm")))).StatusCode);       // der Zaehler ist wieder frei
+        Assert.Equal(0, host.OpenStreams);
+    }
+
+    private const int FilePreviewLimit = FilePreview.MaxStreams;
+
+    [Fact]
+    public async Task A_preview_of_an_unknown_connection_or_a_host_that_fails_gives_clear_codes()
+    {
+        await using var db = await TestDb.CreateAsync();
+        var (app, api, c, host, _) = await OpenHost(db, h => h.File("/pub/zu.png", Blob(PngHead, 100)));
+        await using var guard = app;
+        Assert.Equal((HttpStatusCode.NotFound, "connection_not_found"), await Refusal(await api.Raw(api.Authed(HttpMethod.Get, PreviewUrl(Guid.NewGuid(), "/pub/zu.png")))));
+        Assert.Equal((HttpStatusCode.BadRequest, "invalid_request"), await Refusal(await api.Raw(api.Authed(HttpMethod.Get, "/api/files/remote/preview?path=/pub/zu.png"))));
+        host.Denied.Add("/pub");
+        Assert.Equal((HttpStatusCode.Forbidden, "denied"), await Refusal(await api.Raw(api.Authed(HttpMethod.Get, PreviewUrl(c, "/pub/zu.png")))));
+        Assert.Equal(0, host.OpenStreams);
     }
 
     [Fact]

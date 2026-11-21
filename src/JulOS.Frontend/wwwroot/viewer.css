@@ -1,0 +1,59 @@
+/* Vorschau der Dateien-App (files-viewer.js, docs/FILES-VIEWER.md): wird beim ersten Oeffnen geladen, auf dem Desktop im Dialog-Fenster (dialogwin.css), auf dem Handy als Vollbild-Blatt.
+ * Farben sind die Variablen des jeweiligen Rahmens (Desktop --dk-*, Handy --m3-*), Hell und Dunkel kommen von dort. */
+.f-viewer {
+  --fv-fg: var(--m3-on-surface, var(--dk-t1, #25284a));
+  --fv-muted: var(--m3-on-surface-variant, var(--dk-hint, #52567a));
+  --fv-line: var(--m3-outline-variant, var(--dk-line, rgba(127, 127, 127, .25)));
+  --fv-hover: var(--m3-surface-high, var(--dk-hover-lo, rgba(127, 127, 127, .14)));
+  --fv-accent: var(--m3-primary, var(--dk-accent, #6a58e6));
+  --fv-stage: var(--m3-surface-container-lowest, var(--dk-field, rgba(127, 127, 127, .10)));
+  color: var(--fv-fg);
+}
+.f-viewer .fv-meta { flex: 0 0 auto; margin: 0 0 6px; color: var(--fv-muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.f-viewer svg.f-ic { width: 20px; height: 20px; fill: currentColor; flex: 0 0 auto; }
+
+/* Werkzeugleiste: Tasten flach, 36 px (Handy 44), Abstandshalter schiebt den Rest nach rechts */
+.fv-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; min-height: 0; margin-bottom: 6px; flex-wrap: wrap; }
+.fv-bar:empty { display: none; }
+.fv-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 36px; height: 36px; padding: 0 6px; border: 0; border-radius: 8px; background: none; color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
+.fv-btn:hover { background: var(--fv-hover); }
+.fv-btn:focus-visible { outline: 2px solid var(--fv-accent); outline-offset: -2px; }
+.fv-gap { flex: 1 1 8px; }
+.fv-count, .fv-zoom { padding: 0 8px; font-size: 13px; color: var(--fv-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Flaeche: nimmt den Rest des Fensters, scrollt selbst; der Inhalt ist nie HTML aus der Datei */
+.fv-stage { position: relative; flex: 1 1 auto; min-height: 0; min-width: 0; overflow: auto; display: flex; background: var(--fv-stage); border: 1px solid var(--fv-line); border-radius: 10px; outline: none; overscroll-behavior: contain; }
+.fv-stage:focus-visible { border-color: var(--fv-accent); }
+.fv-stage.fv-msg { display: block; flex: 0 0 auto; padding: 8px; background: none; border-style: dashed; }
+.fv-msg .f-msg { margin: 0; }
+.f-viewer .f-msg.warn { color: var(--m3-error, var(--dk-bad-text, #a31f24)); background: var(--m3-error-container, var(--dk-bad-bg, rgba(229, 72, 77, .15))); }
+.fv-image .fv-img { flex: none; margin: auto; display: block; user-select: none; -webkit-user-drag: none; image-rendering: auto; }
+.fv-image.fv-pan { cursor: grab; }
+.fv-image.fv-pan:active { cursor: grabbing; }
+.fv-media { align-items: center; justify-content: center; padding: 8px; }
+.fv-video { max-width: 100%; max-height: 100%; background: #000; border-radius: 6px; }
+.fv-audio { width: min(100%, 520px); }
+.fv-pdf { display: block; padding: 12px 0; }
+.fv-pages { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.fv-page { flex: none; background: #fff; box-shadow: 0 1px 6px rgba(0, 0, 0, .28); }
+.fv-page canvas { display: block; }
+.fv-page.fv-bad { outline: 2px solid var(--m3-error, var(--dk-bad-text, #a31f24)); }
+
+/* Desktop: die Flaeche waechst mit dem Fenster */
+.dw-body > .fv-stage, .dw-body > .fv-meta { flex: 1 1 auto; }
+.dw-body > .fv-meta { flex: 0 0 auto; }
+.dw-body.f-viewer { padding-top: 0; }
+
+/* Handy: Vollbild-Blatt statt Bottom Sheet */
+dialog.m3sheet.f-viewer { position: fixed; inset: 0; width: 100%; max-width: none; height: 100dvh; max-height: none; margin: 0; border-radius: 0; padding: 14px 12px calc(10px + env(safe-area-inset-bottom)); box-sizing: border-box; overflow: hidden; }
+dialog.m3sheet.f-viewer[open] { display: flex; flex-direction: column; }
+dialog.m3sheet.f-viewer::before { display: none; }
+dialog.m3sheet.f-viewer .f-dlg-btns { flex: 0 0 auto; margin-top: 8px; }
+dialog.m3sheet.f-viewer h2 { flex: 0 0 auto; margin: 0 0 4px; font-size: 16px; overflow-wrap: anywhere; }
+dialog.m3sheet.f-viewer .fv-btn { min-width: 44px; height: 44px; }
+@media (max-width: 480px) {
+  .fv-bar { flex-wrap: nowrap; }
+  .fv-zoom { display: none; }
+  dialog.m3sheet.f-viewer .fv-btn { min-width: 40px; }
+  .fv-count { padding: 0 4px; }
+}

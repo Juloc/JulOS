@@ -3,7 +3,7 @@ namespace JulOS.Frontend.Files;
 // Alle Typen der Dateien-App fuer SFTP (Anfragen und Antworten); die JSON-Namen sind camelCase, siehe docs/FILES.md.
 internal sealed record FileErrorBody(string Error, string Code, string? Fingerprint = null, string? Algorithm = null, string? Known = null, Guid? Connection = null, string? User = null, bool? CanSave = null);
 /// <summary>Local: gibt es den Ort "Gemeinsamer Ordner"; Write: der Schalter "Dateien schreiben" (App, sonst JULOS_FILES_WRITE); MaxBytes: Obergrenze je Datei und Operation.</summary>
-internal sealed record FilesInfoDto(bool Local, bool Write, long MaxBytes);
+internal sealed record FilesInfoDto(bool Local, bool Write, long MaxBytes, long PreviewBytes = 0);
 /// <summary>Kind: file, directory, link, other. Resolved: wohin ein Link zeigt (file, directory, other; leer bei kaputtem oder ungeprueftem Link). Openable: Ordner oder Link auf einen Ordner.</summary>
 internal sealed record RemoteEntryDto(string Name, string Path, string Kind, long Size, DateTimeOffset Modified, string Mode, string? Resolved, bool Openable);
 internal sealed record RemoteListingDto(string Path, RemoteEntryDto[] Entries, bool Truncated, int Hidden);

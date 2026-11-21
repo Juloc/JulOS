@@ -24,11 +24,11 @@ internal static class RemoteEndpoints
         Results.Text(JsonSerializer.Serialize(new ErrorBody(message), AppJson.Default.ErrorBody), "application/json", Encoding.UTF8, status);
 
     /// <summary>Content-Disposition fuer einen Download: ein ASCII-Name zum Zurueckfallen und der Name in UTF-8 (RFC 6266), ohne Zeichen, die den Kopf stoeren koennten.</summary>
-    internal static string ContentDisposition(string name)
+    internal static string ContentDisposition(string name, string disposition = "attachment")
     {
         var clean = new string(name.Select(c => char.IsControl(c) || c is '"' or '\\' or '/' or ';' ? '_' : c).ToArray());
         var ascii = new string(clean.Select(c => c < 127 && c >= 32 ? c : '_').ToArray());
-        return $"attachment; filename=\"{ascii}\"; filename*=UTF-8''{Uri.EscapeDataString(clean)}";
+        return $"{disposition}; filename=\"{ascii}\"; filename*=UTF-8''{Uri.EscapeDataString(clean)}";
     }
 
     /// <summary>Benutzer und Domaene aus dem Anmeldedialog: hoechstens 256 Zeichen, keine Steuerzeichen (null: nicht angegeben).</summary>

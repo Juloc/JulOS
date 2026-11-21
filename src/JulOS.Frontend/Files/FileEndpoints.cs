@@ -3,6 +3,7 @@ using System.Text.Json;
 using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
 using JulOS.Frontend.Auth;
+using JulOS.Integrations.Files;
 
 namespace JulOS.Frontend.Files;
 
@@ -51,6 +52,29 @@ internal static class FileEndpoints
             if (stream is null) return NotFound();
             // Immer als Anhang und als unbekannter Typ: eine HTML- oder SVG-Datei darf im Browser nie als Seite dieser Adresse laufen
             return Results.File(stream, "application/octet-stream", Path.GetFileName(path!.TrimEnd('/')), enableRangeProcessing: true);
+        });
+
+        // Vorschau des Gemeinsamen Ordners (docs/FILES-VIEWER.md): Bild, Video, Audio, PDF von einer festen Liste, inline, mit festem Typ, nosniff und strenger CSP; der Anfang muss zur Endung passen. Mit Range (206).
+        app.MapGet("/api/files/preview", async (string? path, HttpContext ctx, HitCounter hits, FileBrowser files, SecurityConfig security, FilesOptions options) =>
+        {
+            if (!files.Enabled) return Off();
+            if (Busy(ctx, hits, "preview", 240)) return TooMany();
+            var name = Path.GetFileName((path ?? "").TrimEnd('/'));
+            if (FilePreview.ByName(name) is not { } type) return FileErrors.Result("preview_type");
+            await using var stream = files.OpenRead(path);
+            if (stream is null) return FileErrors.Result("not_found");
+            var length = stream.Length;
+            if (FilePreview.Refuse(name, length, root: false, RemoteFileEndpoints.PreviewBytes(security), options.MaxBytes) is { } refused) return FileErrors.Result(refused);
+            try
+            {
+                var (bad, head) = await FilePreview.ReadHeadAsync(stream, type, length, ctx.RequestAborted);
+                if (bad is not null) return FileErrors.Result(bad);
+                var range = FilePreview.ResolveRange(ctx.Request.Headers.Range.ToString(), ctx.Request.Headers.ContainsKey("If-Range"), length, allowed: true);
+                if (range.Unsatisfiable) return FilePreview.NotSatisfiable(ctx, length);
+                var failed = await FilePreview.WriteAsync(ctx, stream, head, type, name, range, length, ranges: true, FileLimits.Default.BufferSize);
+                return failed is not null && !ctx.Response.HasStarted ? FileErrors.Result(failed) : Results.Empty;
+            }
+            catch (IOException) { return FileErrors.Result("failed"); }
         });
     }
 }

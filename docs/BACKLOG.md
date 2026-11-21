@@ -17,6 +17,7 @@ Kept short on purpose. The owner decides what moves up. New ideas go to [IDEAS.m
 - **Explorer repairs (bugs, first):** the column headers and the toolbar look broken (they are buttons that do not look like headers); keyboard focus is lost after every folder change; the sidebar lists terminal tiles (`dev-ssh`, Codex, Claude Code) as places, there must be only **Home** and **Root** per host; the window opens small whatever the screen size.
 - **Connections app grouped by host:** the connections can be told apart per host (a section per host, programs such as Codex and Claude Code under their host, not mixed with plain connections).
 - **Dock:** when it folds away it becomes very thin pills of about 5 px height (one per running program), unfolding when hovered; **icons of the programs come automatically** from the programs, and the **surface is customisable** (theme, accent, wallpaper, dock, icons).
+- **Taskbar of an RDP desktop inside the JulOS dock:** a narrow dock whose framed, labelled strip is the real panel of the VM (a slice of the same picture, nothing changed on the host): [DOCK-REMOTE-TASKBAR.md](DOCK-REMOTE-TASKBAR.md) (requested 2026-11-21, mockup done, plan not built).
 - **Per device memory and several browser windows as one big desktop, seamless, with windows across the border, mouse buttons 4 and 5 and keyboard snapping like Windows:** planned in [MULTI-SCREEN.md](MULTI-SCREEN.md) (decisions of 2026-11-21), four steps, step 1 is the window manager in one browser window.
 
 ## Small things, on the side

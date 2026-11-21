@@ -488,6 +488,7 @@ export default {
   "common.close": "Schließen",
   "common.copy": "Kopieren",
   "common.delete": "Löschen",
+  "common.reset": "Zurücksetzen",
   "common.done": "Fertig",
   "common.edit": "Bearbeiten",
   "common.loading": "Lädt …",

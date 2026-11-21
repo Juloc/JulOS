@@ -14,6 +14,7 @@ import { createPrefs } from './prefs.js';
 import { isScheme, normalizeScheme, isDark } from './scheme.js';
 import { t, tp, tk, applyDom, getPref, setPref, isPref } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
+import { showDialog, focusField, askWindow } from './desktop-window.js';
 import { ClipDiag } from './clipdiag.js';
 import { queryState, browserKind, readDeviceText, copyToDevice } from './clipperm.js';
 import { LIMITS, fmtSize, bmpFromImage, pngFromImage, agentImageEligible, pngFromBytes, filesFromTransfer, itemsFromFiles, planSend, topLevel, progressText, startDownload, saveBlob } from './clip.js';
@@ -351,6 +352,11 @@ function updateKeyEditorHints() {
   else if (type === 'action') { el.keyValueLabel.textContent = t('app.keyValAction'); el.keyHint.textContent = t('app.keyHintAction', { actions: Object.keys(ACTIONS).join(', ') }); }
   else { el.keyValueLabel.textContent = t('app.keyValText'); el.keyHint.textContent = t('app.keyHintText'); }
 }
+/** Sondertasten auf Standard: die Rueckfrage ist auf dem Desktop ein Fenster (confirm() sperrt die ganze Seite), Schliessen heisst Nein */
+async function resetKeys() {
+  if (!(await askWindow({ title: t('app.menuResetKeys'), text: t('app.confirmResetKeys'), yes: t('common.reset'), no: t('common.cancel') }))) return;
+  rows = clone(DEFAULT_ROWS); localStorage.removeItem('pd.rows4'); prefs.reset('keybar'); renderAllRows();
+}
 function openKeyEditor(r, i) {
   editRow = r; editIndex = i;
   const def = i >= 0 ? rows[r].items[i] : { label: '', type: 'chord', value: '' };
@@ -358,7 +364,7 @@ function openKeyEditor(r, i) {
   el.keyLabel.value = def.label; el.keyType.value = def.type; el.keyValue.value = def.value; el.keyScope.value = def.scope || 'both';
   el.keyDelete.hidden = i < 0; el.keyLeft.hidden = i < 0; el.keyRight.hidden = i < 0;
   updateKeyEditorHints();
-  el.keyDlg.showModal();
+  showDialog(el.keyDlg);
 }
 el.keyType.addEventListener('change', updateKeyEditorHints);
 el.keySave.addEventListener('click', () => {
@@ -408,7 +414,7 @@ function openClipDlg() {
   el.remoteClip.value = (s && s.clipText) || '';
   renderRemoteItem();
   renderClipDiag();
-  el.clipDlg.showModal();
+  showDialog(el.clipDlg, { width: 500 });
 }
 /* Die Zwischenablage-Diagnose im Dialog (clipdiag.js): Zeilen der aktiven Sitzung, nur solange der Dialog offen ist */
 let permAt = 0;
@@ -430,7 +436,7 @@ function renderAudioDiag() {
   const lines = audioLines({ audio: s.audioOf(), vnc: s.noAudio(), secure: window.isSecureContext !== false, micPerm: micPermState, kind: browserKind() });
   list.replaceChildren(...lines.map((l) => { const li = document.createElement('li'); li.className = l.ok === true ? 'ok' : l.ok === false ? 'no' : 'note'; li.textContent = l.text; return li; }));
 }
-function openAudioDlg() { micPermAt = 0; el.audioDlg.showModal(); renderAudioDiag(); }
+function openAudioDlg() { micPermAt = 0; showDialog(el.audioDlg); renderAudioDiag(); }
 setInterval(renderAudioDiag, 500);
 // Hatte die Seite beim Eintreffen von Text aus der VM keinen Fokus, versucht der Browser es beim naechsten Fokus noch einmal (nur fuer kurz zuvor kopierten Text)
 window.addEventListener('focus', () => {
@@ -462,7 +468,7 @@ const ACTIONS = {
 let appsTarget = null;
 async function openApps(session) {
   appsTarget = session;
-  $('#appsDlg').showModal(); $('#appsSearch').value = '';
+  showDialog($('#appsDlg')); $('#appsSearch').value = '';
   if (!session.W.apps) { try { session.W.apps = (await agent(session.conn.id, '/apps')).apps || []; } catch (e) { session.toast(t('app.errApps', { msg: e.message })); session.W.apps = []; } }
   renderApps('');
 }
@@ -1477,7 +1483,7 @@ export class RemoteSession extends Session {
     else if (act === 'home') Sessions.requestHome();
     else if (act === 'extra') Sessions.open(this.conn, { password: this.password, extra: true });
     else if (act === 'editKeys') { S.editing = true; renderAllRows(); toast(t('app.editKeysToast'), 3600); }
-    else if (act === 'resetKeys') { if (confirm(t('app.confirmResetKeys'))) { rows = clone(DEFAULT_ROWS); localStorage.removeItem('pd.rows4'); prefs.reset('keybar'); renderAllRows(); } }
+    else if (act === 'resetKeys') resetKeys();
     else if (act === 'password') openPwDialog();
     else if (act === 'theme') openThemeDialog();
     else if (act === 'install') installApp();
@@ -2090,7 +2096,7 @@ function openThemeDialog() {
   }
   el.schemeSel.value = S.scheme;
   if (/^#/.test(S.seed)) el.seedInput.value = S.seed;
-  el.themeDlg.showModal();
+  showDialog(el.themeDlg, { system: true });
 }
 async function seedFromImage(file) {
   // wie Material You: aus dem Bild die haeufigste, kraeftige Farbe waehlen
@@ -2151,7 +2157,7 @@ const photoDlg = $('#photoDlg'), pasteBox = $('#pasteBox');
 function openPhotoDlg() {
   pasteBox.textContent = '';
   $('#photoClip').hidden = !(window.isSecureContext && navigator.clipboard && navigator.clipboard.read);
-  photoDlg.showModal();
+  showDialog(photoDlg);
 }
 /* Eine Taste: Bild aus der Zwischenablage senden (Bild kopieren, dann tippen). Ohne HTTPS oder ohne Erlaubnis: Dialog. */
 async function pasteImageFromClipboard() {
@@ -2213,7 +2219,7 @@ el.photoInput.addEventListener('change', async () => {
  * ===================================================================== */
 function openPwDialog() {
   el.pwUser.value = ''; el.pwPass.value = '';
-  el.pwDlg.showModal(); setTimeout(() => el.pwPass.focus(), 200);
+  showDialog(el.pwDlg); setTimeout(() => focusField(el.pwDlg, el.pwPass), 200);
 }
 async function typePw(both) {
   const u = el.pwUser.value, p = el.pwPass.value;
@@ -2290,7 +2296,7 @@ export const remoteApi = {
   group: (id) => { const r = rows.findIndex((x) => x.id === id); return r < 0 ? null : { index: r, title: rowTitle(rows[r]), items: rows[r].items }; },
   press: (def) => cur() && cur().activateKey(def),
   editKey: (r, i) => openKeyEditor(r, i),
-  resetKeys: () => { if (confirm(t('app.confirmResetKeys'))) { rows = clone(DEFAULT_ROWS); localStorage.removeItem('pd.rows4'); prefs.reset('keybar'); renderAllRows(); } },
+  resetKeys: () => resetKeys(),
   /** Ansicht */
   zoomPercent: () => (cur() ? cur().zoomPercent() : 100),
   setZoomPercent: (p) => { const s = cur(); if (s) { s.setK(100 / p); s.rememberProfile(); } },

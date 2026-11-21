@@ -1,4 +1,5 @@
 import { t, tp, tk, fmtDate } from './i18n.js';
+import { showDialog } from './desktop-window.js';
 
 /* =====================================================================
  * Einstellungen, Sicherheit (docs/SECURITY-REVIEW.md, F-01 bis F-04): vertraute Proxy-Adressen, erlaubte Zielhosts, zweiter Faktor fuer Aktionen, Schluessel im Backup
@@ -271,6 +272,6 @@ export function initSecurity({ api, esc }) {
   }
 
   /** section: die Kennung eines Abschnitts, zu dem nach dem Laden gescrollt wird (die Dateien-App fuehrt so zum Schalter "Dateien schreiben") */
-  function open(section) { reset(); scrollTo = section === 'filesWrite' ? 'secSecFilesWrite' : ''; render(); dlg.showModal(); load(); }
+  function open(section) { reset(); scrollTo = section === 'filesWrite' ? 'secSecFilesWrite' : ''; render(); showDialog(dlg, { system: true, width: 600, resizable: true }); load(); }
   return { open, check: refreshHint, setHomeShown: (on) => { homeShown = on; syncHint(); } };
 }

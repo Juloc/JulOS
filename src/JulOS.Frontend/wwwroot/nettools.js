@@ -3,6 +3,7 @@
  * hier gibt es kein freies Eingabefeld fuer Adressen). Die Textausgabe steht in reinen Funktionen (getestet in tests/frontend/nettools.test.mjs). */
 
 import { t } from './i18n.js';
+import { showDialog } from './desktop-window.js';
 
 const $ = (s) => document.querySelector(s);
 
@@ -75,7 +76,7 @@ export function initNetTools({ api, setMsg, connections }) {
   return async () => {
     out.textContent = ''; setMsg(msg, '');
     sel.replaceChildren();
-    dlg.showModal();
+    showDialog(dlg, { system: true, width: 480 });
     try {
       const { targets } = await api('/api/tools/targets');
       for (const tg of targets) { const o = document.createElement('option'); o.value = o.textContent = tg; sel.appendChild(o); }

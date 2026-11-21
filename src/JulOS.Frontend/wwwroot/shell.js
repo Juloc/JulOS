@@ -16,6 +16,7 @@ import { initStepUp, withStepUp } from './stepup.js';
 import { initNetTools } from './nettools.js';
 import { initAlerts, parseHostLink } from './alerts.js';
 import { qrSvg } from './qr.js';
+import { showDialog, focusField } from './desktop-window.js';
 import { t, tp, tk, relativeTime, getPref, isPref } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
 import './terminal-session.js';      // Sitzungsart 'terminal' (natives SSH-Terminal)
@@ -312,7 +313,7 @@ function editDialog(c, kind) {
       : t('shell.pwHintNew');
   syncOwnLogin();                                   // nach den Zeilen darueber: sie versteckt Benutzer, Passwort und Hinweis, wenn der Host-Login gilt
   setMsg($('#connMsg'), '');
-  $('#connDlg').showModal();
+  showDialog($('#connDlg'), { system: true, width: 500 });
 }
 
 /* ---------- Hosts: Auswahl in der Verbindung, Anlegen, Umbenennen, Loeschen, Agent (docs/HOSTS.md) ---------- */
@@ -372,8 +373,8 @@ function hostDialog(h, onCreated) {
   info.hidden = !h;
   if (h) info.textContent = [hostDetail(h), tp('shell.hostConns', nOf)].filter(Boolean).join(' · ');
   setMsg($('#hostMsg'), '');
-  $('#hostDlg').showModal();
-  setTimeout(() => $('#hostName').focus(), 100);
+  showDialog($('#hostDlg'), { system: true, width: 420 });
+  setTimeout(() => focusField($('#hostDlg'), $('#hostName')), 100);
 }
 
 $('#hostForm').addEventListener('submit', async (e) => {
@@ -497,8 +498,8 @@ function startDialog(c, opts = {}) {
   $('#startTitle').textContent = c.name;
   $('#startUser').value = loginUser(c);
   $('#startPw').value = '';
-  $('#startDlg').showModal();
-  setTimeout(() => $('#startPw').focus(), 150);
+  showDialog($('#startDlg'), { system: true });
+  setTimeout(() => focusField($('#startDlg'), $('#startPw')), 150);
 }
 
 /** Verbindung starten: der Verwalter legt die Sitzung an, die Huelle (Fenster am Desktop, Umschalter am Handy) zeigt sie. */
@@ -531,8 +532,8 @@ function quickDialog(prefill = '') {
   $('#quickUser').value = q ? q.username : '';
   $('#quickPw').value = '';
   setMsg($('#quickMsg'), '');
-  $('#quickDlg').showModal();
-  setTimeout(() => ($('#quickHost').value ? $('#quickPw') : $('#quickHost')).focus(), 150);
+  showDialog($('#quickDlg'), { system: true, width: 480 });
+  setTimeout(() => focusField($('#quickDlg'), $('#quickHost').value ? $('#quickPw') : $('#quickHost')), 150);
 }
 $('#quickKind').addEventListener('change', () => { $('#quickPw').required = $('#quickKind').value !== 'vnc'; });   // ein VNC-Ziel ohne Anmeldung braucht kein Passwort
 $('#quickForm').addEventListener('submit', (e) => {
@@ -642,7 +643,7 @@ function ago(iso) {
 
 async function openDevices() {
   setMsg($('#devicesMsg'), '');
-  $('#devicesDlg').showModal();
+  showDialog($('#devicesDlg'), { system: true, width: 480 });
   await renderDevices();
 }
 

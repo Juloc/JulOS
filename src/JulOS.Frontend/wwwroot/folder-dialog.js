@@ -1,6 +1,7 @@
 import { FOLDER_ICON_KEYS, FOLDER_ICON_LABEL, folderIconSvg } from './folders.js';
 import { t } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
+import { showDialog } from './desktop-window.js';
 
 /* =====================================================================
  * Dialog "Ordner" (docs/FOLDERS.md): anlegen, umbenennen, Symbol waehlen, Reihenfolge, loeschen (die Verbindungen bleiben, ohne Ordner).
@@ -65,5 +66,5 @@ export function initFolderDialog({ state, api, esc, changed }) {
     } catch (err) { msg(serverMsg(err.message)); }
   });
 
-  return () => { reset(); msg(''); drawList(); $('#folderDlg').showModal(); };
+  return () => { reset(); msg(''); drawList(); showDialog($('#folderDlg'), { system: true }); };
 }

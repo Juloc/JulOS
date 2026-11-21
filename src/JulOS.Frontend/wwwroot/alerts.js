@@ -3,6 +3,7 @@
  * letzten Meldungen. Die Regeln selbst wertet der Server aus; der Service Worker (sw-push.js) zeigt die Nachricht. */
 import { t, tk, fmtDate } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
+import { showDialog } from './desktop-window.js';
 
 const $ = (s) => document.querySelector(s);
 const STORE_KEY = 'pd.push.id';        // die Kennung dieses Geraets beim Server (der Server nennt dem Browser keine Endpunkte)
@@ -170,5 +171,5 @@ export function initAlerts({ api, setMsg, esc, deviceLabel, openHost }) {
     clearTimeout(timer); timer = setTimeout(save, 400);
   });
 
-  return async () => { setMsg(msg, ''); data = null; body.replaceChildren(); dlg.showModal(); await load(); };
+  return async () => { setMsg(msg, ''); data = null; body.replaceChildren(); showDialog(dlg, { system: true, width: 520, resizable: true }); await load(); };
 }

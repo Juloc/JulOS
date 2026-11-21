@@ -4,6 +4,8 @@
  * (StepUpPolicy); hier steht nur die Antwort darauf. withStepUp ist reines JavaScript (tests/frontend/stepup.test.mjs), initStepUp bindet das Sheet #stepUpDlg.
  * ===================================================================== */
 
+import { showDialog } from './desktop-window.js';
+
 /** Ist der Fehler die Aufforderung des Servers, sich mit dem zweiten Faktor zu bestaetigen? */
 export const isStepUp = (e) => !!e && e.status === 403 && e.code === 'step_up_required';
 
@@ -43,11 +45,13 @@ export function initStepUp({ api, setMsg }) {
     finally { for (const b of form.querySelectorAll('button[type=submit]')) b.disabled = false; }
   });
 
+  const show = () => showDialog(dlg, { system: true, top: true, width: 420 });
   return () => {
-    if (pending) return pending;
+    if (pending) { show(); return pending; }               // ein zweiter Aufruf holt das offene Fenster nach vorn
     pending = new Promise((resolve) => { settle = resolve; });
     input.value = ''; setMsg(msg, '');
-    dlg.showModal();
+    // Ein Fenster, das vor allen anderen liegt und den Fokus nimmt: die Aktion wartet auf diese Eingabe. Schliessen, Escape und Abmelden heissen "nicht freigegeben" (close-Ereignis oben).
+    show();
     setTimeout(() => input.focus(), 50);
     return pending;
   };

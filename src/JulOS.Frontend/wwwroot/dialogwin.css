@@ -7,9 +7,9 @@
 .dk-dlgwin .dk-wc { margin-left: auto; }
 .dk-dlgwin.active { box-shadow: var(--dk-shadow), 0 0 0 1.5px var(--dk-accent-ring); }
 /* Root: ein Dialog zu einem Root-Ort ist schon an der Titelleiste zu erkennen, auch wenn er hinter anderen Fenstern wieder auftaucht */
-.dk-dlgwin.dw-root .dk-wh { background: var(--dk-bad-bg); }
-.dk-dlgwin.dw-root .dk-wh .dk-wt { color: var(--dk-bad-text); }
-.dk-dlgwin.dw-root { border-color: var(--dk-bad-text); }
+.dk-dlgwin.dw-root .dk-wh, .dk-dlgwin.dw-danger .dk-wh { background: var(--dk-bad-bg); }
+.dk-dlgwin.dw-root .dk-wh .dk-wt, .dk-dlgwin.dw-danger .dk-wh .dk-wt { color: var(--dk-bad-text); }
+.dk-dlgwin.dw-root, .dk-dlgwin.dw-danger { border-color: var(--dk-bad-text); }
 
 /* Inhalt: dieselben Klassen wie im Dialog (.f-dlg aus files.css), nur ohne feste Breite; die Tasten stehen unten und scrollen nicht mit */
 .dw-body.f-dlg { width: auto; max-width: none; flex: 1; min-height: 0; display: flex; flex-direction: column; box-sizing: border-box; padding: 2px 20px 16px; overflow: auto; color: var(--dk-t1); }
@@ -22,3 +22,12 @@
 .dw-btns button { flex: 0 1 auto; min-height: 36px; padding: 0 20px; }
 .dw-body .f-countdown { margin: 6px 0 0; font-size: 12px; color: var(--dk-hint); }
 .dw-body .f-countdown.late { color: var(--dk-bad-text); font-weight: 600; }
+
+/* Feste <dialog>-Elemente im Fenster (showDialog in desktop-window.js): das Element bleibt, verliert aber seine Karte (Rand, Schatten, feste Breite, Animation); das Fenster liefert den Rahmen.
+ * Die Ueberschrift steht schon in der Titelleiste (.dw-src). Die Breite kommt vom Fenster, daher !important gegen die #id-Regeln in style.css, hostui.css und alerts.css. */
+.dk-dlgwin dialog.dw-in { position: static !important; display: block; inset: auto; width: auto !important; max-width: none !important; max-height: none !important; margin: 0; padding: 0; border: 0; border-radius: 0;
+  background: none; box-shadow: none; backdrop-filter: none; overflow: visible; animation: none !important; transform: none; color: inherit; }
+.dw-src { display: none !important; }
+.dw-host .dw-body.f-dlg { padding-top: 12px; }
+/* Tastenreihen am Ende bleiben sichtbar, wenn der Inhalt scrollt */
+.dw-host dialog.dw-in > .row:last-child, .dw-host dialog.dw-in > form > .row:last-child, .dw-host dialog.dw-in > button.close:last-child { position: sticky; bottom: -16px; background: var(--dk-dlg); padding-bottom: 14px; margin-bottom: -16px; }

@@ -66,3 +66,4 @@ Npgsql (PostgreSQL-Treiber fuer .NET), PostgreSQL License.
 Konscious.Security.Cryptography.Argon2 (Passwort-Hash), MIT License.
 .NET und ASP.NET Core (Laufzeit), MIT License, .NET Foundation und Mitwirkende.
 PostgreSQL (Datenbank, getrennter Container), PostgreSQL License.
+pdf.js (pdfjs-dist 6.5.438, PDF-Vorschau der Dateien-App, unter vendor/pdfjs mitgeliefert), Apache License 2.0, Mozilla Foundation und Mitwirkende. Darin die JavaScript-Decoder fuer JBIG2 (PDFium-Quelltext, BSD 3-Clause, The PDFium Authors) und JPEG 2000 (OpenJPEG, BSD 2-Clause); die Lizenztexte liegen in vendor/pdfjs/wasm.

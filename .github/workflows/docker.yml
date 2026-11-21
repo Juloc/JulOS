@@ -1,14 +1,24 @@
 name: docker
 
+# Reine Doku-Aenderungen (docs/, *.md, LICENSE) sind nicht im Image (.dockerignore) und loesen keinen Bau aus. Tags bauen immer: GitHub wertet
+# Pfadfilter bei Tags nicht aus.
 on:
   push:
     branches: [main]
     tags: ["v*"]
+    paths-ignore: ["docs/**", "**/*.md", "LICENSE"]
   pull_request:
+    paths-ignore: ["docs/**", "**/*.md", "LICENSE"]
 
 permissions:
   contents: read
   packages: write
+
+# Ein neuer Push in dieselbe Pull-Request-Verzweigung bricht den alten Lauf ab. Pushes auf main und Tags laufen immer zu Ende (je Lauf eine eigene Gruppe),
+# ein Release-Bau wird also nie abgebrochen.
+concurrency:
+  group: docker-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -50,4 +60,6 @@ jobs:
             COMMIT=${{ github.sha }}
             BUILD_DATE=${{ steps.ver.outputs.date }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Nur main schreibt den Cache. Pull-Requests und Tags lesen ihn, schrieben aber je Lauf 50 bis 100 MB dazu (Stand: 3,5 von 7,6 GB), und der Cache
+          # des Repositories fasst nur 10 GB: dann wirft GitHub die Schichten von main hinaus und der naechste Bau ist kalt.
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,mode=max' || '' }}

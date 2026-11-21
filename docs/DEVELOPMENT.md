@@ -223,7 +223,17 @@ The image is built for amd64 and arm64 by one workflow. The SDK stage is `--plat
 
 ## Continuous integration
 
-`.github/workflows/tests.yml` runs on every push to `main` and every pull request: the server tests against a PostgreSQL service (throwaway password, set as `JULOS_TEST_DB`), the display engine tests, `node --test tests/frontend` and `py_compile` for the agent scripts. Tests that need a real target (SSH, RDP, GPU) are skipped there; they run with `deploy/dev/test.sh` and `deploy/dev/test-display.sh`. A second job runs `dotnet list package --vulnerable --include-transitive` and only reports (job summary and a warning), it never fails the build.
+`.github/workflows/tests.yml` runs on every push to `main` and every pull request, as three jobs at the same time: `server` (the server tests against a PostgreSQL service, throwaway password set as `JULOS_TEST_DB`), `engine` (the display engine tests, `node --test tests/frontend` and `py_compile` for the agent scripts; no database) and `vulnerabilities` (`dotnet list package --vulnerable --include-transitive`; it only reports in the job summary and a warning, it never fails the build). Tests that need a real target (SSH, RDP, GPU) are skipped there; they run with `deploy/dev/test.sh` and `deploy/dev/test-display.sh`.
+
+`.github/workflows/docker.yml` builds the image (amd64 and arm64) on every push to `main`, every tag `v*` and every pull request; only pushes to `main` and tags publish and log in to ghcr.io.
+
+Keeping the runs short (measured on 2026-11-21 over the last 200 runs: tests about 3.6 min, image 1.5 to 2.5 min with a warm cache):
+
+- **Documentation-only changes start nothing** (`paths-ignore`: `docs/**`, `**/*.md`, `LICENSE`; none of them is in the image, see `.dockerignore`). A tag always builds: GitHub does not apply path filters to tags.
+- **A new push to the same pull request cancels its older run** (`concurrency`). Pushes to `main` and tags never cancel each other, so a release build is never aborted.
+- **Only `main` writes the Docker layer cache** (`cache-to`); pull requests and tags only read it. The cache of the repository holds 10 GB; runs of tags and pull requests had filled about half of it with copies nobody reads, and once GitHub throws the layers of `main` out, the next build is cold.
+- **Not done on purpose:** a NuGet cache (restore takes about 10 s and the cache space is short), native arm64 runners (the SDK stage already runs natively, QEMU is only used for the small runtime stage and its layers come from the cache), a one-platform build for pull requests (it would stop checking that the arm64 image still builds, the image job is not the long one anyway).
+- Action versions stay pinned to commit SHAs. Syntax check of the workflows: `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:latest`.
 
 ## Things learned from the test instance
 

@@ -1,15 +1,24 @@
 name: tests
 
+# Reine Doku-Aenderungen (docs/, *.md, LICENSE) aendern weder Code noch Image und loesen nichts aus.
 on:
   push:
     branches: [main]
+    paths-ignore: ["docs/**", "**/*.md", "LICENSE"]
   pull_request:
+    paths-ignore: ["docs/**", "**/*.md", "LICENSE"]
 
 permissions:
   contents: read
 
+# Ein neuer Push in dieselbe Pull-Request-Verzweigung bricht den alten Lauf ab. Pushes auf main laufen alle zu Ende (je Lauf eine eigene Gruppe).
+concurrency:
+  group: tests-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  # Server-Tests und Bildschirm-Engine-Tests laufen als getrennte Jobs gleichzeitig (vorher nacheinander in einem Job): das war der laengste Teil des Laufs.
+  server:
     runs-on: ubuntu-latest
     # PostgreSQL fuer die Datenbank-Tests (jeder Test legt sich ein eigenes Schema an, siehe tests/JulOS.Backend.Tests/TestDb.cs).
     # Wegwerf-Zugang nur fuer diesen Lauf. Die Tests gegen echte Ziele (SSH, RDP) brauchen deploy/dev und bleiben hier uebersprungen.
@@ -34,11 +43,20 @@ jobs:
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           global-json-file: global.json
+      - name: Server tests (mit Datenbank)
+        run: dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj
+
+  # Ohne Datenbank: die Engine-Tests brauchen den PostgreSQL-Dienst nicht, der Job startet ohne ihn.
+  engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-      - name: Server tests (mit Datenbank)
-        run: dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj
       - name: Bildschirm-Engine tests (ohne Ziele)
         run: dotnet test --project tests/JulOS.Display.Tests/JulOS.Display.Tests.csproj
       - name: Browser-Logik (node)

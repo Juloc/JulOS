@@ -1,0 +1,65 @@
+/* Editor der Dateien-App (files-editor.js, CodeMirror 6 aus vendor/codemirror). Farben sind Variablen: die der App (--f-*, siehe files.css) und eigene Syntaxfarben (--ed-*),
+ * hell und dunkel; html[data-scheme] setzt app.js, ein Wechsel zur Laufzeit wirkt sofort, ohne dass der Editor etwas tut. */
+.f-ed {
+  --ed-kw: #8a2f9f; --ed-str: #19703f; --ed-num: #a8520a; --ed-cmt: #666a80; --ed-prop: #1c58b3; --ed-type: #0b6b82; --ed-fn: #a82c5a; --ed-punct: #555a74; --ed-bad: #b3261e;
+  --ed-bg: var(--f-field, rgba(255, 255, 255, .6)); --ed-gutter: var(--f-muted); --ed-line: rgba(127, 127, 127, .12); --ed-sel: rgba(106, 88, 230, .25); --ed-match: rgba(255, 190, 40, .35);
+  flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; border: 1px solid var(--f-line); border-radius: 10px 10px 0 0; overflow: hidden; background: var(--ed-bg);
+}
+html[data-scheme="dark"] .f-ed {
+  --ed-kw: #c9a6ff; --ed-str: #93dcab; --ed-num: #f2b866; --ed-cmt: #a3a5bf; --ed-prop: #94b9ff; --ed-type: #72d4e8; --ed-fn: #ff9fbd; --ed-punct: #b2b7d2; --ed-bad: #ff9a9d;
+  --ed-bg: rgba(255, 255, 255, .05); --ed-line: rgba(255, 255, 255, .07); --ed-sel: rgba(169, 156, 255, .38); --ed-match: rgba(240, 176, 48, .35);
+}
+.f-ed-load { margin: 14px; color: var(--f-muted); }
+.f-ed .cm-editor { flex: 1; min-height: 0; color: var(--f-fg); background: transparent; font-size: 13px; }
+.f-ed.kit .cm-editor { font-size: 16px; }                                      /* unter 16px zoomt iOS beim Tippen ins Feld */
+.f-ed .cm-editor.cm-focused { outline: 2px solid var(--f-accent); outline-offset: -2px; }
+.f-ed .cm-scroller { font-family: ui-monospace, Menlo, Consolas, monospace; line-height: 1.5; overflow: auto; }
+.f-ed .cm-content { caret-color: var(--f-accent); padding: 8px 0; }
+.f-ed .cm-cursor, .f-ed .cm-dropCursor { border-left: 2px solid var(--f-accent); }
+.f-ed .cm-editor .cm-selectionBackground, .f-ed .cm-editor.cm-focused .cm-selectionBackground, .f-ed .cm-content ::selection { background: var(--ed-sel); }
+.f-ed .cm-activeLine { background: var(--ed-line); }
+.f-ed .cm-selectionMatch { background: var(--ed-match); }
+.f-ed .cm-matchingBracket, .f-ed .cm-nonmatchingBracket { background: var(--ed-sel); outline: 1px solid var(--f-accent); }
+.f-ed .cm-nonmatchingBracket { outline-color: var(--ed-bad); color: var(--ed-bad); }
+.f-ed .cm-gutters { background: rgba(127, 127, 127, .1); color: var(--ed-gutter); border: 0; border-right: 1px solid var(--f-line); }
+.f-ed .cm-activeLineGutter { background: var(--ed-line); color: var(--f-fg); }
+.f-ed .cm-foldGutter span { cursor: pointer; }
+.f-ed .cm-foldPlaceholder { background: var(--f-hover); border: 1px solid var(--f-line); color: var(--f-muted); padding: 0 6px; border-radius: 4px; }
+.f-ed .cm-specialChar { color: var(--ed-bad); }
+/* Fehlermarkierung (Pruefung von JSON und YAML) */
+.f-ed .cm-lintRange-error { background-image: none; text-decoration: underline wavy var(--ed-bad); text-underline-offset: 3px; background-color: color-mix(in srgb, var(--ed-bad) 18%, transparent); }
+.f-ed .cm-tooltip { background: var(--f-pop, #fff); color: var(--f-fg); border: 1px solid var(--f-line); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, .25); }
+.f-ed .cm-tooltip-lint { padding: 2px; }
+.f-ed .cm-diagnostic { padding: 4px 8px; border-left: 4px solid var(--ed-bad); font: 13px/1.4 system-ui, sans-serif; }
+/* Suchen und Ersetzen: die Leiste von CodeMirror, oben im Editor */
+.f-ed .cm-panels { background: var(--f-head, #f7f5fd); color: var(--f-fg); border-color: var(--f-line); }
+.f-ed .cm-panels-top { border-bottom: 1px solid var(--f-line); }
+.f-edit .f-ed .cm-panel.cm-search { position: relative; padding: 6px 34px 6px 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font: 13px/1.3 system-ui, sans-serif; }
+.f-ed .cm-search br { display: none; }
+.f-ed .cm-search input.cm-textfield { flex: 1 1 140px; min-width: 0; max-width: 260px; min-height: 30px; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--f-line); border-radius: 6px; background: var(--f-field); color: var(--f-fg); font: inherit; }
+.f-ed .cm-search input.cm-textfield:focus { outline: 2px solid var(--f-accent); outline-offset: -1px; }
+.f-ed .cm-search button.cm-button { min-height: 30px; padding: 0 10px; border: 1px solid var(--f-line); border-radius: 6px; background: var(--f-hover); color: var(--f-fg); font: inherit; cursor: pointer; background-image: none; }
+.f-ed .cm-search button.cm-button:hover { border-color: var(--f-accent); }
+.f-edit .f-ed .cm-search label { display: inline-flex; flex-direction: row; align-items: center; gap: 4px; margin: 0; padding: 0 2px; min-height: 30px; width: auto; height: auto; border-radius: 0; background: none; box-shadow: none; color: var(--f-fg); font: inherit; white-space: nowrap; }
+.f-edit .f-ed .cm-search label input[type=checkbox] { width: 18px; height: 18px; min-height: 0; margin: 0; padding: 0; flex: none; accent-color: var(--f-accent); }
+.f-edit .f-ed .cm-panel.cm-search button[name=close] { position: absolute; top: 2px; right: 2px; width: 26px; height: 26px; padding: 0; border: 0; background: none; color: var(--f-muted); font-size: 18px; cursor: pointer; }
+.f-ed .cm-panel.cm-gotoLine { padding: 6px 8px; display: flex; gap: 6px; align-items: center; }
+.f-ed .cm-searchMatch { background: var(--ed-match); outline: 1px solid var(--f-accent); }
+.f-ed .cm-searchMatch-selected { background: var(--ed-sel); }
+/* Leiste unter dem Text: Werkzeuge, Pruefergebnis, Stelle und Art der Datei */
+.f-ed-bar { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 5px 8px; border: 1px solid var(--f-line); border-top: 0; border-radius: 0 0 10px 10px; background: rgba(127, 127, 127, .08); font-size: 12px; color: var(--f-muted); }
+.f-ed-tools { display: inline-flex; gap: 2px; }
+.f-ed-btn { min-height: 28px; padding: 0 10px; border: 0; border-radius: 6px; background: none; color: var(--f-fg); font: inherit; cursor: pointer; }
+.f-ed-btn:hover:not(:disabled) { background: var(--f-hover); }
+.f-ed-btn:disabled { opacity: .45; cursor: default; }
+.f-ed-btn[aria-pressed="true"] { background: var(--f-sel); font-weight: 600; }
+.f-ed-btn:focus-visible, .f-ed-msg:focus-visible { outline: 2px solid var(--f-accent); outline-offset: -2px; }
+.f-ed-msg { flex: 1 1 200px; min-width: 0; padding: 2px 6px; border: 0; border-radius: 6px; background: none; color: var(--f-muted); font: inherit; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; }
+.f-ed-msg.bad { color: var(--f-bad); background: var(--f-bad-bg); font-weight: 600; cursor: pointer; }
+.f-ed-meta { margin-left: auto; display: inline-flex; gap: 12px; white-space: nowrap; }
+/* Titel im Fenster */
+.f-ed-title { display: inline-flex; align-items: baseline; gap: 10px; min-width: 0; }
+.f-ed-name { overflow: hidden; text-overflow: ellipsis; }
+.f-ed-mark { font-size: 12px; font-weight: 600; color: #b86a0c; padding: 1px 8px; border-radius: 999px; background: rgba(184, 106, 12, .15); }
+html[data-scheme="dark"] .f-ed-mark { color: #f2b866; background: rgba(242, 184, 102, .16); }
+@media (max-width: 600px) { .f-ed-pos { display: none; } .f-ed-btn { min-height: 36px; } }

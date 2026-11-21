@@ -300,6 +300,7 @@ function focusWin(w) {
   if (w.minimized) return;
   const branch = new Set(); for (let o = w; o; o = o.owner && wins.has(o.owner.id) ? o.owner : null) branch.add(o);
   for (const o of stackOrder(rootOf(w), branch)) o.el.style.zIndex = ++zTop;
+  for (const o of wins.values()) if (o.opts.top && !o.minimized) o.el.style.zIndex = ++zTop;      // eine Freigabe (zweiter Faktor) bleibt vor den anderen Fenstern
   for (const o of wins.values()) o.el.classList.toggle('active', o === w);
   if (w.opts.onFocus) w.opts.onFocus(w);       // Sitzungsfenster: die Sitzung wird die aktive (Tasten gehen an sie)
   // Ein Dialog-Fenster sperrt nichts, nimmt aber den Fokus in sich auf, damit Tab und Escape dort wirken (Klick auf die Titelleiste eingeschlossen)
@@ -383,20 +384,27 @@ window.addEventListener('resize', () => {
 let dlgSeq = 0;
 /**
  * Legt ein Dialog-Fenster an: mittig ueber dem Fenster, das es geoeffnet hat (owner: ein Element darin; sonst das Fenster mit dem Fokus oder das vordere), leicht versetzt bei mehreren.
+ * system: gehoert keinem Fenster (nur die Mitte richtet sich danach). top: liegt immer ueber den anderen Fenstern, auch wenn eines davon angeklickt wird (Freigabe mit dem zweiten Faktor).
  * Hoehe 0 = so hoch wie der Inhalt. onRequestClose(): darf das Fenster zu? (Schliessen-Taste und Schliessen des Eigentuemers fragen so); onClose(): es ist zu. Gibt null zurueck, solange der Desktop nicht steht.
  */
-function dialogFrame({ title, w = 480, h = 0, resizable = false, owner = null, cls = '', onClose, onRequestClose }) {
+function dialogFrame({ title, w = 480, h = 0, resizable = false, owner = null, cls = '', top = false, system = false, onClose, onRequestClose }) {
   if (!root) return null;
   const from = owner || document.activeElement;
   const front = [...wins.values()].filter((o) => !o.minimized).sort((a, b) => b.el.style.zIndex - a.el.style.zIndex)[0] || null;
   const ownerWin = [...wins.values()].find((o) => from && from.nodeType && o.el.contains(from)) || (owner ? null : [...wins.values()].find((o) => o.el.classList.contains('active'))) || front;
-  const n = [...wins.values()].filter((o) => o.dialog && o.owner === ownerWin).length;
+  const link = system ? null : ownerWin;
+  const n = [...wins.values()].filter((o) => o.dialog && o.owner === link).length;
   const v = viewport();
   w = Math.min(w, v.w - 40); if (h) h = Math.min(h, v.h - BAR_H - dockReserve());
   const cx = ownerWin ? ownerWin.el.offsetLeft + ownerWin.el.offsetWidth / 2 : v.w / 2, cy = ownerWin ? ownerWin.el.offsetTop + ownerWin.el.offsetHeight / 2 : (BAR_H + v.h) / 2;
-  const win = createWindow({ id: 'dlg:' + (++dlgSeq), title, dialog: true, resizable, owner: ownerWin, cls: 'dk-dlgwin ' + cls, rect: { x: cx - w / 2, y: cy - (h || 260) / 2, w, h: h || 260 },
+  const win = createWindow({ id: 'dlg:' + (++dlgSeq), title, dialog: true, resizable, owner: link, top, cls: 'dk-dlgwin ' + cls, rect: { x: cx - w / 2, y: cy - (h || 260) / 2, w, h: h || 260 },
     minW: resizable ? 360 : 0, minH: resizable ? 240 : 0, autoHeight: !h, onClose, onRequestClose });
   const label = win.head.querySelector('.dk-wt span');
+  // Der Inhalt kommt oft erst spaeter (Antwort vom Server) und macht das Fenster hoeher: es rutscht dann zurueck in den sichtbaren Bereich, statt unten abgeschnitten zu bleiben
+  if (!h && typeof ResizeObserver === 'function') new ResizeObserver(() => {
+    const r = fitRect({ x: win.el.offsetLeft, y: win.el.offsetTop, w: win.el.offsetWidth, h: win.el.offsetHeight }, 0, 0);
+    if (r.y !== win.el.offsetTop || r.x !== win.el.offsetLeft) Object.assign(win.el.style, { left: r.x + 'px', top: r.y + 'px' });
+  }).observe(win.el);
   return {
     el: win.el, body: win.body,
     setTitle(x) { if (typeof x === 'string') label.textContent = x; else label.replaceChildren(x); win.el.setAttribute('aria-label', label.textContent); },

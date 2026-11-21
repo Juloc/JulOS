@@ -17,7 +17,7 @@ function node(tag) {
 globalThis.document = { documentElement: { classList: { contains: (c) => c === 'desktop' } }, createElement: node, body: node('body'), activeElement: null };
 globalThis.queueMicrotask ||= (f) => Promise.resolve().then(f);
 
-const { openDialogWindow, setDialogHost } = await import('../../src/JulOS.Frontend/wwwroot/desktop-window.js');
+const { openDialogWindow, setDialogHost, showDialog } = await import('../../src/JulOS.Frontend/wwwroot/desktop-window.js');
 
 /** Wie dialogFrame in desktop.js: ein Fenster mit Rahmen; close() ruft onClose, der Schliessen-Knopf fragt erst */
 let last = null;
@@ -79,4 +79,41 @@ test('ohne Desktop (kein Fenster-Host oder nicht html.desktop) gibt es kein Fens
   globalThis.document.documentElement = { classList: { contains: () => false } };
   assert.equal(open(), null);
   globalThis.document.documentElement = dt;
+});
+
+// showDialog: die festen <dialog>-Elemente (Step-up, Host-Aktion, Konto ...) im Fenster
+globalThis.document.createComment = () => ({ parentNode: null, replaceWith() {}, remove() {} });
+function dialog() {
+  const l = new EventTarget();
+  const d = {
+    open: false, closes: 0, parentNode: null, classList: { add() {}, remove() {} }, querySelector: () => null, contains: () => false, before() {}, remove() {}, focus() {},
+    setAttribute() { d.open = true; },
+    close() { if (!d.open) return; d.open = false; d.closes++; l.dispatchEvent(new Event('close')); },
+    addEventListener: (...a) => l.addEventListener(...a), removeEventListener: (...a) => l.removeEventListener(...a), fire: (t) => l.dispatchEvent(new Event(t)),
+  };
+  return d;
+}
+const tick = () => new Promise((r) => setTimeout(r, 5));
+
+test('showDialog: Schliessen des Fensters (Taste, Escape, Eigentuemer, Abmelden) schliesst das <dialog> = abgebrochen, nie bestaetigt', async () => {
+  for (const how of ['x', 'escape', 'owner']) {
+    const d = dialog(); const h = showDialog(d, { title: 'Freigabe' });
+    assert.ok(d.open);
+    if (how === 'x') last.xButton(); else if (how === 'escape') press(last, 'Escape'); else last.close();
+    assert.equal(await h.promise, null);
+    await tick();
+    assert.equal(d.open, false); assert.equal(d.closes, 1);        // die App sieht ihr close-Ereignis (Step-up: nicht freigegeben; Host-Aktion: nichts gesendet)
+  }
+});
+
+test('showDialog: dlg.close() der App schliesst das Fenster; ein zweiter Aufruf holt das offene Fenster; ein altes close-Ereignis schliesst ein neu geoeffnetes nicht', async () => {
+  const d = dialog(); const h = showDialog(d);
+  assert.equal(showDialog(d), h);
+  d.close(); await tick();
+  assert.equal(last.closed, true);
+  const h2 = showDialog(d); assert.notEqual(h2, h);
+  d.fire('close');                                                // spaet eingetroffenes Ereignis des ersten Schliessens, der Dialog ist wieder offen
+  assert.equal(last.closed, false);
+  d.close(); await tick();
+  assert.equal(last.closed, true);
 });

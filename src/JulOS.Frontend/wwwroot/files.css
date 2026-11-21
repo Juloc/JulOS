@@ -241,3 +241,6 @@
 .f-dlg-btns button:disabled { opacity: .4; }
 
 
+
+.f-writeoff { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.f-writeoff .f-msg { margin: 0; }

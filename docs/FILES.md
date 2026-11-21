@@ -18,13 +18,11 @@ A connection that is not SSH (RDP, VNC) is not a place. A host with several SSH 
 
 ### Switching writing on
 
-Everything that changes something (upload, overwrite, rename, move, copy, delete, new folder, and the `prepare` before it) is refused with `403 write_off` until you set
+Everything that changes something (upload, overwrite, rename, move, copy, delete, new folder, and the `prepare` before it) is refused with `403 write_off` until you switch it on **in the app**: Settings, Security, **"Write files"** (`PUT /api/security/files-write`, stored in `instance_settings` as `security.filesWrite`, changed only with a fresh authenticator code like every security setting, written to the security history). It takes effect on the next request, **without a restart**.
 
-```
-JULOS_FILES_WRITE=on
-```
+The environment variable `JULOS_FILES_WRITE=on` (server container) is only the **fallback**: it counts while the app has no value ("Reset to default" in the app forgets the app's value again). The value of the app wins in both directions: the app can switch writing off although the environment says `on`. A typo in the variable (anything but `on` or `off`, including `true` or `1`) is **off**, and never switches writing on. The settings page shows where the current value comes from (app, environment, default).
 
-in the environment of the server container (Compose `environment:` or your `.env`, then recreate the container). The default and any other value (including `true` or `1`) is **off**, and a typo never switches writing on. With writing off the page shows a note and hides the write buttons; reading, viewing and downloading still work. A refused attempt is written to the history.
+With writing off the page does **not** grey out the buttons silently: a note above the list says so and has the button **"Zum Schalter"** (it opens Settings, Security, at this switch), and a click on a write action (New, Upload, Rename, Delete, Cut/Copy, drop of files) explains it in a dialog with the same button. Reading, viewing and downloading still work. A refused attempt is written to the history. The switch changes nothing about the safeguards: every action still needs its confirmation (`prepare`, token, 60 s), the root place its own keys (below), and the pause switch stays.
 
 Other settings: `JULOS_FILES_MAX_MB` (largest file and largest operation, default 2048, range 1 to 65536) and `JULOS_FILES_MAX_SESSIONS` (open SFTP connections per user, default 4, range 1 to 16).
 
@@ -76,7 +74,7 @@ The place **"<Host> (Root)"** shows and changes the files of a host **as root**,
 2. On the page "Hosts", the level of this host is **"Alles"** (`full`; `updates` and `read` do not give files, `root_off`).
 3. The **pause switch** for host actions is not on (`root_paused`; the same switch as for the other actions).
 4. The agent allows it **locally**: the word `files-root` in `/etc/julos-agent/permissions` (installer: `--allow files-root`; `root_not_permitted`). The root helper checks the file once more.
-5. Writing needs `JULOS_FILES_WRITE=on` as everywhere (`write_off`); reading a root file does not.
+5. Writing needs the switch "Write files" as everywhere (`write_off`); reading a root file does not.
 
 The place appears in the app only when 1 to 4 hold at that moment (the page knows the agent state); a refusal later says which key is missing. The place's id is the host's id; the name is "<Host> (Root)" and the page marks it red: a banner in the list, a red mark under the path, and a root notice in every confirmation dialog.
 

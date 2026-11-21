@@ -77,9 +77,19 @@ export function mountFiles(box, deps) {
 
   const canWrite = (p = st.place) => !!(p && !C.isLocal(p) && info.write);
   const writable = () => canWrite();
+  /** Die Tasten zum Schreiben sind auf einem Host auch bei ausgeschaltetem Schreiben bedienbar: ein Klick erklaert es und fuehrt zum Schalter, statt stumm zu bleiben */
+  const canTry = (p = st.place) => !!(p && !C.isLocal(p));
+  const writeOff = () => canTry() && !info.write;
+  const openSettings = () => window.dispatchEvent(new CustomEvent('julos:open-security', { detail: { section: 'filesWrite' } }));
   const label = () => (st.place ? st.place.label : t('files.choosePlace'));
   const selEntries = () => st.sel.list().map((p) => st.byPath.get(p)).filter(Boolean);
   const noWriteTitle = () => (st.place && C.isLocal(st.place) ? t('files.localNote') : t('files.writeOff'));
+  /** Eine schreibende Aktion ist nicht erlaubt: auf einem Host ein Dialog mit dem Grund und dem Weg zum Schalter, am gemeinsamen Ordner der kurze Hinweis */
+  async function explainNoWrite(place = st.place) {
+    if (!place || C.isLocal(place)) return say(t('files.localNote'));
+    const d = modal({ title: t('files.writeOffTitle'), kit, content: [h('p', { text: t('files.writeOffText') })], actions: [{ id: 'x', label: t('common.close'), kind: 'ghost' }, { id: 'go', label: t('files.writeOffOpen'), kind: 'primary' }] });
+    if ((await d.promise) === 'go') openSettings();
+  }
 
   /* ----- Ansicht anwenden ----- */
   function applyView() {
@@ -202,7 +212,7 @@ export function mountFiles(box, deps) {
   function renderNav() {
     placeBtn.replaceChildren(icon(st.place && C.isRoot(st.place) ? 'root' : st.place && !C.isLocal(st.place) ? 'dns' : 'folder'), h('span', { class: 'f-place-t', text: X.safeName(label()) }), icon('more'));
     placeBtn.onclick = pickPlace;
-    const has = !!st.place, w = canWrite();
+    const has = !!st.place, w = canTry();
     root.classList.toggle('f-has-place', has);
     btnBack.disabled = !st.back.length; btnFwd.disabled = !st.fwd.length; btnUp.disabled = !has || !st.path || st.path === '/'; btnRef.disabled = !has;
     btnNew.disabled = !w; btnUpload.disabled = !w; btnHist.hidden = !has || C.isLocal(st.place); btnView.disabled = !has;
@@ -212,7 +222,7 @@ export function mountFiles(box, deps) {
     banner.replaceChildren();
     root.classList.toggle('f-is-root', C.isRoot(st.place));
     if (C.isRoot(st.place)) banner.append(h('div', { class: 'f-rootbar', role: 'note' }, icon('root'), h('span', { text: t('files.root.banner', { host: st.place.name }) })));
-    if (has && !C.isLocal(st.place) && !info.write) banner.append(noteEl(t('files.writeOff'), 'hint'));
+    if (writeOff()) banner.append(h('div', { class: 'f-writeoff', role: 'status' }, noteEl(t('files.writeOff'), 'hint'), btn(t('files.writeOffOpen'), kit ? 'm3-btn tonal sm mb m3-state' : 'dk-btn', openSettings)));
     banner.hidden = !banner.childNodes.length;
     renderAddr();
   }
@@ -269,7 +279,7 @@ export function mountFiles(box, deps) {
   const colName = (c) => t(COL_KEYS[c]);
   const ctrl = () => t('files.menu.ctrl');
   function newItems() {
-    const w = canWrite(), tip = w ? undefined : noWriteTitle();
+    const w = canTry(), tip = w ? undefined : noWriteTitle();
     return [
       { id: 'newfolder', label: t('files.newFolder'), icon: 'newfolder', shortcut: kit ? '' : `${ctrl()}+Shift+N`, disabled: !w, title: tip, run: () => newFolder() },
       { id: 'newfile', label: t('files.menu.newFile'), icon: 'newfile', disabled: !w, title: tip, run: () => newFile() },
@@ -365,7 +375,7 @@ export function mountFiles(box, deps) {
     const show = kit && sel.length > 0;
     selbar.hidden = !show; selbar.replaceChildren(); root.classList.toggle('f-selecting', show);
     if (!show) { if (kit) st.multi = false; return; }
-    const one = sel.length === 1 ? sel[0] : null, w = canWrite();
+    const one = sel.length === 1 ? sel[0] : null, w = canTry();
     const act = (name, text, fn, cls = '', off = false) => h('button', { type: 'button', class: `f-act-btn m3-btn tonal sm mb m3-state ${cls}`.trim(), title: text, 'aria-label': text, disabled: off, onclick: fn }, icon(name), h('span', { class: 'f-act-t', text }));
     selbar.append(h('span', { class: 'f-count', text: t('files.selected', { n: sel.length }) }));
     if (one && C.isFileLike(one)) selbar.append(act('download', t('desktopFiles.download'), () => download(one)));
@@ -507,7 +517,7 @@ export function mountFiles(box, deps) {
     openMenu({ kit, x: e.clientX, y: e.clientY, label: t('files.menu.label'), items: onEntry && sel.length ? entryItems(sel) : emptyItems() });
   }
   function entryItems(sel) {
-    const one = sel.length === 1 ? sel[0] : null, w = canWrite(), tip = w ? undefined : noWriteTitle(), k = ctrl(), sc = (s) => (kit ? '' : s);
+    const one = sel.length === 1 ? sel[0] : null, w = canTry(), tip = w ? undefined : noWriteTitle(), k = ctrl(), sc = (s) => (kit ? '' : s);
     const items = [];
     if (one) items.push({ id: 'open', label: t('files.menu.open'), icon: one.openable ? 'open' : 'blank', shortcut: sc('Enter'), run: () => openEntry(one) });
     if (one && C.isFileLike(one)) items.push({ id: 'download', label: t('desktopFiles.download'), icon: 'download', run: () => download(one) });
@@ -524,7 +534,7 @@ export function mountFiles(box, deps) {
     return items;
   }
   function emptyItems() {
-    const w = canWrite(), tip = w ? undefined : noWriteTitle(), k = ctrl();
+    const w = canTry(), tip = w ? undefined : noWriteTitle(), k = ctrl();
     return [
       ...newItems(), { sep: true },
       { id: 'paste', label: t('files.menu.paste'), icon: 'paste', shortcut: kit ? '' : `${k}+V`, disabled: !w || !clip, title: tip, run: () => pasteInto(st.place, st.path) },
@@ -620,7 +630,7 @@ export function mountFiles(box, deps) {
     catch (e) { if (!C.isCancelled(e)) say(C.errorMessage(e)); }
   }
   async function newFolder() {
-    if (!canWrite()) return say(noWriteTitle());
+    if (!canWrite()) return explainNoWrite();
     const place = st.place, dir = st.path;
     const name = await inputDialog(kit, { title: t('files.mkdir.title'), label: t('files.mkdir.nameLabel'), confirm: t('files.mkdir.next') });
     if (!name) return;
@@ -630,7 +640,7 @@ export function mountFiles(box, deps) {
     await runWrite(() => guarded(() => fapi.mkdir(place, prep.dir, prep.name, prep.token, r.answer), place), t('files.mkdir.done', { name: X.safeName(prep.name) }), C.joinPath(prep.dir, prep.name, place));
   }
   async function newFile() {
-    if (!canWrite()) return say(noWriteTitle());
+    if (!canWrite()) return explainNoWrite();
     const place = st.place, dir = st.path;
     const name = await inputDialog(kit, { title: t('files.newFile.title'), label: t('files.newFile.nameLabel'), value: t('files.newFile.default'), confirm: t('files.mkdir.next'), selectBase: true });
     if (!name) return;
@@ -641,7 +651,7 @@ export function mountFiles(box, deps) {
     await runWrite(() => retryOpen(place, () => fapi.upload(place, prep.dir, file, { overwrite: prep.conflicts.includes(name), token: prep.token, answer: r.answer }).promise), t('files.newFile.done', { name: X.safeName(name) }), C.joinPath(prep.dir, name, place));
   }
   async function rename(e) {
-    if (!canWrite()) return say(noWriteTitle());
+    if (!canWrite()) return explainNoWrite();
     const place = st.place;
     const name = await inputDialog(kit, { title: t('files.rename.title'), label: t('files.rename.nameLabel'), value: e.name, confirm: t('files.mkdir.next'), selectBase: !e.openable });
     if (!name || name === e.name) return;
@@ -652,7 +662,7 @@ export function mountFiles(box, deps) {
   }
   async function remove(sel) {
     if (!sel.length) return;
-    if (!canWrite()) return say(noWriteTitle());
+    if (!canWrite()) return explainNoWrite();
     const place = st.place;
     const prep = await prepare('delete', { paths: sel.map((e) => e.path) }, place);
     const model = prep && C.deleteModel(prep);
@@ -664,7 +674,7 @@ export function mountFiles(box, deps) {
 
   /* ----- Zwischenablage, Einfuegen, Ziehen ----- */
   function doClip(mode) {
-    if (!canWrite()) return say(noWriteTitle());
+    if (!canWrite()) return explainNoWrite();
     const sel = selEntries(); if (!sel.length) return;
     clip = X.makeClip(mode, st.place.id, sel); clip.placeObj = st.place;
     st.multi = false; paint();
@@ -672,7 +682,7 @@ export function mountFiles(box, deps) {
   }
   async function pasteInto(place, dir) {
     if (!clip) return;
-    if (!canWrite(place)) return say(noWriteTitle());
+    if (!canWrite(place)) return explainNoWrite(place);
     if (X.pasteIsNoop(clip, place.id, dir, (p) => C.parentOf(p, place))) return;
     const action = clip.mode === 'cut' ? 'move' : 'copy', used = clip;
     const done = await transfer(action, used.placeObj, used.paths, { place, dir });
@@ -724,11 +734,11 @@ export function mountFiles(box, deps) {
   main.addEventListener('dragenter', (e) => { if (!hasFiles(e) || !writable()) return; e.preventDefault(); dragDepth++; drop.hidden = false; });
   main.addEventListener('dragover', (e) => { if (hasFiles(e) && writable()) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
   main.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; drop.hidden = true; } });
-  main.addEventListener('drop', (e) => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth = 0; drop.hidden = true; if (writable()) upload([...e.dataTransfer.files].filter((f) => f.type || f.size || f.name)); else say(t('files.writeOff')); });
+  main.addEventListener('drop', (e) => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth = 0; drop.hidden = true; if (writable()) upload([...e.dataTransfer.files].filter((f) => f.type || f.size || f.name)); else explainNoWrite(); });
 
   async function upload(files, dest = { place: st.place, dir: st.path }) {
     const { place, dir } = dest;
-    if (!canWrite(place)) return say(t('files.writeOff'));
+    if (!canWrite(place)) return explainNoWrite(place);
     const tooBig = files.filter((f) => info.maxBytes && f.size > info.maxBytes);
     if (tooBig.length) say(t('files.err.too_large'));
     files = files.filter((f) => !tooBig.includes(f));

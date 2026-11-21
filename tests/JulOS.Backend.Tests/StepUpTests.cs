@@ -140,7 +140,7 @@ public sealed class StepUpTests
         ("DELETE", "/api/hosts/00000000-0000-0000-0000-000000000001/agent"), ("PUT", "/api/hosts/00000000-0000-0000-0000-000000000001/login"),
         ("DELETE", "/api/hosts/00000000-0000-0000-0000-000000000001/login"), ("POST", "/api/auth/password"), ("POST", "/api/auth/totp/begin"),
         ("PUT", "/api/security/proxies"), ("PUT", "/api/security/hosts"), ("DELETE", "/api/security/hosts"), ("PUT", "/api/security/step-up"),
-        ("PUT", "/api/security/backup-key"), ("POST", "/api/security/recovery"),
+        ("PUT", "/api/security/backup-key"), ("POST", "/api/security/recovery"), ("PUT", "/api/security/files-write"),
     ];
 
     private static readonly (string Method, string Url)[] Open =

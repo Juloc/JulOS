@@ -202,7 +202,7 @@ dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj    # 
 | `JULOS_AGENT_SOCKET` | Unix socket of the agent on the same machine, default `/uploads/.agent/agent.sock` (agents on other machines connect outbound, no setting needed; see AGENT_API.md) |
 | `JULOS_UPLOAD_DIR` | shared folder for photo uploads, default `/uploads`; its disk is the one the system overview shows |
 | `JULOS_FILES_ROOT` | the one folder the read-only shared-folder place of the Files app shows, default `JULOS_UPLOAD_DIR`; `off` disables that place |
-| `JULOS_FILES_WRITE` | `on` allows writing on hosts over SFTP (upload, rename, move, copy, delete, new folder); default and anything else `off` (reading stays on), see [FILES.md](FILES.md) |
+| `JULOS_FILES_WRITE` | **fallback** (the switch lives in the app, Settings, Security, "Write files"): `on` allows writing on hosts over SFTP (upload, rename, move, copy, delete, new folder); default and anything else `off` (reading stays on), see [FILES.md](FILES.md) |
 | `JULOS_FILES_MAX_MB` | largest file and largest operation of the Files app, default 2048 (1 to 65536) |
 | `JULOS_FILES_MAX_SESSIONS` | open SFTP connections per user, default 4 (1 to 16); an unused one closes after 60 s |
 | `JULOS_SERVICES`, `JULOS_CADDY`, `JULOS_DDNS` | `off` (default), `read` or `control` (Caddy has no `control` yet): the optional modules; their other settings (`JULOS_SERVICES_HOSTS`, `JULOS_CADDYFILE`, `JULOS_CADDY_ADMIN_URL`, `JULOS_CADDY_ADMIN_AUTH_FILE`, `JULOS_CADDY_TLS_CONNECT`, `JULOS_CADDY_LOG_FILE`, `JULOS_DDNS_*`) are in [MODULES.md](MODULES.md) |

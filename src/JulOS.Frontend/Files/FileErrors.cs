@@ -50,7 +50,7 @@ internal static class FileErrors
         ["invalid_path"] = (400, "Ungültiger Pfad."),
         ["invalid_request"] = (400, "Ungültige Anfrage."),
         ["not_text"] = (415, "Das ist keine Textdatei."),
-        ["write_off"] = (403, "Schreiben ist auf diesem Server nicht eingeschaltet (JULOS_FILES_WRITE=on)."),
+        ["write_off"] = (403, "Schreiben ist nicht eingeschaltet (Einstellungen, Sicherheit, „Dateien schreiben“)."),
         ["confirmation_invalid"] = (403, "Die Bestätigung ist unbekannt oder schon benutzt."),
         ["confirmation_expired"] = (403, "Die Bestätigung ist abgelaufen."),
         ["confirmation_mismatch"] = (403, "Die Bestätigung gilt für etwas anderes."),

@@ -742,6 +742,7 @@ export default {
   "files.chooseHint": "Wähle einen Ort: den gemeinsamen Ordner des Servers oder einen Host mit SSH-Zugang.",
   "files.choosePlace": "Ort wählen",
   "files.clearSelection": "Auswahl aufheben",
+  "files.confirm.countdown": "Die Bestätigung gilt noch {s} s.",
   "files.copy.confirm": "Kopieren",
   "files.copy.overwriteWarning": "Diese Namen gibt es am Ziel schon und sie würden ersetzt ({n}): {names}",
   "files.copy.sentence": "Von {from} wird kopiert: {path}, nach {to} in den Ordner {dir}.",

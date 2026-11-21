@@ -5,6 +5,7 @@
 import { t } from './i18n.js';
 import * as C from './files-core.js';
 import { confirmReady } from './confirm.js';
+import { openDialogWindow, dialogWindowsAvailable } from './desktop-window.js';
 
 const ICONS = {
   dns: 'M20 13H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 19c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM20 3H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1V4c0-.55-.45-1-1-1zM7 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z',
@@ -84,10 +85,16 @@ export const tool = (kit, name, label, onclick, cls = '') => h('button', { type:
 
 /* ---------- Dialoge ---------- */
 /**
- * Ein modaler Dialog. content: Knoten; actions: [{ id, label, kind: 'primary'|'danger'|'ghost', disabled, keepOpen, onclick }] (keepOpen: die Taste schliesst nicht). Gibt { el, close(result), setDisabled(id, on), promise } zurueck;
- * das Versprechen liefert die id der gedrueckten Taste oder null (Escape, Schliessen). Auf dem Handy ein Bottom Sheet, auf dem Desktop ein gewoehnlicher Dialog.
+ * Ein Dialog. content: Knoten; actions: [{ id, label, kind: 'primary'|'danger'|'ghost', disabled, keepOpen, onclick }] (keepOpen: die Taste schliesst nicht). Gibt { el, close(result), setDisabled(id, on), setLabel, setHidden, setTitle, promise } zurueck;
+ * das Versprechen liefert die id der gedrueckten Taste oder null (Escape, Schliessen: das heisst immer "abgebrochen", nie eine Taste).
+ * Auf dem Handy (kit) ein Bottom Sheet, das die Seite sperrt. Auf dem Desktop ein bewegliches Fenster im Fenstermanager (desktop-window.js), das nichts sperrt.
+ * Nur Desktop: key (oeffnet nur einmal, ein zweiter Aufruf holt das Fenster nach vorn), win { width, height, resizable } (Groesse), focus (id der Taste mit dem Fokus), root (rote Titelleiste).
  */
-export function modal({ title, content = [], actions = [], kit = false, id = '' }) {
+export function modal({ title, content = [], actions = [], kit = false, id = '', key = '', win = {}, focus = '', root = false }) {
+  if (!kit && dialogWindowsAvailable()) {
+    const w = openDialogWindow({ title, content, actions, key, focus, root, width: win.width, height: win.height, resizable: win.resizable, cls: id ? 'dw-' + id : '' });
+    if (w) return w;
+  }
   const dlg = h('dialog', { class: 'f-dlg' + (kit ? ' m3sheet' : ''), 'aria-labelledby': 'fdlgT' + (id || ''), id: id ? 'fdlg-' + id : undefined });
   const buttons = new Map();
   const bar = h('div', { class: 'row dlg-btns f-dlg-btns' });
@@ -105,7 +112,7 @@ export function modal({ title, content = [], actions = [], kit = false, id = '' 
   dlg.addEventListener('click', (e) => { if (e.target === dlg) { const r = dlg.getBoundingClientRect(); if (e.clientY < r.top || e.clientY > r.bottom || e.clientX < r.left || e.clientX > r.right) close(null); } });
   document.body.appendChild(dlg);
   dlg.showModal();
-  return { el: dlg, close, promise, setDisabled: (aid, on) => { const b = buttons.get(aid); if (b) b.disabled = !!on; }, setLabel: (aid, text) => { const b = buttons.get(aid); if (b) b.textContent = text; }, setHidden: (aid, on) => { const b = buttons.get(aid); if (b) b.hidden = !!on; } };
+  return { el: dlg, close, promise, setTitle: (x) => dlg.querySelector('h2').replaceChildren(x), setDisabled: (aid, on) => { const b = buttons.get(aid); if (b) b.disabled = !!on; }, setLabel: (aid, text) => { const b = buttons.get(aid); if (b) b.textContent = text; }, setHidden: (aid, on) => { const b = buttons.get(aid); if (b) b.hidden = !!on; } };
 }
 
 export const rowsEl = (rows) => h('dl', { class: 'f-rows' }, rows.map(([k, v]) => [h('dt', { text: k }), h('dd', { text: v })]));
@@ -118,9 +125,14 @@ export const noteEl = (text, kind = '') => h('p', { class: 'f-msg ' + kind, role
  */
 export async function confirmDialog(kit, model, { expiresIn = 0 } = {}) {
   const wrap = h('div', { class: 'f-confirm' });
-  const dlg = modal({ title: model.title, kit, content: [wrap], actions: [{ id: 'no', label: t('common.cancel'), kind: 'ghost' }, { id: 'yes', label: model.confirm, kind: model.danger ? 'danger' : 'primary', disabled: !!model.ack || !!model.typed }] });
-  let check = null, field = null, timer = null;
-  const ready = () => (!model.ack || !!(check && check.checked)) && (!model.typed || confirmReady({ needsCheck: false, typed: model.typed }, { typed: field ? field.value : '' }));
+  // Als Fenster bleibt der Desktop benutzbar: der Titel nennt darum Host und Aktion (ein spaeter wiedergefundenes Fenster ist eindeutig), das Fenster zaehlt die Gueltigkeit herunter,
+  // der Fokus steht auf "Abbrechen" (Enter bestaetigt nie, "Ausfuehren" braucht einen Klick), Schliessen und Escape brechen ab (Ergebnis null).
+  const live = !kit && dialogWindowsAvailable();
+  const host = (model.rows.find(([k]) => k === t('files.rowHost') || k === t('files.rowFrom')) || [])[1];      // Host, bei Kopieren und Verschieben der Quellhost
+  const dlg = modal({ title: live && host ? `${model.title} · ${host}` : model.title, kit, root: !!model.root, focus: 'no', content: [wrap], actions: [{ id: 'no', label: t('common.cancel'), kind: 'ghost' }, { id: 'yes', label: model.confirm, kind: model.danger ? 'danger' : 'primary', disabled: !!model.ack || !!model.typed }] });
+  let check = null, field = null, timer = null, ticker = null;
+  let expired = false;
+  const ready = () => !expired && (!model.ack || !!(check && check.checked)) && (!model.typed || confirmReady({ needsCheck: false, typed: model.typed }, { typed: field ? field.value : '' }));
   if (model.root) wrap.append(h('div', { class: 'f-rootnote', role: 'alert' }, icon('root'), h('span', { text: model.rootNote })));
   wrap.append(h('p', { class: 'f-sentence', text: model.sentence }), rowsEl(model.rows));
   if (model.note) wrap.append(noteEl(model.note));
@@ -137,9 +149,15 @@ export async function confirmDialog(kit, model, { expiresIn = 0 } = {}) {
     field.addEventListener('input', () => dlg.setDisabled('yes', !ready()));
     wrap.append(h('label', { class: 'f-typed', for: 'fTyped' }, h('span', { text: t('hostact.typePrompt', { name: model.typed }) }), field));
   }
-  if (expiresIn > 0) timer = setTimeout(() => { dlg.setDisabled('yes', true); wrap.append(noteEl(C.errText('confirmation_expired'), 'warn')); }, expiresIn * 1000);
+  if (expiresIn > 0) {
+    const end = Date.now() + expiresIn * 1000;
+    const count = live ? h('p', { class: 'f-countdown', role: 'timer' }) : null;
+    const tick = () => { if (count) count.textContent = t('files.confirm.countdown', { s: Math.max(0, Math.ceil((end - Date.now()) / 1000)) }); };
+    if (count) { tick(); wrap.append(count); ticker = setInterval(tick, 1000); }
+    timer = setTimeout(() => { expired = true; dlg.setDisabled('yes', true); clearInterval(ticker); if (count) { count.textContent = ''; count.classList.add('late'); } wrap.append(noteEl(C.errText('confirmation_expired'), 'warn')); }, expiresIn * 1000);
+  }
   const which = await dlg.promise;
-  clearTimeout(timer);
+  clearTimeout(timer); clearInterval(ticker);
   if (which !== 'yes') return null;
   const ack = !!(check && check.checked), typed = field ? field.value : '';
   return { ack, typed, answer: { ...(check ? { acknowledged: ack } : {}), ...(model.typed ? { typed } : {}) } };
@@ -157,12 +175,13 @@ export async function inputDialog(kit, { title, label, value = '', confirm, sele
   return which === 'yes' ? field.value.trim() : null;
 }
 
-/** Fortschritt: ein Dialog mit Balken und Text; update() waehrend der Arbeit, finish() am Ende (dann kommt "Schliessen"); onCancel() fuer "Abbrechen" */
+/** Fortschritt: ein Dialog mit Balken und Text; update() waehrend der Arbeit, finish() am Ende (dann kommt "Schliessen"); onCancel() fuer "Abbrechen". Escape und Schliessen gelten erst nach dem Ende. */
 export function progressDialog(kit, title, { onCancel } = {}) {
   const bar = h('progress', { class: 'f-progress', 'aria-label': title });
   const line = h('p', { class: 'f-line', role: 'status', 'aria-live': 'polite' });
   const result = h('div', { class: 'f-result' });
   let finished = false;
+  const live = !kit && dialogWindowsAvailable();
   const dlg = modal({ title, kit, content: [bar, line, result], actions: [
     { id: 'cancel', label: t('common.cancel'), kind: 'ghost', keepOpen: true, onclick: (b) => { if (onCancel) onCancel(); b.disabled = true; b.textContent = t('files.cancelling'); } },
     { id: 'close', label: t('common.close'), kind: 'primary' }] });
@@ -174,7 +193,7 @@ export function progressDialog(kit, title, { onCancel } = {}) {
       finished = true; bar.max = 100; bar.value = ok ? 100 : bar.value || 0; line.textContent = '';
       result.replaceChildren(noteEl(text, ok ? 'ok' : 'warn'), ...details.map((d) => noteEl(d)));
       dlg.setHidden('cancel', true); dlg.setHidden('close', false);
-      return dlg.promise;
+      return live ? Promise.resolve() : dlg.promise;          // als Fenster wartet der Aufrufer nicht aufs Schliessen (die Liste aktualisiert sich gleich); das Blatt auf dem Handy sperrt, dort ja
     },
     close: () => dlg.close(),
     promise: dlg.promise,

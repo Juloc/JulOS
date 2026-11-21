@@ -16,9 +16,9 @@ export const withEol = (text, eol) => (eol === 'crlf' ? text.replace(/\n/g, '\r\
 
 /**
  * @param {{kit?: boolean, name: string, path: string, text: string, sizeText?: string, readOnly?: boolean, why?: string, onSave: (text: string) => Promise<boolean>}} o
- * why: warum nur lesen (Text unter dem Titel). Gibt { promise, close } zurueck; das Versprechen endet, wenn der Editor zu ist.
+ * why: warum nur lesen (Text unter dem Titel). Gibt { promise, close, modified, focus } zurueck; das Versprechen endet, wenn der Editor zu ist.
  */
-export function openEditor({ kit = false, name, path, text, sizeText = '', readOnly = false, why = '', onSave }) {
+export function openEditor({ kit = false, name, path, text, sizeText = '', readOnly = false, why = '', key = '', onSave }) {
   const eol = detectEol(text);
   let original = text.replace(/\r\n/g, '\n');
   let busy = false, closing = false;
@@ -34,12 +34,13 @@ export function openEditor({ kit = false, name, path, text, sizeText = '', readO
   const modified = () => ta.value !== original;
   const refresh = () => { mark.hidden = !modified(); dlg.setDisabled('save', readOnly || busy || !modified()); };
   const title = h('span', { class: 'f-ed-title' }, h('span', { class: 'f-ed-name', text: safeName(name) }), ' ', mark);
-  const dlg = modal({ title: '', kit, id: 'edit', content: [h('p', { class: 'f-sub', text: `${safeName(path)}${sizeText ? ' · ' + sizeText : ''}` }), ...notes, h('div', { class: 'f-ed' }, gutter, ta)], actions: [
+  // Auf dem Desktop ein eigenes, in der Groesse veraenderbares Fenster (key: je Datei eins, ein zweites Oeffnen holt es nach vorn); auf dem Handy wie bisher ein Blatt
+  const dlg = modal({ title: '', kit, id: 'edit', key, win: { width: 920, height: 680, resizable: true }, content: [h('p', { class: 'f-sub', text: `${safeName(path)}${sizeText ? ' · ' + sizeText : ''}` }), ...notes, h('div', { class: 'f-ed' }, gutter, ta)], actions: [
     { id: 'close', label: t('common.close'), kind: 'ghost', keepOpen: true, onclick: () => tryClose() },
     ...(readOnly ? [] : [{ id: 'save', label: t('files.edit.save'), kind: 'primary', keepOpen: true, disabled: true, onclick: () => save() }]),
   ] });
   dlg.el.classList.add('f-edit');
-  dlg.el.querySelector('h2').replaceChildren(title);
+  dlg.setTitle(title);
   if (readOnly) dlg.setDisabled('save', true);
 
   ta.addEventListener('input', () => { lines(); refresh(); });
@@ -60,12 +61,12 @@ export function openEditor({ kit = false, name, path, text, sizeText = '', readO
     if (closing) return;
     if (modified()) {
       closing = true;
-      const ask = modal({ title: t('files.edit.discardTitle'), kit, id: 'discard', content: [h('p', { class: 'f-sentence', text: t('files.edit.discardText', { name: safeName(name) }) })], actions: [{ id: 'no', label: t('files.edit.keepEditing'), kind: 'ghost' }, { id: 'yes', label: t('files.edit.discard'), kind: 'danger' }] });
+      const ask = modal({ title: t('files.edit.discardTitle'), kit, id: 'discard', focus: 'no', content: [h('p', { class: 'f-sentence', text: t('files.edit.discardText', { name: safeName(name) }) })], actions: [{ id: 'no', label: t('files.edit.keepEditing'), kind: 'ghost' }, { id: 'yes', label: t('files.edit.discard'), kind: 'danger' }] });
       const r = await ask.promise; closing = false;
       if (r !== 'yes') { ta.focus(); return; }
     }
     dlg.close('close');
   }
   setTimeout(() => ta.focus({ preventScroll: true }), 60);
-  return { promise: dlg.promise, close: () => dlg.close('close'), modified };
+  return { promise: dlg.promise, close: () => dlg.close('close'), modified, focus: () => dlg.focus && dlg.focus() };
 }

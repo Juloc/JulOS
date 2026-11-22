@@ -125,7 +125,8 @@ function fit(h, s, l, bgs, min, dir) {
 }
 
 // Die ungunstigsten Flaechen, auf denen Akzenttext steht: hell Glas ueber dem dunkelsten Hintergrund, dunkel Glas ueber dem hellsten (aus theme-css.test.mjs, mit Luft)
-const SURF = { light: ['#ffffff', '#dcdcf0'], dark: ['#15141f', '#2c2a44'] };
+export const SURFACES = { light: ['#ffffff', '#cdcde6'], dark: ['#15141f', '#4e445a'] };
+const SURF = SURFACES;
 const WHITE = '#ffffff', INK_DARK = '#14123a';
 /** Alle Variablen, die der Akzent setzt (zum Entfernen beim Zuruecksetzen) */
 export const ACCENT_VARS = ['--dk-accent', '--dk-accent2', '--dk-accent-text', '--dk-accent-strong', '--dk-accent-ring', '--dk-pri-a', '--dk-pri-b', '--dk-pri-fg', '--dk-pri-shw',
@@ -141,7 +142,7 @@ export function accentVars(hex, dark) {
   const h = c.h, s = clamp(c.s, 0.25, 0.85), bgs = SURF[dark ? 'dark' : 'light'], dir = dark ? 1 : -1;
   const a = fit(h, s, dark ? 0.72 : 0.5, bgs, 3, dir);                         // Linien, Ringe, Symbole: 3:1
   const text = fit(h, s, dark ? 0.8 : 0.4, bgs, 4.5, dir);                      // Text auf Glas: 4,5:1
-  const strong = fit(h, s, dark ? 0.88 : 0.3, [...bgs, ...(dark ? [] : ['#d4d4ee'])], 6.5, dir);   // auf getontem Grund (Auswahl): mehr Luft
+  const strong = fit(h, s, dark ? 0.88 : 0.3, bgs, 6.5, dir);   // auf getontem Grund (Auswahl): mehr Luft
   const fg = dark ? INK_DARK : WHITE;
   // Hauptknopf: Schrift 4,5:1 auf beiden Enden des Verlaufs
   const pa = fit(h, s, dark ? 0.72 : 0.5, [fg], 4.5, dark ? 1 : -1), pb = fit((h + 12) % 360, s, dark ? 0.66 : 0.44, [fg], 4.5, dark ? 1 : -1);

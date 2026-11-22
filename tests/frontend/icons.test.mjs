@@ -90,3 +90,14 @@ test('Kachelfarben: das weisse Symbol erreicht auf beiden Enden des Verlaufs 3:1
   for (const [name, ends] of Object.entries(COLORS)) for (const c of ends) { const r = 1.05 / (lum(c) + 0.05); if (r < 3) bad.push(`${name} ${c}: ${r.toFixed(2)}`); }
   assert.deepEqual(bad, []);
 });
+
+test('connectionIcon: Host aus der Liste, Ueberschreibung aus dem Aussehen', async () => {
+  const { connectionIcon } = await import('../../src/JulOS.Frontend/wwwroot/icons.js');
+  const c = term({ id: 'abc', hostId: 'h1' });
+  assert.equal(connectionIcon(c, [host('Proxmox VE 8')], null).key, 'layers');
+  assert.equal(connectionIcon(c, [host('Proxmox VE 8', { id: 'andere' })], null).key, 'terminal');
+  const r = connectionIcon(c, [], { icons: { over: { abc: { k: 'database' } } } });
+  assert.deepEqual([r.key, r.auto], ['database', false]);
+  assert.equal(connectionIcon(c, undefined, { icons: { over: { anderer: { k: 'database' } } } }).auto, true);
+  assert.equal(connectionIcon(null, [], null).key, 'monitor');
+});

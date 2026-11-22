@@ -19,9 +19,16 @@ export const GROUPS = [
   ] },
   { id: 'appearance', title: tk('set.appearance'), help: tk('set.appearanceHelp'), rows: [
     { id: 'scheme', ctl: 'choice', label: tk('set.scheme'), help: tk('set.schemeHelp') },
-    { id: 'lang', ctl: 'choice', label: tk('set.lang'), help: tk('set.langHelp') },
+    { id: 'accent', ctl: 'swatches', only: 'desktop', label: tk('set.accent'), help: tk('set.accentHelp') },
     { id: 'color', ctl: 'swatches', only: 'phone', label: tk('set.color'), help: tk('set.colorHelp') },
+    { id: 'bg', ctl: 'choice', only: 'desktop', label: tk('set.bg'), help: tk('set.bgHelp') },
     { id: 'dock', ctl: 'choice', only: 'desktop', label: tk('set.dock'), help: tk('set.dockHelp') },
+    { id: 'dockSize', ctl: 'choice', only: 'desktop', label: tk('set.dockSize'), help: tk('set.dockSizeHelp') },
+    { id: 'iconSize', ctl: 'choice', label: tk('set.iconSize'), help: tk('set.iconSizeHelp') },
+    { id: 'iconStyle', ctl: 'choice', label: tk('set.iconStyle'), help: tk('set.iconStyleHelp') },
+    { id: 'iconOver', ctl: 'button', label: tk('set.iconOver'), help: tk('set.iconOverHelp'), action: tk('set.iconOverAction') },
+    { id: 'lang', ctl: 'choice', label: tk('set.lang'), help: tk('set.langHelp') },
+    { id: 'appearanceReset', ctl: 'button', label: tk('set.appearanceReset'), help: tk('set.appearanceResetHelp'), action: tk('set.resetAll') },
   ] },
   { id: 'workspace', title: tk('set.workspace'), help: tk('set.workspaceHelp'), rows: [
     { id: 'wsRemember', ctl: 'choice', only: 'desktop', label: tk('set.wsRemember'), help: tk('set.wsRememberHelp') },

@@ -1,4 +1,6 @@
-import { ico, setTheme, setLanguage } from './app.js';
+import { ico, setTheme, setLanguage, getAppearance, setAppearance, resetAppearance, resetAllAppearance } from './app.js';
+import { glyph, appIconFor, connectionIcon } from './icons.js';
+import { SIZES, SIZE_LABEL, ICON_STYLES, STYLE_LABEL, isDefaultArea } from './appearance.js';
 import { Sessions } from './sessions.js';
 import { SCHEMES, normalizeScheme } from './scheme.js';
 import { GROUPS, rowsFor, aboutValues } from './settings.js';
@@ -62,7 +64,10 @@ X.claude = 'M12 2l1.9 6.1L20 6l-4.1 4.9L22 12l-6.1 1.1L20 18l-6.1-2.1L12 22l-1.9
 X.codex = 'M9.4 16.6 4.8 12l4.6-4.6L8 6l-6 6 6 6zm5.2 0 4.6-4.6-4.6-4.6L16 6l6 6-6 6z';
 const icon = (n) => (X[n] ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${X[n]}"/></svg>` : ico(n));
 const kindIcon = (k) => icon(k === 'terminal' ? 'terminal' : 'desktop');
-const connIcon = (c) => icon(tileKind(c) === 'vnc' ? 'desktop' : tileKind(c));              // Terminal-Verbindungen mit Claude oder Codex bekommen ihr eigenes Symbol
+/** Symbol und Farbe einer Verbindung: dieselbe Zuordnung wie am Desktop (icons.js), mit Host-Betriebssystem und der Wahl des Nutzers */
+const connIconInfo = (c) => connectionIcon(c, hosts(), getAppearance());
+const connIcon = (c) => glyph(connIconInfo(c).key);
+const tileStyle = (g) => `--g1:${g[0]};--g2:${g[1]}`;
 const LOGO = `<svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="mlg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--m3-primary)"/><stop offset="1" stop-color="var(--m3-tertiary)"/></linearGradient></defs><rect width="32" height="32" rx="10" fill="url(#mlg)"/><path d="M12 9.5v13l11-6.5z" fill="var(--m3-on-primary)"/></svg>`;
 const DEST = [
   { id: 'home', label: tk('mobile.home'), ic: 'home' },
@@ -303,6 +308,7 @@ export function go(id, { push = true, focusSearch = false } = {}) {
   if (focusSearch) setTimeout(() => $('#mSearch').focus(), 330);
 }
 
+document.addEventListener('julos:appearance', () => { if (root) renderAll(); });
 function renderAll() { if (!root) return; renderNav(); if (current !== 'host') renderPage(current); }       // die Seite eines Hosts zeichnet sich nicht von selbst neu (Reiter und Stand blieben nicht)
 function renderPage(id) {
   if (id === 'home') renderHome(); else if (id === 'services') renderServices(); else if (id === 'server') renderServer(); else if (id === 'files') renderFiles();
@@ -376,7 +382,7 @@ const openCount = (c) => Sessions.find(c.id).length;
 const tileHtml = (c, pinned, L) => {
   const l = (L && L.get(c.id)) || { name: c.name, host: '' }, st = connectionState(hosts(), c), n = openCount(c);
   return `<button type="button" class="mb tile m3-state ${c.kind} k-${tileKind(c)}${n ? ' live' : ''}" data-conn="${c.id}" data-act="start" aria-label="${esc(t('mobile.tileAria', { name: l.name, kind: connKindText(c) + ', ' + l.host, state: stateText(st), action: n ? t('mobile.tileOpen', { n }) : t('mobile.tileTap') }))}">
-  <span class="ti">${connIcon(c)}</span><span class="tx"><span class="tn">${esc(l.name)}</span><span class="th"><span class="hdot ${hostDot(st)}" title="${esc(stateText(st))}"></span><span>${esc(l.host)}</span></span></span>${n ? `<span class="liveb" title="${esc(t('mobile.sessionOpen'))}">${n}</span>` : pinned ? `<span class="fav" title="${esc(t('mobile.favourite'))}">${icon('star')}</span>` : ''}</button>`;
+  <span class="ti" style="${tileStyle(connIconInfo(c).g)}">${connIcon(c)}</span><span class="tx"><span class="tn">${esc(l.name)}</span><span class="th"><span class="hdot ${hostDot(st)}" title="${esc(stateText(st))}"></span><span>${esc(l.host)}</span></span></span>${n ? `<span class="liveb" title="${esc(t('mobile.sessionOpen'))}">${n}</span>` : pinned ? `<span class="fav" title="${esc(t('mobile.favourite'))}">${icon('star')}</span>` : ''}</button>`;
 };
 
 /* Vom Server: die letzten DNS-Aenderungen des Moduls DDNS erscheinen in den Aktivitaeten (nur wenn das Modul an ist, hoechstens einmal je Minute abgefragt) */
@@ -405,7 +411,7 @@ function activityRows(limit) {
 /* Offene Sitzungen: Karten mit Zustandspunkt, ein Tipp wechselt hin, das Kreuz schliesst */
 const dotClass = (st) => (st === 'connected' ? 'ok' : st === 'connecting' || st === 'reconnecting' ? 'busy' : 'bad');
 const sessionRows = () => Sessions.list().map((s) => `<div class="m3-li sess ${s === Sessions.active ? 'act' : ''}" data-act="sess" data-sid="${s.id}" role="button" tabindex="0" aria-label="${esc(t('mobile.sessAria', { title: s.title, state: s.stateText }))}">
-    <span class="lead">${icon(tileKind(s.conn))}</span><span class="txt"><span class="hl">${esc(s.title)}</span><span class="sl"><span class="m3-dot sdot ${dotClass(s.state)}"></span>${esc(s.stateText)} · ${esc(s.conn.name === s.title ? kindText(s.kind) : s.conn.name)}</span></span>
+    <span class="lead">${connIcon(s.conn)}</span><span class="txt"><span class="hl">${esc(s.title)}</span><span class="sl"><span class="m3-dot sdot ${dotClass(s.state)}"></span>${esc(s.stateText)} · ${esc(s.conn.name === s.title ? kindText(s.kind) : s.conn.name)}</span></span>
     <button type="button" class="mb sx m3-state" data-act="sessclose" data-sid="${s.id}" aria-label="${esc(t('mobile.sessClose', { title: s.title }))}">${icon('close')}</button></div>`).join('');
 function sessionsSection() {
   if (!Sessions.count) return '';
@@ -418,11 +424,11 @@ function continueRow(L) {
   if (!c) return `<div class="m3-card"><div class="m3-empty"><span class="ei">${icon('desktop')}</span><span class="et">${t('mobile.noConnectionYet')}</span><p>${t('mobile.noConnectionHelp')}</p><button type="button" class="mb m3-btn filled m3-state" data-act="add">${icon('add')}${t('shell.newConnection')}</button></div></div>`;
   const l = L.get(c.id) || { name: c.name, host: '' }, st = connectionState(hosts(), c), when = c.lastUsedAt ? whenLabel(Date.parse(c.lastUsedAt) || c.lastUsedAt) : '';
   return `<button type="button" class="mb m3-main m3-state" data-act="last" aria-label="${esc(t('mobile.continueAria', { name: l.name, host: l.host }))}">
-    <span class="ti">${connIcon(c)}</span><span class="tx"><span class="cl">${t('mobile.continue')}</span><span class="cn">${esc(l.name)}</span><span class="th"><span class="hdot ${hostDot(st)}" title="${esc(stateText(st))}"></span><span>${esc([l.host, when].filter(Boolean).join(' · '))}</span></span></span><span class="go">${icon('play')}</span></button>`;
+    <span class="ti" style="${tileStyle(connIconInfo(c).g)}">${connIcon(c)}</span><span class="tx"><span class="cl">${t('mobile.continue')}</span><span class="cn">${esc(l.name)}</span><span class="th"><span class="hdot ${hostDot(st)}" title="${esc(stateText(st))}"></span><span>${esc([l.host, when].filter(Boolean).join(' · '))}</span></span></span><span class="go">${icon('play')}</span></button>`;
 }
 /** Claude Code und Codex mit einem Tipp: ein Tipp startet die passende Kachel oder legt sie an (shell.js: launchProgram) */
 const PROG_NAME = { claude: tk('prog.claude'), codex: tk('prog.codex') };
-const programTile = (p) => `<button type="button" class="mb tile m3-state terminal k-${p}" data-act="prog" data-prog="${p}"><span class="ti">${icon(p)}</span><span class="tx"><span class="tn">${t(PROG_NAME[p])}</span><span class="th"><span>${t('mobile.progStart')}</span></span></span></button>`;
+const programTile = (p) => `<button type="button" class="mb tile m3-state terminal k-${p}" data-act="prog" data-prog="${p}"><span class="ti" style="${tileStyle(appIconFor(p).g)}">${glyph(appIconFor(p).key)}</span><span class="tx"><span class="tn">${t(PROG_NAME[p])}</span><span class="th"><span>${t('mobile.progStart')}</span></span></span></button>`;
 
 function renderHome() {
   const pg = $('#pg-home'), top = pg.scrollTop;
@@ -611,14 +617,19 @@ function curSeed() { const s = readStore('seed', DEFAULT_SEED); return /^#[0-9a-
 let about = null;                                           // Antwort von /api/about (einmal je Besuch der Seite geladen)
 const toneDot = (tone) => (tone === 'ok' ? 'ok' : tone === 'error' ? 'bad' : '');
 
+/** "Zuruecksetzen" je Bereich, nur wenn etwas abweicht */
+const mReset = (area, isDefault) => (isDefault ? '' : `<button type="button" class="mb m3-btn text sm m3-state" data-reset="${area}">${t('set.reset')}</button>`);
 /** Eine Zeile: Beschriftung, kurze Erklaerung und das eine Bedienelement rechts (Auswahl und Farben stehen darunter) */
 function settingRow(r, ab) {
   const label = t(r.label); let help = t(r.help), ctl = '', stack = false;
   switch (r.id) {
     case 'user': ctl = `<span class="rv">${esc(user)}</span>`; break;
-    case 'scheme': stack = true; ctl = seg('mScheme', SCHEMES.map(([v]) => [v, t(SCHEME_LABEL[v])]), normalizeScheme(readStore('scheme', 'auto'))); break;
+    case 'scheme': stack = true; ctl = seg('mScheme', SCHEMES.map(([v]) => [v, t(SCHEME_LABEL[v])]), normalizeScheme(readStore('scheme', 'auto'))) + mReset('scheme', normalizeScheme(readStore('scheme', 'auto')) === 'auto'); break;
+    case 'iconSize': stack = true; ctl = seg('mIconSize', SIZES.map((v) => [v, t(SIZE_LABEL[v])]), getAppearance().icons.size) + mReset('icons', isDefaultArea(getAppearance(), 'icons')); break;
+    case 'iconStyle': stack = true; ctl = seg('mIconStyle', ICON_STYLES.map((v) => [v, t(STYLE_LABEL[v])]), getAppearance().icons.style) + mReset('icons', isDefaultArea(getAppearance(), 'icons')); break;
+    case 'iconOver': { const n = Object.keys(getAppearance().icons.over).length; help = n ? t('set.iconOverN', { n }) : t('set.iconOverNone'); if (n) ctl = `<button type="button" class="mb m3-btn tonal sm m3-state" data-set="iconOver" aria-label="${esc(label + ': ' + t(r.action))}">${esc(t(r.action))}</button>`; break; }
     case 'lang': stack = true; ctl = seg('mLang', LANG_CHOICES.map(([v, l]) => [v, v === 'system' ? t('lang.system') : l]), getPref()); break;
-    case 'color': stack = true; ctl = `<div class="swatches2" role="radiogroup" aria-label="${esc(label)}" id="mSwatches">${SWATCHES.map(([h, n]) => `<button type="button" class="mb sw" role="radio" aria-checked="${h === curSeed()}" aria-label="${esc(t(n))}" data-seed="${h}" style="--c:${h}">${icon('check')}</button>`).join('')}</div>`; break;
+    case 'color': stack = true; ctl = `<div class="swatches2" role="radiogroup" aria-label="${esc(label)}" id="mSwatches">${SWATCHES.map(([h, n]) => `<button type="button" class="mb sw" role="radio" aria-checked="${h === curSeed()}" aria-label="${esc(t(n))}" data-seed="${h}" style="--c:${h}">${icon('check')}</button>`).join('')}</div>${mReset('color', curSeed() === DEFAULT_SEED)}`; break;
     case 'backup': case 'backupCopy': {
       const info = r.id === 'backup' ? ab.backup : ab.copy;
       if (!info) return '';
@@ -653,10 +664,16 @@ function renderProfile() {
   on('#mScheme', (e) => { const b = e.target.closest('[data-v]'); if (!b) return; setTheme({ scheme: b.dataset.v }); applyShellTheme(); renderProfile(); });
   on('#mLang', (e) => { const b = e.target.closest('[data-v]'); if (b && b.dataset.v !== getPref()) setLanguage(b.dataset.v); });
   on('#mSwatches', (e) => { const b = e.target.closest('[data-seed]'); if (!b) return; setTheme({ seed: b.dataset.seed }); applyShellTheme(); renderProfile(); });
+  on('#mIconSize', (e) => { const b = e.target.closest('[data-v]'); if (!b) return; const a = getAppearance(); setAppearance({ ...a, icons: { ...a.icons, size: b.dataset.v } }); });
+  on('#mIconStyle', (e) => { const b = e.target.closest('[data-v]'); if (!b) return; const a = getAppearance(); setAppearance({ ...a, icons: { ...a.icons, style: b.dataset.v } }); });
+  pg.querySelectorAll('[data-reset]').forEach((b) => b.addEventListener('click', () => {
+    if (b.dataset.reset === 'scheme') setTheme({ scheme: 'auto' }); else if (b.dataset.reset === 'color') setTheme({ seed: DEFAULT_SEED }); else resetAppearance(b.dataset.reset);
+    applyShellTheme(); renderProfile();
+  }));
   pg.querySelectorAll('[data-set]').forEach((b) => b.addEventListener('click', () => settingAction(b.dataset.set)));
   if (current === 'profile' && !about) loadAbout();
 }
-const SETTING_ACTIONS = { password: () => ctx.account(), security: () => ctx.security(), devices: () => ctx.devices(), folders: () => ctx.folders(), nettools: () => ctx.nettools(), alerts: () => ctx.alerts(), signout: () => ctx.signOut(),
+const SETTING_ACTIONS = { iconOver: () => resetAppearance('iconsOver'), appearanceReset: () => { resetAllAppearance(); applyShellTheme(); }, password: () => ctx.account(), security: () => ctx.security(), devices: () => ctx.devices(), folders: () => ctx.folders(), nettools: () => ctx.nettools(), alerts: () => ctx.alerts(), signout: () => ctx.signOut(),
   claude: () => launchProgram('claude'), codex: () => launchProgram('codex') };
 function settingAction(id) { const f = SETTING_ACTIONS[id]; if (f) f(); }
 /** Claude oder Codex starten (wie der Schnellstart auf der Verbindungen-Seite) */

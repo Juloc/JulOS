@@ -12,6 +12,7 @@ import { SizeGate, LayoutLog } from './layoutlog.js';
 import { KB_SETTLE_MS, StageBase, effectiveStage, panOffset, panDrag, normalizeKbMode, nextKbMode, kbModeLabel } from './kbpan.js';
 import { Session, Sessions } from './sessions.js';
 import { createPrefs } from './prefs.js';
+import { normalizeAppearance, compactAppearance, resetArea, applyAppearance } from './appearance.js';
 import { isScheme, normalizeScheme, isDark } from './scheme.js';
 import { t, tp, tk, applyDom, getPref, setPref, isPref } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
@@ -50,8 +51,25 @@ export const prefs = createPrefs({
     keybar: normalizeRows(store.get('rows4', null)) ? { rows: store.get('rows4', null) } : null,       // null: nie veraendert, nichts hochzuladen
     lang: localStorage.getItem('pd.lang') !== null ? { lang: getPref() } : null,
     theme: localStorage.getItem('pd.seed') !== null || localStorage.getItem('pd.scheme') !== null ? { seed: validSeed(S.seed) ? S.seed : 'system', scheme: S.scheme } : null,
+    appearance: localStorage.getItem('pd.appearance') !== null ? compactAppearance(appearance) : null,
   }),
 });
+/* ---------- Aussehen (appearance.js, docs/APPEARANCE.md): Akzent, Hintergrund, Dock, Symbole; wirkt sofort ueber CSS-Variablen ---------- */
+let appearance = normalizeAppearance(store.get('appearance', null));
+export const getAppearance = () => appearance;
+/** Neues Aussehen setzen: sofort anwenden, lokal merken, zum Server schicken (nur Abweichungen vom Standard; nichts mehr uebrig = zuruecksetzen) */
+export function setAppearance(next) {
+  appearance = normalizeAppearance(next);
+  const c = compactAppearance(appearance);
+  store.set('appearance', c || {});
+  if (c) prefs.push('appearance', c); else prefs.reset('appearance');
+  applyTheme();                                   // setzt auch die Variablen des Aussehens (der Akzent haengt von hell/dunkel ab)
+  document.dispatchEvent(new CustomEvent('julos:appearance', { detail: appearance }));
+}
+/** Ein Bereich ('accent', 'bg', 'dock', 'icons', 'iconsOver') oder alles ('all') zurueck auf den Standard */
+export const resetAppearance = (area) => setAppearance(resetArea(appearance, area));
+/** Alles im Abschnitt Aussehen zurueck: Helligkeit, Themenfarbe des Handys und alles aus appearance.js */
+export function resetAllAppearance() { S.scheme = 'auto'; S.seed = '#9a67ea'; saveTheme(); resetAppearance('all'); }
 /** Farbe und Hell/Dunkel lokal merken und (wenn gueltig) zum Server schicken. */
 function saveTheme() {
   store.set('seed', S.seed); store.set('scheme', S.scheme);
@@ -2096,6 +2114,7 @@ function applyTheme() {
     set('--md-error', '#ba1a1a'); set('--md-error-container', '#ffdad6');
   }
   st.colorScheme = dark ? 'dark' : 'light';
+  applyAppearance(appearance, dark);
   document.documentElement.dataset.scheme = dark ? 'dark' : 'light';      // die Desktop-Oberflaeche (desktop.css) haengt ihren dunklen Farbsatz daran
   document.dispatchEvent(new CustomEvent('julos:scheme', { detail: { scheme: S.scheme, dark } }));
   const meta = document.querySelector('meta[name=theme-color]');
@@ -2161,11 +2180,12 @@ export function setLanguage(choice) {
 }
 export function setTheme({ seed, scheme }) { if (seed) S.seed = seed; if (scheme) S.scheme = scheme; saveTheme(); applyTheme(); }
 /** Was der Server fuer diesen Benutzer hat (prefs.sync): Tastenleiste, Theme und Sprache uebernehmen, lokale Kopie auffrischen, neu zeichnen. */
-export function applyServerPrefs({ keybar, theme, lang } = {}) {
+export function applyServerPrefs({ keybar, theme, lang, appearance: ap } = {}) {
   if (lang && isPref(lang.lang) && lang.lang !== getPref()) setPref(lang.lang);   // gilt ab dem naechsten Laden der Seite (shell.js laedt beim Anmelden neu)
   const r = keybar && normalizeRows(keybar.rows);
   if (r) { rows = r; store.set('rows4', rows); renderAllRows(); }
   if (theme && validSeed(theme.seed) && isScheme(theme.scheme)) { S.seed = theme.seed; S.scheme = theme.scheme; store.set('seed', S.seed); store.set('scheme', S.scheme); applyTheme(); }
+  if (ap) { appearance = normalizeAppearance(ap); store.set('appearance', compactAppearance(appearance) || {}); applyTheme(); document.dispatchEvent(new CustomEvent('julos:appearance', { detail: appearance })); }
 }
 /* =====================================================================
  *  Foto einfuegen: hochladen, Helfer legt es in die Zwischenablage der VM-Sitzung, dann Strg+V

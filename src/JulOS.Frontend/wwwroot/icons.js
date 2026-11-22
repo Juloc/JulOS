@@ -159,6 +159,12 @@ export function iconFor({ conn, host, override } = {}) {
     [key, color] = [hit ? hit[1] : 'bolt', 'slate'];
   } else [key, color] = special ? [OS_GLYPH[fam][0], 'slate'] : APP_ICONS.terminal;       // Shell: auf Proxmox, Home Assistant, Synology, Windows das Zeichen des Hosts, sonst das Terminal
   const o = cleanOverride(override);
-  const out = pack(o && o.k || key, o && o.c || color, !o);
-  return out;
+  return pack(o && o.k || key, o && o.c || color, !o);
 }
+
+/** Symbol und Farbe einer Verbindung mit Host und Ueberschreibung aus dem Aussehen (appearance.icons.over): die Stelle, die Desktop und Handy benutzen */
+export const connectionIcon = (conn, hosts, appearance) => iconFor({
+  conn,
+  host: conn && (hosts || []).find((h) => h.id === conn.hostId),
+  override: conn && appearance && appearance.icons && appearance.icons.over ? appearance.icons.over[conn.id] : undefined,
+});

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeAppearance, compactAppearance, resetArea, isDefaultArea, withOverride, accentVars, contrast, ACCENTS, WALLPAPERS, appearanceVars, MAX_OVERRIDES, dockHeight } from '../../src/JulOS.Frontend/wwwroot/appearance.js';
+import { normalizeAppearance, compactAppearance, SURFACES, resetArea, isDefaultArea, withOverride, accentVars, contrast, ACCENTS, WALLPAPERS, appearanceVars, MAX_OVERRIDES, dockHeight } from '../../src/JulOS.Frontend/wwwroot/appearance.js';
 
 /* Normalisieren, Zuruecksetzen und Kontrastlage der Akzentfarbe (docs/APPEARANCE.md). Kein Test fuer die Optik. */
 const ID = '3f2b8a52-6d1e-4c9a-9a57-0c1c2a7e9d10';
@@ -51,7 +51,7 @@ test('Symbol je Verbindung setzen und auf automatisch zuruecksetzen', () => {
 const EDGE = ['#ffff00', '#ffffff', '#000000', '#808080', '#00ffff', '#ff00ff', '#0000ff', '#ff0000', '#00ff00', '#f5d90a', '#101010'];
 for (const dark of [false, true]) {
   test(`Akzentfarbe (${dark ? 'dunkel' : 'hell'}): Text 4,5:1, Symbole 3:1, Hauptknopf 4,5:1 fuer feste und eigene Farben`, () => {
-    const surf = dark ? ['#15141f', '#2c2a44'] : ['#ffffff', '#dcdcf0'];
+    const surf = SURFACES[dark ? 'dark' : 'light'];
     const bad = [];
     for (const hex of [...ACCENTS.map((a) => a[1]), ...EDGE]) {
       const v = accentVars(hex, dark), at = (name, bgs, min) => bgs.forEach((b) => { const r = contrast(v[name], b); if (r < min) bad.push(`${hex} ${name} auf ${b}: ${r.toFixed(2)}`); });

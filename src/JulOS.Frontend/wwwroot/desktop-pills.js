@@ -18,7 +18,7 @@ export function createPills({ label, onClick, onMenu }) {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'dk-pill'; b.dataset.pill = it.id;
     b.innerHTML = '<span class="dk-pc"><span class="dk-pi"></span><span class="dk-pn"></span></span>';
-    if (it.icon) b.querySelector('.dk-pi').innerHTML = it.icon;       // Kachel aus dem Code (desktop.js), kein Text von aussen
+    if (it.icon) { b.querySelector('.dk-pi').innerHTML = it.icon; b.dataset.ic = it.icon; }       // Kachel aus dem Code (desktop.js), kein Text von aussen
     b.addEventListener('click', () => onClick(it.id));
     b.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); onMenu(it.id, b); });
     buttons.set(it.id, b);
@@ -34,6 +34,7 @@ export function createPills({ label, onClick, onMenu }) {
       if (nav.children[i] !== b) nav.insertBefore(b, nav.children[i] || null);
       b.classList.toggle('act', !!it.active); b.classList.toggle('min', !!it.minimized); b.classList.toggle('rem', !!it.remote);
       if (it.active) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+      if (it.icon && b.dataset.ic !== it.icon) { b.querySelector('.dk-pi').innerHTML = it.icon; b.dataset.ic = it.icon; }       // das Symbol wurde geaendert (Aussehen)
       const name = b.querySelector('.dk-pn');
       if (name.textContent !== it.title) name.textContent = it.title;
       const text = it.hint ? `${it.title} (${it.hint})` : it.title;

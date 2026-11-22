@@ -10,6 +10,7 @@ import { zfsState, zfsLines, hostSupport, fmtBytes, fmtUptime, fmtAge, fmtPercen
 import { stateText, dotClass, hostDetail, serviceState } from './hosts.js';
 import { agentPanel } from './hostagent.js';
 import { loginPanel } from './hostlogin.js';
+import { glyph, hostIconFor } from './icons.js';
 import { icon, dl, noteP, callout, subH, chip, bar, meter, card, listBlock, empty, button } from './hostui.js';
 import { hasActionAgent, controlHtml, auditHtml, errText, blockReason, whyText } from './hostactions.js';
 
@@ -112,7 +113,7 @@ export function hostCardHtml(h, entry, o) {
     + `<span class="hu-menu" role="menu" hidden>${m.kind === 'none' ? '' : (shared ? `<span class="hu-mnote">${esc(shared)}</span>` : '') + CARD_ACTIONS.map(act).join('') + '<span class="hu-msep" role="separator"></span>'}`
     + `${m.kind === 'none' ? '' : item(page('agent'), t('mobile.agentManage'), 'download')}${item(`data-act="hostedit" data-hostedit="${id}"`, t('hostview.rename'), 'edit')}</span></span>`;
   return `<article class="hu-card hu-host${h.online ? '' : ' off'}" data-host-card="${id}">
-    <header class="hu-hh"><span class="hu-hi">${icon('server')}</span><div class="hu-ht"><div class="hu-hn" role="heading" aria-level="3">${esc(h.name)}</div><p>${esc(detail(h))}</p></div>
+    <header class="hu-hh"><span class="hu-hi">${glyph(hostIconFor(h).key, 'hu-i')}</span><div class="hu-ht"><div class="hu-hn" role="heading" aria-level="3">${esc(h.name)}</div><p>${esc(detail(h))}</p></div>
       <span class="hu-state ${h.online ? 'ok' : 'off'}"><i class="hu-dot ${dotClass(h.online)}"></i>${esc(stateText(h.online))}</span></header>
     <div class="hu-hk">${chip(agentLine(h), esc, '', m.kind === 'none' ? 'info' : 'terminal')}</div>
     ${nothing}${stat}${flags.length ? `<div class="hu-flags">${flags.join('')}</div>` : ''}${conns}

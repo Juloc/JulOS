@@ -1,5 +1,5 @@
 /* =====================================================================
- * Einstellungen je Benutzer auf dem Server (docs/FOLDERS.md): die Tastenleiste ("keybar"), die Themenfarbe ("theme") und die Sprache ("lang").
+ * Einstellungen je Benutzer auf dem Server (docs/FOLDERS.md): die Tastenleiste ("keybar"), die Themenfarbe ("theme"), die Sprache ("lang") und das Aussehen ("appearance").
  * Die Seite behaelt ihre lokale Kopie (localStorage) und nutzt sie sofort; der Server macht sie auf jedem Geraet gleich.
  *  - Eine Aenderung wird lokal gespeichert, dann mit kurzer Verzoegerung zum Server geschickt (push). Klappt das nicht, bleibt sie als "offen" vermerkt
  *    und geht beim naechsten Abgleich hinaus.
@@ -11,7 +11,7 @@
 import { t } from './i18n.js';
 
 const PENDING_KEY = 'pd.prefs.pending';
-export const PREF_KEYS = ['keybar', 'theme', 'lang'];
+export const PREF_KEYS = ['keybar', 'theme', 'lang', 'appearance'];
 
 /** Kleiner Aufruf der API (Aenderungen tragen die Sonderkopfzeile). Wirft bei einem Fehler. */
 export async function jsonApi(path, { method = 'GET', body } = {}) {
@@ -24,7 +24,7 @@ export async function jsonApi(path, { method = 'GET', body } = {}) {
 }
 
 /**
- * @param {{api?: Function, storage: Storage, local: () => {keybar?: object|null, theme?: object|null, lang?: object|null}, delay?: number, schedule?: Function, cancel?: Function}} o
+ * @param {{api?: Function, storage: Storage, local: () => {keybar?: object|null, theme?: object|null, lang?: object|null, appearance?: object|null}, delay?: number, schedule?: Function, cancel?: Function}} o
  * local: was dieses Geraet lokal hat (null: noch nie veraendert, also nichts hochzuladen)
  */
 export function createPrefs({ api = jsonApi, storage, local, delay = 800, schedule = setTimeout, cancel = clearTimeout }) {

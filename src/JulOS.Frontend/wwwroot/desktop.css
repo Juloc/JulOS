@@ -93,6 +93,9 @@ html.desktop body { background: var(--dk-body); }
 #desktop { position: absolute; inset: 0; overflow: hidden; font: 14px/1.4 Inter, "Segoe UI", system-ui, -apple-system, Roboto, sans-serif; user-select: none; -webkit-user-select: none; }
 #desktop .dk-wp { position: absolute; inset: 0; z-index: 0; }
 #desktop .dk-wp svg { width: 100%; height: 100%; display: block; }
+/* Eigener Hintergrund (appearance.js: Verlauf oder Muster als --dk-bg-image); das gemalte Bild ('scene') bleibt der Standard */
+html.desktop[data-bg]:not([data-bg="scene"]) #desktop .dk-wp { background: var(--dk-bg-image); }
+html.desktop[data-bg]:not([data-bg="scene"]) #desktop .dk-wp svg { display: none; }
 
 /* Zuruecksetzen der grossen Handy-Schaltflaechen fuer alle eigenen Knoepfe */
 .dk-b { background: none; color: inherit; border: 0; border-radius: 0; min-height: 0; padding: 0; font: inherit; font-weight: inherit; letter-spacing: 0; cursor: pointer; overflow: visible; text-align: inherit; }
@@ -203,8 +206,8 @@ html.desktop .sv .sv-overlay .box { border-radius: 20px; background: var(--dk-ov
 .dk-tile .dk-tt i.on { color: var(--dk-ok-text); }
 .dk-tile .dk-tt i.on::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--dk-ok); margin-right: 5px; vertical-align: 1px; }
 .dk-tile.add { border-style: dashed !important; background: var(--dk-card-dim); color: var(--dk-accent-text); }
-.dk-ti { width: 38px; height: 38px; border-radius: 11px; display: inline-flex; align-items: center; justify-content: center; color: var(--dk-tile-fg); background: linear-gradient(145deg, var(--g1, #7b78ee), var(--g2, #5160e6)); box-shadow: 0 3px 8px rgba(var(--dk-tshw), .28), inset 0 1px 0 rgba(255, 255, 255, .35); flex: 0 0 auto; }
-.dk-ti svg { width: 21px; height: 21px; }
+.dk-ti { width: calc(38px * var(--ic-s, 1)); height: calc(38px * var(--ic-s, 1)); border-radius: 11px; display: inline-flex; align-items: center; justify-content: center; color: var(--dk-tile-fg); background: linear-gradient(145deg, var(--g1, #7b78ee), var(--g2, #5160e6)); box-shadow: 0 3px 8px rgba(var(--dk-tshw), .28), inset 0 1px 0 rgba(255, 255, 255, .35); flex: 0 0 auto; }
+.dk-ti svg { width: calc(21px * var(--ic-s, 1)); height: calc(21px * var(--ic-s, 1)); }
 .dk-qa { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
 .dk-qa button { display: flex !important; flex-direction: column; align-items: center; gap: 8px; padding: 14px 8px 12px !important; color: var(--dk-t2); font-weight: 500; text-align: center; }
 .dk-qa button svg { width: 26px; height: 26px; color: var(--dk-accent); stroke-width: 1.7; }
@@ -260,7 +263,7 @@ html.desktop .sv .sv-overlay .box { border-radius: 20px; background: var(--dk-ov
 .dk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 12px; padding-top: 14px; }
 .dk-app { display: flex !important; flex-direction: column; align-items: center; gap: 8px; padding: 12px 6px !important; border-radius: 14px !important; color: var(--dk-t1); font-size: 13px; position: relative; text-align: center; }
 #desktop button.dk-app:hover:not([aria-disabled="true"]) { background: var(--dk-card-hi) !important; }
-.dk-app .dk-ti { width: 54px; height: 54px; border-radius: 15px; } .dk-app .dk-ti svg { width: 28px; height: 28px; }
+.dk-app .dk-ti { width: calc(54px * var(--ic-s, 1)); height: calc(54px * var(--ic-s, 1)); border-radius: 15px; } .dk-app .dk-ti svg { width: calc(28px * var(--ic-s, 1)); height: calc(28px * var(--ic-s, 1)); }
 .dk-app[aria-disabled="true"] .dk-ti { filter: grayscale(.7) opacity(.55); box-shadow: none; }
 .dk-app[aria-disabled="true"] { color: var(--dk-hint); }
 .dk-app .dk-tag { position: absolute; top: 4px; right: 4px; }
@@ -276,18 +279,18 @@ html.desktop .sv .sv-overlay .box { border-radius: 20px; background: var(--dk-ov
 .dk-dockrow { position: absolute; left: 50%; bottom: calc(14px + var(--dk-tb-b, 0px)); transform: translateX(-50%); z-index: 4500; display: flex; align-items: flex-end; gap: 12px; }
 .dk-dock { position: relative; display: flex; align-items: flex-end; gap: 10px; padding: 9px 14px; border-radius: 24px;
   background: var(--dk-dock); backdrop-filter: blur(26px) saturate(1.6); border: 1px solid var(--dk-dock-edge); box-shadow: 0 12px 36px rgba(var(--dk-shw), .25); }
-.dk-di { position: relative; width: 54px; height: 54px; border-radius: 15px; display: inline-flex; align-items: center; justify-content: center; color: var(--dk-tile-fg); transition: transform .14s cubic-bezier(.3, 1.6, .5, 1);
+.dk-di { position: relative; width: calc(54px * var(--dk-dock-s, 1)); height: calc(54px * var(--dk-dock-s, 1)); border-radius: 15px; display: inline-flex; align-items: center; justify-content: center; color: var(--dk-tile-fg); transition: transform .14s cubic-bezier(.3, 1.6, .5, 1);
   background: linear-gradient(145deg, var(--g1, #7b78ee), var(--g2, #5160e6)); box-shadow: 0 4px 10px rgba(var(--dk-tshw), .3), inset 0 1px 0 rgba(255, 255, 255, .4); }
-.dk-di svg { width: 28px; height: 28px; }
+.dk-di svg { width: calc(28px * var(--dk-dock-s, 1)); height: calc(28px * var(--dk-dock-s, 1)); }
 #desktop .dk-dock button.dk-di:hover { transform: translateY(-7px) scale(1.12); }
 .dk-di .dk-dot { position: absolute; left: 50%; bottom: -7px; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%; background: var(--dk-accent-text); opacity: 0; }
 .dk-di.run .dk-dot { opacity: 1; } .dk-di.run.hid .dk-dot { opacity: .45; }
 .dk-di .dk-tip { position: absolute; bottom: calc(100% + 12px); left: 50%; transform: translateX(-50%); padding: 4px 10px; border-radius: 8px; background: var(--dk-tip-bg); color: var(--dk-tip-fg); font-size: 12px; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .12s; }
 .dk-di:hover .dk-tip { opacity: 1; }
-.dk-dsep { width: 1px; height: 40px; align-self: center; background: var(--dk-line2); margin: 0 2px; }
+.dk-dsep { width: 1px; height: calc(40px * var(--dk-dock-s, 1)); align-self: center; background: var(--dk-line2); margin: 0 2px; }
 
 /* ---------- Launcher ---------- */
-.dk-launch { position: absolute; left: 22px; bottom: 104px; z-index: 4800; width: 372px; padding: 18px 18px 14px; border-radius: 20px; background: var(--dk-glass-strong); backdrop-filter: blur(28px) saturate(1.5);
+.dk-launch { position: absolute; left: 22px; bottom: calc(8px + 96px * var(--dk-dock-s, 1)); z-index: 4800; width: 372px; padding: 18px 18px 14px; border-radius: 20px; background: var(--dk-glass-strong); backdrop-filter: blur(28px) saturate(1.5);
   border: 1px solid var(--dk-edge); box-shadow: var(--dk-shadow); animation: dkpop .16s ease-out; }
 .dk-launch h2 { margin: 0 0 12px; display: flex; align-items: center; gap: 10px; font-size: 16.5px; font-weight: 650; color: var(--dk-t1); }
 .dk-launch h2 svg { width: 24px; height: 24px; }
@@ -295,11 +298,11 @@ html.desktop .sv .sv-overlay .box { border-radius: 20px; background: var(--dk-ov
 .dk-launch input { all: unset; flex: 1; min-width: 0; color: var(--dk-t1); font-size: 14px; user-select: text; -webkit-user-select: text; }
 .dk-launch input::placeholder { color: var(--dk-hint); }
 .dk-launch .dk-grid { grid-template-columns: repeat(4, 1fr); gap: 2px; padding-top: 10px; }
-.dk-launch .dk-app .dk-ti { width: 50px; height: 50px; }
+.dk-launch .dk-app .dk-ti { width: calc(50px * var(--ic-s, 1)); height: calc(50px * var(--ic-s, 1)); }
 .dk-launch .dk-sl { margin-top: 8px; display: flex; flex-direction: column; gap: 2px; max-height: 300px; overflow-y: auto; }
 .dk-launch .dk-sl button { display: flex; align-items: center; gap: 11px; height: 44px; padding: 0 8px; border-radius: 10px; width: 100%; color: var(--dk-t1); }
 #desktop .dk-launch .dk-sl button:hover:not(:disabled), #desktop .dk-launch .dk-sl button.sel { background: var(--dk-hover); }
-.dk-launch .dk-sl .dk-ti { width: 30px; height: 30px; border-radius: 9px; } .dk-launch .dk-sl .dk-ti svg { width: 17px; height: 17px; }
+.dk-launch .dk-sl .dk-ti { width: calc(30px * var(--ic-s, 1)); height: calc(30px * var(--ic-s, 1)); border-radius: 9px; } .dk-launch .dk-sl .dk-ti svg { width: calc(17px * var(--ic-s, 1)); height: calc(17px * var(--ic-s, 1)); }
 .dk-launch .dk-sl i { margin-left: auto; font-style: normal; font-size: 12px; color: var(--dk-hint); }
 .dk-launch .dk-none { padding: 22px 6px 10px; text-align: center; color: var(--dk-hint); }
 .dk-launch .dk-foot { display: flex; align-items: center; gap: 4px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--dk-line); }
@@ -386,7 +389,7 @@ html.desktop .sv .sv-overlay .box { border-radius: 20px; background: var(--dk-ov
 .dk-menu .dk-it .dk-hint svg { width: 14px; height: 14px; }
 .dk-dockrow { transition: transform .22s cubic-bezier(.2, .8, .3, 1), opacity .18s, visibility 0s; }
 .dk-dockrow.away { transform: translate(-50%, calc(100% + 40px)); opacity: 0; visibility: hidden; pointer-events: none; transition: transform .22s ease-in, opacity .18s, visibility 0s .22s; }
-.dk-knob { position: absolute; left: 50%; bottom: 86px; transform: translateX(-50%); z-index: 4400; width: 46px; height: 18px; border-radius: 99px; display: inline-flex; align-items: center; justify-content: center;
+.dk-knob { position: absolute; left: 50%; bottom: calc(86px * var(--dk-dock-s, 1)); transform: translateX(-50%); z-index: 4400; width: 46px; height: 18px; border-radius: 99px; display: inline-flex; align-items: center; justify-content: center;
   background: var(--dk-knob); backdrop-filter: blur(16px); border: 1px solid var(--dk-dock-edge); color: var(--dk-t3); box-shadow: 0 2px 8px rgba(var(--dk-shw), .18); transition: bottom .22s cubic-bezier(.2, .8, .3, 1), background .12s; }
 .dk-knob[hidden] { display: none; }
 .dk-knob svg { width: 14px; height: 14px; transition: transform .2s; }
@@ -480,7 +483,7 @@ html.desktop dialog ::placeholder { color: var(--dk-hint); opacity: 1; }
  * Maus darauf oder Tastaturfokus klappt die Pillen zu Karten mit dem Namen auf; im Modus "automatisch" steigen sie mit dem Dock nach oben. Immer sichtbar (Modus "immer") gibt es keine Pillen. */
 .dk-pills { position: absolute; left: 50%; bottom: calc(3px + var(--dk-tb-b, 0px)); transform: translateX(-50%); z-index: 4400; display: flex; align-items: flex-end; max-width: calc(100% - 40px); transition: bottom .22s cubic-bezier(.2, .8, .3, 1); }
 .dk-pills:empty, #desktop[data-dock="always"] .dk-pills, #desktop[data-dock="toggle"]:not(.dk-folded) .dk-pills { display: none; }
-#desktop[data-dock="auto"]:not(.dk-folded) .dk-pills { bottom: calc(106px + var(--dk-tb-b, 0px)); }
+#desktop[data-dock="auto"]:not(.dk-folded) .dk-pills { bottom: calc(10px + 96px * var(--dk-dock-s, 1) + var(--dk-tb-b, 0px)); }
 #desktop .dk-pill { --pc: var(--dk-pill); position: relative; flex: 0 1 auto; height: 14px; min-height: 0; min-width: 40px; padding: 4px 3px; border: 0; background: none; color: var(--dk-t1); font: inherit; font-size: 12.5px; cursor: pointer;
   display: inline-flex; align-items: flex-end; transition: height .2s cubic-bezier(.2, .8, .3, 1), min-width .2s; }
 #desktop .dk-pill.min { --pc: var(--dk-pill-min); } #desktop .dk-pill.act { --pc: var(--dk-pill-act); min-width: 64px; }
@@ -527,3 +530,15 @@ html.desktop dialog ::placeholder { color: var(--dk-hint); opacity: 1; }
 .dk-tb-box { position: absolute; box-sizing: border-box; border: 2px solid var(--dk-pill-rem-act); background: var(--dk-tb-fill); outline: 1px dashed var(--dk-tb-dash); pointer-events: none; }
 .dk-tb-hint { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); display: flex; align-items: center; gap: 14px; max-width: calc(100% - 28px); padding: 8px 8px 8px 16px; border-radius: 12px; font-size: 13.5px; color: var(--dk-t1); background: var(--dk-glass-strong); border: 1px solid var(--dk-line2); box-shadow: var(--dk-shadow); cursor: default; }
 .dk-tb-hint button { padding: 5px 12px; border-radius: 8px; border: 1px solid var(--dk-ctl-edge); color: var(--dk-t1); }
+
+/* ---------- Einstellungen: Aussehen (appearance.js) ---------- */
+.dk-sw { width: 28px; height: 28px; min-height: 0; padding: 0; border-radius: 50%; border: 2px solid var(--dk-card-edge); color: var(--dk-tile-fg); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; position: relative; }
+.dk-sw svg.dk-i { width: 15px; height: 15px; stroke-width: 2.6; }
+.dk-sw[aria-pressed="true"], .dk-sw-own.on { box-shadow: 0 0 0 2px var(--dk-accent-ring); }
+.dk-sw-own { overflow: hidden; background: conic-gradient(var(--dk-av1), var(--dk-accent), var(--dk-st-ok), var(--dk-st-busy), var(--dk-av1)); }
+.dk-sw-own input { position: absolute; inset: -6px; width: 40px; height: 40px; opacity: 0; cursor: pointer; }
+.dk-sw-own:focus-within { outline: 2px solid var(--dk-accent-ring); outline-offset: 2px; }
+.dk-bgchip { display: inline-block; width: 26px; height: 16px; margin-right: 8px; vertical-align: -3px; border-radius: 5px; box-shadow: 0 0 0 1px var(--dk-line2); }
+#desktop .dk-st .dk-reset { align-self: flex-start; margin: 5px 0 0; padding: 2px 0; font-size: 12px; font-weight: 600; color: var(--dk-accent-text); text-decoration: underline; border-radius: 4px; }
+#desktop .dk-st .dk-reset:focus-visible { outline: 2px solid var(--dk-accent-ring); outline-offset: 2px; }
+.dk-gh-t > svg.dk-hg { width: 17px; height: 17px; margin: 0 7px 0 0; color: var(--dk-t2); }

@@ -996,6 +996,7 @@ export function mountFiles(box, deps) {
 
   return {
     refreshPlaces,
+    back: () => goBack(), forward: () => goForward(),
     /** Oeffnet einen Ort (oder den ersten Host, den es gibt) */
     enter: (id, path) => { const p = C.findPlace(places, id); if (p) return enter(p, path); },
     reload: () => (st.place ? reload() : Promise.resolve()),

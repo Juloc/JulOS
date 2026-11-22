@@ -23,7 +23,7 @@ test('der dunkle Satz ueberschreibt nur Werte, die es im hellen gibt', () => {
 test('jede benutzte Variable --dk-*, --wp-* und --md-* ist definiert', () => {
   const defined = new Set([...Object.keys(LIGHT), ...[...css.matchAll(/(--md-[a-z-]+|--bg|--panel2?|--line|--text|--muted):/g)].map((m) => m[1])]);
   const used = new Set([...css.matchAll(/var\((--[a-z0-9-]+)/g), ...js.matchAll(/var\((--(?:dk|wp)-[a-z0-9-]+)/g)].map((m) => m[1]));
-  const skip = new Set(['--g1', '--g2', '--dk-reserve']);       // je Kachel bzw. von desktop.js gesetzt
+  const skip = new Set(['--g1', '--g2', '--dk-reserve', '--pc']);       // je Kachel, von desktop.js bzw. je Pille (Zustand) gesetzt
   for (const v of used) if (!skip.has(v)) assert.ok(defined.has(v), `${v} ist nicht definiert`);
 });
 

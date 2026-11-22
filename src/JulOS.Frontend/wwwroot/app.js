@@ -1907,7 +1907,7 @@ wireKb(el.kbInput); wireKb(el.kbRich);
 // Es gehoert immer der aktiven Sitzung: am Desktop ist das das Fenster, das den Fokus hat.
 const HW_KB = matchMedia('(pointer: fine) and (hover: hover)').matches || location.search.includes('hwkb');   // ?hwkb: nur zum Testen
 // Wer bekommt die Tasten? Auf dem Handy immer die Fernsteuerung. Im Desktop-Layout nur, solange ein Fernfenster das aktive Fenster ist:
-// desktop.js meldet das ueber remoteApi.setKeyOwner (Menue oder Launcher offen, anderes Fenster vorn: nein).
+// desktop.js meldet das ueber remoteApi.setKeyOwner (Menue oder Launcher offen, anderes Fenster vorn: nein; mit der Taste als Argument: die Tasten zum Fensterwechsel gehoeren dem Fenstermanager).
 let keyOwner = () => true, keyFocusHook = () => {};
 function focusKbForHardware() {
   const s = cur();
@@ -1927,7 +1927,7 @@ function isTextField(a) {
 if (HW_KB) {
   window.addEventListener('keydown', (e) => {
     const s = cur();
-    if (!s || !s.connected || !keyOwner()) return;
+    if (!s || !s.connected || !keyOwner(e)) return;
     if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta' || e.key === 'AltGraph') return;
     if (document.querySelector('dialog[open]')) return;
     const a = document.activeElement;

@@ -15,6 +15,8 @@ import { jobFinal } from './hostactions.js';
 import { loginUser, loginSaved } from './hostlogin.js';
 import { filesWindowSize } from './files-explorer.js';
 import { setDialogHost } from './desktop-window.js';
+import { createWM } from './desktop-wm.js';
+import { createPills } from './desktop-pills.js';
 
 /* =====================================================================
  * Desktop-Oberflaeche (breite Bildschirme mit Maus): Menueleiste, Dock, Launcher, Home-Fenster und ein Fenster
@@ -27,6 +29,8 @@ const $ = (s, r = document) => r.querySelector(s);
 const BAR_H = 34;
 let ctx = null;            // von shell.js: { state, esc, api, connect, edit, add, quick, folders, editHost, addHost, hostInfo, info, devices, account, nettools, alerts, signOut }
 let root = null;
+let wm = null;             // Fenstermanager (desktop-wm.js): Einrasten, Tastatur, Maustasten 4 und 5
+let pills = null;          // duenne Pillen des eingeklappten Docks (desktop-pills.js)
 const wins = new Map();    // id -> Fenster
 let zTop = 10;
 const sessWins = new Map(); // Sitzungskennung -> Fenster (jede Sitzung ein Fenster)
@@ -250,7 +254,7 @@ function fitRect(r, minW, minH) {
 
 /** Legt ein Fenster an. opts: id, title, icon (Kachel-HTML), cls, rect, minW, minH, head (Element fuer die Titelleiste), onClose */
 function createWindow(opts) {
-  const w = { id: opts.id, minimized: false, maximized: false, opts };
+  const w = { id: opts.id, minimized: false, maximized: false, snap: null, restore: null, opts };
   const e = el('div', 'dk-win ' + (opts.cls || ''));
   e.dataset.win = opts.id; e.setAttribute('role', 'dialog'); e.setAttribute('aria-label', opts.title);
   const head = el('div', 'dk-wh');
@@ -281,7 +285,7 @@ function createWindow(opts) {
   bMax.addEventListener('click', () => toggleMax(w));
   bCl.addEventListener('click', () => { if (!w.dialog) closeWin(w); else if (!w.opts.onRequestClose || w.opts.onRequestClose()) closeWin(w, true); });   // Dialog: Schliessen ist eine Abbruch-Anfrage, die der Dialog ablehnen darf
   if (!opts.dialog) head.addEventListener('dblclick', (ev) => { if (!ev.target.closest('button, input')) toggleMax(w); });
-  wireDrag(w, head); wireResize(w);
+  wm.wireDrag(w, head); wireResize(w);
   focusWin(w);
   renderDock();
   return w;
@@ -316,10 +320,12 @@ function minimizeWin(w) {
   renderDock(); renderBar();
 }
 function restoreWin(w) { w.minimized = false; w.el.classList.remove('min'); if (w.opts.onVisible) w.opts.onVisible(true); focusWin(w); renderDock(); }
-function toggleMax(w) {
-  w.maximized = !w.maximized; w.el.classList.toggle('max', w.maximized);
-  w.bMax.innerHTML = ic(w.maximized ? 'restore' : 'square'); w.bMax.setAttribute('aria-label', w.maximized ? t('desktop.restore') : t('desktop.maximize'));
+/** Maximiert (CSS-Klasse max) oder nicht; die Knopf-Beschriftung folgt. Wer maximiert oder wiederherstellt, ruft toggleMax: der Fenstermanager merkt sich dabei den Zustand davor. */
+function setMax(w, on) {
+  w.maximized = on; w.el.classList.toggle('max', on);
+  w.bMax.innerHTML = ic(on ? 'restore' : 'square'); w.bMax.setAttribute('aria-label', on ? t('desktop.restore') : t('desktop.maximize'));
 }
+const toggleMax = (w) => wm.toggleMax(w);
 /** Schliesst ein Fenster samt seinen Dialog-Fenstern. Ohne force fragt jeder Dialog erst (onRequestClose: false = bleibt offen, zum Beispiel der Editor mit ungespeicherten Aenderungen); dann bleibt auch das Fenster offen. */
 function closeWin(w, force = false) {
   if (!wins.has(w.id)) return;
@@ -330,26 +336,12 @@ function closeWin(w, force = false) {
   w.opts.onClose && w.opts.onClose(w);
   w.el.remove(); wins.delete(w.id); renderDock(); renderBar();
 }
-const saveRect = (w) => { if (!w.maximized && !w.dialog) ls.set('rect.' + w.id, { x: w.el.offsetLeft, y: w.el.offsetTop, w: w.el.offsetWidth, h: w.el.offsetHeight }); };
+const saveRect = (w) => { if (!w.maximized && !w.dialog && !w.snap) ls.set('rect.' + w.id, { x: w.el.offsetLeft, y: w.el.offsetTop, w: w.el.offsetWidth, h: w.el.offsetHeight }); };
 
-function wireDrag(w, head) {
-  head.addEventListener('pointerdown', (ev) => {
-    if (ev.button !== 0 || ev.target.closest('button, input') || w.maximized) return;
-    ev.preventDefault();
-    const sx = ev.clientX, sy = ev.clientY, ox = w.el.offsetLeft, oy = w.el.offsetTop, v = viewport();
-    head.setPointerCapture(ev.pointerId); w.el.classList.add('dragging'); root.classList.add('dk-moving');
-    const move = (m) => {
-      w.el.style.left = clamp(ox + m.clientX - sx, 120 - w.el.offsetWidth, v.w - 120) + 'px';
-      w.el.style.top = clamp(oy + m.clientY - sy, BAR_H, v.h - 60) + 'px';
-    };
-    const up = () => { head.removeEventListener('pointermove', move); head.removeEventListener('pointerup', up); head.removeEventListener('pointercancel', up); w.el.classList.remove('dragging'); root.classList.remove('dk-moving'); saveRect(w); };
-    head.addEventListener('pointermove', move); head.addEventListener('pointerup', up); head.addEventListener('pointercancel', up);
-  });
-}
 function wireResize(w) {
   for (const z of w.el.querySelectorAll('.dk-rz')) z.addEventListener('pointerdown', (ev) => {
     if (ev.button !== 0) return;
-    ev.preventDefault(); ev.stopPropagation(); focusWin(w);
+    ev.preventDefault(); ev.stopPropagation(); focusWin(w); wm.forget(w);
     const d = z.dataset.dir, sx = ev.clientX, sy = ev.clientY, r0 = { x: w.el.offsetLeft, y: w.el.offsetTop, w: w.el.offsetWidth, h: w.el.offsetHeight };
     const minW = w.opts.minW || 320, minH = w.opts.minH || 220, v = viewport();
     z.setPointerCapture(ev.pointerId); w.el.classList.add('resizing');
@@ -374,6 +366,7 @@ window.addEventListener('resize', () => {
   if (!root) return;
   for (const w of wins.values()) {
     if (w.maximized) continue;
+    if (w.snap) { wm.reflow(w); continue; }          // eingerastet: bleibt in seiner Zone
     const r = fitRect({ x: w.el.offsetLeft, y: w.el.offsetTop, w: w.el.offsetWidth, h: w.el.offsetHeight }, w.opts.minW || 320, w.opts.minH || 220);
     Object.assign(w.el.style, { left: r.x + 'px', top: r.y + 'px', width: r.w + 'px' });
     if (w.opts.autoHeight) w.el.style.maxHeight = (viewport().h - BAR_H - dockReserve()) + 'px'; else w.el.style.height = r.h + 'px';
@@ -627,6 +620,7 @@ function renderMenus() {
 }
 function renderBar() {
   renderMenus();
+  renderPills();
   syncKeys();
   const s = $('#dkSess', root); if (!s) return;
   const n = sessWins.size, a = Sessions.active;
@@ -655,6 +649,8 @@ function tickClock() {
  *  Dock
  * ===================================================================== */
 function buildDock() {
+  // Die Zeile haelt den Dock und daneben einen Platz fuer den gerahmten Bereich der Taskleiste eines Fernen Desktops (docs/DOCK-REMOTE-TASKBAR.md, noch leer und verborgen)
+  const row = el('div', 'dk-dockrow'), slot = el('div', 'dk-dockext'); slot.hidden = true;
   const dock = el('nav', 'dk-dock'); dock.setAttribute('aria-label', t('desktop.dock'));
   const item = (id, name, a, extra) => {
     const b = btn('dk-di', `${ic(a.ic)}<span class="dk-dot"></span><span class="dk-tip"></span>`, name);
@@ -680,7 +676,8 @@ function buildDock() {
   );
   dock.addEventListener('contextmenu', (e) => { e.preventDefault(); dockMenu(dock); });
   dock.addEventListener('focusin', showDock);
-  return dock;
+  row.append(dock, slot);
+  return row;
 }
 /** Caddy und DDNS im Dock: erst sichtbar, wenn der Server das Modul eingeschaltet hat (applyModules) */
 function modDock(item) {
@@ -712,23 +709,42 @@ function renderDock() {
     const w = state[b.dataset.dock];
     b.classList.toggle('run', !!w); b.classList.toggle('hid', !!w && w.minimized);
   }
+  renderPills();
+}
+/** Pillen: eine je Fenster (ohne Dialog-Fenster), in der Reihenfolge des Oeffnens; Verbindungen (Sitzungen) sind farblich abgesetzt */
+function renderPills() {
+  if (!pills) return;
+  const list = [...wins.values()].filter((w) => !w.dialog);
+  pills.update(list.map((w) => ({ id: w.id, title: w.el.getAttribute('aria-label') || w.opts.title, icon: w.opts.icon || '', remote: !!w.session, active: w.el.classList.contains('active') && !w.minimized, minimized: w.minimized, hint: w.minimized ? t('desktop.minimized') : '' })));
+  root.classList.toggle('dk-haspills', list.length > 0);
+}
+/** Klick auf eine Pille: ein minimiertes Fenster kommt zurueck, das aktive wird minimiert, jedes andere kommt nach vorn */
+function pillClick(id) {
+  const w = wins.get(id); if (!w) return;
+  if (w.minimized) restoreWin(w); else if (w.el.classList.contains('active')) minimizeWin(w); else focusWin(w);
+}
+/** Rechtsklick auf eine Pille: Aktionen fuer dieses Fenster, darunter das Menue des Docks wie bisher */
+function pillMenu(id, anchor) {
+  const w = wins.get(id); if (!w) return;
+  showMenu(anchor, [{ cap: w.el.getAttribute('aria-label') || w.opts.title }, ...wm.menuItems(w), { sep: true }, { cap: t('desktop.dock') }, ...dockItems()], 'above');
 }
 
 
 /* ---------- Dock: drei Modi (localStorage "pd.dockMode"): auto = erscheint am unteren Rand (Standard), always = immer sichtbar, toggle = per Knopf einklappbar ---------- */
 const DOCK_MODES = [['auto', t('desktop.dockAuto')], ['always', t('desktop.dockAlways')], ['toggle', t('desktop.dockToggle')]];
 const EDGE_PX = 6, EDGE_DWELL = 300, HIDE_DELAY = 700;
+const PILL_STRIP = 10;     // Streifen am unteren Rand fuer die duennen Pillen (5 px und etwas Luft); maximierte und eingerastete Fenster enden darueber
 let dockMode = 'auto', dockCollapsed = false, dockShown = false, edgeTimer = null, hideTimer = null;
 function readDockMode() { try { const v = JSON.parse(localStorage.getItem('pd.dockMode')); return DOCK_MODES.some((m) => m[0] === v) ? v : 'auto'; } catch { return 'auto'; } }
 /** Platz am unteren Rand, den Fenster freihalten (maximiert und beim Oeffnen): nur wenn der Dock dort steht */
-function dockReserve() { return dockMode === 'always' || (dockMode === 'toggle' && !dockCollapsed) ? 96 : dockMode === 'toggle' ? 30 : 12; }
+function dockReserve() { return dockMode === 'always' || (dockMode === 'toggle' && !dockCollapsed) ? 96 : dockMode === 'toggle' ? 30 : PILL_STRIP; }
 function applyDock() {
-  const dock = $('.dk-dock', root), knob = $('.dk-knob', root); if (!dock) return;
+  const dock = $('.dk-dockrow', root), knob = $('.dk-knob', root); if (!dock) return;
   const away = dockMode === 'auto' ? !dockShown : dockMode === 'toggle' && dockCollapsed;
-  dock.classList.toggle('away', away);
+  dock.classList.toggle('away', away); root.classList.toggle('dk-folded', away);      // eingeklappt: nur die duennen Pillen
   knob.hidden = dockMode !== 'toggle'; knob.classList.toggle('closed', dockCollapsed);
   knob.setAttribute('aria-label', dockCollapsed ? t('desktop.dockExpand') : t('desktop.dockCollapse')); knob.setAttribute('aria-expanded', dockCollapsed ? 'false' : 'true');
-  root.style.setProperty('--dk-reserve', (dockMode === 'auto' ? 0 : dockReserve()) + 'px');
+  root.style.setProperty('--dk-reserve', dockReserve() + 'px');
   root.dataset.dock = dockMode;
 }
 function setDockMode(m, quiet) {
@@ -738,7 +754,7 @@ function setDockMode(m, quiet) {
   applyDock(); renderHome_ifOpen();
   if (!quiet && m === 'auto') notify(t('desktop.dockHint'), 4200);
 }
-function showDock() { if (dockMode === 'auto' && !dockShown) { dockShown = true; applyDock(); } }
+function showDock() { if (dockMode !== 'auto') return; clearTimeout(hideTimer); hideTimer = null; if (!dockShown) { dockShown = true; applyDock(); } }       // auch ein schon geplantes Ausblenden entfaellt (Tastaturfokus im Dock)
 function hideDock() {
   hideTimer = null;
   if (dockMode !== 'auto' || !dockShown) return;
@@ -751,7 +767,7 @@ function wireDockHover() {
   document.addEventListener('pointermove', (e) => {
     if (dockMode !== 'auto' || !root || root.hidden) return;
     const edge = e.clientY >= innerHeight - EDGE_PX;
-    const keep = edge || (e.target.closest && e.target.closest('.dk-dock, .dk-menu, .dk-launch'));
+    const keep = edge || (e.target.closest && e.target.closest('.dk-dockrow, .dk-pills, .dk-menu, .dk-launch'));
     if (dockShown) {
       if (keep) { clearTimeout(hideTimer); hideTimer = null; } else if (!hideTimer) hideTimer = setTimeout(hideDock, HIDE_DELAY);
     } else if (edge && e.buttons === 0) { if (!edgeTimer) edgeTimer = setTimeout(() => { edgeTimer = null; showDock(); }, EDGE_DWELL); }
@@ -759,11 +775,13 @@ function wireDockHover() {
   }, true);
   document.documentElement.addEventListener('mouseleave', () => { clearTimeout(edgeTimer); edgeTimer = null; if (dockShown && !hideTimer) hideTimer = setTimeout(hideDock, HIDE_DELAY); });
 }
-function dockMenu(anchor) {
-  const items = [{ cap: t('desktop.dock') }, ...DOCK_MODES.map(([id, label]) => ({ label, icon: id === dockMode ? 'check' : 'blank', run: () => setDockMode(id) }))];
+/** Die Eintraege des Dock-Menues (Modus waehlen, einklappen); auch unter dem Menue einer Pille */
+function dockItems() {
+  const items = DOCK_MODES.map(([id, label]) => ({ label, icon: id === dockMode ? 'check' : 'blank', run: () => setDockMode(id) }));
   if (dockMode === 'toggle') items.push({ sep: true }, { label: dockCollapsed ? t('desktop.expand') : t('desktop.collapse'), icon: 'blank', run: toggleDockCollapsed });
-  showMenu(anchor, items, 'above');
+  return items;
 }
+function dockMenu(anchor) { showMenu(anchor, [{ cap: t('desktop.dock') }, ...dockItems()], 'above'); }
 function toggleDockCollapsed() { dockCollapsed = !dockCollapsed; ls.set('dockCollapsed', dockCollapsed); applyDock(); }
 function buildKnob() {
   const k = btn('dk-knob', ic('chev'), t('desktop.dockCollapse')); k.hidden = true;
@@ -885,10 +903,11 @@ function openHome(view) {
     const find = btn('dk-find', ic('search') + `<span>${t('desktop.searchPlaceholder')}</span>`, t('common.search')); find.dataset.launcher = '1';
     find.addEventListener('click', () => openLauncher());
     head.append(back, fwd, find);
-    back.addEventListener('click', () => { if (nav.back.length) { nav.fwd.push(nav.view); nav.view = nav.back.pop(); renderHome(); } });
-    fwd.addEventListener('click', () => { if (nav.fwd.length) { nav.back.push(nav.view); nav.view = nav.fwd.pop(); renderHome(); } });
+    const goBack = () => { if (nav.back.length) { nav.fwd.push(nav.view); nav.view = nav.back.pop(); renderHome(); } };
+    const goFwd = () => { if (nav.fwd.length) { nav.back.push(nav.view); nav.view = nav.fwd.pop(); renderHome(); } };
+    back.addEventListener('click', goBack); fwd.addEventListener('click', goFwd);
     w = createWindow({ id: 'home', title: t('desktop.start'), icon: `<span class="dk-ti" style="--g1:#7b78ee;--g2:#5160e6;width:22px;height:22px;border-radius:7px">${ic('home')}</span>`,
-      rect: defaultRect('home', ...homeSize(), -30, 0), minW: 640, minH: 420, head, onClose: () => { stopOverview(); ctx.hostPage.unmount(); nav.view = 'start'; nav.back = []; nav.fwd = []; } });
+      rect: defaultRect('home', ...homeSize(), -30, 0), minW: 640, minH: 420, head, onNavigate: (dir) => (dir < 0 ? goBack() : goFwd()), onClose: () => { stopOverview(); ctx.hostPage.unmount(); nav.view = 'start'; nav.back = []; nav.fwd = []; } });
     w.head.querySelector('.dk-wt').style.minWidth = '60px';
     w.body.innerHTML = `<div class="dk-home"><nav class="dk-side" aria-label="${t('desktop.areas')}"></nav><div class="dk-main"></div></div>`;
     w.side = $('.dk-side', w.body); w.main = $('.dk-main', w.body);
@@ -1183,6 +1202,7 @@ async function openFiles(path, focusSearch) {
     const m = await import('./desktop-files.js');
     if (!wins.has('files')) return w;   // schon wieder geschlossen
     w.files = m.mount(w.body, { api: ctx.api, getState: () => ({ connections: ctx.state.connections, hosts: ctx.state.hosts }), notify });
+    w.onNavigate = (dir) => w.files.navigate(dir);        // Maustasten 4 und 5: der Verlauf der Ordner (wie Alt+Links und Alt+Rechts)
     if (focusSearch) $('.f-search input', w.el)?.focus();
   } catch { w.body.innerHTML = `<div class="dk-fempty">${t('desktop.filesLoadFailed')}</div>`; }
   return w;
@@ -1282,7 +1302,7 @@ const renderHome_ifOpen = () => { if (wins.has('home')) renderHome(); };
 /* Anordnen: nebeneinander (Kacheln) oder ueberlappend (versetzt). Betrifft nur die Sitzungsfenster, die nicht minimiert sind. */
 function placeWindows(list, rects) {
   list.forEach((w, i) => {
-    if (w.maximized) toggleMax(w);
+    wm.forget(w);
     Object.assign(w.el.style, { left: rects[i].x + 'px', top: rects[i].y + 'px', width: rects[i].w + 'px', height: rects[i].h + 'px' });
     saveRect(w);
   });
@@ -1322,17 +1342,21 @@ export async function init(context) {
   });
   root = $('#desktop');
   root.replaceChildren();
+  wm = createWM({ root, wins, barH: BAR_H, view: viewport, area: () => { const v = viewport(); return { x: 0, y: BAR_H, w: v.w, h: v.h - BAR_H - dockReserve() }; }, fit: fitRect,
+    focusWin, minimizeWin, restoreWin, closeWin: (w) => closeWin(w), rootOf, setMax, saveRect, keysToRemote: () => keysToRemote(), notify: (m, ms) => notify(m, ms), ls });
+  pills = createPills({ label: t('desktop.pillsLabel'), onClick: pillClick, onMenu: pillMenu });
+  pills.el.addEventListener('focusin', showDock);          // mit der Tastatur auf eine Pille: der Dock klappt auf
   const wp = el('div', 'dk-wp'); wp.innerHTML = scene(true);
   root.insertAdjacentHTML('afterbegin', DEFS);
   dockMode = readDockMode(); dockCollapsed = ls.get('dockCollapsed', false); dockShown = dockMode !== 'auto';
-  root.append(wp, buildBar(), buildDock(), buildKnob());
+  root.append(wp, buildBar(), buildDock(), pills.el, buildKnob());
   applyDock(); renderBar(); wireDockHover();
-  remoteApi.setKeyOwner(() => keysToRemote(), () => setTimeout(markKeys, 0));
+  remoteApi.setKeyOwner((e) => keysToRemote() && !(e && wm.claims(e)), () => setTimeout(markKeys, 0));   // die Tasten zum Wechseln des Fensters gehen nie ins Fernfenster (kein Tastaturfang)
   document.addEventListener('focusin', () => setTimeout(markKeys, 0));
   document.addEventListener('focusout', () => setTimeout(markKeys, 0));
   document.addEventListener('close', () => syncKeys(), true);      // ein Dialog (zum Beispiel Text senden, Kombination bearbeiten) wurde geschlossen
   // Ein Klick auf einen Knopf, die Leiste, den Dock oder eine Titelleiste darf den Fokus nicht vom Tastaturfeld wegnehmen
-  root.addEventListener('mousedown', (e) => { if (e.target.closest && e.target.closest('button, .dk-bar, .dk-dock, .dk-wh, .dk-menu') && !e.target.closest('input, textarea, select, [contenteditable="true"]')) e.preventDefault(); });
+  root.addEventListener('mousedown', (e) => { if (e.target.closest && e.target.closest('button, .dk-bar, .dk-dockrow, .dk-wh, .dk-menu') && !e.target.closest('input, textarea, select, [contenteditable="true"]')) e.preventDefault(); });
   setInterval(tickClock, 15000); tickClock();
   // Beim Wegklicken auf den Hintergrund: Menues zu (Fenster nehmen den Fokus selbst)
   wp.addEventListener('pointerdown', () => { for (const w of wins.values()) w.el.classList.remove('active'); renderBar(); });
@@ -1361,7 +1385,7 @@ export function hostInfoChanged() {
 /** Abgemeldet oder Anmeldung noetig: alle Fenster zu */
 export function reset() {
   if (!root) return;
-  closeMenu(); closeLauncher();
+  closeMenu(); closeLauncher(); wm.endMove();
   for (const w of [...wins.values()]) { if (!w.dialog) w.opts.onClose = null; closeWin(w, true); }     // ein Dialog-Fenster meldet beim Schliessen "abgebrochen" (sein Versprechen endet)
   sessWins.clear(); taskWins.clear(); renderTaskChip();
   modules = { caddy: false, ddns: false, services: false }; applyModules();

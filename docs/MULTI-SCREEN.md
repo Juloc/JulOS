@@ -1,6 +1,6 @@
 # One desktop over several browser windows (plan; workspace server built)
 
-Status: **planned**; the server side of the workspace (step 1, point 1 below) is **built** (see "Workspace on the server"), the browser side is not. Decisions of the owner on 2026-11-21 (interview); the order of work is at the end.
+Status: **step 1 partly built** (not released): the interface part of the window manager in one browser window (keyboard, snapping with the mouse, mouse buttons 4 and 5, thin dock pills; see "Step 1: what is built" below) and the server side of the workspace (see "Workspace on the server"). **Not built yet:** the connection of the interface to the workspace (loading and saving it from the page) and steps 2 to 4. Decisions of the owner on 2026-11-21 (interview); the order of work is at the end.
 
 ## What the owner wants
 
@@ -54,6 +54,16 @@ Status: **planned**; the server side of the workspace (step 1, point 1 below) is
 - **Connections must belong to the user.** On saving, a window whose `connectionId` is not one of the user's connections is dropped (counted in `dropped`) and never stored; on reading, windows of connections deleted since are left out as well.
 
 Not covered, on purpose: windows of other apps' own state (the Files view has its own setting `files`), a live push to other browsers or devices, removal of devices unused for months (the limit of 16 keeps the table small).
+
+## Step 1: what is built (interface part)
+
+- **Pure logic** in `desktop-snap.js` (zones for halves, quarters and maximise, the zone under the pointer, the Windows-like arrow steps, size and move limits, the window under a snapped window that is dragged, next window) and `desktop-keys.js` (the key bindings as data, matching, which keys may fire in a text field); both tested in `tests/frontend/desktop-snap.test.mjs`. `desktop-wm.js` wires them to the windows of `desktop.js`, `desktop-pills.js` is the pill row.
+- **Keyboard (default `Ctrl+Alt` as the replacement for the Windows key):** `Ctrl+Alt+Left/Right` half, `Up` maximise (from a half first the quarter above), `Down` restore (from a half first the quarter below; on a free window: minimise); `Ctrl+Alt+Shift+Arrows` size (32 px), `Ctrl+Alt+M` move mode (arrows 24 px, Shift four times as much, `Enter` or `Esc` ends), `Ctrl+Alt+PageDown/PageUp` next and previous window (minimised ones come back). The bindings are `DEFAULT_BINDINGS`; a changed set can be stored in `localStorage` `pd.dk.keys` (`{ "snap.left": { "code": "KeyH", "mods": ["alt"] } }`, `null` switches one off, invalid or doubled keys are ignored); a settings dialog is not built.
+- **Who gets the keys:** a remote window with the keyboard gets all keys, in full screen (Keyboard Lock) every key. The one exception is the window switch (`next`, `prev`, marked `global`): without it the keyboard would be trapped in the remote window. In a text field a binding fires only if it is not a character key (Ctrl+Alt is AltGr on German layouts) and has two of Ctrl, Alt, Meta. A remote window can be snapped with the mouse (drag, double click, right click on its pill).
+- **Snapping with the mouse:** a preview while dragging (left or right edge: half, corner or the edge near it: quarter, top edge: maximise, bottom edge only corners); the snap happens on release. A snapped or maximised window leaves its zone after 4 px of dragging and gets its old size back with the grip at the same relative place. Double click on the title bar maximises or restores. Snapped windows stay in their zone when the browser window changes size.
+- **Mouse buttons 4 and 5:** `mousedown`, `auxclick` and `mouseup` of the buttons 3 and 4 are prevented on the desktop (no `history` entries are made), `mouseup` calls `onNavigate(-1 | 1)` of the focused window (option of `createWindow` or `w.onNavigate`; Files: folder history, Start: the view history). A window without the hook does nothing. Over a session window the buttons are left to the session (`mouse.js` sends them to the target as before).
+- **Dock pills:** see [BACKLOG.md](BACKLOG.md). The dock sits in a row (`.dk-dockrow`) with a hidden slot for the framed taskbar area of [DOCK-REMOTE-TASKBAR.md](DOCK-REMOTE-TASKBAR.md).
+- **Checked:** in the browser pane at 1500x900 and 1000x700 (light and dark), every shortcut once, drag to edge and corner, double click, the buttons 4 and 5 as script events, pills, a real RDP window (test target), phone 375 unchanged. **Not checked:** a real mouse with side buttons, Windows Brave, a Mac keyboard, the animations (the pane was hidden while checking), a real browser resize.
 
 ## Order of work (each step releasable on its own)
 

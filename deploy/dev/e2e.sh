@@ -29,7 +29,8 @@ quiet dc --profile e2e build e2e
 # frische Datenbank bei jedem Lauf (die Ersteinrichtung ist Teil der Tests); die Ziele bleiben stehen
 quiet dc stop julos
 quiet dc exec -T postgres psql -q -U julos -d julos -c 'drop schema public cascade; create schema public;'
-since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+# Nanosekunden: mit ganzen Sekunden lag die Zeile des ersten Starts (vor dem Loeschen der Datenbank) manchmal noch im Fenster, und der Test nahm den falschen Setup-Code
+since=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
 quiet dc start julos
 code=""
 for _ in $(seq 1 60); do

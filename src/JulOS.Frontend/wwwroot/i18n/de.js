@@ -2550,4 +2550,11 @@ export default {
   "sec.confirmClickWarn": "Mit »Nur Klick« genügt ein versehentlicher Klick, um zum Beispiel einen Host neu zu starten oder mehrere Dateien zu löschen. Bei sehr gefährlichen Dingen, zum Beispiel JulOS selbst stoppen, bleibt das Häkchen.",
   "sec.ev.confirm_mode_set": "Bestätigung bei gefährlichen Aktionen eingestellt",
   "sec.stepUpLonger": "Ein längeres Fenster (bis 60 Minuten) heißt: weniger Codes eintippen. Ein kürzeres ist sicherer, falls dein Gerät in fremde Hände gerät.",
+  "desktop.tbMark": "Taskleiste markieren",
+  "desktop.tbRemark": "Taskleiste neu markieren",
+  "desktop.tbOff": "Taskleiste aus",
+  "desktop.tbLabel": "Taskleiste von {name}",
+  "desktop.tbMarkHint": "Ziehe ein Rechteck über die Taskleiste der VM, vom Bildrand bis zu ihrer inneren Kante.",
+  "desktop.tbMarkFail": "Das sieht nicht nach einer Taskleiste aus. Das Rechteck muss an einem Bildrand enden und fast dessen ganze Länge decken.",
+  "desktop.tbMarked": "Taskleiste markiert: sie steht jetzt im Dock.",
 };

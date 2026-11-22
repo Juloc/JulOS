@@ -24,9 +24,21 @@ export function sessionMenu(deps) {
     { label: t('desktop.reconnect'), icon: 'play', run: () => R.reconnect() },
     ...(R.canPopOut() ? [{ label: R.popped() ? t('desktop.pinBack') : t('desktop.openOwnWindow'), icon: 'blank', run: () => R.popOut() }] : []),
     { sep: true },
+    ...taskbarItems(deps),
     ...(funcs ? funcs.items.filter((d) => d.type === 'action').map((d) => ({ label: d.label.startsWith(':') ? d.value : d.label, icon: 'blank', run: () => R.press(d) })) : []),
     { sep: true },
     { label: t('desktop.endConnection'), icon: 'power', run: () => deps.end() },
+  ];
+}
+
+/** Taskleiste der VM im Dock (desktop-taskbar.js): nur fuer Bildverbindungen (Desktop, VNC), nicht fuers Terminal */
+function taskbarItems(deps) {
+  const s = deps.taskbar && deps.taskbar.session();
+  if (!s) return [];
+  return [
+    { label: s.tb ? t('desktop.tbRemark') : t('desktop.tbMark'), icon: 'blank', run: () => deps.taskbar.mark() },
+    ...(s.tb ? [{ label: t('desktop.tbOff'), icon: 'blank', run: () => deps.taskbar.off() }] : []),
+    { sep: true },
   ];
 }
 

@@ -2550,4 +2550,11 @@ export default {
   "sec.confirmClickWarn": "With \"Click only\" one accidental click is enough to restart a host or delete several files. For very dangerous things, such as stopping JulOS itself, the checkbox stays.",
   "sec.ev.confirm_mode_set": "Confirmation for dangerous actions changed",
   "sec.stepUpLonger": "A longer window (up to 60 minutes) means typing fewer codes. A shorter one is safer if your device falls into the wrong hands.",
+  "desktop.tbMark": "Mark taskbar",
+  "desktop.tbRemark": "Mark taskbar again",
+  "desktop.tbOff": "Taskbar off",
+  "desktop.tbLabel": "Taskbar of {name}",
+  "desktop.tbMarkHint": "Drag a rectangle over the VM's taskbar, from the edge of the picture to its inner edge.",
+  "desktop.tbMarkFail": "That does not look like a taskbar. The rectangle must end at an edge of the picture and cover almost its whole length.",
+  "desktop.tbMarked": "Taskbar marked: it now sits in the dock.",
 };

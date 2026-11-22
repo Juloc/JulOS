@@ -40,6 +40,8 @@ html.desktop {
   /* Pillen des eingeklappten Docks: Fenster, minimiertes Fenster, aktives Fenster; dieselben drei fuer Verbindungen in Blaugruen; ein feiner Rand trennt sie vom Hintergrund */
   --dk-pill: #6b6f96; --dk-pill-min: #a4a7c4; --dk-pill-act: #4b3fb8; --dk-pill-rem: #2f8f8c; --dk-pill-rem-min: #8fc4c1; --dk-pill-rem-act: #12706c; --dk-pill-edge: rgba(36, 38, 70, .3);
   --dk-snap-fill: rgba(106, 88, 230, .16); --dk-snap-edge: rgba(75, 63, 184, .75);
+  --dk-tb-bg: #000; --dk-tb-dim: rgba(0, 0, 0, .18); --dk-tb-fill: rgba(47, 143, 140, .28); --dk-tb-dash: #fff; --dk-tb-tagfg: #fff;   /* Taskleiste der VM (Bild bleibt schwarz hinterlegt) */
+  --dk-tb-t: 0px; --dk-tb-r: 0px; --dk-tb-b: 0px; --dk-tb-l: 0px;   /* Platz am Rand, den die Taskleiste belegt (desktop.js setzt sie) */
 }
 html.desktop[data-scheme="dark"] {
   --dk-ink: #f3f1fc; --dk-t1: #ebe9f7; --dk-t2: #d3d0ea; --dk-t3: #bab7d8; --dk-sub: #bdbad9; --dk-hint: #b9b6d6; --dk-dis: #6f6c8e;
@@ -69,6 +71,7 @@ html.desktop[data-scheme="dark"] {
   --wp-b1: #7a4a8a; --wp-b2: #6a3f7c; --wp-b3: #9a6aa5; --wp-b4: #5a3470; --wp-b5: #b99ac8;
   --dk-pill: #9a98b8; --dk-pill-min: #5c5a78; --dk-pill-act: #bcb1ff; --dk-pill-rem: #4fc3bd; --dk-pill-rem-min: #2d6a67; --dk-pill-rem-act: #8ff0e9; --dk-pill-edge: rgba(0, 0, 0, .5);
   --dk-snap-fill: rgba(169, 156, 255, .2); --dk-snap-edge: rgba(188, 177, 255, .8);
+  --dk-tb-bg: #000; --dk-tb-dim: rgba(0, 0, 0, .3); --dk-tb-fill: rgba(79, 195, 189, .3); --dk-tb-dash: #fff; --dk-tb-tagfg: #06302d;
 }
 
 /* Die Dialoge liegen ausserhalb von #desktop und bekommen dieselben Werte. Das ueberschreibt, was app.js fuer das Handy-Design auf html setzt. */
@@ -132,7 +135,7 @@ html.desktop #micLive { top: 42px; z-index: 4000; }
 .dk-win.active { box-shadow: var(--dk-shadow); }
 @keyframes dkwin { from { opacity: 0; transform: scale(.965) translateY(8px); } to { opacity: 1; transform: none; } }
 .dk-win.min { opacity: 0; transform: translateY(60px); pointer-events: none; visibility: hidden; transition: opacity .18s, transform .18s, visibility 0s .18s; }   /* ohne scale: die Groesse der Anzeige darf sich beim Minimieren nicht aendern */
-.dk-win.max { left: 0 !important; top: 34px !important; width: 100% !important; height: calc(100% - 34px - var(--dk-reserve, 96px)) !important; border-radius: 0; }
+.dk-win.max { left: var(--dk-tb-l, 0px) !important; top: calc(34px + var(--dk-tb-t, 0px)) !important; width: calc(100% - var(--dk-tb-l, 0px) - var(--dk-tb-r, 0px)) !important; height: calc(100% - 34px - var(--dk-tb-t, 0px) - var(--dk-reserve, 96px)) !important; border-radius: 0; }
 .dk-win.dragging, .dk-win.resizing { transition: none; }
 .dk-wh { flex: 0 0 auto; height: 42px; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 14px; cursor: default; border-radius: 16px 16px 0 0; }
 .dk-win.max .dk-wh { border-radius: 0; }
@@ -270,8 +273,7 @@ html.desktop .sv .sv-overlay .box { border-radius: 20px; background: var(--dk-ov
 #desktop button.dk-find { text-align: left; }
 
 /* ---------- Dock ---------- */
-.dk-dockrow { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 4500; display: flex; align-items: flex-end; gap: 12px; }
-.dk-dockext { align-self: stretch; }   /* Platz fuer den gerahmten Bereich der Taskleiste eines Fernen Desktops (docs/DOCK-REMOTE-TASKBAR.md), noch leer */
+.dk-dockrow { position: absolute; left: 50%; bottom: calc(14px + var(--dk-tb-b, 0px)); transform: translateX(-50%); z-index: 4500; display: flex; align-items: flex-end; gap: 12px; }
 .dk-dock { position: relative; display: flex; align-items: flex-end; gap: 10px; padding: 9px 14px; border-radius: 24px;
   background: var(--dk-dock); backdrop-filter: blur(26px) saturate(1.6); border: 1px solid var(--dk-dock-edge); box-shadow: 0 12px 36px rgba(var(--dk-shw), .25); }
 .dk-di { position: relative; width: 54px; height: 54px; border-radius: 15px; display: inline-flex; align-items: center; justify-content: center; color: var(--dk-tile-fg); transition: transform .14s cubic-bezier(.3, 1.6, .5, 1);
@@ -472,9 +474,9 @@ html.desktop dialog ::placeholder { color: var(--dk-hint); opacity: 1; }
 /* ---------- Dock eingeklappt: duenne Pillen (desktop-pills.js) ----------
  * Eine Pille je Fenster, 5 px hoch, am unteren Rand. Die Taste selbst ist hoeher als der sichtbare Balken (die Haelfte ist Luft zum Treffen); der Balken ist ::before.
  * Maus darauf oder Tastaturfokus klappt die Pillen zu Karten mit dem Namen auf; im Modus "automatisch" steigen sie mit dem Dock nach oben. Immer sichtbar (Modus "immer") gibt es keine Pillen. */
-.dk-pills { position: absolute; left: 50%; bottom: 3px; transform: translateX(-50%); z-index: 4400; display: flex; align-items: flex-end; max-width: calc(100% - 40px); transition: bottom .22s cubic-bezier(.2, .8, .3, 1); }
+.dk-pills { position: absolute; left: 50%; bottom: calc(3px + var(--dk-tb-b, 0px)); transform: translateX(-50%); z-index: 4400; display: flex; align-items: flex-end; max-width: calc(100% - 40px); transition: bottom .22s cubic-bezier(.2, .8, .3, 1); }
 .dk-pills:empty, #desktop[data-dock="always"] .dk-pills, #desktop[data-dock="toggle"]:not(.dk-folded) .dk-pills { display: none; }
-#desktop[data-dock="auto"]:not(.dk-folded) .dk-pills { bottom: 106px; }
+#desktop[data-dock="auto"]:not(.dk-folded) .dk-pills { bottom: calc(106px + var(--dk-tb-b, 0px)); }
 #desktop .dk-pill { --pc: var(--dk-pill); position: relative; flex: 0 1 auto; height: 14px; min-height: 0; min-width: 40px; padding: 4px 3px; border: 0; background: none; color: var(--dk-t1); font: inherit; font-size: 12.5px; cursor: pointer;
   display: inline-flex; align-items: flex-end; transition: height .2s cubic-bezier(.2, .8, .3, 1), min-width .2s; }
 #desktop .dk-pill.min { --pc: var(--dk-pill-min); } #desktop .dk-pill.act { --pc: var(--dk-pill-act); min-width: 64px; }
@@ -498,3 +500,26 @@ html.desktop dialog ::placeholder { color: var(--dk-hint); opacity: 1; }
 .dk-snapprev.on { opacity: 1; }
 .dk-win.kbmove { box-shadow: 0 0 0 3px var(--dk-accent-ring), var(--dk-shadow); }
 @media (prefers-reduced-motion: reduce) { .dk-snapprev { transition: none; } }
+
+/* ---------- Taskleiste der VM im Dock (desktop-taskbar.js, docs/DOCK-REMOTE-TASKBAR.md) ----------
+ * Gerahmter Streifen am Bildschirmrand: Rahmen in der Farbe der Verbindung (wie der Strich oben im Fenster der Verbindung) und ein Namensschild mit Namen und Art. Der Rand
+ * ist breit genug fuer Kontrast ohne Farbe; das Schild nennt die Verbindung. Der Streifen ist ein Bild der VM: auf ihm gilt der Zeiger der VM, nicht der des Browsers. */
+.dk-tb { position: absolute; z-index: 4450; box-sizing: border-box; display: flex; border: 3px solid var(--dk-pill-rem-act); background: var(--dk-pill-rem-act); box-shadow: 0 0 0 1px var(--dk-dock-edge), 0 8px 24px rgba(var(--dk-shw), .3); }
+.dk-tb[hidden] { display: none; }
+.dk-tb-cv { display: block; flex: none; cursor: none; touch-action: none; background: var(--dk-tb-bg); }
+.dk-tb-tag { flex: none; box-sizing: border-box; font-size: 11.5px; font-weight: 600; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--dk-tb-tagfg); background: var(--dk-pill-rem-act); pointer-events: none; }
+.dk-tb-bottom, .dk-tb-top { left: 50%; transform: translateX(-50%); }
+.dk-tb-bottom { bottom: 0; flex-direction: column; border-bottom-width: 0; border-radius: 6px 6px 0 0; }
+.dk-tb-top { top: 34px; flex-direction: column-reverse; border-top-width: 0; border-radius: 0 0 6px 6px; }
+.dk-tb-left, .dk-tb-right { top: calc(34px + (100% - 34px) / 2); transform: translateY(-50%); }
+.dk-tb-left { left: 0; flex-direction: row-reverse; border-left-width: 0; border-radius: 0 6px 6px 0; }
+.dk-tb-right { right: 0; flex-direction: row; border-right-width: 0; border-radius: 6px 0 0 6px; }
+.dk-tb-bottom .dk-tb-tag, .dk-tb-top .dk-tb-tag { height: 18px; padding: 0 10px; }
+.dk-tb-left .dk-tb-tag, .dk-tb-right .dk-tb-tag { width: 18px; padding: 10px 0; writing-mode: vertical-rl; }
+/* Das Fenster der Verbindung bekommt oben denselben Strich: so gehoeren Fenster und Streifen sichtbar zusammen */
+.dk-win.dk-tb-on > .dk-wh { box-shadow: inset 0 3px 0 var(--dk-pill-rem-act); }
+/* Markieren: Schicht ueber dem Bild, Rechteck ziehen */
+.dk-tb-mark { position: absolute; inset: 0; z-index: 8; cursor: crosshair; touch-action: none; background: var(--dk-tb-dim); }
+.dk-tb-box { position: absolute; box-sizing: border-box; border: 2px solid var(--dk-pill-rem-act); background: var(--dk-tb-fill); outline: 1px dashed var(--dk-tb-dash); pointer-events: none; }
+.dk-tb-hint { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); display: flex; align-items: center; gap: 14px; max-width: calc(100% - 28px); padding: 8px 8px 8px 16px; border-radius: 12px; font-size: 13.5px; color: var(--dk-t1); background: var(--dk-glass-strong); border: 1px solid var(--dk-line2); box-shadow: var(--dk-shadow); cursor: default; }
+.dk-tb-hint button { padding: 5px 12px; border-radius: 8px; border: 1px solid var(--dk-ctl-edge); color: var(--dk-t1); }

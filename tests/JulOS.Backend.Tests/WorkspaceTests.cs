@@ -133,7 +133,7 @@ public sealed class WorkspaceTests
         Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Req(HttpMethod.Put, url, cookie, Save(0, Doc($"[{Win("w1")}]"), "Mein Laptop")))).StatusCode);
 
         // der Fremde: nichts zu lesen, in der Liste nichts, Loeschen trifft nichts
-        Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Req(HttpMethod.Get, url, theirs))).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await c.SendAsync(Req(HttpMethod.Get, url, theirs))).StatusCode);
         Assert.Empty((await Json(await c.SendAsync(Req(HttpMethod.Get, "/api/workspaces", theirs)))).GetProperty("devices").EnumerateArray());
         Assert.Equal(HttpStatusCode.NoContent, (await c.SendAsync(Req(HttpMethod.Delete, url, theirs))).StatusCode);
         Assert.Equal(1L, await db.ScalarAsync<long>("select count(*) from workspaces where user_id = $1", user));
@@ -195,7 +195,7 @@ public sealed class WorkspaceTests
         var gone = await Put(4, Doc());
         Assert.Equal(HttpStatusCode.Conflict, gone.StatusCode);
         Assert.Equal(0, (await Json(gone)).GetProperty("version").GetInt32());
-        Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Req(HttpMethod.Get, url, cookie))).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await c.SendAsync(Req(HttpMethod.Get, url, cookie))).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await Put(0, Doc())).StatusCode);
     }
 

@@ -24,12 +24,12 @@ Status: **step 1 built** (not released): the window manager in one browser windo
 
 **Storage:** an own table `workspaces (user_id, device_id, name, doc jsonb, version, created_at, updated_at)` (migration `023_workspaces.sql`, primary key user and device), not the per-user settings store. The settings store has a fixed list of keys that `GET /api/settings` sends to every client, no version column and no list of devices; a key per device would bend all three. The table needs nothing else, and it is in the backup like every table (`DbDump` takes all of them; a test restores a workspace) and goes away with its user (`on delete cascade`).
 
-**The device id** comes from the browser (`[A-Za-z0-9_-]{8,64}`, random, kept locally). It is no secret and opens nothing: every request needs a session, and every query has the user in its condition, so a foreign user with the same id gets 404 and an own empty row, never the other's data. At most **16 devices per user**; a new one above that replaces the one unused longest (browsers that clear their data would otherwise only leave dead rows).
+**The device id** comes from the browser (`[A-Za-z0-9_-]{8,64}`, random, kept locally). It is no secret and opens nothing: every request needs a session, and every query has the user in its condition, so a foreign user with the same id gets 204 (nothing saved) and an own empty row, never the other's data. At most **16 devices per user**; a new one above that replaces the one unused longest (browsers that clear their data would otherwise only leave dead rows).
 
 | Route | What |
 | --- | --- |
 | `GET /api/workspaces` | `{ devices: [{ deviceId, name, version, updatedAt, windows, connections: [id] }] }`, most recently saved first. `connections` are the open connections of that device (only the user's own that still exist): what "continue here" picks from. |
-| `GET /api/workspaces/{deviceId}` | `{ deviceId, name, version, updatedAt, doc }`, `404 not_found` if nothing is saved. Windows of deleted connections are left out. |
+| `GET /api/workspaces/{deviceId}` | `{ deviceId, name, version, updatedAt, doc }`, `204` (no content) if nothing is saved (not 404: the browser would log a console error on every first start). Windows of deleted connections are left out. |
 | `PUT /api/workspaces/{deviceId}` | body `{ version, name?, doc }`; answer `{ version, updatedAt, dropped }`. `version` is the version the browser based its document on, `0` for "I have none". `name` (40 characters) is the display name of the device, kept when omitted. |
 | `DELETE /api/workspaces/{deviceId}` | forget the device: `204`, also when there was nothing |
 

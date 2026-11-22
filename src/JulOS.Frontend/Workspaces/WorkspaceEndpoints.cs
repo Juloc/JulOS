@@ -63,7 +63,7 @@ internal static class WorkspaceEndpoints
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             if (!WorkspaceRules.IsDeviceId(deviceId)) return Fail(400, "Geräte-Kennung ungültig.", "invalid_device");
             if (Limited(ctx, hits, "read", ReadsPerMinute)) return Fail(429, "Zu viele Anfragen.", "rate_limited");
-            if (await store.GetAsync(id.UserId, deviceId, ctx.RequestAborted) is not { } row) return Fail(404, "Für dieses Gerät ist nichts gespeichert.", "not_found");
+            if (await store.GetAsync(id.UserId, deviceId, ctx.RequestAborted) is not { } row) return Results.NoContent();      // nichts gespeichert: 204 statt 404, sonst meldet der Browser bei jedem ersten Start einen Fehler in der Konsole
             return Results.Json(new WorkspaceDto(row.DeviceId, row.Name, row.Version, row.UpdatedAt, await CleanElementAsync(store, id.UserId, row.Doc, ctx.RequestAborted)), AppJson.Default.WorkspaceDto);
         });
 

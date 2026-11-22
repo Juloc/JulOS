@@ -2567,4 +2567,11 @@ export default {
   "ws.gone": "Diese Verbindung gibt es nicht mehr.",
   "ws.forgotten": "Dieses Gerät ist vergessen. Beim nächsten Öffnen beginnt es neu; bis dahin wird nichts mehr gemerkt.",
   "ws.forgetFailed": "Vergessen hat nicht geklappt. Versuche es gleich noch einmal.",
+  "desktop.tbMark": "Taskleiste markieren",
+  "desktop.tbRemark": "Taskleiste neu markieren",
+  "desktop.tbOff": "Taskleiste aus",
+  "desktop.tbLabel": "Taskleiste von {name}",
+  "desktop.tbMarkHint": "Ziehe ein Rechteck über die Taskleiste der VM, vom Bildrand bis zu ihrer inneren Kante.",
+  "desktop.tbMarkFail": "Das sieht nicht nach einer Taskleiste aus. Das Rechteck muss an einem Bildrand enden und fast dessen ganze Länge decken.",
+  "desktop.tbMarked": "Taskleiste markiert: sie steht jetzt im Dock.",
 };

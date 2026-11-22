@@ -1,5 +1,6 @@
 import { StreamClient } from './stream.js';
 import { MouseInput, mouseState } from './mouse.js';
+import { normalizeTb, vmSize, workRect, displayOffset } from './desktop-taskbar-geom.js';
 import { Resume } from './resume.js';
 import { isLoginError, loginStep, userOfTarget, readLogin } from './login.js';
 import { StatusBar } from './statusbar.js';
@@ -550,6 +551,7 @@ export class RemoteSession extends Session {
     this.gen = 0;                                  // zaehlt jeden Verbindungsversuch: spaete Antworten eines alten Versuchs werden verworfen
     this.k = clamp(store.get('k.' + conn.id, store.get('k', pcDefaultK())), 0.35, 1.8);   // Remote-Pixel pro Handy-Pixel (kleiner = Inhalt groesser), je Verbindung gemerkt
     this.lastSent = { w: 0, h: 0 }; this.gate = new SizeGate({ settleMs: KB_SETTLE_MS });
+    this.tb = conn.quick ? null : normalizeTb(store.get('tb.' + conn.id, null));   // Taskleiste der VM im Dock (docs/DOCK-REMOTE-TASKBAR.md), je Verbindung in diesem Browser gemerkt
     this.quality = normalizeQuality(store.get('q.' + conn.id, 'auto'));   // Bildrate dieser Sitzung (Nachricht 31), je Verbindung gemerkt
     this.retry = 0; this.retryTimer = null; this.resizeTimer = null; this.connectTimer = null; this.toastTimer = null; this.zoomTimer = null;
     this.connectedAt = 0; this.connectStarted = 0; this.frameSeen = false;
@@ -591,6 +593,8 @@ export class RemoteSession extends Session {
     this.lay = new LayoutLog({ emit: (evt, d) => this.dbg(evt, d), parts: { app: $('#app'), stage: this.el.stage, topbar: this.el.topbar, dock: this.el.dock }, state: () => ({ kbOpen }), visible: LAYDEBUG });
     this.ro = new ResizeObserver(() => this.onStageResize());
     this.ro.observe(this.el.stage);
+    this.onFullscreen = () => { if (this.tb) { this.fitDisplay(); this.scheduleSize(); this.dispatchEvent(new CustomEvent('taskbarchange')); } };       // im Vollbild steht keine Leiste im Dock: sie bleibt im Bild der VM
+    document.addEventListener('fullscreenchange', this.onFullscreen);
     this.updateMenuLabels();
     this.renderRows();
   }
@@ -734,6 +738,7 @@ export class RemoteSession extends Session {
     this.setState('connected', t('app.stateOwnWindow'));
     this.el.reconnectBtn.textContent = t('app.reattach');
     this.showOverlay(t('app.sessionInOwnWindow'));
+    this.dispatchEvent(new CustomEvent('taskbarchange'));        // im eigenen Fenster gibt es kein Dock
   }
   /** Das Fenster ist zu oder will zurueck (oder der Benutzer tippt "Wieder anheften"): die Sitzung hier wieder aufnehmen. */
   popBack() {
@@ -745,6 +750,7 @@ export class RemoteSession extends Session {
     if (this.disposed) return;
     this.intentional = false; this.retry = 0; this.resume.lost();     // das Token gilt ab jetzt (die Zeit ohne Browser zaehlt erst ab hier)
     this.start();
+    this.dispatchEvent(new CustomEvent('taskbarchange'));
   }
 
   /** Bildrate dieser Sitzung waehlen ('auto' | '60' | '30' | 'eco'): merken, an den Server schicken, anzeigen. */
@@ -761,7 +767,7 @@ export class RemoteSession extends Session {
     this.disposed = true; this.intentional = true;
     if (this.popped) { const p = this.popped; this.popped = null; p.end(); }      // die Sitzung endet: das Fenster beendet sie am Server und geht zu
     this.teardown();
-    this.ro.disconnect(); this.lay.dispose();
+    this.ro.disconnect(); this.lay.dispose(); document.removeEventListener('fullscreenchange', this.onFullscreen);
     clearTimeout(this.toastTimer); clearTimeout(this.zoomTimer); this.statusBar.dispose();
     this.password = null;
     this.unmount();
@@ -1097,7 +1103,16 @@ export class RemoteSession extends Session {
     const dpr = window.devicePixelRatio || 1;
     const w = Math.max(400, Math.floor((r.w * dpr * this.k) / 4) * 4);
     const h = Math.max(300, Math.floor((r.h * dpr * this.k) / 2) * 2);
-    return { w, h };
+    return vmSize({ w, h }, this.taskbar());       // mit Taskleiste fragt die VM nach Fenster plus Leiste: ihr Panel bleibt, wie es ist
+  }
+  /** Die Taskleiste, die gerade im Dock steht: nur im Desktop-Layout, nicht im Vollbild (das Dock liegt ausserhalb) und nicht im eigenen Fenster; sonst null und die VM zeigt ihre Leiste im Bild. */
+  taskbar() { return this.tb && document.documentElement.classList.contains('desktop') && !this.popped && !document.fullscreenElement ? this.tb : null; }
+  /** Markierung setzen (null = aus), merken und der VM die neue Groesse schicken. */
+  setTaskbar(tb) {
+    this.tb = normalizeTb(tb);
+    if (!this.conn.quick) store.set('tb.' + this.conn.id, this.tb);
+    this.fitDisplay(); this.pushSize(true);
+    this.dispatchEvent(new CustomEvent('taskbarchange'));
   }
   fitDisplay() {
     if (!this.display) return;
@@ -1105,10 +1120,11 @@ export class RemoteSession extends Session {
     if (!rw) return;
     const r = this.el.stage.getBoundingClientRect();
     if (r.width < 50) return;                       // versteckt: nichts zu skalieren
+    const vis = workRect({ w: rw, h: this.display.getHeight() }, this.taskbar());       // nur die Fensterflaeche des Bildes, ohne den Streifen im Dock
     // Das Bild der VM hat nach dem Abrunden auf Vielfache von 4 ein paar Pixel weniger als das Fenster; wuerde es darauf gestreckt, laege es um
     // Bruchteile eines Pixels daneben und waere ueberall weich. Wo es 1:1 auf den Schirm passt (Faktor 1 / devicePixelRatio), bleibt es genau dort.
     const dpr = window.devicePixelRatio || 1;
-    let scale = r.width / rw;
+    let scale = r.width / vis.w;
     if (Math.abs(scale * dpr - 1) < 0.02) scale = 1 / dpr;
     this.display.scale(scale);
     this.applyPan();
@@ -1126,7 +1142,10 @@ export class RemoteSession extends Session {
       const s = this.display.getScale();
       this.panY = panOffset({ contentH: this.display.getHeight() * s, viewH: this.el.stage.getBoundingClientRect().height, focusY: this.focusY === null ? null : this.focusY * s, current: this.panY });
     }
-    this.el.display.style.transform = this.panY ? `translateY(${-this.panY}px)` : '';
+    // Taskleiste oben oder links: der Streifen rutscht aus dem Bild (Verschiebung in Pixeln der VM mal Massstab)
+    const o = displayOffset({ w: this.display.getWidth(), h: this.display.getHeight() }, this.taskbar()), sc = this.display.getScale();
+    const dx = o.x * sc, dy = o.y * sc - this.panY;
+    this.el.display.style.transform = dx || dy ? `translate(${dx}px, ${dy}px)` : '';
   }
   // Wann die Groesse wirklich an die VM geht, entscheidet SizeGate (layoutlog.js): nur bei echtem Unterschied (8 x 16 Geraetepixel Toleranz),
   // nicht waehrend die Tastatur faehrt, hoechstens einmal pro Sekunde und mit Notbremse (4 Aenderungen in 20 s, dann 5 s Pause).
@@ -1507,8 +1526,8 @@ export class RemoteSession extends Session {
     this.mouse = mouse;
     const fwd = (state) => {
       if (this.client !== client) return;
-      const s = display.getScale() || 1;
-      client.sendMouseState({ ...state, x: state.x / s, y: state.y / s });
+      const s = display.getScale() || 1, o = displayOffset({ w: display.getWidth(), h: display.getHeight() }, this.taskbar());
+      client.sendMouseState({ ...state, x: state.x / s - o.x, y: state.y / s - o.y });
     };
     mouse.onmousedown = mouse.onmouseup = mouse.onmousemove = fwd;
     mouse.onmouseout = () => {};

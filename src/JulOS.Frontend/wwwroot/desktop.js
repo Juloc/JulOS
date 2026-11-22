@@ -18,6 +18,7 @@ import { setDialogHost } from './desktop-window.js';
 import { createWM } from './desktop-wm.js';
 import { createPills } from './desktop-pills.js';
 import { createWorkspace, fitIntoView, isZone } from './desktop-workspace.js';
+import { createTaskbar } from './desktop-taskbar.js';
 
 /* =====================================================================
  * Desktop-Oberflaeche (breite Bildschirme mit Maus): Menueleiste, Dock, Launcher, Home-Fenster und ein Fenster
@@ -34,6 +35,7 @@ let wm = null;             // Fenstermanager (desktop-wm.js): Einrasten, Tastatu
 let pills = null;          // duenne Pillen des eingeklappten Docks (desktop-pills.js)
 let ws = null;             // Workspace pro Geraet (desktop-workspace.js): merkt sich die Fenster, stellt sie beim Start wieder her
 let modulesReady = Promise.resolve();   // die Module (Caddy, DDNS ...) sind geladen: erst dann weiss das Wiederherstellen, welche Fenster es gibt
+let taskbar = null;        // Taskleiste der VM im Dock (desktop-taskbar.js)
 const wins = new Map();    // id -> Fenster
 let zTop = 10;
 const sessWins = new Map(); // Sitzungskennung -> Fenster (jede Sitzung ein Fenster)
@@ -595,6 +597,12 @@ const remoteDeps = {
     else w.el.requestFullscreen({ navigationUI: 'hide' }).catch(() => notify(t('desktop.fullscreenFail')));
   },
   end: () => { const w = activeW(); if (w) closeWin(w); },
+  /** Taskleiste der VM im Dock: Menue der Verbindung (desktop-remote.js) */
+  taskbar: {
+    session: () => { const w = activeW(); return w && w.session && w.session.setTaskbar && w.session.display ? w.session : null; },
+    mark: () => { const s = remoteDeps.taskbar.session(); if (s) taskbar.mark(s); },
+    off: () => { const s = remoteDeps.taskbar.session(); if (s) s.setTaskbar(null); },
+  },
 };
 /** Fernmenues laufen, danach bekommt das Fernbild die Tastatur zurueck */
 const afterRemote = (items) => items && (items.then ? items.then(afterRemote) : items.map((it) => (it.run ? { ...it, run: () => { it.run(); setTimeout(() => remoteApi.focus(), 80); } } : it.sub ? { ...it, sub: afterRemote(it.sub) } : it)));
@@ -620,11 +628,20 @@ function renderMenus() {
 function renderBar() {
   renderMenus();
   renderPills();
+  syncTaskbar();
   syncKeys();
   const s = $('#dkSess', root); if (!s) return;
   const n = sessWins.size, a = Sessions.active;
   s.hidden = !n;
   if (n) s.querySelector('span').textContent = n === 1 ? (a ? a.title : t('desktop.session')) : t('desktop.sessionsN', { n });
+}
+/** Taskleiste der VM: im Dock steht die der Sitzung im Fokus; Platz am Rand belegt die im Fokus oder, sonst, eine andere sichtbare (damit der Fokuswechsel die Groesse der VM nicht aendert) */
+function syncTaskbar() {
+  if (!taskbar) return;
+  const has = [...sessWins.values()].filter((w) => !w.minimized && w.session.taskbar && w.session.taskbar());
+  const act = has.find((w) => w.el.classList.contains('active')) || null;
+  for (const w of sessWins.values()) w.el.classList.toggle('dk-tb-on', w === act);
+  taskbar.sync(act ? act.session : null, (act || has[0] || {}).session || null);
 }
 /** Menue der offenen Sitzungen (Menueleiste): wechseln, anordnen */
 function sessionMenu2(anchor) {
@@ -648,8 +665,7 @@ function tickClock() {
  *  Dock
  * ===================================================================== */
 function buildDock() {
-  // Die Zeile haelt den Dock und daneben einen Platz fuer den gerahmten Bereich der Taskleiste eines Fernen Desktops (docs/DOCK-REMOTE-TASKBAR.md, noch leer und verborgen)
-  const row = el('div', 'dk-dockrow'), slot = el('div', 'dk-dockext'); slot.hidden = true;
+  const row = el('div', 'dk-dockrow');
   const dock = el('nav', 'dk-dock'); dock.setAttribute('aria-label', t('desktop.dock'));
   const item = (id, name, a, extra) => {
     const b = btn('dk-di', `${ic(a.ic)}<span class="dk-dot"></span><span class="dk-tip"></span>`, name);
@@ -675,7 +691,7 @@ function buildDock() {
   );
   dock.addEventListener('contextmenu', (e) => { e.preventDefault(); dockMenu(dock); });
   dock.addEventListener('focusin', showDock);
-  row.append(dock, slot);
+  row.append(dock);
   return row;
 }
 /** Caddy und DDNS im Dock: erst sichtbar, wenn der Server das Modul eingeschaltet hat (applyModules) */
@@ -736,7 +752,7 @@ const PILL_STRIP = 10;     // Streifen am unteren Rand fuer die duennen Pillen (
 let dockMode = 'auto', dockCollapsed = false, dockShown = false, edgeTimer = null, hideTimer = null;
 function readDockMode() { try { const v = JSON.parse(localStorage.getItem('pd.dockMode')); return DOCK_MODES.some((m) => m[0] === v) ? v : 'auto'; } catch { return 'auto'; } }
 /** Platz am unteren Rand, den Fenster freihalten (maximiert und beim Oeffnen): nur wenn der Dock dort steht */
-function dockReserve() { return dockMode === 'always' || (dockMode === 'toggle' && !dockCollapsed) ? 96 : dockMode === 'toggle' ? 30 : PILL_STRIP; }
+function dockReserve() { return (dockMode === 'always' || (dockMode === 'toggle' && !dockCollapsed) ? 96 : dockMode === 'toggle' ? 30 : PILL_STRIP) + (taskbar ? taskbar.inset().bottom : 0); }
 function applyDock() {
   const dock = $('.dk-dockrow', root), knob = $('.dk-knob', root); if (!dock) return;
   const away = dockMode === 'auto' ? !dockShown : dockMode === 'toggle' && dockCollapsed;
@@ -744,6 +760,8 @@ function applyDock() {
   knob.hidden = dockMode !== 'toggle'; knob.classList.toggle('closed', dockCollapsed);
   knob.setAttribute('aria-label', dockCollapsed ? t('desktop.dockExpand') : t('desktop.dockCollapse')); knob.setAttribute('aria-expanded', dockCollapsed ? 'false' : 'true');
   root.style.setProperty('--dk-reserve', dockReserve() + 'px');
+  const ti = taskbar ? taskbar.inset() : { top: 0, right: 0, bottom: 0, left: 0 };       // Platz, den die Taskleiste der VM belegt (desktop-taskbar.js)
+  for (const [k, v] of [['t', ti.top], ['r', ti.right], ['b', ti.bottom], ['l', ti.left]]) root.style.setProperty('--dk-tb-' + k, v + 'px');
   root.dataset.dock = dockMode;
 }
 function setDockMode(m, quiet) {
@@ -765,7 +783,7 @@ function hideDock() {
 function wireDockHover() {
   document.addEventListener('pointermove', (e) => {
     if (dockMode !== 'auto' || !root || root.hidden) return;
-    const edge = e.clientY >= innerHeight - EDGE_PX;
+    const edge = e.clientY >= innerHeight - EDGE_PX - taskbar.inset().bottom && !(e.target.closest && e.target.closest('.dk-tb'));      // mit Taskleiste unten: der schmale Streifen ueber ihr ist der Rand, nicht sie selbst
     const keep = edge || (e.target.closest && e.target.closest('.dk-dockrow, .dk-pills, .dk-menu, .dk-launch'));
     if (dockShown) {
       if (keep) { clearTimeout(hideTimer); hideTimer = null; } else if (!hideTimer) hideTimer = setTimeout(hideDock, HIDE_DELAY);
@@ -1276,6 +1294,7 @@ export function sessionOpened(session, n) {
   const dot = el('span', 'dk-sdot busy'); dot.title = session.stateText; w.head.querySelector('.dk-wt').prepend(dot);
   w.dot = dot;
   session.addEventListener('titlechange', (e) => { w.head.querySelector('.dk-wt span:last-child').textContent = e.detail.title; w.el.setAttribute('aria-label', e.detail.title); renderBar(); });
+  session.addEventListener('taskbarchange', () => renderBar());
   session.addEventListener('statechange', (e) => { dot.className = 'dk-sdot ' + stateClass(e.detail.state); dot.title = e.detail.text; });
   session.mount(w.body);
   takePlaceholder(w, c.id);
@@ -1452,7 +1471,7 @@ export async function init(context) {
   });
   root = $('#desktop');
   root.replaceChildren();
-  wm = createWM({ root, wins, barH: BAR_H, view: viewport, area: () => { const v = viewport(); return { x: 0, y: BAR_H, w: v.w, h: v.h - BAR_H - dockReserve() }; }, fit: fitRect,
+  wm = createWM({ root, wins, barH: BAR_H, view: viewport, area: () => { const v = viewport(), ti = taskbar.inset(); return { x: ti.left, y: BAR_H + ti.top, w: v.w - ti.left - ti.right, h: v.h - BAR_H - ti.top - dockReserve() }; }, fit: fitRect,
     focusWin, minimizeWin, restoreWin, closeWin: (w) => closeWin(w), rootOf, setMax, saveRect, keysToRemote: () => keysToRemote(), notify: (m, ms) => notify(m, ms), ls });
   pills = createPills({ label: t('desktop.pillsLabel'), onClick: pillClick, onMenu: pillMenu });
   ws = createWorkspace({ root, ls, storage: localStorage, channel: (id) => (typeof BroadcastChannel === 'function' ? new BroadcastChannel('julos-workspace-' + id) : null),
@@ -1460,11 +1479,12 @@ export async function init(context) {
     whenReady: () => modulesReady.catch(() => {}), openApp: openAppByToken, openConnection: openReconnect, reconnect: reconnectWin,
     canAutoConnect: (id) => { const c = ctx.state.connections.find((x) => x.id.toLowerCase() === id); return !!c && c.kind !== 'vnc' && loginSaved(c); },     // nur mit gespeichertem Passwort: sonst braucht es den Benutzer
     place: placeFromDoc, finish: finishRestore });
+  taskbar = createTaskbar({ barH: BAR_H, focusRemote: () => remoteApi.focus(), notify: (m, ms) => notify(m, ms), onInset: () => applyDock() });
   pills.el.addEventListener('focusin', showDock);          // mit der Tastatur auf eine Pille: der Dock klappt auf
   const wp = el('div', 'dk-wp'); wp.innerHTML = scene(true);
   root.insertAdjacentHTML('afterbegin', DEFS);
   dockMode = readDockMode(); dockCollapsed = ls.get('dockCollapsed', false); dockShown = dockMode !== 'auto';
-  root.append(wp, buildBar(), buildDock(), pills.el, buildKnob());
+  root.append(wp, buildBar(), buildDock(), pills.el, taskbar.el, buildKnob());
   applyDock(); renderBar(); wireDockHover();
   remoteApi.setKeyOwner((e) => keysToRemote() && !(e && wm.claims(e)), () => setTimeout(markKeys, 0));   // die Tasten zum Wechseln des Fensters gehen nie ins Fernfenster (kein Tastaturfang)
   document.addEventListener('focusin', () => setTimeout(markKeys, 0));

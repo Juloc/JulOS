@@ -2567,4 +2567,11 @@ export default {
   "ws.gone": "This connection no longer exists.",
   "ws.forgotten": "This device is forgotten. The next time you open JulOS it starts fresh; until then nothing is remembered.",
   "ws.forgetFailed": "Forgetting did not work. Try again in a moment.",
+  "desktop.tbMark": "Mark taskbar",
+  "desktop.tbRemark": "Mark taskbar again",
+  "desktop.tbOff": "Taskbar off",
+  "desktop.tbLabel": "Taskbar of {name}",
+  "desktop.tbMarkHint": "Drag a rectangle over the VM's taskbar, from the edge of the picture to its inner edge.",
+  "desktop.tbMarkFail": "That does not look like a taskbar. The rectangle must end at an edge of the picture and cover almost its whole length.",
+  "desktop.tbMarked": "Taskbar marked: it now sits in the dock.",
 };

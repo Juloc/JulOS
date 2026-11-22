@@ -17,6 +17,7 @@ import { filesWindowSize } from './files-explorer.js';
 import { setDialogHost } from './desktop-window.js';
 import { createWM } from './desktop-wm.js';
 import { createPills } from './desktop-pills.js';
+import { createWorkspace, fitIntoView, isZone } from './desktop-workspace.js';
 
 /* =====================================================================
  * Desktop-Oberflaeche (breite Bildschirme mit Maus): Menueleiste, Dock, Launcher, Home-Fenster und ein Fenster
@@ -31,6 +32,8 @@ let ctx = null;            // von shell.js: { state, esc, api, connect, edit, ad
 let root = null;
 let wm = null;             // Fenstermanager (desktop-wm.js): Einrasten, Tastatur, Maustasten 4 und 5
 let pills = null;          // duenne Pillen des eingeklappten Docks (desktop-pills.js)
+let ws = null;             // Workspace pro Geraet (desktop-workspace.js): merkt sich die Fenster, stellt sie beim Start wieder her
+let modulesReady = Promise.resolve();   // die Module (Caddy, DDNS ...) sind geladen: erst dann weiss das Wiederherstellen, welche Fenster es gibt
 const wins = new Map();    // id -> Fenster
 let zTop = 10;
 const sessWins = new Map(); // Sitzungskennung -> Fenster (jede Sitzung ein Fenster)
@@ -245,12 +248,8 @@ function defaultRect(id, w, h, dx = 0, dy = 0) {
   w = Math.min(w, v.w - 40); h = Math.min(h, v.h - BAR_H - reserve);
   return { x: Math.round((v.w - w) / 2 + dx), y: Math.round(BAR_H + Math.max(12, (v.h - BAR_H - reserve - h) / 2) + dy), w, h };
 }
-function fitRect(r, minW, minH) {
-  const v = viewport();
-  const w = clamp(r.w, minW, v.w), h = clamp(r.h, minH, v.h - BAR_H);
-  // moeglichst ganz sichtbar halten; nur wenn der Bildschirm zu klein ist, ragt etwas heraus
-  return { w, h, x: clamp(r.x, 0, Math.max(0, v.w - w)), y: clamp(r.y, BAR_H, Math.max(BAR_H, v.h - h)) };
-}
+/** Moeglichst ganz sichtbar halten; nur wenn der Bildschirm zu klein ist, ragt etwas heraus (desktop-workspace.js, getestet) */
+const fitRect = (r, minW, minH) => fitIntoView(r, viewport(), BAR_H, minW, minH);
 
 /** Legt ein Fenster an. opts: id, title, icon (Kachel-HTML), cls, rect, minW, minH, head (Element fuer die Titelleiste), onClose */
 function createWindow(opts) {
@@ -336,7 +335,7 @@ function closeWin(w, force = false) {
   w.opts.onClose && w.opts.onClose(w);
   w.el.remove(); wins.delete(w.id); renderDock(); renderBar();
 }
-const saveRect = (w) => { if (!w.maximized && !w.dialog && !w.snap) ls.set('rect.' + w.id, { x: w.el.offsetLeft, y: w.el.offsetTop, w: w.el.offsetWidth, h: w.el.offsetHeight }); };
+const saveRect = (w) => { if (!w.maximized && !w.dialog && !w.snap && !w.reconnect) ls.set('rect.' + w.id, { x: w.el.offsetLeft, y: w.el.offsetTop, w: w.el.offsetWidth, h: w.el.offsetHeight }); };
 
 function wireResize(w) {
   for (const z of w.el.querySelectorAll('.dk-rz')) z.addEventListener('pointerdown', (ev) => {
@@ -715,7 +714,7 @@ function renderDock() {
 function renderPills() {
   if (!pills) return;
   const list = [...wins.values()].filter((w) => !w.dialog);
-  pills.update(list.map((w) => ({ id: w.id, title: w.el.getAttribute('aria-label') || w.opts.title, icon: w.opts.icon || '', remote: !!w.session, active: w.el.classList.contains('active') && !w.minimized, minimized: w.minimized, hint: w.minimized ? t('desktop.minimized') : '' })));
+  pills.update(list.map((w) => ({ id: w.id, title: w.el.getAttribute('aria-label') || w.opts.title, icon: w.opts.icon || '', remote: !!w.session || !!w.reconnect, active: w.el.classList.contains('active') && !w.minimized, minimized: w.minimized, hint: w.minimized ? t('desktop.minimized') : '' })));
   root.classList.toggle('dk-haspills', list.length > 0);
 }
 /** Klick auf eine Pille: ein minimiertes Fenster kommt zurueck, das aktive wird minimiert, jedes andere kommt nach vorn */
@@ -782,7 +781,7 @@ function dockItems() {
   return items;
 }
 function dockMenu(anchor) { showMenu(anchor, [{ cap: t('desktop.dock') }, ...dockItems()], 'above'); }
-function toggleDockCollapsed() { dockCollapsed = !dockCollapsed; ls.set('dockCollapsed', dockCollapsed); applyDock(); }
+function toggleDockCollapsed() { dockCollapsed = !dockCollapsed; ls.set('dockCollapsed', dockCollapsed); applyDock(); ws?.changed(); }
 function buildKnob() {
   const k = btn('dk-knob', ic('chev'), t('desktop.dockCollapse')); k.hidden = true;
   k.addEventListener('click', toggleDockCollapsed);
@@ -930,6 +929,7 @@ function goto(view) { if (view === nav.view) return; nav.back.push(nav.view); na
 
 function renderHome() {
   const w = wins.get('home'); if (!w) return;
+  ws?.changed();            // die Ansicht (Start, Hosts, Einstellungen ...) gehoert zum gemerkten Fenster
   w.side.replaceChildren();
   NAV.forEach((n, i) => {
     if (n.id === 'dateien') w.side.appendChild(document.createElement('hr'));
@@ -1123,6 +1123,8 @@ function dkSettingRow(r, ab) {
     case 'scheme': ctl = dkChoice('scheme', SCHEMES, getScheme(), label); break;
     case 'lang': ctl = dkChoice('lang', LANG_CHOICES.map(([id, l]) => [id, id === 'system' ? t('lang.system') : l]), getPref(), label); break;
     case 'dock': ctl = dkChoice('dockmode', DOCK_MODES, dockMode, label); break;
+    case 'wsRemember': ctl = dkChoice('ws', [['remember:on', t('set.on')], ['remember:off', t('set.off')]], 'remember:' + ws.option('remember'), label); break;
+    case 'wsReconnect': ctl = dkChoice('ws', [['reconnect:ask', t('set.wsAsk')], ['reconnect:auto', t('set.wsAuto')]], 'reconnect:' + ws.option('reconnect'), label); break;
     case 'backup': case 'backupCopy': {
       const info = r.id === 'backup' ? ab.backup : ab.copy; if (!info) return '';
       if (!info.next && !info.details) help = info.line;
@@ -1153,12 +1155,14 @@ function renderSettings(m) {
   }
 }
 function onMainClick(e) {
-  const t = e.target.closest('[data-conn],[data-edit],[data-extra],[data-act],[data-go],[data-app],[data-dockmode],[data-scheme],[data-lang],[data-hostfilter],[data-folderfilter],[data-groupby],[data-hostclose],[data-fav],[data-hostedit],[data-hostagent],[data-hostinfo],[data-hcact]'); if (!t) return;
+  const t = e.target.closest('[data-conn],[data-edit],[data-extra],[data-act],[data-go],[data-app],[data-dockmode],[data-ws],[data-scheme],[data-lang],[data-hostfilter],[data-folderfilter],[data-groupby],[data-hostclose],[data-fav],[data-hostedit],[data-hostagent],[data-hostinfo],[data-hcact]'); if (!t) return;
   const find = (id) => ctx.state.connections.find((c) => c.id === id);
   const host = (id) => ctx.state.hosts.find((h) => h.id === id);
   if (t.dataset.lang) { if (t.dataset.lang !== getPref()) setLanguage(t.dataset.lang); }
   else if (t.dataset.scheme) setTheme({ scheme: t.dataset.scheme });   // das Ereignis julos:scheme (app.js) zeichnet die Einstellungen neu
   else if (t.dataset.dockmode) setDockMode(t.dataset.dockmode);
+  else if (t.dataset.ws) { const [k, v] = t.dataset.ws.split(':'), mm = wins.get('home')?.main, y = mm ? mm.scrollTop : 0; ws.setOption(k, v); renderHome(); if (mm) mm.scrollTop = y; }
+  else if (t.dataset.act === 'wsForget') forgetDevice();
   else if (t.dataset.hostfilter !== undefined) { hostFilter.id = t.dataset.hostfilter; renderHome(); }
   else if (t.dataset.folderfilter !== undefined) { folderFilter.id = t.dataset.folderfilter; renderHome(); }
   else if (t.dataset.groupby) { folderFilter.by = t.dataset.groupby; renderHome(); }
@@ -1274,6 +1278,7 @@ export function sessionOpened(session, n) {
   session.addEventListener('titlechange', (e) => { w.head.querySelector('.dk-wt span:last-child').textContent = e.detail.title; w.el.setAttribute('aria-label', e.detail.title); renderBar(); });
   session.addEventListener('statechange', (e) => { dot.className = 'dk-sdot ' + stateClass(e.detail.state); dot.title = e.detail.text; });
   session.mount(w.body);
+  takePlaceholder(w, c.id);
   renderBar(); renderDock(); renderHome_ifOpen();
 }
 /** Die aktive Sitzung hat sich geaendert (Klick auf ein Fenster, neue Sitzung, anderes Fenster nach dem Schliessen). reveal = soll gezeigt werden. */
@@ -1326,6 +1331,111 @@ export function arrange(mode) { if (mode === 'tile') tileSessions(); else cascad
 export function isRunning(c) { return Sessions.find(c.id).length > 0; }
 
 /* =====================================================================
+ *  Workspace pro Geraet (desktop-workspace.js): welche Fenster und Verbindungen offen sind und wo sie liegen, wird gemerkt und beim Start wiederhergestellt.
+ *  Die Fenster der Apps kommen an ihren Platz zurueck; eine Verbindung wird nicht still wieder verbunden, sondern als Fenster "Wieder verbinden" angelegt
+ *  (Passwort, Host-Schluessel und Bestaetigung gehoeren dem Benutzer). Nur mit der Einstellung "Automatisch" und einem gespeicherten Passwort verbindet es von selbst.
+ * ===================================================================== */
+// Die Ansicht des Start-Fensters (home) steht im Dokument als App: start = home, die anderen heissen wie ihr Bereich
+const HOME_APP = { start: 'home', dienste: 'services', host: 'hosts', hosts: 'hosts', system: 'system', einstellungen: 'settings', apps: 'apps' };
+const HOME_VIEW = { home: 'start', services: 'dienste', hosts: 'hosts', system: 'system', settings: 'einstellungen', apps: 'apps' };
+const appToken = (w) => (w.id === 'home' ? HOME_APP[nav.view] || 'home' : ['files', 'about', 'caddy', 'ddns'].includes(w.id) ? w.id : null);
+/** Die Kennung des Fensters, das zu einer App des Dokuments gehoert (null: gibt es hier nicht, zum Beispiel ein Modul, das der Server ausgeschaltet hat) */
+const appKey = (token) => (HOME_VIEW[token] ? 'home' : token === 'files' || token === 'about' ? token : (token === 'caddy' || token === 'ddns') && modules[token] ? token : null);
+const styleRect = (w) => ({ x: parseFloat(w.el.style.left) || 0, y: parseFloat(w.el.style.top) || 0, w: parseFloat(w.el.style.width) || w.el.offsetWidth, h: parseFloat(w.el.style.height) || w.el.offsetHeight });
+
+/** Die offenen Fenster fuers Dokument: Apps, Sitzungen und Platzhalter, in der Reihenfolge der Pillen (kein Dialog, keine Aufgaben-Panels) */
+function workspaceList() {
+  const out = [];
+  for (const w of wins.values()) {
+    if (w.dialog) continue;
+    const conn = w.session ? w.session.conn.id : w.reconnect ? w.reconnect.connId : null, app = conn ? null : appToken(w);
+    if (!conn && !app) continue;
+    out.push({ id: w.id, kind: conn ? 'connection' : 'app', app, connectionId: conn, ...styleRect(w), z: parseInt(w.el.style.zIndex, 10) || 0,
+      minimized: w.minimized, maximized: w.maximized, snap: w.maximized ? 'max' : w.snap, restore: w.restore, active: w.el.classList.contains('active') });
+  }
+  return out;
+}
+
+async function openAppByToken(token) {
+  if (token === 'files') return openFiles();
+  if (token === 'caddy' || token === 'ddns') return openModule(token);
+  if (token === 'about') { await openAbout(); return wins.get('about') || null; }
+  return HOME_VIEW[token] ? openHome(HOME_VIEW[token]) : null;
+}
+
+/** Ort, Groesse und Zustand aus dem Dokument auf ein Fenster legen; ausserhalb des sichtbaren Bereichs (kleinerer Bildschirm) wird es hineingeschoben, eingerastete Fenster folgen ihrer Zone */
+function placeFromDoc(w, e, view) {
+  const r = fitIntoView(e.state === 'normal' ? e : e.restore || e, view, BAR_H, w.opts.minW || 320, w.opts.minH || 220);
+  wm.forget(w);
+  Object.assign(w.el.style, { left: r.x + 'px', top: r.y + 'px', width: r.w + 'px', height: r.h + 'px' });
+  saveRect(w);
+  const zone = e.state === 'max' ? 'max' : e.snap;
+  if ((e.state === 'max' || e.state === 'snapped' || e.state === 'min') && (zone === 'max' || isZone(zone))) wm.apply(w, zone);
+  if (e.state === 'min') minimizeWin(w);
+}
+
+/** Nach dem Wiederherstellen: Reihenfolge der Pillen, Stapelfolge und Fokus wie gespeichert */
+function finishRestore(entries, order, focusId) {
+  const now = (w) => { while (w.replacedBy) w = w.replacedBy; return w; };       // ein Platzhalter kann schon durch seine Sitzung ersetzt sein
+  const list = entries.map(({ win, entry }) => ({ w: now(win), id: entry.id, z: entry.z })).filter((x) => wins.has(x.w.id));
+  const ordered = order.map((id) => list.find((x) => x.id === id)?.w).filter(Boolean);
+  const rest = [...wins.values()].filter((o) => !ordered.includes(o));
+  wins.clear(); for (const o of [...ordered, ...rest]) wins.set(o.id, o);
+  for (const x of [...list].sort((a, b) => a.z - b.z)) if (!x.w.minimized) focusWin(x.w);
+  const f = list.find((x) => x.id === focusId);
+  if (f && !f.w.minimized) focusWin(f.w);
+  else { for (const o of wins.values()) o.el.classList.remove('active'); renderBar(); }       // nichts hatte den Fokus
+  renderPills();
+}
+
+/* ---------- Platzhalter "Wieder verbinden" ---------- */
+let reconSeq = 0;
+function openReconnect(connId) {
+  const c = ctx.state.connections.find((x) => x.id.toLowerCase() === connId);
+  if (!c) return null;
+  const w = createWindow({ id: 'r:' + (++reconSeq), title: c.name, cls: 'dk-reconwin', icon: sessionIcon(c), rect: defaultRect('session', SESSION_RECT.w, SESSION_RECT.h, 20, 0), minW: 360, minH: 220 });
+  w.reconnect = { connId: c.id };
+  const box = el('div', 'dk-recon'), name = el('b'), text = el('p'), go = btn('dk-btn pri', ic('play') + '<span></span>');
+  name.textContent = c.name; text.textContent = t('ws.reconnectText'); go.lastElementChild.textContent = t('ws.reconnect');
+  go.addEventListener('click', () => reconnectWin(w));
+  box.append(name, text, go); w.body.appendChild(box);
+  return w;
+}
+/** Der Knopf (oder die Einstellung "Automatisch"): verbinden wie von der Startseite; schon eine Sitzung dieser Verbindung offen, wird es eine weitere */
+function reconnectWin(w) {
+  const c = ctx.state.connections.find((x) => x.id === w.reconnect.connId);
+  if (!c) { notify(t('ws.gone')); return closeWin(w, true); }
+  w.reconnect.clicked = true;
+  ctx.connect(c, Sessions.find(c.id).length ? { extra: true } : {});
+}
+/** Eine neue Sitzung nimmt den Platz eines Platzhalters ihrer Verbindung ein (zuerst den, dessen Knopf gedrueckt wurde) und ersetzt ihn */
+function takePlaceholder(w, connId) {
+  const ph = [...wins.values()].filter((o) => o.reconnect && o.reconnect.connId === connId).sort((a, b) => (b.reconnect.clicked ? 1 : 0) - (a.reconnect.clicked ? 1 : 0))[0];
+  if (!ph) return;
+  const r = styleRect(ph);
+  Object.assign(w.el.style, { left: r.x + 'px', top: r.y + 'px', width: r.w + 'px', height: r.h + 'px' });
+  w.snap = ph.snap; w.restore = ph.restore;
+  if (ph.maximized) setMax(w, true);
+  if (ph.minimized) minimizeWin(w);
+  ph.replacedBy = w;
+  const before = [...wins.values()];
+  closeWin(ph, true);
+  const order = before.filter((o) => o !== w).map((o) => (o === ph ? w : o));       // die Sitzung steht in der Reihenfolge der Pillen dort, wo der Platzhalter stand
+  wins.clear(); for (const o of order) wins.set(o.id, o);
+  renderPills();
+}
+
+/** Einstellungen, "Dieses Geraet vergessen" */
+async function forgetDevice() {
+  const ok = await ws.forget();
+  notify(ok ? t('ws.forgotten') : t('ws.forgetFailed'), 6000);
+}
+async function startWorkspace() {
+  const n = await ws.start();
+  if (!n && !wins.size) openHome();
+}
+
+/* =====================================================================
  *  Schnittstelle zu shell.js
  * ===================================================================== */
 export async function init(context) {
@@ -1345,6 +1455,11 @@ export async function init(context) {
   wm = createWM({ root, wins, barH: BAR_H, view: viewport, area: () => { const v = viewport(); return { x: 0, y: BAR_H, w: v.w, h: v.h - BAR_H - dockReserve() }; }, fit: fitRect,
     focusWin, minimizeWin, restoreWin, closeWin: (w) => closeWin(w), rootOf, setMax, saveRect, keysToRemote: () => keysToRemote(), notify: (m, ms) => notify(m, ms), ls });
   pills = createPills({ label: t('desktop.pillsLabel'), onClick: pillClick, onMenu: pillMenu });
+  ws = createWorkspace({ root, ls, storage: localStorage, channel: (id) => (typeof BroadcastChannel === 'function' ? new BroadcastChannel('julos-workspace-' + id) : null),
+    collect: () => ({ list: workspaceList(), view: viewport(), collapsed: dockCollapsed }), appKey, connectionIds: () => new Set(ctx.state.connections.map((c) => c.id.toLowerCase())),
+    whenReady: () => modulesReady.catch(() => {}), openApp: openAppByToken, openConnection: openReconnect, reconnect: reconnectWin,
+    canAutoConnect: (id) => { const c = ctx.state.connections.find((x) => x.id.toLowerCase() === id); return !!c && c.kind !== 'vnc' && loginSaved(c); },     // nur mit gespeichertem Passwort: sonst braucht es den Benutzer
+    place: placeFromDoc, finish: finishRestore });
   pills.el.addEventListener('focusin', showDock);          // mit der Tastatur auf eine Pille: der Dock klappt auf
   const wp = el('div', 'dk-wp'); wp.innerHTML = scene(true);
   root.insertAdjacentHTML('afterbegin', DEFS);
@@ -1363,9 +1478,9 @@ export async function init(context) {
 }
 /** Nach Anmeldung (oder wenn die Seite die Startansicht zeigt): Konto setzen, Home-Fenster oeffnen */
 export function userChanged(user, message) {
-  import('./modules.js').then((m) => m.loadModules(ctx.api)).then((m) => { modules = m; applyModules(); const hw = wins.get('home'); if (hw && nav.view === 'start') mountHeim(hw.main); });
+  modulesReady = import('./modules.js').then((m) => m.loadModules(ctx.api)).then((m) => { modules = m; applyModules(); const hw = wins.get('home'); if (hw && nav.view === 'start') mountHeim(hw.main); });
   const av = $('#dkUser .dk-avatar', root); if (av) av.textContent = (user || '?').slice(0, 1);
-  if (!wins.has('home') && !wins.size) openHome();
+  if (!wins.size) startWorkspace();
   if (dockMode === 'auto' && !dockHinted) { dockHinted = true; showDock(); hideTimer = setTimeout(hideDock, 3500); }
   notify(message);
 }
@@ -1385,6 +1500,7 @@ export function hostInfoChanged() {
 /** Abgemeldet oder Anmeldung noetig: alle Fenster zu */
 export function reset() {
   if (!root) return;
+  ws.stop();           // die Fenster werden gleich abgeraeumt: das darf nicht als leerer Desktop gespeichert werden
   closeMenu(); closeLauncher(); wm.endMove();
   for (const w of [...wins.values()]) { if (!w.dialog) w.opts.onClose = null; closeWin(w, true); }     // ein Dialog-Fenster meldet beim Schliessen "abgebrochen" (sein Versprechen endet)
   sessWins.clear(); taskWins.clear(); renderTaskChip();

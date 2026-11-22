@@ -17,6 +17,8 @@ function watchErrors(page) {
 async function signedIn(browser, options = DESKTOP) {
   if (!existsSync(AUTH_FILE)) throw new Error('Keine Anmeldung aus Test 1 vorhanden (er muss zuerst laufen und bestehen).');
   const context = await browser.newContext({ ...options, storageState: AUTH_FILE, baseURL: 'http://127.0.0.1:8080' });
+  // Fenster merken aus: die Ablaeufe starten sonst mit den Fenstern des vorigen Tests (die Wiederherstellung selbst wird von Hand im Browser geprueft)
+  await context.addInitScript(() => localStorage.setItem('pd.dk.ws.remember', 'false'));
   const page = await context.newPage();
   return { context, page, errors: watchErrors(page) };
 }

@@ -1136,6 +1136,7 @@ export class RemoteSession extends Session {
     return Math.max(0, this.display.getHeight() * this.display.getScale() - r.height);
   }
   applyPan() {
+    if (!this.display) return;
     const max = this.panMax();
     if (max <= 0) this.panY = 0;
     else {

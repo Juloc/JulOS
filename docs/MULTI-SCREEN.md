@@ -1,6 +1,6 @@
-# One desktop over several browser windows (plan, not built)
+# One desktop over several browser windows (plan; workspace server built)
 
-Status: **planned**. Decisions of the owner on 2026-11-21 (interview). Nothing is built yet; the order of work is at the end.
+Status: **planned**; the server side of the workspace (step 1, point 1 below) is **built** (see "Workspace on the server"), the browser side is not. Decisions of the owner on 2026-11-21 (interview); the order of work is at the end.
 
 ## What the owner wants
 
@@ -12,7 +12,7 @@ Status: **planned**. Decisions of the owner on 2026-11-21 (interview). Nothing i
 
 ## What this needs (design)
 
-1. **Device and workspace on the server.** Every browser gets a device id (kept locally and registered with the account, see "Devices and sessions"). The server stores one **workspace** per user and device: the list of screens (browser windows with their size), and the list of windows (kind: app or connection, connection id, geometry in desktop coordinates, stacking order, state). A change is sent over one WebSocket and written to the database; all windows of the device (and the same account on another device, if the owner wants to continue there) follow.
+1. **Device and workspace on the server.** Every browser makes up a device id (random, kept locally) and uses it for its workspace; the server stores one **workspace** per user and device: the list of screens (browser windows with their size), and the list of windows (kind: app or connection, connection id, geometry in desktop coordinates, stacking order, state). The browser saves the whole document after a change (debounced) and reads it when it opens. Browser windows of one device share state through `BroadcastChannel` and use the version check below against overwriting each other; the server is the memory and the list of devices for "continue on the phone". Built, see the next section. (A WebSocket for live updates to other devices is not part of it; polling the read endpoint is enough until that is wanted.)
 2. **One coordinate system for all browser windows.** A browser window knows its place on the real monitors (`window.screenX`, `screenY`, `outerWidth`, `innerWidth`, the browser frame offset) and reports it; the desktop is the union of these rectangles in screen coordinates. So the arrangement comes **from where the owner really put the browser windows**, no setup. Moving a browser window moves its part of the desktop. Browsers on one device share state without delay through `BroadcastChannel`, the server is the memory and the bridge to other devices.
 3. **Dragging across the border.** While the button is held, pointer capture keeps delivering the pointer in global screen coordinates (`screenX`, `screenY`) even outside the page; every window computes where the drag is in its own area and draws the window part that lies inside. The window manager of JulOS (not the browser) owns all of this, including snapping.
 4. **Keyboard.** The Windows key is reserved by the operating system; in full screen the Keyboard Lock API can take it (the code already does that for the remote windows). Without full screen, an alternative modifier (for example Ctrl+Alt+arrows) moves and snaps the active window. Snap zones: left and right half, quarters, maximise, restore, also across screens. The key bindings are settings, not constants.
@@ -20,9 +20,44 @@ Status: **planned**. Decisions of the owner on 2026-11-21 (interview). Nothing i
 6. **Streams across the border (the hard part).** Today a connection has one viewer per user; a second browser takes it over (status 777). New: **several viewers of one session**. The server sends the same encoded video to every viewer of the connection, each viewer gets a keyframe when it joins, and each browser window draws the whole picture offset so that only its part is visible. Input comes from the window under the pointer; clipboard and sound belong to the focused viewer. Each viewer has its own back-pressure, so a slow window cannot slow the others. Measure the extra cost (encoding is shared, only the sending multiplies).
 7. **Continue on the phone.** The phone is not part of the spanned desktop. "Continue here" opens the same connection on the phone as a viewer or takes it over (the owner's choice per connection); the window state is read from the workspace.
 
+## Workspace on the server (built, no interface yet)
+
+**Storage:** an own table `workspaces (user_id, device_id, name, doc jsonb, version, created_at, updated_at)` (migration `023_workspaces.sql`, primary key user and device), not the per-user settings store. The settings store has a fixed list of keys that `GET /api/settings` sends to every client, no version column and no list of devices; a key per device would bend all three. The table needs nothing else, and it is in the backup like every table (`DbDump` takes all of them; a test restores a workspace) and goes away with its user (`on delete cascade`).
+
+**The device id** comes from the browser (`[A-Za-z0-9_-]{8,64}`, random, kept locally). It is no secret and opens nothing: every request needs a session, and every query has the user in its condition, so a foreign user with the same id gets 404 and an own empty row, never the other's data. At most **16 devices per user**; a new one above that replaces the one unused longest (browsers that clear their data would otherwise only leave dead rows).
+
+| Route | What |
+| --- | --- |
+| `GET /api/workspaces` | `{ devices: [{ deviceId, name, version, updatedAt, windows, connections: [id] }] }`, most recently saved first. `connections` are the open connections of that device (only the user's own that still exist): what "continue here" picks from. |
+| `GET /api/workspaces/{deviceId}` | `{ deviceId, name, version, updatedAt, doc }`, `404 not_found` if nothing is saved. Windows of deleted connections are left out. |
+| `PUT /api/workspaces/{deviceId}` | body `{ version, name?, doc }`; answer `{ version, updatedAt, dropped }`. `version` is the version the browser based its document on, `0` for "I have none". `name` (40 characters) is the display name of the device, kept when omitted. |
+| `DELETE /api/workspaces/{deviceId}` | forget the device: `204`, also when there was nothing |
+
+**Errors** (body `{ error, code }`): `400 invalid_device` (bad id), `400 invalid_request` (version or doc missing, version below 0), `400 invalid_doc` (the message says which field), `401` without session, `403` without the `X-JulOS` header or from another origin, `409 workspace_conflict`, `413` above 64 KiB, `429 rate_limited` (writes 120 per minute and user, reads 240).
+
+**Version check (no overwriting by a second browser window):** saving is one SQL statement that only writes when the stored version equals `version`, and then counts up; of several writers with the same version exactly one wins. A stale writer gets `409 workspace_conflict` with `{ version, updatedAt, doc }` of the current state (`version: 0` and no `doc` when the device was forgotten in the meantime). It is last-write-wins with a hint: the client may adopt the returned document, or repeat its own save with the returned `version` to overwrite. A save with `version: 0` while the device already exists gets the same 409.
+
+**Document** (checked and rewritten like `SettingsRules`: unknown fields are dropped, wrong types or values outside a list are `invalid_doc`, numbers are rounded and limited to their range, ids and names are patterns; no credentials, no targets, only connection ids):
+
+```json
+{ "screens": [{ "id": "s1", "x": 0, "y": 0, "w": 1920, "h": 1080 }],
+  "windows": [{ "id": "w1", "kind": "app", "app": "files", "x": 10, "y": 20, "w": 800, "h": 600, "z": 3, "state": "normal" },
+              { "id": "w2", "kind": "connection", "connectionId": "<uuid>", "x": 0, "y": 0, "w": 1920, "h": 1080, "z": 4, "state": "snapped", "snap": "left",
+                "restore": { "x": 100, "y": 100, "w": 800, "h": 600 } }],
+  "focus": "w2",
+  "dock": { "collapsed": false, "side": "bottom", "order": ["w1", "w2"] } }
+```
+
+- Everything is in desktop coordinates (the union of the screens). `x`, `y` are limited to ±100000, `w`, `h` to 1 to 100000, `z` to 0 to 100000; all whole numbers on disk.
+- `id` of screens and windows: `[A-Za-z0-9_:.-]{1,64}`, unique in the document. `kind` is `app` (needs `app`, `[a-z0-9_-]{1,30}`) or `connection` (needs `connectionId`, a UUID). `state` is `normal`, `min`, `max` or `snapped`; `snap` is a free token naming the zone (`[a-z0-9_-]{1,30}`) and is only stored. `restore` (optional) is the rectangle to go back to from `max` or `snapped`.
+- Limits: 32 windows, 8 screens, 64 entries in `dock.order`, 64 KiB per document (the 64 KiB request limit comes first). `focus` is kept only if a window with that id exists. All `dock` fields are optional; the dock fields are the ones of the pills (side, folded, order), more can be added in `WorkspaceRules` when the dock needs them.
+- **Connections must belong to the user.** On saving, a window whose `connectionId` is not one of the user's connections is dropped (counted in `dropped`) and never stored; on reading, windows of connections deleted since are left out as well.
+
+Not covered, on purpose: windows of other apps' own state (the Files view has its own setting `files`), a live push to other browsers or devices, removal of devices unused for months (the limit of 16 keeps the table small).
+
 ## Order of work (each step releasable on its own)
 
-1. **Window manager in one browser window:** keyboard move, size and snap, mouse buttons 4 and 5, thin dock pills, workspace per device saved on the server and restored (screens, open connections, geometry).
+1. **Window manager in one browser window:** keyboard move, size and snap, mouse buttons 4 and 5, thin dock pills, workspace per device saved on the server and restored (screens, open connections, geometry). Server side of the workspace is built; the browser side (save, restore, device list) follows the window manager.
 2. **Several browser windows, apps without a stream first** (Files explorer, Hosts, Settings): shared workspace, global coordinates from the real window positions, drag across the border, one window shown in two browsers.
 3. **Several viewers per connection** (engine and relay change) so that a remote screen can lie across the border; shared pacing; input and clipboard owner.
 4. **Continue on the phone** and across devices.

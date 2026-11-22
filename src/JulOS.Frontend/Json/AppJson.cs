@@ -12,6 +12,7 @@ using JulOS.Frontend.Security;
 using JulOS.Frontend.Push;
 using JulOS.Frontend.Settings;
 using JulOS.Frontend.Tools;
+using JulOS.Frontend.Workspaces;
 using JulOS.Integrations.Reachability;
 using JulOS.Frontend.SystemInfo;
 
@@ -148,6 +149,11 @@ namespace JulOS.Frontend;
 [JsonSerializable(typeof(SecurityAuditResponse))]
 [JsonSerializable(typeof(SettingsResponse))]
 [JsonSerializable(typeof(SettingRequest))]
+[JsonSerializable(typeof(WorkspaceSaveRequest))]
+[JsonSerializable(typeof(WorkspaceSaved))]
+[JsonSerializable(typeof(WorkspaceDto))]
+[JsonSerializable(typeof(WorkspaceListResponse))]
+[JsonSerializable(typeof(WorkspaceConflict))]
 [JsonSerializable(typeof(CaddyListing))]
 [JsonSerializable(typeof(CaddyReachability))]
 [JsonSerializable(typeof(DdnsStatus))]

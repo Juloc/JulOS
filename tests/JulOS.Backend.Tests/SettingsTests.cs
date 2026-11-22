@@ -73,6 +73,27 @@ public sealed class SettingsTests
     }
 
     [Fact]
+    public void The_appearance_setting_keeps_only_known_fields_and_limits_sizes()
+    {
+        const string id = "3f2b8a52-6d1e-4c9a-9a57-0c1c2a7e9d10";
+        var good = """{"accent":"#2F6FE0","bg":"ocean","evil":1,"dock":{"mode":"always","size":"l","x":1},"icons":{"size":"s","style":"filled","over":{"ID":{"k":"database","c":"red","z":1},"bad id!":{"k":"bolt"},"empty":{}},"y":2}}""".Replace("ID", id);
+        var (json, error) = SettingsRules.Validate("appearance", J(good));
+        Assert.Null(error);
+        Assert.Equal("""{"accent":"#2f6fe0","bg":"ocean","dock":{"mode":"always","size":"l"},"icons":{"size":"s","style":"filled","over":{"ID":{"k":"database","c":"red"}}}}""".Replace("ID", id), json);
+
+        // nur Abweichungen vom Standard werden gespeichert; Unbekanntes in den festen Listen faellt auf den Standard
+        Assert.Equal("{}", SettingsRules.Validate("appearance", J("""{"bg":"scene","dock":{"mode":"neon","size":"m"},"icons":{"size":"xl","style":"x","over":{}}}""")).Json);
+        Assert.Equal("""{"accent":"#000000"}""", SettingsRules.Validate("appearance", J("""{"accent":"#000000"}""")).Json);
+        Assert.Equal("{}", SettingsRules.Validate("appearance", J("""{"accent":null}""")).Json);
+
+        // Farbformat, Kennungen, Grenzen
+        var many = string.Join(",", Enumerable.Range(0, SettingsRules.MaxIconOverrides + 1).Select(i => "\"c" + i + "\":{\"k\":\"bolt\"}"));
+        var bad = new[] { "[1]", "\"x\"", """{"accent":"red"}""", """{"accent":"#fff"}""", """{"accent":"#12345g"}""", """{"accent":5}""", """{"bg":"Neon Bunt!"}""", "{\"bg\":\"" + new string('a', 31) + "\"}",
+            """{"icons":{"over":{"c1":{"k":"Bad Key"}}}}""", """{"icons":{"over":{"c1":{"c":"a;b"}}}}""", "{\"icons\":{\"over\":{" + many + "}}}" };
+        foreach (var b in bad) Assert.NotNull(SettingsRules.Validate("appearance", J(b)).Error);
+    }
+
+    [Fact]
     public async Task The_settings_table_comes_with_the_migration_and_old_data_is_untouched()
     {
         await using var db = await FolderTests.CreateBeforeFoldersAsync();

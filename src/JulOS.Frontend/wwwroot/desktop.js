@@ -1471,6 +1471,7 @@ export async function init(context) {
   });
   root = $('#desktop');
   root.replaceChildren();
+  taskbar = createTaskbar({ barH: BAR_H, focusRemote: () => remoteApi.focus(), notify: (m, ms) => notify(m, ms), onInset: () => applyDock() });
   wm = createWM({ root, wins, barH: BAR_H, view: viewport, area: () => { const v = viewport(), ti = taskbar.inset(); return { x: ti.left, y: BAR_H + ti.top, w: v.w - ti.left - ti.right, h: v.h - BAR_H - ti.top - dockReserve() }; }, fit: fitRect,
     focusWin, minimizeWin, restoreWin, closeWin: (w) => closeWin(w), rootOf, setMax, saveRect, keysToRemote: () => keysToRemote(), notify: (m, ms) => notify(m, ms), ls });
   pills = createPills({ label: t('desktop.pillsLabel'), onClick: pillClick, onMenu: pillMenu });
@@ -1479,7 +1480,6 @@ export async function init(context) {
     whenReady: () => modulesReady.catch(() => {}), openApp: openAppByToken, openConnection: openReconnect, reconnect: reconnectWin,
     canAutoConnect: (id) => { const c = ctx.state.connections.find((x) => x.id.toLowerCase() === id); return !!c && c.kind !== 'vnc' && loginSaved(c); },     // nur mit gespeichertem Passwort: sonst braucht es den Benutzer
     place: placeFromDoc, finish: finishRestore });
-  taskbar = createTaskbar({ barH: BAR_H, focusRemote: () => remoteApi.focus(), notify: (m, ms) => notify(m, ms), onInset: () => applyDock() });
   pills.el.addEventListener('focusin', showDock);          // mit der Tastatur auf eine Pille: der Dock klappt auf
   const wp = el('div', 'dk-wp'); wp.innerHTML = scene(true);
   root.insertAdjacentHTML('afterbegin', DEFS);

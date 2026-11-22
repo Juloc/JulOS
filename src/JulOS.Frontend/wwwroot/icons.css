@@ -1,0 +1,20 @@
+/* Symbolfamilie (icons.js, docs/ICONS.md): Strichsymbole mit currentColor, gemeinsam fuer Desktop und Handy.
+ * Aussehen (appearance.js): --ic-s (Groesse der Kacheln, 0,85 / 1 / 1,2) und data-icon-style="filled" (Formen mit Flaeche, class="f", werden getont) setzt app.js auf html. */
+svg.fi { fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; }
+/* Die Handy-Oberflaeche fuellt Symbole in Tasten mit currentColor (Material-Symbole): die Formen der Familie zeichnen sich selbst als Strich */
+svg.fi :is(path, rect, circle, ellipse) { fill: none; stroke: currentColor; }
+html[data-icon-style="filled"] :is(.dk-ti, .dk-di, .tile .ti, .icon-prev, .icon-pick .pk) svg.fi { stroke-width: 2.1; }
+html[data-icon-style="filled"] :is(.dk-ti, .dk-di, .tile .ti, .icon-prev, .icon-pick .pk) svg.fi .f { fill: currentColor; fill-opacity: .34; }
+
+/* Auswahl des Symbols einer Verbindung (icon-picker.js, im Dialog der Verbindung) */
+.icon-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0 4px; }
+.icon-row > span.lbl { flex: 1 0 100%; font-size: 12.5px; opacity: .85; }
+.icon-prev { width: 40px; height: 40px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; color: #fff; background: linear-gradient(145deg, var(--g1, #7b78ee), var(--g2, #5160e6)); }
+.icon-prev svg { width: 22px; height: 22px; }
+.icon-pick { flex: 1 0 100%; display: flex; flex-direction: column; gap: 8px; }
+.icon-pick .glyphs, .icon-pick .colors { display: flex; flex-wrap: wrap; gap: 6px; }
+.icon-pick button.pk { width: 38px; height: 38px; min-height: 0; padding: 0; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; color: var(--text, inherit); background: transparent; border: 1px solid var(--line, currentColor); }
+.icon-pick button.pk svg { width: 20px; height: 20px; }
+.icon-pick button.pk[aria-checked="true"] { outline: 2px solid var(--md-primary, currentColor); outline-offset: 1px; }
+.icon-pick button.cl { width: 28px; height: 28px; min-height: 0; padding: 0; border-radius: 50%; border: 1px solid var(--line, currentColor); background: linear-gradient(145deg, var(--g1), var(--g2)); }
+.icon-pick button.cl[aria-checked="true"] { outline: 2px solid var(--md-primary, currentColor); outline-offset: 2px; }

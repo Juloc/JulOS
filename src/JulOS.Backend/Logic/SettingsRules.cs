@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 namespace JulOS.Backend.Logic;
 
 /// <summary>
-/// Einstellungen, die der Server je Benutzer merkt (Tastenleiste, Themenfarbe, Sprache). Es gibt nur diese Schluessel, und jeder Wert wird geprueft und neu
+/// Einstellungen, die der Server je Benutzer merkt (Tastenleiste, Themenfarbe, Sprache, Aussehen). Es gibt nur diese Schluessel, und jeder Wert wird geprueft und neu
 /// geschrieben: unbekannte Felder fallen weg, Laengen und Zahl der Eintraege sind begrenzt. So kann ein Browser dem Server nichts Beliebiges unterschieben.
 /// </summary>
 public static partial class SettingsRules
@@ -15,9 +15,10 @@ public static partial class SettingsRules
     public const string Theme = "theme";
     public const string Lang = "lang";
     public const string Files = "files";
-    public static readonly IReadOnlyList<string> Keys = [Keybar, Theme, Lang, Files];
+    public const string Appearance = "appearance";
+    public static readonly IReadOnlyList<string> Keys = [Keybar, Theme, Lang, Files, Appearance];
 
-    public const int MaxPins = 100, MaxClosed = 200;
+    public const int MaxPins = 100, MaxClosed = 200, MaxIconOverrides = 200;
 
     public const int MaxRows = 12, MaxItemsPerRow = 60;
 
@@ -44,6 +45,7 @@ public static partial class SettingsRules
                 Theme => (WriteTheme(value), null),
                 Lang => (WriteLang(value), null),
                 Files => (WriteFiles(value), null),
+                Appearance => (WriteAppearance(value), null),
                 _ => (null, "Unbekannte Einstellung."),
             };
         }
@@ -69,6 +71,73 @@ public static partial class SettingsRules
         using (var w = new Utf8JsonWriter(ms, Plain))
         {
             w.WriteStartObject(); w.WriteString("seed", seed.ToLowerInvariant()); w.WriteString("scheme", scheme); w.WriteEndObject();
+        }
+        return Encoding.UTF8.GetString(ms.ToArray());
+    }
+
+    private static readonly string[] DockModes = ["auto", "always", "toggle"], Sizes = ["s", "m", "l"], IconStyles = ["outline", "filled"];
+
+    /// <summary>
+    /// Das Aussehen der Oberflaeche (docs/APPEARANCE.md): Akzentfarbe, Hintergrund, Dock, Symbole. Gespeichert wird nur, was vom Standard abweicht, also darf jedes Feld fehlen.
+    /// Hintergrund, Symbol und Farbname je Verbindung sind Namen aus einer festen Familie des Browsers; hier zaehlt nur die Form (kleine Kennung), ein Unbekannter faellt im Browser auf automatisch.
+    /// Die Symbole je Verbindung sind auf <see cref="MaxIconOverrides"/> Eintraege begrenzt, die Kennung der Verbindung ist nur eine Zeichenkette (sie gibt nichts frei).
+    /// </summary>
+    private static string WriteAppearance(JsonElement v)
+    {
+        if (v.ValueKind != JsonValueKind.Object) throw new FormatException("Aussehen erwartet ein Objekt.");
+        using var ms = new MemoryStream();
+        using (var w = new Utf8JsonWriter(ms, Plain))
+        {
+            w.WriteStartObject();
+            if (v.TryGetProperty("accent", out var accent) && accent.ValueKind != JsonValueKind.Null)
+            {
+                var hex = accent.ValueKind == JsonValueKind.String ? accent.GetString() ?? "" : "";
+                if (!HexColor().IsMatch(hex)) throw new FormatException("Akzentfarbe ungültig (#rrggbb).");
+                w.WriteString("accent", hex.ToLowerInvariant());
+            }
+            var bg = Text(v, "bg", 30, required: false);
+            if (bg.Length > 0) { if (!Token().IsMatch(bg)) throw new FormatException("Hintergrund ungültig."); if (bg != "scene") w.WriteString("bg", bg); }
+            if (v.TryGetProperty("dock", out var dock) && dock.ValueKind == JsonValueKind.Object)
+            {
+                var mode = OneOf(dock, "mode", DockModes); var size = OneOf(dock, "size", Sizes, "m");
+                if (mode != "auto" || size != "m")
+                {
+                    w.WritePropertyName("dock"); w.WriteStartObject();
+                    if (mode != "auto") w.WriteString("mode", mode);
+                    if (size != "m") w.WriteString("size", size);
+                    w.WriteEndObject();
+                }
+            }
+            if (v.TryGetProperty("icons", out var icons) && icons.ValueKind == JsonValueKind.Object)
+            {
+                var size = OneOf(icons, "size", Sizes, "m"); var style = OneOf(icons, "style", IconStyles);
+                var entries = new List<(string Id, string K, string C)>();
+                if (icons.TryGetProperty("over", out var over) && over.ValueKind == JsonValueKind.Object)
+                {
+                    if (over.EnumerateObject().Count() > MaxIconOverrides) throw new FormatException("Zu viele Symbole.");
+                    foreach (var p in over.EnumerateObject())
+                    {
+                        if (!PlaceId().IsMatch(p.Name) || p.Value.ValueKind != JsonValueKind.Object) continue;
+                        var k = Text(p.Value, "k", 30, required: false); var c = Text(p.Value, "c", 30, required: false);
+                        if ((k.Length > 0 && !Token().IsMatch(k)) || (c.Length > 0 && !Token().IsMatch(c))) throw new FormatException("Symbol oder Farbe ungültig.");
+                        if (k.Length > 0 || c.Length > 0) entries.Add((p.Name, k, c));
+                    }
+                }
+                if (size != "m" || style != IconStyles[0] || entries.Count > 0)
+                {
+                    w.WritePropertyName("icons"); w.WriteStartObject();
+                    if (size != "m") w.WriteString("size", size);
+                    if (style != IconStyles[0]) w.WriteString("style", style);
+                    if (entries.Count > 0)
+                    {
+                        w.WritePropertyName("over"); w.WriteStartObject();
+                        foreach (var (id, k, c) in entries) { w.WritePropertyName(id); w.WriteStartObject(); if (k.Length > 0) w.WriteString("k", k); if (c.Length > 0) w.WriteString("c", c); w.WriteEndObject(); }
+                        w.WriteEndObject();
+                    }
+                    w.WriteEndObject();
+                }
+            }
+            w.WriteEndObject();
         }
         return Encoding.UTF8.GetString(ms.ToArray());
     }
@@ -131,10 +200,10 @@ public static partial class SettingsRules
         return Encoding.UTF8.GetString(ms.ToArray());
     }
 
-    private static string OneOf(JsonElement o, string name, string[] allowed)
+    private static string OneOf(JsonElement o, string name, string[] allowed, string? fallback = null)
     {
         var s = Text(o, name, 12, required: false);
-        return allowed.Contains(s) ? s : allowed[0];
+        return allowed.Contains(s) ? s : fallback ?? allowed[0];
     }
 
     private static string WriteLang(JsonElement v)

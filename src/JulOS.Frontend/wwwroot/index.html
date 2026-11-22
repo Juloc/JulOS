@@ -12,6 +12,7 @@
   <link rel="icon" href="icon-32.png" type="image/png" sizes="32x32">
   <link rel="apple-touch-icon" href="icon-180.png">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="icons.css">
   <link rel="stylesheet" href="terminal.css">
   <link rel="stylesheet" href="widgets.css">
   <link rel="stylesheet" href="hostui.css">
@@ -229,6 +230,13 @@
         <label id="connForgetRow" class="check" hidden data-i18n="app.forgetPassword"><input id="connForget" type="checkbox"> Gespeichertes Passwort löschen</label>
         <p id="connPwHint" class="hint"></p>
         <label><span data-i18n="app.notes">Notizen <span class="opt" data-i18n="app.optional">(optional)</span></span> <textarea id="connNotes" rows="2" maxlength="500" autocomplete="off" placeholder="Wofür ist das Ziel, Besonderheiten …" data-i18n-placeholder="app.notesPh"></textarea></label>
+        <div id="connIconRow" class="icon-row" hidden>
+          <span class="lbl" data-i18n="ico.title">Symbol</span>
+          <span id="connIconPrev" class="icon-prev" aria-hidden="true"></span>
+          <button id="connIconChange" type="button" class="ghost" data-i18n="ico.change">Ändern …</button>
+          <button id="connIconAuto" type="button" class="ghost" data-i18n="ico.auto">Automatisch</button>
+          <div id="connIconPick" class="icon-pick" hidden></div>
+        </div>
         <p id="connMsg" class="msg" role="alert"></p>
         <div class="row">
           <button id="connSave" type="submit" class="primary" data-i18n="common.save">Speichern</button>

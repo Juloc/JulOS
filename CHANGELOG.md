@@ -6,6 +6,14 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+### Neu
+- **Icons kommen automatisch** ([docs/ICONS.md](docs/ICONS.md)): Kacheln, Dock, Pillen, Fenstertitel, die Listen am Handy und die Host-Karten holen ihr Symbol und ihre Farbe von **einer** Stelle (`icons.js`, reine Funktionen mit Test) aus Verbindungsart, Programm (Claude Code, Codex, eigener Befehl nach dem ersten Wort) und dem Betriebssystem des Hosts, wenn JulOS es kennt (RDP-Desktop eines Windows-Rechners, Shell auf Proxmox, Home Assistant, Synology). Eine eigene, kleine Symbolfamilie (etwa 50 Strichsymbole, selbst gezeichnet, keine Marken-Logos, neutrale Zeichen für Betriebssysteme). Je Verbindung lassen sich Symbol und Farbe im Dialog der Verbindung überschreiben („Automatisch“ setzt zurück; gespeichert je Benutzer auf dem Server). Am Handy sind die Kacheln jetzt farbig wie am Desktop.
+- **Aussehen anpassbar** ([docs/APPEARANCE.md](docs/APPEARANCE.md)): Einstellungen, Abschnitt „Aussehen“: **Akzentfarbe** (acht feste Farben und eine eigene; die Oberfläche rechnet daraus Farben mit gesichertem Kontrast, Text 4,5:1, Symbole 3:1, auch im Dunkeln), **Hintergrund** (das gemalte Bild, sechs Verläufe, zwei Muster), **Dock** (Modus wie bisher, neu die Größe), **Symbole** (Größe, Stil Umriss oder gefüllt). Alles wirkt sofort ohne Neuladen, „Zurücksetzen“ je Bereich und insgesamt. Gespeichert je Benutzer auf dem Server (neue Einstellung `appearance`, geprüft und begrenzt in `SettingsRules`), lokal als Rückfall. Der Modus des Docks wandert von `localStorage` in diese Einstellung. Am Handy: Helligkeit, Themenfarbe und Symbole. Kein eigenes Hintergrundbild (Begründung in der Doku), kein Dock links oder rechts.
+- Neu: `icons.js`, `icons.css`, `appearance.js`, `icon-picker.js`; Tests `icons.test.mjs`, `appearance.test.mjs`, die Kontrastprüfung `theme-css.test.mjs` läuft jetzt auch mit jeder Akzentfarbe und jedem Hintergrund; ein Backend-Test für die Regel.
+
+### Behoben
+- Ein Klick auf eine leere Stelle in den Einstellungen setzte „Helligkeit: System“ auf Hell oder Dunkel (der Klick-Handler fand `data-scheme` am `html`-Element).
+
 ## [0.23.0] - 2026-11-22
 
 ### Neu

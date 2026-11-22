@@ -5,8 +5,9 @@ Die Desktop-Oberfläche und die Handy-Shell haben je ein helles und ein dunkles 
 
 ## Wo man wählt
 
-- Desktop: Start → Einstellungen → Darstellung (drei Knöpfe).
-- Handy: Profil → Darstellung → Helligkeit.
+- Desktop: Start → Einstellungen → Aussehen (drei Knöpfe).
+- Akzentfarbe, Hintergrund, Dock und Symbole stehen im selben Abschnitt: [APPEARANCE.md](APPEARANCE.md).
+- Handy: Profil → Aussehen → Helligkeit.
 - Die Wahl gilt sofort. Das Sitzungsbild (Canvas/Video), seine Statusleiste und das Pop-out-Fenster (immer dunkel) bleiben, wie sie sind.
 
 ## Speicherung

@@ -1,5 +1,7 @@
-import { remoteApi, getScheme, setTheme, setLanguage } from './app.js';
+import { remoteApi, getScheme, setTheme, setLanguage, getAppearance, setAppearance, resetAppearance, resetAllAppearance } from './app.js';
 import { SCHEMES } from './scheme.js';
+import { glyph, appIconFor, hostIconFor, connectionIcon } from './icons.js';
+import { ACCENTS, ACCENT_LABEL, WALLPAPERS, SIZES, SIZE_LABEL, ICON_STYLES, STYLE_LABEL, isDefaultArea, dockHeight, wallpaperCss } from './appearance.js';
 import { GROUPS, rowsFor, aboutValues } from './settings.js';
 import { Sessions } from './sessions.js';
 import { looksLikeAddress } from './quick.js';
@@ -49,76 +51,34 @@ const ls = {
 };
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
-/* ---------- Symbole (Strich-Symbole, 24 px) ---------- */
-const P = {
-  home: '<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
-  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
-  monitor: '<rect x="2.5" y="3.5" width="19" height="13" rx="2"/><path d="M8 21h8M12 16.5V21"/>',
-  terminal: '<path d="m4 17 6-6-6-6M12 19h8"/>',
-  spark: '<path d="M12 3l1.9 5.6L20 10l-6.1 1.4L12 17l-1.9-5.6L4 10l6.1-1.4zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
-  code: '<path d="m8 7-5 5 5 5M16 7l5 5-5 5"/>',
-  sliders: '<path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/>',
-  folder: '<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"/>',
-  server: '<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
-  cloud: '<path d="M17.5 19H9a7 7 0 1 1 6.7-9h1.8a4.5 4.5 0 1 1 0 9z"/>',
-  activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
-  box: '<path d="m21 8-9-5-9 5v8l9 5 9-5z"/><path d="m3.3 7.5 8.7 5 8.7-5M12 22V12.5"/>',
-  globe: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
-  power: '<path d="M12 2v10M18.4 6.6a9 9 0 1 1-12.77.04"/>',
-  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>',
-  plus: '<path d="M12 5v14M5 12h14"/>',
-  grid: '<path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/>',
-  x: '<path d="M18 6 6 18M6 6l12 12"/>',
-  star: '<path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
-  minus: '<path d="M5 12h14"/>',
-  square: '<rect x="5" y="5" width="14" height="14" rx="2"/>',
-  restore: '<rect x="4.5" y="8.5" width="11" height="11" rx="2"/><path d="M8.5 8.5V6.5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-2"/>',
-  left: '<path d="m15 18-6-6 6-6"/>',
-  right: '<path d="m9 18 6-6-6-6"/>',
-  edit: '<path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
-  shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
-  info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
-  play: '<path d="M7 4.5v15l12-7.5z"/>',
-  key: '<circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 8-8M16 7l3 3"/>',
-  cpu: '<rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/>',
-  ram: '<rect x="3" y="7" width="18" height="10" rx="1.5"/><path d="M7 7V5M12 7V5M17 7V5M7 17v2M12 17v2M17 17v2"/>',
-  disk: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 14.5h6"/><circle cx="17" cy="14.5" r=".6"/>',
-  network: '<path d="M7 4v16m0 0-3-3m3 3 3-3M17 20V4m0 0-3 3m3-3 3 3"/>',
-  chev: '<path d="m6 9 6 6 6-6"/>',
-  refresh: '<path d="M20 11a8 8 0 0 0-14.5-4.5L4 8M4 4v4h4M4 13a8 8 0 0 0 14.5 4.5L20 16M20 20v-4h-4"/>',
-  keyboard: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
-  file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
-  download: '<path d="M12 3v12m0 0-4-4m4 4 4-4M5 21h14"/>',
-  up: '<path d="m18 15-6-6-6 6"/>',
-  check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
-  popout: '<path d="M14 4h6v6M20 4l-8.5 8.5M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/>',
-  blank: '',
-};
-const ic = (n) => `<svg class="dk-i" viewBox="0 0 24 24" aria-hidden="true">${P[n] || ''}</svg>`;
+/* ---------- Symbole: die Familie steht in icons.js (Strichsymbole, 24 px) ---------- */
+const ic = (n) => glyph(n, 'dk-i');
 // Der Verlauf steht einmal in DEFS (versteckte SVG im Desktop); jedes Logo verweist nur darauf
 const DEFS = `<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="dkl" x1="0" y1="0" x2="1" y2="1"><stop offset="0" style="stop-color:var(--dk-logo-a)"/><stop offset="1" style="stop-color:var(--dk-logo-b)"/></linearGradient></defs></svg>`;
 const LOGO = `<svg viewBox="0 0 32 32" aria-hidden="true">
   <path d="M8 5.5 25.5 16 8 26.5z" fill="url(#dkl)" stroke="url(#dkl)" stroke-width="3.6" stroke-linejoin="round"/><path d="M8 5.5 25.5 16 15 16z" style="fill:var(--dk-logo-hi)" opacity=".28"/></svg>`;
 
-/* Programme: Farben, Symbole, Ziele. soon = gibt es noch keinen Server-Teil dafuer (siehe docs/IDEAS.md). mod = nur sichtbar, wenn der Server das Modul eingeschaltet hat (docs/MODULES.md). */
+/* Programme: Namen und Ziele; Symbol und Farbe kommen aus icons.js (ic, g), ebenso bei Verbindungen (appOf). soon = gibt es noch keinen Server-Teil dafuer (siehe docs/IDEAS.md). mod = nur sichtbar, wenn der Server das Modul eingeschaltet hat (docs/MODULES.md). */
+const withIcon = (a) => { const i = appIconFor(a.id); return { ...a, ic: i.key, g: i.g }; };
 const APPS = [
-  { id: 'home', name: t('desktop.start'), ic: 'home', g: ['#7b78ee', '#5160e6'] },
-  { id: 'desktop', name: t('desktop.desktop'), sub: 'RDP', ic: 'monitor', g: ['#3a99dc', '#2f5fe0'] },
-  { id: 'vnc', name: t('desktop.vnc'), sub: t('desktop.desktop'), ic: 'monitor', g: ['#2a8f8a', '#25758f'] },
-  { id: 'terminal', name: t('desktop.terminal'), sub: 'SSH', ic: 'terminal', g: ['#5b6275', '#2c3142'] },
-  { id: 'claude', name: t('prog.claude'), sub: 'SSH', ic: 'spark', g: ['#c0683a', '#94491f'] },
-  { id: 'codex', name: t('prog.codex'), sub: 'SSH', ic: 'code', g: ['#3f8a76', '#2c6a5c'] },
-  { id: 'settings', name: t('desktop.settings'), ic: 'sliders', g: ['#7d849f', '#555b78'] },
-  { id: 'files', name: t('desktop.files'), ic: 'folder', g: ['#c28418', '#a86408'] },
-  { id: 'hosts', name: t('desktop.hosts'), sub: t('desktop.hostsSub'), ic: 'server', g: ['#2fa08c', '#1c7a70'] },
-  { id: 'docker', name: 'Docker', ic: 'box', g: ['#3a95e0', '#1f69bf'], soon: true },
-  { id: 'widgets', name: t('desktop.widgets'), sub: t('desktop.widgetsSub'), ic: 'grid', g: ['#c06a14', '#a8461a'], mod: 'services' },
-  { id: 'caddy', name: 'Caddy', sub: t('desktop.caddySub'), ic: 'globe', g: ['#1fa06a', '#12804f'], mod: 'caddy' },
-  { id: 'ddns', name: 'DDNS', sub: t('desktop.ddnsSub'), ic: 'cloud', g: ['#3f8fe0', '#2d66cc'], mod: 'ddns' },
-  { id: 'monitor', name: t('desktop.monitor'), ic: 'activity', g: ['#cf5fae', '#8c45d6'] },
-];
+  { id: 'home', name: t('desktop.start') },
+  { id: 'desktop', name: t('desktop.desktop'), sub: 'RDP' },
+  { id: 'vnc', name: t('desktop.vnc'), sub: t('desktop.desktop') },
+  { id: 'terminal', name: t('desktop.terminal'), sub: 'SSH' },
+  { id: 'claude', name: t('prog.claude'), sub: 'SSH' },
+  { id: 'codex', name: t('prog.codex'), sub: 'SSH' },
+  { id: 'settings', name: t('desktop.settings') },
+  { id: 'files', name: t('desktop.files') },
+  { id: 'hosts', name: t('desktop.hosts'), sub: t('desktop.hostsSub') },
+  { id: 'docker', name: 'Docker', soon: true },
+  { id: 'widgets', name: t('desktop.widgets'), sub: t('desktop.widgetsSub'), mod: 'services' },
+  { id: 'caddy', name: 'Caddy', sub: t('desktop.caddySub'), mod: 'caddy' },
+  { id: 'ddns', name: 'DDNS', sub: t('desktop.ddnsSub'), mod: 'ddns' },
+  { id: 'monitor', name: t('desktop.monitor') },
+].map(withIcon);
 const appById = (id) => APPS.find((a) => a.id === id);
-const appOf = (c) => appById(tileKind(c));     // Kachel einer Verbindung: Desktop, Terminal, Claude oder Codex
+/** Kachel einer Verbindung: Name der Art (Desktop, Terminal, Claude, Codex) und Symbol und Farbe aus icons.js (nach Programm, Host-Betriebssystem oder der Wahl des Nutzers) */
+const appOf = (c) => { const i = connectionIcon(c, ctx && ctx.state.hosts, getAppearance()); return { ...appById(tileKind(c)), ic: i.key, g: i.g }; };
 const isProg = (c) => c.kind === 'terminal' && tileKind(c) !== 'terminal';
 /** Kurzer Hinweis fuer shell.js (Kachel angelegt, Fehler). */
 export const toast = (msg) => notify(msg);
@@ -675,7 +635,7 @@ function buildDock() {
     return b;
   };
   dock.append(
-    item('launcher', t('desktop.launcher'), { ic: 'grid', g: ['#8f6af0', '#6a58e6'] }, true),
+    item('launcher', t('desktop.launcher'), withIcon({ id: 'launcher' }), true),
     item('home', t('desktop.start'), appById('home')),
     item('files', t('desktop.files'), appById('files')),
     item('hosts', t('desktop.hosts'), appById('hosts')),
@@ -750,9 +710,14 @@ const DOCK_MODES = [['auto', t('desktop.dockAuto')], ['always', t('desktop.dockA
 const EDGE_PX = 6, EDGE_DWELL = 300, HIDE_DELAY = 700;
 const PILL_STRIP = 10;     // Streifen am unteren Rand fuer die duennen Pillen (5 px und etwas Luft); maximierte und eingerastete Fenster enden darueber
 let dockMode = 'auto', dockCollapsed = false, dockShown = false, edgeTimer = null, hideTimer = null;
-function readDockMode() { try { const v = JSON.parse(localStorage.getItem('pd.dockMode')); return DOCK_MODES.some((m) => m[0] === v) ? v : 'auto'; } catch { return 'auto'; } }
+/** Modus und Groesse des Docks stehen im Aussehen (Server, je Benutzer, docs/APPEARANCE.md). Die alte Wahl dieses Geraets (pd.dockMode) gilt einmal weiter und wandert dorthin. */
+function migrateDockMode() {
+  let old = null; try { old = JSON.parse(localStorage.getItem('pd.dockMode')); localStorage.removeItem('pd.dockMode'); } catch { /* egal */ }
+  const a = getAppearance();
+  if (DOCK_MODES.some((m) => m[0] === old) && old !== 'auto' && isDefaultArea(a, 'dock')) setAppearance({ ...a, dock: { ...a.dock, mode: old } });
+}
 /** Platz am unteren Rand, den Fenster freihalten (maximiert und beim Oeffnen): nur wenn der Dock dort steht */
-function dockReserve() { return (dockMode === 'always' || (dockMode === 'toggle' && !dockCollapsed) ? 96 : dockMode === 'toggle' ? 30 : PILL_STRIP) + (taskbar ? taskbar.inset().bottom : 0); }
+function dockReserve() { return (dockMode === 'always' || (dockMode === 'toggle' && !dockCollapsed) ? dockHeight(getAppearance().dock.size) : dockMode === 'toggle' ? 30 : PILL_STRIP) + (taskbar ? taskbar.inset().bottom : 0); }
 function applyDock() {
   const dock = $('.dk-dockrow', root), knob = $('.dk-knob', root); if (!dock) return;
   const away = dockMode === 'auto' ? !dockShown : dockMode === 'toggle' && dockCollapsed;
@@ -766,10 +731,21 @@ function applyDock() {
 }
 function setDockMode(m, quiet) {
   if (!DOCK_MODES.some((x) => x[0] === m)) return;
-  try { localStorage.setItem('pd.dockMode', JSON.stringify(m)); } catch { /* egal */ }
-  dockMode = m; dockShown = m !== 'auto'; clearTimeout(edgeTimer); clearTimeout(hideTimer); edgeTimer = hideTimer = null;
-  applyDock(); renderHome_ifOpen();
+  const a = getAppearance(); setAppearance({ ...a, dock: { ...a.dock, mode: m } });      // onAppearance setzt es um
   if (!quiet && m === 'auto') notify(t('desktop.dockHint'), 4200);
+}
+/** Das Aussehen hat sich geaendert (Einstellung hier, auf einem anderen Geraet oder Zuruecksetzen): Dock, Symbole und die offenen Ansichten nachziehen. Farben, Groessen und Hintergrund wirken ueber CSS-Variablen schon. */
+function onAppearance() {
+  if (!root) return;
+  const m = getAppearance().dock.mode;
+  if (m !== dockMode) { dockMode = m; dockShown = m !== 'auto'; clearTimeout(edgeTimer); clearTimeout(hideTimer); edgeTimer = hideTimer = null; }
+  applyDock(); renderDock();
+  for (const w of sessWins.values()) {            // Fenstertitel der Sitzungen: das Symbol kann sich geaendert haben
+    w.opts.icon = sessionIcon(w.session.conn);
+    const old = w.el.querySelector('.dk-wt > .dk-ti'); if (old) old.outerHTML = w.opts.icon;
+  }
+  renderPills();
+  const hw = wins.get('home'); if (hw) { const top = hw.main.scrollTop; renderHome(); hw.main.scrollTop = top; }
 }
 function showDock() { if (dockMode !== 'auto') return; clearTimeout(hideTimer); hideTimer = null; if (!dockShown) { dockShown = true; applyDock(); } }       // auch ein schon geplantes Ausblenden entfaellt (Tastaturfokus im Dock)
 function hideDock() {
@@ -935,6 +911,7 @@ function openHome(view) {
       goto(b.dataset.nav);
     });
     w.main.addEventListener('click', onMainClick);
+    w.main.addEventListener('change', onMainChange);
     if (view) nav.view = view;
     renderHome();
   } else {
@@ -1087,7 +1064,7 @@ function renderServices(m) {
   const closed = readClosed(localStorage);
   const hostBlock = (g) => {
     const open = !closed.includes(g.key), n = g.plain.length + g.programs.length;
-    const head = `<h4 class="dk-gh"><button type="button" class="dk-b dk-gh-t" data-hostclose="${ctx.esc(g.key)}" aria-expanded="${open}" aria-label="${ctx.esc((g.host ? g.host.name : t('desktop.noHost')) + ' – ' + t(open ? 'desktop.collapse' : 'desktop.expand'))}">${ic(open ? 'chev' : 'right')}${g.host ? `<span class="dk-sd ${dotClass(g.host.online)}"></span>` : ''}<b>${ctx.esc(g.host ? g.host.name : t('desktop.noHost'))}</b><span class="dk-sub">${g.host ? ctx.esc(hostStatusText(g.host)) : ''}</span><span class="dk-count">${n}</span></button></h4>`;
+    const head = `<h4 class="dk-gh"><button type="button" class="dk-b dk-gh-t" data-hostclose="${ctx.esc(g.key)}" aria-expanded="${open}" aria-label="${ctx.esc((g.host ? g.host.name : t('desktop.noHost')) + ' – ' + t(open ? 'desktop.collapse' : 'desktop.expand'))}">${ic(open ? 'chev' : 'right')}${g.host ? glyph(hostIconFor(g.host).key, 'dk-i dk-hg') : ''}${g.host ? `<span class="dk-sd ${dotClass(g.host.online)}"></span>` : ''}<b>${ctx.esc(g.host ? g.host.name : t('desktop.noHost'))}</b><span class="dk-sub">${g.host ? ctx.esc(hostStatusText(g.host)) : ''}</span><span class="dk-count">${n}</span></button></h4>`;
     if (!open) return `<section class="dk-hsec closed">${head}</section>`;
     const list = (arr) => `<div class="dk-list">${arr.map(serviceRow).join('')}</div>`;
     const body = !n ? `<p class="dk-lead">${t('desktop.noConnectionsOnHost')}</p>`
@@ -1134,13 +1111,28 @@ function renderAppsView(m) {
 /* Einstellungen: dieselben Gruppen wie am Handy (settings.js); die Angaben des Servers (Version, Backup) kommen von /api/about */
 let aboutCache = null, aboutAt = 0;
 const dkChoice = (attr, opts, cur, label) => `<span class="dk-btns" role="group" aria-label="${ctx.esc(label)}">${opts.map(([id, l]) => `<button type="button" class="dk-b dk-btn${id === cur ? ' pri' : ''}" data-${attr}="${id}" aria-pressed="${id === cur}">${l}</button>`).join('')}</span>`;
+/** "Zuruecksetzen" je Bereich: nur sichtbar, wenn etwas vom Standard abweicht */
+const dkReset = (area, isDefault) => (isDefault ? '' : `<button type="button" class="dk-b dk-reset" data-reset-area="${area}">${t('set.reset')}</button>`);
+/** Akzentfarbe: feste Farben und eine eigene; die Oberflaeche rechnet daraus Farben mit gesicherter Lesbarkeit (appearance.js) */
+const dkAccent = (ap, label) => `<span class="dk-btns" role="group" aria-label="${ctx.esc(label)}">${ACCENTS.map(([id, hex]) => `<button type="button" class="dk-b dk-sw" data-pick-accent="${hex}" aria-pressed="${ap.accent === hex}" aria-label="${ctx.esc(t(ACCENT_LABEL[id]))}" title="${ctx.esc(t(ACCENT_LABEL[id]))}" style="background:${hex}">${ap.accent === hex ? ic('check') : ''}</button>`).join('')}`
+  + `<label class="dk-sw dk-sw-own${ap.accent && !ACCENTS.some((a) => a[1] === ap.accent) ? ' on' : ''}" title="${ctx.esc(t('set.accentOwn'))}"><input type="color" value="${ap.accent || ACCENTS[0][1]}" data-pick-accent-own aria-label="${ctx.esc(t('set.accentOwn'))}"></label></span>`;
+/** Hintergruende als kleine Vorschauen mit Namen */
+const dkBackgrounds = (ap, label) => `<span class="dk-btns" role="group" aria-label="${ctx.esc(label)}">${WALLPAPERS.map((w) => `<button type="button" class="dk-b dk-btn${w.id === ap.bg ? ' pri' : ''}" data-pick-bg="${w.id}" aria-pressed="${w.id === ap.bg}"><span class="dk-bgchip" style="background:${w.light ? wallpaperCss(w.id, document.documentElement.dataset.scheme === 'dark') : 'var(--dk-hero-bg)'}"></span>${t(w.label)}</button>`).join('')}</span>`;
+const dkDef = (area) => isDefaultArea(getAppearance(), area);
 function dkSettingRow(r, ab) {
-  const label = t(r.label); let help = t(r.help), ctl = '';
+  const label = t(r.label); let help = t(r.help), ctl = '', reset = '';
+  const ap = getAppearance();
   switch (r.id) {
     case 'user': ctl = `<b>${ctx.esc(ctx.state.user || '')}</b>`; break;
-    case 'scheme': ctl = dkChoice('scheme', SCHEMES, getScheme(), label); break;
+    case 'scheme': ctl = dkChoice('scheme', SCHEMES, getScheme(), label); reset = dkReset('scheme', getScheme() === 'auto'); break;
     case 'lang': ctl = dkChoice('lang', LANG_CHOICES.map(([id, l]) => [id, id === 'system' ? t('lang.system') : l]), getPref(), label); break;
-    case 'dock': ctl = dkChoice('dockmode', DOCK_MODES, dockMode, label); break;
+    case 'dock': ctl = dkChoice('dockmode', DOCK_MODES, dockMode, label); reset = dkReset('dock', dkDef('dock')); break;
+    case 'dockSize': ctl = dkChoice('pick-docksize', SIZES.map((v) => [v, t(SIZE_LABEL[v])]), ap.dock.size, label); reset = dkReset('dock', dkDef('dock')); break;
+    case 'iconSize': ctl = dkChoice('pick-iconsize', SIZES.map((v) => [v, t(SIZE_LABEL[v])]), ap.icons.size, label); reset = dkReset('icons', dkDef('icons')); break;
+    case 'iconStyle': ctl = dkChoice('pick-iconstyle', ICON_STYLES.map((v) => [v, t(STYLE_LABEL[v])]), ap.icons.style, label); reset = dkReset('icons', dkDef('icons')); break;
+    case 'accent': ctl = dkAccent(ap, label); reset = dkReset('accent', dkDef('accent')); break;
+    case 'bg': ctl = dkBackgrounds(ap, label); reset = dkReset('bg', dkDef('bg')); break;
+    case 'iconOver': { const n = Object.keys(ap.icons.over).length; help = n ? t('set.iconOverN', { n }) : t('set.iconOverNone'); ctl = n ? `<button type="button" class="dk-b dk-btn" data-act="iconOver" aria-label="${ctx.esc(label + ': ' + t(r.action))}">${t(r.action)}</button>` : ''; break; }
     case 'wsRemember': ctl = dkChoice('ws', [['remember:on', t('set.on')], ['remember:off', t('set.off')]], 'remember:' + ws.option('remember'), label); break;
     case 'wsReconnect': ctl = dkChoice('ws', [['reconnect:ask', t('set.wsAsk')], ['reconnect:auto', t('set.wsAuto')]], 'reconnect:' + ws.option('reconnect'), label); break;
     case 'backup': case 'backupCopy': {
@@ -1153,7 +1145,7 @@ function dkSettingRow(r, ab) {
     case 'source': if (!ab.repository) return ''; ctl = `<a class="dk-btn" href="${ctx.esc(ab.repository)}" target="_blank" rel="noopener" aria-label="${ctx.esc(label + ': ' + t(r.action))}">${t(r.action)}</a>`; break;
     default: if (r.ctl === 'button') ctl = `<button type="button" class="dk-b dk-btn${r.danger ? ' dk-danger' : ''}" data-act="${r.id === 'password' ? 'account' : r.id}" aria-label="${ctx.esc(label + ': ' + t(r.action))}">${t(r.action)}</button>`;
   }
-  return `<div class="dk-srow"><div class="dk-st"><b>${ctx.esc(label)}</b><i>${ctx.esc(help)}</i></div>${ctl ? `<div class="dk-sc">${ctl}</div>` : ''}</div>`;
+  return `<div class="dk-srow"><div class="dk-st"><b>${ctx.esc(label)}</b><i>${ctx.esc(help)}</i>${reset}</div>${ctl ? `<div class="dk-sc">${ctl}</div>` : ''}</div>`;
 }
 const dkBackupNotes = (ab) => [ab.backup, ab.copy].filter((i) => i && (i.next || i.details)).map((i) => `<div class="dk-msg dk-t-${i.tone}" role="${i.tone === 'error' ? 'alert' : 'status'}"><b>${ctx.esc(i.line)}</b>${i.next ? `<span>${ctx.esc(i.next)}</span>` : ''}${i.details ? `<details><summary>${t('set.details')}</summary><pre>${ctx.esc(i.details)}</pre></details>` : ''}</div>`).join('');
 function renderSettings(m) {
@@ -1172,13 +1164,23 @@ function renderSettings(m) {
     }, () => { /* ohne Angaben bleiben die Werte leer */ });
   }
 }
+/** Eigene Akzentfarbe: erst wenn die Auswahl geschlossen wird (change), nicht bei jedem Zug im Farbfeld */
+function onMainChange(e) { const i = e.target.closest && e.target.closest('[data-pick-accent-own]'); if (i) setAppearance({ ...getAppearance(), accent: i.value }); }
 function onMainClick(e) {
-  const t = e.target.closest('[data-conn],[data-edit],[data-extra],[data-act],[data-go],[data-app],[data-dockmode],[data-ws],[data-scheme],[data-lang],[data-hostfilter],[data-folderfilter],[data-groupby],[data-hostclose],[data-fav],[data-hostedit],[data-hostagent],[data-hostinfo],[data-hcact]'); if (!t) return;
+  const t = e.target.closest('[data-conn],[data-edit],[data-extra],[data-act],[data-go],[data-app],[data-dockmode],[data-ws],[data-scheme],[data-lang],[data-pick-accent],[data-pick-bg],[data-pick-docksize],[data-pick-iconsize],[data-pick-iconstyle],[data-reset-area],[data-hostfilter],[data-folderfilter],[data-groupby],[data-hostclose],[data-fav],[data-hostedit],[data-hostagent],[data-hostinfo],[data-hcact]'); if (!t || t === document.documentElement) return;      // html selbst traegt data-scheme, data-bg ... und ist kein Knopf
   const find = (id) => ctx.state.connections.find((c) => c.id === id);
   const host = (id) => ctx.state.hosts.find((h) => h.id === id);
   if (t.dataset.lang) { if (t.dataset.lang !== getPref()) setLanguage(t.dataset.lang); }
   else if (t.dataset.scheme) setTheme({ scheme: t.dataset.scheme });   // das Ereignis julos:scheme (app.js) zeichnet die Einstellungen neu
   else if (t.dataset.dockmode) setDockMode(t.dataset.dockmode);
+  else if (t.dataset.pickAccent) setAppearance({ ...getAppearance(), accent: t.dataset.pickAccent });
+  else if (t.dataset.pickBg) setAppearance({ ...getAppearance(), bg: t.dataset.pickBg });
+  else if (t.dataset.pickDocksize) { const a = getAppearance(); setAppearance({ ...a, dock: { ...a.dock, size: t.dataset.pickDocksize } }); }
+  else if (t.dataset.pickIconsize) { const a = getAppearance(); setAppearance({ ...a, icons: { ...a.icons, size: t.dataset.pickIconsize } }); }
+  else if (t.dataset.pickIconstyle) { const a = getAppearance(); setAppearance({ ...a, icons: { ...a.icons, style: t.dataset.pickIconstyle } }); }
+  else if (t.dataset.resetArea) { if (t.dataset.resetArea === 'scheme') setTheme({ scheme: 'auto' }); else resetAppearance(t.dataset.resetArea); }
+  else if (t.dataset.act === 'iconOver') resetAppearance('iconsOver');
+  else if (t.dataset.act === 'appearanceReset') resetAllAppearance();
   else if (t.dataset.ws) { const [k, v] = t.dataset.ws.split(':'), mm = wins.get('home')?.main, y = mm ? mm.scrollTop : 0; ws.setOption(k, v); renderHome(); if (mm) mm.scrollTop = y; }
   else if (t.dataset.act === 'wsForget') forgetDevice();
   else if (t.dataset.hostfilter !== undefined) { hostFilter.id = t.dataset.hostfilter; renderHome(); }
@@ -1483,7 +1485,8 @@ export async function init(context) {
   pills.el.addEventListener('focusin', showDock);          // mit der Tastatur auf eine Pille: der Dock klappt auf
   const wp = el('div', 'dk-wp'); wp.innerHTML = scene(true);
   root.insertAdjacentHTML('afterbegin', DEFS);
-  dockMode = readDockMode(); dockCollapsed = ls.get('dockCollapsed', false); dockShown = dockMode !== 'auto';
+  dockMode = getAppearance().dock.mode; dockCollapsed = ls.get('dockCollapsed', false); dockShown = dockMode !== 'auto';
+  document.addEventListener('julos:appearance', onAppearance);
   root.append(wp, buildBar(), buildDock(), pills.el, taskbar.el, buildKnob());
   applyDock(); renderBar(); wireDockHover();
   remoteApi.setKeyOwner((e) => keysToRemote() && !(e && wm.claims(e)), () => setTimeout(markKeys, 0));   // die Tasten zum Wechseln des Fensters gehen nie ins Fernfenster (kein Tastaturfang)
@@ -1500,6 +1503,7 @@ export async function init(context) {
 export function userChanged(user, message) {
   modulesReady = import('./modules.js').then((m) => m.loadModules(ctx.api)).then((m) => { modules = m; applyModules(); const hw = wins.get('home'); if (hw && nav.view === 'start') mountHeim(hw.main); });
   const av = $('#dkUser .dk-avatar', root); if (av) av.textContent = (user || '?').slice(0, 1);
+  migrateDockMode();
   if (!wins.size) startWorkspace();
   if (dockMode === 'auto' && !dockHinted) { dockHinted = true; showDock(); hideTimer = setTimeout(hideDock, 3500); }
   notify(message);

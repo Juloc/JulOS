@@ -1,4 +1,5 @@
-import { ico, prefs, applyServerPrefs } from './app.js';
+import { ico, prefs, applyServerPrefs, getAppearance, setAppearance } from './app.js';
+import { initIconPicker } from './icon-picker.js';
 import { Sessions } from './sessions.js';
 import { hostDetail } from './hosts.js';
 import { createHostInfoStore } from './hostinfo.js';
@@ -187,7 +188,7 @@ async function syncPrefs(afterSignIn = false) {
   const got = await prefs.sync();
   // Hat der Server eine andere Sprache als diese Seite: nach der Anmeldung (noch keine Sitzung offen) neu laden, sonst gilt sie ab dem naechsten Laden
   if (afterSignIn && got.lang && isPref(got.lang.lang) && got.lang.lang !== getPref()) { applyServerPrefs({ lang: got.lang }); location.reload(); return; }
-  if (got.keybar || got.theme || got.lang) { applyServerPrefs(got); if (M) M.applyShellTheme(); }
+  if (got.keybar || got.theme || got.lang || got.appearance) { applyServerPrefs(got); if (M) M.applyShellTheme(); }
 }
 // Ein anderes Geraet hat etwas geaendert: beim Zurueckkehren zur Seite (hoechstens einmal je Minute) neu abgleichen
 document.addEventListener('visibilitychange', () => { if (!document.hidden && state.user && Date.now() - prefsAt > 60000) syncPrefs(); });
@@ -285,6 +286,7 @@ function showProgramFields() {
 }
 $('#connProgram').addEventListener('change', showProgramFields);
 
+const iconPicker = initIconPicker({ getAppearance, setAppearance, hosts: () => state.hosts });     // Symbol der Verbindung waehlen (docs/ICONS.md)
 function editDialog(c, kind) {
   state.editing = c;
   $('#connDlgTitle').textContent = c ? t('shell.editConnection') : t('shell.newConnection');
@@ -303,6 +305,7 @@ function editDialog(c, kind) {
   fillFolderSelect(c ? c.folderId : '');
   $('#connUp').hidden = $('#connDown').hidden = !c;
   $('#connDelete').hidden = !c; $('#connDelete').textContent = t('common.delete');
+  iconPicker.show(c);
   $('#connOwn').checked = !!(c && c.ownLogin);
   $('#connPw').value = ''; $('#connPw').disabled = !state.canStore;
   $('#connForget').checked = false; $('#connForgetRow').hidden = !(c && c.hasPassword);

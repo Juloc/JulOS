@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { accentVars, ACCENTS, WALLPAPERS } from '../../src/JulOS.Frontend/wwwroot/appearance.js';
 
 /* Pruefung der Farben der Desktop-Oberflaeche (docs/THEME.md): keine festen Farben in den Regeln, beide Farbsaetze vollstaendig, Kontrast nach WCAG AA. */
 const WWW = new URL('../../src/JulOS.Frontend/wwwroot/', import.meta.url);
@@ -23,7 +24,7 @@ test('der dunkle Satz ueberschreibt nur Werte, die es im hellen gibt', () => {
 test('jede benutzte Variable --dk-*, --wp-* und --md-* ist definiert', () => {
   const defined = new Set([...Object.keys(LIGHT), ...[...css.matchAll(/(--md-[a-z-]+|--bg|--panel2?|--line|--text|--muted):/g)].map((m) => m[1])]);
   const used = new Set([...css.matchAll(/var\((--[a-z0-9-]+)/g), ...js.matchAll(/var\((--(?:dk|wp)-[a-z0-9-]+)/g)].map((m) => m[1]));
-  const skip = new Set(['--g1', '--g2', '--dk-reserve', '--pc']);       // je Kachel, von desktop.js bzw. je Pille (Zustand) gesetzt
+  const skip = new Set(['--g1', '--g2', '--dk-reserve', '--pc', '--dk-bg-image', '--ic-s', '--dk-dock-s']);       // je Kachel, von desktop.js bzw. je Pille (Zustand) gesetzt; das Aussehen (appearance.js) setzt Hintergrund und Groessen
   for (const v of used) if (!skip.has(v)) assert.ok(defined.has(v), `${v} ist nicht definiert`);
 });
 
@@ -43,40 +44,47 @@ test('keine festen Farben in den Regeln (nur Variablen), ausser den bewusst unve
 test('Hintergrundbild, Logo und Symbole in desktop.js haben keine festen Farben', () => {
   const scene = js.slice(js.indexOf('const DEFS'), js.indexOf('const LOGO') + 400) + js.slice(js.indexOf('function scene('), js.indexOf('Menues (Menueleiste'));
   assert.doesNotMatch(scene.replace(/stop-opacity|fill-opacity/g, ''), /(?:fill|stroke|stop-color)="#[0-9a-fA-F]{3,8}"/, 'feste Farbe als Attribut');
-  assert.doesNotMatch(js.slice(js.indexOf('const P = {'), js.indexOf('const ic =')), /#[0-9a-fA-F]{3,8}|rgb/, 'Symbole zeichnen mit currentColor');
 });
 
 // ---- Kontrast ----
 const hex = (s) => { const m = /^#([0-9a-f]{6})$/i.exec(s) || /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(s); if (!m) return null; const h = m.length === 2 ? m[1] : m.slice(1).map((c) => c + c).join(''); return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)).concat(1); };
 const rgba = (s) => { const m = /^rgba?\(([^)]+)\)$/.exec(s); if (!m) return hex(s); const p = m[1].split(',').map(Number); return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1]; };
-const over = (f, b) => [0, 1, 2].map((i) => f[i] * f[3] + b[i] * (1 - f[3])).concat(1);
+const over_ = (f, b) => [0, 1, 2].map((i) => f[i] * f[3] + b[i] * (1 - f[3])).concat(1);
 const lum = (c) => { const v = c.slice(0, 3).map((x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; }); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
 const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
 
 // Hinter dem Glas liegt das Hintergrundbild; ein Fenster kann ueberall stehen. Geprueft wird gegen die unguenstigsten grossen Flaechen:
-// hell der dunkelste Himmel, die Berge und der See; dunkel die hellsten grossen Flaechen (Himmel, Berg, Bluetenzweige).
+// hell der dunkelste Himmel, die Berge und der See; dunkel die hellsten grossen Flaechen (Himmel, Berg, Bluetenzweige). Dazu alle eigenen
+// Hintergruende (appearance.js, je drei Farben; ihr Muster macht den Grund nie ungunstiger) und die Akzentfarben (feste und Grenzfaelle): die Lesbarkeit
+// haengt nicht von der Wahl ab.
 const WALLS = { light: ['--wp-s1', '--wp-m1', '--wp-w3'], dark: ['--wp-s3', '--wp-m2', '--wp-b3'] };
+const EDGE_ACCENTS = ['#ffff00', '#ffffff', '#000000', '#808080', '#00ffff', '#ff00ff', '#f5d90a'];
+const variants = (scheme) => [['Standard', {}], ...[...ACCENTS.map((a) => a[1]), ...EDGE_ACCENTS].map((h) => [h, accentVars(h, scheme === 'dark')])];
 
 for (const scheme of ['light', 'dark']) {
-  const T = set(scheme);
-  const c = (name) => { const v = rgba(T[name]); assert.ok(v, `${name} = ${T[name]}`); return v; };
-  /** Flaechen als Funktion des Hintergrunds */
-  const surfaceDefs = {
-    'Fenster (Glas)': (w) => over(c('--dk-glass'), w),
-    'Karte im Fenster': (w) => over(c('--dk-card'), over(c('--dk-glass'), w)),
-    'Karte, Maus darueber': (w) => over(c('--dk-card-hi'), over(c('--dk-glass'), w)),
-    'Menue': (w) => over(c('--dk-glass-strong'), w),
-    'Menueleiste': (w) => over(c('--dk-bar'), w),
-    'Dock': (w) => over(c('--dk-dock'), w),
-    'Dialog': (w) => over(c('--dk-dlg'), w),
-    'Marke (getont)': (w) => over(c('--dk-hover-lo'), over(c('--dk-glass'), w)),
+  /** Werte, Flaechen und "schlechtester Hintergrund" fuer einen Satz Variablen (Standard oder mit Akzent) */
+  const setup = (over) => {
+    const T = { ...set(scheme), ...over };
+    const c = (name) => { const v = rgba(T[name]); assert.ok(v, `${name} = ${T[name]}`); return v; };
+    const surfaceDefs = {
+      'Fenster (Glas)': (w) => over_(c('--dk-glass'), w),
+      'Karte im Fenster': (w) => over_(c('--dk-card'), over_(c('--dk-glass'), w)),
+      'Karte, Maus darueber': (w) => over_(c('--dk-card-hi'), over_(c('--dk-glass'), w)),
+      'Menue': (w) => over_(c('--dk-glass-strong'), w),
+      'Menueleiste': (w) => over_(c('--dk-bar'), w),
+      'Dock': (w) => over_(c('--dk-dock'), w),
+      'Dialog': (w) => over_(c('--dk-dlg'), w),
+      'Marke (getont)': (w) => over_(c('--dk-hover-lo'), over_(c('--dk-glass'), w)),
+    };
+    const walls = [...WALLS[scheme].map((n) => c(n)), ...WALLPAPERS.filter((w) => w.light).flatMap((w) => w[scheme].map((h) => hex(h)))];
+    const worst = (fg, surface) => Math.min(...walls.map((w) => ratio(fg, surfaceDefs[surface](w))));
+    return { c, surfaceDefs, worst, walls };
   };
-  const worst = (fg, surface) => Math.min(...WALLS[scheme].map((wn) => ratio(fg, surfaceDefs[surface](c(wn)))));
-  test(`${scheme}: Text erreicht 4,5:1 auf allen Flaechen`, () => {
+  const each = (fn) => { const bad = []; for (const [vn, over] of variants(scheme)) fn(setup(over), (msg) => bad.push(`[${vn}] ${msg}`)); assert.deepEqual(bad, []); };
+
+  test(`${scheme}: Text erreicht 4,5:1 auf allen Flaechen, mit jedem Akzent und Hintergrund`, () => {
     const texts = ['--dk-ink', '--dk-t1', '--dk-t2', '--dk-t3', '--dk-sub', '--dk-hint', '--dk-accent-text', '--dk-accent-strong', '--dk-ok-text', '--dk-bad-text', '--dk-on-surface', '--dk-on-variant'];
-    const bad = [];
-    for (const t of texts) for (const name of Object.keys(surfaceDefs)) { const r = worst(c(t), name); if (r < 4.5) bad.push(`${t} auf ${name}: ${r.toFixed(2)}`); }
-    assert.deepEqual(bad, []);
+    each(({ c, surfaceDefs, worst }, bad) => { for (const t of texts) for (const name of Object.keys(surfaceDefs)) { const r = worst(c(t), name); if (r < 4.5) bad(`${t} auf ${name}: ${r.toFixed(2)}`); } });
   });
   test(`${scheme}: Tooltip, Hauptknopf, Material-Paare und Zustandstexte`, () => {
     const pairs = [
@@ -85,25 +93,17 @@ for (const scheme of ['light', 'dark']) {
       ['--dk-error', '--dk-error-container', 4.5], ['--dk-on-surface', '--dk-surface', 4.5], ['--dk-on-variant', '--dk-surface-container', 4.5], ['--dk-on-variant', '--dk-surface-high', 4.5],
       ['--dk-close-fg', '--dk-close', 3],
     ];
-    const bad = [];
-    for (const [a, b, min] of pairs) { const r = ratio(c(a), over(c(b), [128, 128, 128, 1])); if (r < min) bad.push(`${a} auf ${b}: ${r.toFixed(2)}`); }
-    // Zustandstexte auf ihrem getonten Grund
-    const tint = (fgName, bgName) => Math.min(...WALLS[scheme].map((wn) => ratio(c(fgName), over(c(bgName), surfaceDefs['Fenster (Glas)'](c(wn))))));
-    for (const [f, g] of [['--dk-ok-text', '--dk-ok-bg'], ['--dk-bad-text', '--dk-bad-bg']]) { const r = tint(f, g); if (r < 4.5) bad.push(`${f} auf ${g}: ${r.toFixed(2)}`); }
-    assert.deepEqual(bad, []);
+    each(({ c, surfaceDefs, walls }, bad) => {
+      for (const [a, b, min] of pairs) { const r = ratio(c(a), over_(c(b), [128, 128, 128, 1])); if (r < min) bad(`${a} auf ${b}: ${r.toFixed(2)}`); }
+      // Zustandstexte auf ihrem getonten Grund
+      const tint = (fgName, bgName) => Math.min(...walls.map((w) => ratio(c(fgName), over_(c(bgName), surfaceDefs['Fenster (Glas)'](w)))));
+      for (const [f, g] of [['--dk-ok-text', '--dk-ok-bg'], ['--dk-bad-text', '--dk-bad-bg']]) { const r = tint(f, g); if (r < 4.5) bad(`${f} auf ${g}: ${r.toFixed(2)}`); }
+    });
   });
-  test(`${scheme}: Raender von Feldern und Zustandspunkte erreichen 3:1`, () => {
-    const bad = [];
-    for (const name of ['Dialog', 'Fenster (Glas)']) { const r = worst(c('--dk-ctl-edge'), name); if (r < 3) bad.push(`ctl-edge auf ${name}: ${r.toFixed(2)}`); }
-    for (const d of ['--dk-st-off', '--dk-st-ok', '--dk-st-busy', '--dk-st-bad']) { const r = worst(c(d), 'Fenster (Glas)'); if (r < 3) bad.push(`${d}: ${r.toFixed(2)}`); }
-    assert.deepEqual(bad, []);
+  test(`${scheme}: Raender von Feldern, Zustandspunkte und der Akzent selbst erreichen 3:1`, () => {
+    each(({ c, worst }, bad) => {
+      for (const name of ['Dialog', 'Fenster (Glas)']) { const r = worst(c('--dk-ctl-edge'), name); if (r < 3) bad(`ctl-edge auf ${name}: ${r.toFixed(2)}`); }
+      for (const d of ['--dk-st-off', '--dk-st-ok', '--dk-st-busy', '--dk-st-bad', '--dk-accent']) { const r = worst(c(d), 'Fenster (Glas)'); if (r < 3) bad(`${d}: ${r.toFixed(2)}`); }
+    });
   });
 }
-
-test('Kachelfarben: das weisse Symbol erreicht auf beiden Enden des Verlaufs 3:1', () => {
-  const apps = [...js.matchAll(/g: \['(#[0-9a-f]{6})', '(#[0-9a-f]{6})'\]/gi)];
-  assert.ok(apps.length >= 10);
-  const bad = [];
-  for (const m of apps) for (const col of [m[1], m[2]]) { const r = ratio([255, 255, 255, 1], hex(col)); if (r < 3) bad.push(`${col}: ${r.toFixed(2)}`); }
-  assert.deepEqual(bad, []);
-});

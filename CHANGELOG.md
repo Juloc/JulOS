@@ -6,6 +6,9 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+### Neu
+- **Arbeitsplatz je Gerät auf dem Server (nur Server, noch ohne Oberfläche)** ([docs/MULTI-SCREEN.md](docs/MULTI-SCREEN.md#workspace-on-the-server-built-no-interface-yet)): JulOS kann sich pro Gerät merken, welche Bildschirme (Browserfenster) und Fenster es gibt und wo sie liegen (Position, Größe, Reihenfolge, Zustand, Verbindung). Neue Tabelle `workspaces` (Migration 023, im Backup wie jede Tabelle, mit dem Benutzer gelöscht), Endpunkte `GET /api/workspaces` (Geräte des Benutzers mit Name, zuletzt benutzt und offenen Verbindungen), `GET`, `PUT` und `DELETE /api/workspaces/{deviceId}`. Die Geräte-Kennung kommt vom Browser und ist kein Geheimnis; jede Anfrage braucht die Sitzung und sieht nur eigene Daten. **Versionsprüfung** gegen Überschreiben durch ein zweites Browserfenster (`409` mit dem aktuellen Stand, wer will, schreibt mit der neuen Version darüber). Der Server prüft und schreibt das Dokument neu (unbekannte Felder fallen weg, höchstens 32 Fenster, 8 Bildschirme, 16 Geräte, 64 KiB, Zahlen im Bereich); Fenster mit einer Verbindung, die dem Benutzer nicht gehört, werden verworfen; Rate-Limit je Benutzer. Tests: Regeln und Grenzen, fremde Daten, Versionsprüfung auch bei gleichzeitigem Speichern, Rate-Limit, Backup.
+
 ## [0.22.0] - 2026-11-21
 
 ### Neu

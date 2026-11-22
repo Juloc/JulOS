@@ -342,6 +342,10 @@ html.desktop .sv .sv-overlay .box { border-radius: 20px; background: var(--dk-ov
 .dk-flist .dk-fp { flex: 0 1 38%; font-size: 12px; color: var(--dk-hint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dk-flist .dk-fm { flex: 0 0 76px; text-align: right; }
 .dk-fempty { padding: 60px 20px; text-align: center; color: var(--dk-hint); }
+/* Platzhalter "Wieder verbinden" (Workspace, desktop-workspace.js): ein Fenster ohne Sitzung, das den Platz der Verbindung haelt */
+.dk-recon { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center; color: var(--dk-hint); }
+.dk-recon b { font-size: 16px; color: var(--dk-ink); }
+.dk-recon p { max-width: 380px; margin: 0; line-height: 1.45; }
 .dk-fstat { flex: 0 0 auto; min-height: 40px; display: flex; align-items: center; gap: 12px; padding: 4px 14px; border-top: 1px solid var(--dk-line); color: var(--dk-sub); font-size: 12.5px; }
 .dk-fstat > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dk-fstat .dk-btn { height: 30px; }

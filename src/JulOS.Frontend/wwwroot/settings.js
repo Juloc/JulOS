@@ -7,7 +7,7 @@
  * ===================================================================== */
 import { t, tk, fmtDate, fmtNumber } from './i18n.js';
 
-/** ctl: button | choice | swatches | value | status | link | note. only: 'phone' | 'desktop' (sonst beide). */
+/** ctl: button | choice | swatches | value | status | link | note. only: 'phone' | 'desktop' (sonst beide). Eine Gruppe nur mit solchen Zeilen erscheint nur dort (die Fenster dieses Geraets gibt es nur am Desktop). */
 export const GROUPS = [
   { id: 'account', title: tk('set.account'), help: tk('set.accountHelp'), rows: [
     { id: 'user', ctl: 'value', label: tk('set.user'), help: tk('set.userHelp') },
@@ -22,6 +22,11 @@ export const GROUPS = [
     { id: 'lang', ctl: 'choice', label: tk('set.lang'), help: tk('set.langHelp') },
     { id: 'color', ctl: 'swatches', only: 'phone', label: tk('set.color'), help: tk('set.colorHelp') },
     { id: 'dock', ctl: 'choice', only: 'desktop', label: tk('set.dock'), help: tk('set.dockHelp') },
+  ] },
+  { id: 'workspace', title: tk('set.workspace'), help: tk('set.workspaceHelp'), rows: [
+    { id: 'wsRemember', ctl: 'choice', only: 'desktop', label: tk('set.wsRemember'), help: tk('set.wsRememberHelp') },
+    { id: 'wsReconnect', ctl: 'choice', only: 'desktop', label: tk('set.wsReconnect'), help: tk('set.wsReconnectHelp') },
+    { id: 'wsForget', ctl: 'button', only: 'desktop', label: tk('set.wsForget'), help: tk('set.wsForgetHelp'), action: tk('set.wsForgetAction') },
   ] },
   { id: 'connections', title: tk('set.connections'), help: tk('set.connectionsHelp'), rows: [
     { id: 'folders', ctl: 'button', label: tk('set.folders'), help: tk('set.foldersHelp'), action: tk('set.manage') },

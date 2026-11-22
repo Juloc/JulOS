@@ -1,31 +1,41 @@
 # Backlog and order of work
 
-Kept short on purpose. The owner decides what moves up. New ideas go to [IDEAS.md](IDEAS.md); this page is the order. Last agreed: 2026-11-20 (a week with few tokens: one piece of work at a time, targeted tests, short reports).
+Kept short on purpose. The owner decides what moves up. New ideas go to [IDEAS.md](IDEAS.md); this page is the order. Last agreed: 2026-11-22 (finish and walk through what is built before anything new; targeted tests, short reports).
 
 ## Principle (owner's wish, 2026-11-20)
 
 **Settings live in the app, not in Compose files or environment variables**, wherever that is possible. An environment variable stays as a default or an override for the person who runs the server, but every setting that matters to the owner has a place in the settings page, is stored in the database and takes effect without a restart. The same goes for **updating JulOS itself from the app** (see "Later").
 
-## Now (this week, in this order, one at a time)
+## Now: finish and go through it with the owner (agreed 2026-11-22)
 
-1. **Security quick fixes (done in 0.18, waiting for the owner to switch them on and look at them).** (a) The two settings that protect the internet-facing server move into the app (Settings, Security): *trusted proxy addresses* (today `JULOS_TRUSTED_PROXIES`) and *allowed target hosts* (today `JULOS_ALLOWED_HOSTS`), stored in the database, environment variable as the fallback; a clear warning on the settings page while the proxy list is empty. (b) The backup key no longer lies next to the dump by default (F-01). (c) A second factor (TOTP) for actions that change hosts or files, asked once for a short window (F-04). See [SECURITY-REVIEW.md](SECURITY-REVIEW.md).
-2. **Push messages without AI. Done** ([PUSH.md](PUSH.md)). New security updates, disk almost full (threshold in the app), failed service or container, agent offline or reboot needed. Web Push over the PWA (VAPID), rules in the settings page, quiet hours, one place to see what was sent. See [ASSISTANT.md](ASSISTANT.md) (alerts) and [HOST-AGENT.md](HOST-AGENT.md).
-3. **Files app as a real explorer.** Built on the branch `claude/explorer-30d19a`, not released yet: [FILES-EXPLORER.md](FILES-EXPLORER.md) (what is built, the decisions, what was not verified).
+No new big piece before the owner has looked at everything and said what still bothers. Order: (1) merge and release what is built, (2) a walkthrough of the live system in nine short parts (updates and host actions, explorer with the address bar, dialogs as windows, editor, preview, window manager, dock pills and remembered windows, taskbar of an RDP desktop, appearance and icons), (3) fix what the owner names, (4) only then the next piece (the owner's pick: the self-update, see [SELF-UPDATE.md](SELF-UPDATE.md)).
 
-## Desktop polish and screens (requested 2026-11-21, owner's words condensed)
+## Done and live (0.18 to 0.23, 2026-11-20 to 2026-11-22)
 
-- **Explorer repairs (done, waiting for release and the owner's look):** the column headers and the toolbar look broken (they are buttons that do not look like headers); keyboard focus is lost after every folder change; the sidebar lists terminal tiles (`dev-ssh`, Codex, Claude Code) as places, there must be only **Home** and **Root** per host; the window opens small whatever the screen size.
-- **Connections app grouped by host (done, same release):** the connections can be told apart per host (a section per host, programs such as Codex and Claude Code under their host, not mixed with plain connections).
-- **Dock (pills built on `claude/fenstermanager-f514c3`, not released):** when it folds away it becomes very thin pills of about 5 px height (one per running window, the active one wider, remote connections in another colour), unfolding to named cards at the bottom edge or with the keyboard (`desktop-pills.js`, see [MULTI-SCREEN.md](MULTI-SCREEN.md)); **icons and the customisable surface are built on `claude/icons-oberflaeche-23e387`, not released:** icons come automatically from kind, program and host operating system ([ICONS.md](ICONS.md)), and Settings has an Appearance section (theme, accent colour, background, dock mode and size, icon size and style, reset per area, own icon per connection; [APPEARANCE.md](APPEARANCE.md)). **Still open:** one pill per *program* instead of per window, a dock at the left or right, an own wallpaper picture (needs a small file endpoint).
-- **Taskbar of an RDP desktop inside the JulOS dock:** a narrow dock whose framed, labelled strip is the real panel of the VM (a slice of the same picture, nothing changed on the host): [DOCK-REMOTE-TASKBAR.md](DOCK-REMOTE-TASKBAR.md) (requested 2026-11-21; step 1 built on `claude/rdp-taskleiste-1ac34b`, not released: mark the panel by hand, framed strip in the dock, size `height + P`, input mapping; the agent detection (step 2) and JulOS pills for the VM's windows (step 3) are open).
-- **Per device memory and several browser windows as one big desktop, seamless, with windows across the border, mouse buttons 4 and 5 and keyboard snapping like Windows:** planned in [MULTI-SCREEN.md](MULTI-SCREEN.md) (decisions of 2026-11-21), four steps, step 1 (window manager in one browser window, workspace saved and restored per device) is built, not released.
-- **Dialogs as windows, a real editor and a viewer in the Files app (owner's wishes 2026-11-21):** dialogs and confirmations open as movable, non-blocking windows (phone keeps its sheets), an editor for YAML, JSON and the like (CodeMirror 6, vendored), and viewing of images, video, audio, PDF, Word and Excel through a new narrow preview endpoint. Plan with inventory, library comparison, security model and five releasable steps (windows, remaining dialogs, preview, editor, Word and Excel): [FILES-VIEWER.md](FILES-VIEWER.md); six open questions at its end. Starts after the explorer repairs are released.
+- **Security** (0.18, 0.20): trusted proxies and allowed hosts in the app, backup key apart from the dump, second factor (TOTP), confirmations in three levels ([SECURITY-REVIEW.md](SECURITY-REVIEW.md)).
+- **Push messages without AI** ([PUSH.md](PUSH.md)).
+- **Files** (0.21, 0.22): explorer with an address bar like the Windows Explorer, one *Home* and *Root* per host, connections grouped by host, "write files" as a switch in the app, reasons for files that cannot be read, preview of images, video, audio, PDF, Word, Excel and csv, an editor with CodeMirror 6 ([FILES-EXPLORER.md](FILES-EXPLORER.md), [FILES-VIEWER.md](FILES-VIEWER.md)).
+- **Dialogs and confirmations as movable windows** (0.22, phone keeps its sheets).
+- **Window manager** (0.23): snapping with mouse and keyboard (`Ctrl+Alt`), mouse buttons 4 and 5, thin dock pills, windows remembered per device, the taskbar of an RDP desktop as a framed strip in the dock (step 1, marked by hand) ([MULTI-SCREEN.md](MULTI-SCREEN.md), [DOCK-REMOTE-TASKBAR.md](DOCK-REMOTE-TASKBAR.md)).
+- **CI:** tag image build about 70 s, tests in parallel jobs, doc-only changes start nothing.
+
+## Built, not released yet
+
+- **Icons from the programs and an Appearance section** (theme, accent, background, dock mode and size, icon size and style, own icon per connection): [ICONS.md](ICONS.md), [APPEARANCE.md](APPEARANCE.md).
+
+## Half built (decide after the walkthrough)
+
+- **Taskbar of an RDP desktop:** step 2 (agent detection of the panel) and step 3 (JulOS pills for the VM's windows) are open; not verified: a Windows target, a panel at the left or right, HiDPI, real full screen, two VMs.
+- **Several browser windows as one desktop** (MULTI-SCREEN steps 2 to 4): windows across the border, several viewers per connection, continue on the phone. Planned, not started.
+- **Dock:** one pill per program instead of per window, a dock at the left or right, an own wallpaper picture.
+- **Editor:** a read-only look at the end of files over 1 MiB (dropped for now); **preview:** old `.doc` and `.xls` do not open (download offered).
 
 ## Small things, on the side
 
-- Review the open Dependabot pull requests, merge the safe ones.
-- Try the Docker actions on the Docker VM with a throw-away container (start, stop, restart, pull).
-- Tidy: archive finished side sessions, remove old branches and worktrees.
+- Review the open Dependabot pull requests (two GitHub Actions bumps, green), merge the safe ones; close the old pull request from August.
+- One server test is sometimes red (`Jobs_belong_to_their_user_and_a_user_runs_at_most_two_at_once`): repair it, it guards user isolation.
+- The branch `claude/integr-m0` keeps the parked integration layer (M0/M1) of 2026-11-20; not merged.
+- Try the Docker actions on the Docker VM with a throw-away container (done for restart, stop, start, pull on 2026-11-20).
 
 ## Later (each needs its own plan)
 
@@ -43,6 +53,7 @@ Kept short on purpose. The owner decides what moves up. New ideas go to [IDEAS.m
 
 ## Waiting for the owner
 
-- Look at the new Hosts window and the Files app on the real screen and phone and say what still bothers.
-- Dev VM sound: the owner runs the `apt install` line from [AUDIO.md](AUDIO.md) and signs in again.
-- Dev VM: `claude auth login`.
+- The walkthrough above, on the real screen and on the phone (everything was only tested by the assistant in a browser pane).
+- Restart the Docker VM and the Proxmox host so that the new kernels apply (the owner decides when).
+- Settings, Security: enter the trusted proxy address and keep the recovery key; switch push on at the phone.
+- Dev VM sound: the owner runs the `apt install` line from [AUDIO.md](AUDIO.md) and signs in again; Dev VM: `claude auth login`.

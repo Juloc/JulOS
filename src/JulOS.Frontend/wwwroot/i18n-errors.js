@@ -171,6 +171,7 @@ export const SERVER_TEXTS = {
   // KI-Zugang (ai.js)
   "enabled fehlt.": "err.ai.fieldMissing",
   "active fehlt.": "err.ai.fieldMissing",
+  "confirmed fehlt.": "err.ai.fieldMissing",
   "Das Modell ist anbieter/modell.": "err.ai.modelFormat",
   "Anbieter nicht gefunden.": "err.ai.notFound",
   "App nicht gefunden.": "err.ai.notFound",

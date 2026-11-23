@@ -77,6 +77,12 @@ function budgetBar(label, part, esc) {
   return `<div class="ai-budget ai-${tone}"><span>${esc(label)}</span><div class="ai-bar" role="img" aria-label="${esc(label)}"><i style="width:${p === null ? 0 : p}%"></i></div><b>${esc(fmtTokens(part.used))}${part.limit ? ' / ' + esc(fmtTokens(part.limit)) : ' · ' + esc(t('ai.noLimit'))}</b></div>`;
 }
 
+function confirmBlock(c, esc) {
+  return c.confirmed
+    ? `<p class="hint">${esc(t('ai.codex.confirmed'))}</p><div class="dlg-btns"><button type="button" class="ghost" data-ai="codex-unconfirm">${esc(t('ai.codex.unconfirm'))}</button></div>`
+    : `<p class="sec-warn" role="status">${esc(t('ai.codex.unconfirmed'))}</p><div class="dlg-btns"><button type="button" class="ghost" data-ai="codex-confirm">${esc(t('ai.codex.confirm'))}</button></div>`;
+}
+
 function codexBlock(p, esc) {
   const c = p.codex, btn = (a, label, cls = '') => `<button type="button" class="${cls || 'ghost'}" data-ai="${a}">${esc(label)}</button>`;
   if (!c.supported) return `<p class="hint">${esc(t('ai.codex.unsupported'))}</p>`;
@@ -93,8 +99,8 @@ function codexBlock(p, esc) {
   }
   const plan = p.plan && p.plan.windows.length ? `<p class="hint">${esc(t('ai.codex.plan', { plan: p.plan.plan || '', usage: p.plan.windows.map((w) => `${Math.round(w.usedPercent)} %${w.minutes ? ' / ' + (w.minutes >= 1440 ? Math.round(w.minutes / 1440) + ' d' : Math.round(w.minutes / 60) + ' h') : ''}`).join(', ') }))}</p>` : '';
   const after = LOGIN_END[login.state] ? `<p class="sec-warn">${esc(t(LOGIN_END[login.state]))}</p>` : '';
-  if (p.status === 'ready') return `${plan}<div class="dlg-btns">${btn('logout', t('ai.codex.logout'))}</div>`;
-  return `${after}<p class="hint">${esc(t('ai.codex.signInHelp'))}</p><div class="dlg-btns">${btn('login-start', t('ai.codex.signIn'), 'primary')}</div>`;
+  if (p.status === 'ready') return `${plan}${confirmBlock(c, esc)}<div class="dlg-btns">${btn('logout', t('ai.codex.logout'))}</div>`;
+  return `${after}<p class="hint">${esc(t('ai.codex.signInHelp'))}</p>${confirmBlock(c, esc)}<div class="dlg-btns">${btn('login-start', t('ai.codex.signIn'), 'primary')}</div>`;
 }
 
 function keyBlock(p, canStore, ui, esc) {
@@ -241,6 +247,8 @@ function createDialog(api, esc) {
     'codex-retry': () => run('p-codex', () => call('/api/ai/providers/codex', 'PUT', { enabled: true })),
     'login-start': () => run('p-codex', () => call('/api/ai/providers/codex/login', 'POST')),
     'login-cancel': () => run('p-codex', () => call('/api/ai/providers/codex/login', 'DELETE')),
+    'codex-confirm': () => run('p-codex', () => call('/api/ai/providers/codex/confirm', 'PUT', { confirmed: true })),
+    'codex-unconfirm': () => run('p-codex', () => call('/api/ai/providers/codex/confirm', 'PUT', { confirmed: false })),
     'logout': () => run('p-codex', () => call('/api/ai/providers/codex/logout', 'POST')),
     'key-save': (b) => {
       const input = body.querySelector('#aiKey-' + b.dataset.id), key = input ? input.value.trim() : '';

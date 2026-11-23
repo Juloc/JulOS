@@ -95,3 +95,7 @@ Today three apps each carry a copy of the bridge and each is signed in separatel
 - **The sign-in provider in JulOS:** own code, limited to the one flow above, with Microsoft's token library, and a review of its own before release.
 - **Delivery:** the base is copied into an app by a script (version in the files, a check for drift). No package server.
 - **Order (corrected by the owner the same day):** the base first, with `notes` as the first app; the walkthrough of JulOS comes after everything agreed here is rebuilt.
+- **The base becomes a public repository** (MIT, like JulOS) once its foundation is checked: its code is copied into public apps anyway.
+- **An app of the family opens inside a JulOS window** on the desktop (a full page on the phone, always with "open in a new tab").
+- **The public website may present every app** of the family. It never links to the owner's own installations; those appear only for the owner coming from JulOS.
+- The four plans in the base repository (`docs/plans/`: accounts, app contract, notes web, website) stand with their proposals unless the owner says otherwise.

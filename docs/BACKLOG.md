@@ -6,9 +6,9 @@ Kept short on purpose. The owner decides what moves up. New ideas go to [IDEAS.m
 
 **Settings live in the app, not in Compose files or environment variables**, wherever that is possible. An environment variable stays as a default or an override for the person who runs the server, but every setting that matters to the owner has a place in the settings page, is stored in the database and takes effect without a restart. The same goes for **updating JulOS itself from the app** (see "Later").
 
-## Now: finish and go through it with the owner (agreed 2026-11-22)
+## Now: the shared base (owner's order of 2026-11-23)
 
-No new big piece before the owner has looked at everything and said what still bothers. Order: (1) merge and release what is built, (2) a walkthrough of the live system in nine short parts (updates and host actions, explorer with the address bar, dialogs as windows, editor, preview, window manager, dock pills and remembered windows, taskbar of an RDP desktop, appearance and icons), (3) fix what the owner names, (4) only then the next piece (the owner's pick: the self-update, see [SELF-UPDATE.md](SELF-UPDATE.md)).
+The owner moved the order: first the shared base of the app family ([BASE.md](BASE.md); its own repository `base`), then JulOS moves onto it (accounts, sign-in provider, AI gateway). **The walkthrough of the live JulOS with the owner comes after that rebuild**, in the nine parts noted before (updates and host actions, explorer, dialogs as windows, editor, preview, window manager, dock pills and remembered windows, taskbar of an RDP desktop, appearance and icons). JulOS itself gets only fixes until then.
 
 ## Done and live (0.18 to 0.23, 2026-11-20 to 2026-11-22)
 

@@ -1,6 +1,6 @@
 # The shared base of the app family and one sign-in through JulOS (draft, not built)
 
-Status: **agreed draft**, 2026-11-23 (the decisions are at the end). Nothing is built. It answers one question: what do all apps of the family share, and how does a person stay signed in everywhere, also after an update, without making anything less safe.
+Status: **agreed draft**, 2026-11-23 (the decisions are at the end). The repository `base` is started; nothing of it is released. It answers one question: what do all apps of the family share, and how does a person stay signed in everywhere, also after an update, without making anything less safe.
 
 ## What the owner wants
 
@@ -79,7 +79,7 @@ Today three apps each carry a copy of the bridge and each is signed in separatel
 
 ## Order of work
 
-1. The walkthrough of JulOS with the owner and the fixes from it (agreed first).
+1. The base first (owner, 2026-11-23): the repository `base` exists (private), its foundation is being built.
 2. `base` with Core, Data, Web, Look and the start project; the first rules with numbers. **First app on it: the web of `notes`** (small, and its look is the one the owner dislikes).
 3. Accounts in the base (taken out of JulOS, plus passkeys and roles). JulOS itself moves onto it.
 4. JulOS as sign-in provider; `notes` signs in through it. Review of the whole sign-in before release.
@@ -94,4 +94,4 @@ Today three apps each carry a copy of the bridge and each is signed in separatel
 - **Other people (family):** accounts in JulOS with a role per app; one place to manage and to lock.
 - **The sign-in provider in JulOS:** own code, limited to the one flow above, with Microsoft's token library, and a review of its own before release.
 - **Delivery:** the base is copied into an app by a script (version in the files, a check for drift). No package server.
-- **Order:** first the walkthrough of JulOS with the owner and the fixes from it, then the base with `notes` as the first app.
+- **Order (corrected by the owner the same day):** the base first, with `notes` as the first app; the walkthrough of JulOS comes after everything agreed here is rebuilt.

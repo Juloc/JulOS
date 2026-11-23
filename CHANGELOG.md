@@ -6,6 +6,9 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+### Neu
+- **Diagnose für ständiges Neuverbinden der Bildschirm-Verbindung** ([docs/SESSIONS.md](docs/SESSIONS.md#sitzungserhalt-stream-engine)): Das Server-Log sagt bei „Browser weg“ jetzt, nach wie vielen Sekunden und warum die Leitung endete (Browser schloss selbst, Leitung abgerissen, von einer neuen Verbindung abgelöst); mit `?debug` schreibt der Browser `ws-close` (Code, sauber oder abgerissen, Dauer, Seite versteckt, online). Am Verhalten ändert sich nichts.
+
 ## [0.24.0] - 2026-11-22
 
 ### Neu

@@ -288,6 +288,8 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
 
         byte[]? last = null;
         var outcome = Outcome.BrowserGone;
+        var attachedAt = Environment.TickCount64;
+        var gone = "unbekannt";       // nur fuers Log: warum die Leitung zum Browser endete (Abriss, Schliessen durch den Browser, Ablosung)
         try
         {
             try
@@ -331,6 +333,10 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                 {
                     outcome = Outcome.UserEnded;
                 }
+                else
+                {
+                    gone = WhyBrowserGone(first == send ? "Senden" : first == receive ? "Empfangen" : "Sitzung", first, ws);
+                }
 
                 // Zuerst sagen, warum es endet (ein abgebrochenes Senden oder Empfangen reisst den WebSocket ein), dann die Schleifen beenden
                 if (last is not null)
@@ -357,6 +363,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             catch (Exception e) when (e is OperationCanceledException or WebSocketException or IOException or ObjectDisposedException or InvalidOperationException)
             {
                 // der Browser ist weg, bevor oder waehrend wir ihm etwas gesendet haben: wie ein Abbruch der Leitung
+                gone = $"Leitung abgerissen beim Start ({e.GetType().Name})";
                 log.LogDebug("Bildschirm: {Type} {Message}", e.GetType().Name, e.Message);
                 await attach.CancelAsync().ConfigureAwait(false);
             }
@@ -364,7 +371,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             // Die Leitung riss ab, und es gibt etwas zu erhalten: warten. Alles andere beendet die Sitzung wirklich.
             if (outcome == Outcome.BrowserGone && Keep is { } keepIt && !live.Run.IsCompleted && !live.Ended)
             {
-                Detach(live, keepIt);
+                Detach(live, keepIt, gone, (Environment.TickCount64 - attachedAt) / 1000);
             }
             else
             {
@@ -409,7 +416,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
     }
 
     // Kein Browser mehr: die Sitzung pausiert, Ereignisse werden verworfen, nach "keepFor" (oder wenn die App-Sitzung weg ist) endet sie.
-    private void Detach(Live live, TimeSpan keepFor)
+    private void Detach(Live live, TimeSpan keepFor, string reason, long connectedSeconds)
     {
         live.Stream.Park();
         var waiting = new CancellationTokenSource();
@@ -420,9 +427,18 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             live.Drain = DrainAsync(live.Stream, waiting.Token);
         }
 
-        log.LogInformation("Browser weg: die Sitzung bleibt {Seconds} s erhalten.", (int)keepFor.TotalSeconds);
+        // Der Grund ist das, was fehlte, um ein staendiges Neuverbinden zu deuten: "Leitung abgerissen" (ohne Close-Frame) kommt vom Netz zwischen Handy und
+        // Server, "Browser schloss selbst" vom Browser (Seite war im Hintergrund, Neuladen, eigenes Neuverbinden), "abgebrochen" von einer neuen Verbindung derselben Sitzung.
+        log.LogInformation("Browser weg nach {Connected} s ({Reason}): die Sitzung bleibt {Seconds} s erhalten.", connectedSeconds, reason, (int)keepFor.TotalSeconds);
         _ = ExpireAsync(live, keepFor, waiting.Token);
     }
+
+    /// <summary>Der Grund, warum die erste der Aufgaben der Leitung zum Browser endete, als kurzer Text fuers Log (keine Inhalte).</summary>
+    private static string WhyBrowserGone(string leg, Task first, WebSocket ws) =>
+        first.IsFaulted ? $"Leitung abgerissen beim {leg} ({first.Exception?.GetBaseException().GetType().Name})"
+        : first.IsCanceled ? "abgebrochen, eine neue Verbindung derselben Sitzung kam"
+        : leg == "Senden" ? "Ereignisse der Sitzung endeten"
+        : $"Browser schloss selbst ({ws.CloseStatus?.ToString() ?? "ohne Status"})";
 
     private static async Task DrainAsync(ScreenStream stream, CancellationToken ct)
     {

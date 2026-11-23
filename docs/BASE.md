@@ -8,7 +8,7 @@ Status: **agreed draft**, 2026-11-23 (the decisions are at the end). The reposit
 - Every app **runs on its own**. Opened through JulOS, a person is **signed in at once**, in every app, also after an update of the app or of JulOS.
 - Very safe. Sign-in with passkeys, TOTP, mail and Google where it makes sense.
 - JulOS is the hub: the sign-in, the access to AI (the Codex bridge, set up once), the home of all apps.
-- Plain names: the repository says what the app is (`os`, `caddy`, `arr`, `watch`, `read`, `ani`, `cook`, `finance`, `receipts`, `notes`, later `health`, `life`; the base is `base`).
+- Plain names: the repository says what the app is (`os`, `caddy`, `arr`, `watch`, `read`, `ani`, `cook`, `finance`, `receipts`, `notes`, `calendar`, `todo`, later `health`, `life`; the base is `base`).
 
 ## Rules for the base
 

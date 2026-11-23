@@ -7,6 +7,7 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 ## [Unveröffentlicht]
 
 ### Neu
+- **KI-Zugang für die Apps der Familie** ([docs/AI-GATEWAY.md](docs/AI-GATEWAY.md)): Einstellungen, *KI* (aus per Vorgabe: nichts läuft, nichts wird geladen): Anbieter einmal einrichten (Codex-Brücke mit ChatGPT-Konto per Geräte-Code, das Programm wird erst beim Einschalten in den Datenordner geladen, gepinnte Version mit SHA-256-Prüfung; OpenAI- und Anthropic-Schlüssel verschlüsselt) und Apps mit eigenem Schlüssel, Modellwahl, Tages- und Monatsbudget (Hinweis bei 80 %, Stopp bei 100 %), Ratenlimit und Verbrauch je Tag; die API `/api/ai/v1` (`models`, `chat` als Antwort oder Server-Sent-Events-Strom, `usage`) geht nur mit dem App-Schlüssel und öffnet sonst nichts in JulOS; gespeichert werden nur Zähler, nie ein Text. Änderungen verlangen den zweiten Faktor und stehen im Verlauf. Migration `026_ai.sql`. Die echte Codex-Anmeldung und die echten Anbieter sind noch nicht geprüft.
 - **Diagnose für ständiges Neuverbinden der Bildschirm-Verbindung** ([docs/SESSIONS.md](docs/SESSIONS.md#sitzungserhalt-stream-engine)): Das Server-Log sagt bei „Browser weg“ jetzt, nach wie vielen Sekunden und warum die Leitung endete (Browser schloss selbst, Leitung abgerissen, von einer neuen Verbindung abgelöst); mit `?debug` schreibt der Browser `ws-close` (Code, sauber oder abgerissen, Dauer, Seite versteckt, online). Am Verhalten ändert sich nichts.
 
 ## [0.24.0] - 2026-11-22

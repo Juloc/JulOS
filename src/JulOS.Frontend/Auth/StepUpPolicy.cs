@@ -27,6 +27,10 @@ internal static class StepUpPolicy
         ("PUT", "api/security/**"),
         ("POST", "api/security/**"),
         ("DELETE", "api/security/**"),
+        // KI-Zugang: Anbieter, Schluessel, Apps und Grenzen aendern (die API der Apps unter api/ai/v1 geht nie hierher, sie hat keine Sitzung)
+        ("PUT", "api/ai/**"),
+        ("POST", "api/ai/**"),
+        ("DELETE", "api/ai/**"),
     ];
 
     // Die Vorschau der Zielhosts aendert nichts und braucht keine Freigabe

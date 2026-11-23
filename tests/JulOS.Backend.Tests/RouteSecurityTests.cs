@@ -29,6 +29,9 @@ public sealed class RouteSecurityTests
         ["GET /agent-files/{name}"] = "Agent-Dateien und Pruefsummen (Quelltext, kein Geheimnis)",
         ["POST /api/agent-link/enroll"] = "Agent tauscht den Einmalcode gegen ein Token",
         ["ANY /api/agent-link"] = "WebSocket des Agenten (prueft sein Token selbst)",
+        ["GET /api/ai/v1/models"] = "KI-API der Apps: Schluessel der App statt Sitzung (docs/AI-GATEWAY.md)",
+        ["GET /api/ai/v1/usage"] = "KI-API der Apps: Schluessel der App statt Sitzung",
+        ["POST /api/ai/v1/chat"] = "KI-API der Apps: Schluessel der App statt Sitzung",
     };
 
     private static string Fill(string pattern) =>
@@ -114,6 +117,7 @@ public sealed class RouteSecurityTests
         {
             if (method is "GET" or "HEAD") continue;
             if (pattern.StartsWith("/api/agent-link")) continue;                 // der Agent ist kein Browser: Token statt Cookie und Origin
+            if (pattern.StartsWith("/api/ai/v1/")) continue;                     // Apps der Familie: Schluessel statt Cookie, kein Browser, kein Origin
             foreach (var (name, tweak) in new (string, Action<HttpRequestMessage>)[]
             {
                 ("ohne Kopfzeile", r => r.Headers.Remove("X-JulOS")),

@@ -996,6 +996,8 @@ export class RemoteSession extends Session {
         setTimeout(() => { if (this.client === client && this.connected) { this.firstLogin = false; this.retry = 0; this.loginTries = 0; } }, 12000);
       } else if (st === 5) { // getrennt
         this.connected = false;
+        // Diagnose (?debug): wie lange die Leitung hielt, wie sie endete (Code, sauber geschlossen oder abgerissen) und was die Seite gerade tat; so sieht man, ob das Neuverbinden vom Netz oder von der Seite selbst kommt
+        if (client.lastClose) this.dbg('ws-close', { code: client.lastClose.code, clean: client.lastClose.clean, up: Math.round((client.lastClose.at - this.connectStarted) / 1000), hidden: document.hidden, online: navigator.onLine, resume: this.resume.usable() });
         if (client.drawn) { this.streamWorked = true; this.resume.confirm(); }      // die Sitzung am Ziel gibt es wirklich: ein Token darf sie wieder aufnehmen
         if (!client.closing && !this.streamWorked && !this.intentional && !this.fatal) return this.streamFailed(t('app.errLostBeforePicture'));   // ohne Fehlermeldung getrennt
         if (this.intentional || this.fatal) return;

@@ -254,7 +254,7 @@ export class StreamClient {
     this.watch = setInterval(() => this.watchDecoder(), 500);
     window.addEventListener('blur', this.focusLost); document.addEventListener('visibilitychange', this.focusLost);
     socket.onmessage = (e) => { if (this.socket === socket) this.receive(e.data); };
-    socket.onclose = () => { if (this.socket === socket) this.finish(); };
+    socket.onclose = (e) => { if (this.socket === socket) { this.lastClose = { code: e.code, clean: e.wasClean, at: Date.now() }; this.finish(); } };   // lastClose: nur fuer die Diagnose (app.js, ws-close)
     socket.onerror = () => { if (this.socket === socket && !this.connected && this.onerror) this.onerror({ code: 520, message: t('stream.noServer') }); };
   }
 

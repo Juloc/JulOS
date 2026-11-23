@@ -16,7 +16,7 @@ internal static class OidcPages
 
     private static IResult Html(int status, string title, string body, string? head = null) =>
         Results.Content($"<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"color-scheme\" content=\"light dark\">"
-            + $"<meta name=\"robots\" content=\"noindex\"><title>{E(title)}</title><link rel=\"stylesheet\" href=\"/oidc.css\">{head}</head><body><main class=\"oidc-card\">{body}</main></body></html>",
+            + $"<meta name=\"robots\" content=\"noindex\"><title>{E(title)}</title><link rel=\"stylesheet\" href=\"/oidc-page.css\">{head}</head><body><main class=\"oidc-card\">{body}</main></body></html>",
             "text/html; charset=utf-8", Encoding.UTF8, status);
 
     private static string T(HttpRequest r, string de, string en) => English(r) ? en : de;

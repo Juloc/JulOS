@@ -106,7 +106,7 @@ internal static class OidcEndpoints
             if (!hits.Allow("oidc-authorize:" + Ip(ctx), 120, Minute)) return OidcPages.TooMany(req);
             var q = req.Query;
             var input = new OidcAuthorizeInput(One(q, "client_id"), One(q, "redirect_uri"), One(q, "response_type"), One(q, "scope"), One(q, "state"), One(q, "nonce"),
-                One(q, "code_challenge"), One(q, "code_challenge_method"), One(q, "prompt"), One(q, "max_age"));
+                One(q, "code_challenge"), One(q, "code_challenge_method"), One(q, "prompt"), One(q, "max_age"), One(q, "response_mode"));
             var who = await ApiGuard.ResolveAsync(ctx, auth, rotate: true);
             var outcome = await oidc.AuthorizeAsync(input, who, bounced: One(q, "jb") == "1", ctx.RequestAborted);
             switch (outcome)

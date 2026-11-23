@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 namespace JulOS.Backend.Services;
 
 /// <summary>Die Felder einer Anfrage an /oidc/authorize, so wie sie ankamen (nichts davon ist schon geprueft).</summary>
-public sealed record OidcAuthorizeInput(string? ClientId, string? RedirectUri, string? ResponseType, string? Scope, string? State, string? Nonce, string? CodeChallenge, string? CodeChallengeMethod, string? Prompt, string? MaxAge);
+public sealed record OidcAuthorizeInput(string? ClientId, string? RedirectUri, string? ResponseType, string? Scope, string? State, string? Nonce, string? CodeChallenge, string? CodeChallengeMethod, string? Prompt, string? MaxAge, string? ResponseMode = null);
 
 /// <summary>Was auf eine Anfrage an /oidc/authorize folgt.</summary>
 public abstract record OidcAuthorizeOutcome
@@ -60,6 +60,7 @@ public sealed class OidcService(OidcAppStore apps, OidcFlowStore flow, OidcKeys 
 
         // 2. Form der Anfrage
         if (q.ResponseType != "code") return Fail("unsupported_response_type", "Nur response_type=code.");
+        if (q.ResponseMode is not (null or "query")) return Fail("invalid_request", "Nur response_mode=query.");              // keine Antwort im Fragment oder per form_post
         if (!OidcRules.OpaqueOk(q.State)) return Fail("invalid_request", "state ist Pflicht (höchstens 512 Zeichen).");
         if (q.Nonce is not null && !OidcRules.OpaqueOk(q.Nonce)) return Fail("invalid_request", "nonce ungültig.");
         if (OidcRules.GrantedScopes(q.Scope) is not { } scopes) return Fail("invalid_scope", "scope muss openid enthalten.");

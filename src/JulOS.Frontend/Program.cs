@@ -13,6 +13,7 @@ using JulOS.Frontend.Files;
 using JulOS.Frontend.Folders;
 using JulOS.Frontend.Hosts;
 using JulOS.Frontend.Modules;
+using JulOS.Frontend.Oidc;
 using JulOS.Frontend.Push;
 using JulOS.Frontend.Remote;
 using JulOS.Frontend.Security;
@@ -145,6 +146,8 @@ builder.Services.AddSingleton(sp => new FileConfirmations(sp.GetRequiredService<
 builder.Services.AddHostedService<SftpPoolSweeper>();
 // Module Caddy und DDNS (nur lesen, standardmaessig aus): JULOS_CADDY, JULOS_DDNS, siehe docs/MODULES.md
 builder.Services.AddModules(builder.Configuration);
+// Anmelde-Zentrale (OpenID Connect, docs/SIGN-IN.md): Apps, Rollen, Token; JULOS_PUBLIC_URL ist der Rueckfall fuer die oeffentliche Adresse
+builder.Services.AddOidc(builder.Configuration);
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJson.Default));
 
 // Hinter einem Proxy im eigenen Netz (zum Beispiel Caddy) kommen Client-Adresse, Protokoll und Host aus den X-Forwarded-Kopfzeilen. Welche Adressen als Proxy gelten, steht in den
@@ -246,6 +249,7 @@ app.MapFiles();
 app.MapRemoteFiles();
 app.MapModules();
 app.MapNetTools();
+app.MapOidcAll();
 
 app.Run();
 return 0;

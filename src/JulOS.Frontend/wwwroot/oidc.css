@@ -1,0 +1,15 @@
+/* Seiten der Anmelde-Zentrale (Anmelden, kein Zugang, Fehler) und die Verwaltung der Apps in den Einstellungen. Nur Variablen mit hellem und dunklem Wert. */
+:root { color-scheme: light dark; --o-bg: #f4f6f9; --o-card: #fff; --o-fg: #1b2330; --o-dim: #5a6578; --o-line: #d5dbe6; --o-accent: #2457c5; --o-on-accent: #fff; --o-bad: #b3261e; --o-ok: #1a7a3c; }
+@media (prefers-color-scheme: dark) { :root { --o-bg: #12161d; --o-card: #1b212b; --o-fg: #e6eaf2; --o-dim: #9aa6ba; --o-line: #2f3847; --o-accent: #8db0ff; --o-on-accent: #0b1220; --o-bad: #ffb4ab; --o-ok: #7bd69a; } }
+html { background: var(--o-bg); }
+body { margin: 0; font: 16px/1.45 system-ui, sans-serif; color: var(--o-fg); min-height: 100vh; display: grid; place-items: center; }
+.oidc-card { box-sizing: border-box; width: min(26rem, 100% - 2rem); margin: 1rem; padding: 1.5rem; background: var(--o-card); border: 1px solid var(--o-line); border-radius: 1rem; }
+.oidc-card h1 { margin: 0 0 .5rem; font-size: 1.35rem; }
+.oidc-card .hint { color: var(--o-dim); margin: 0 0 1rem; }
+.oidc-card label { display: block; margin: .75rem 0 0; font-size: .9rem; color: var(--o-dim); }
+.oidc-card input { box-sizing: border-box; width: 100%; margin-top: .25rem; padding: .6rem .7rem; font: inherit; color: var(--o-fg); background: transparent; border: 1px solid var(--o-line); border-radius: .5rem; }
+.oidc-card input:focus-visible, .oidc-card button:focus-visible, .oidc-card a:focus-visible { outline: 2px solid var(--o-accent); outline-offset: 2px; }
+.oidc-card .msg { min-height: 1.4em; margin: .75rem 0 0; color: var(--o-bad); }
+.oidc-card button { margin-top: .5rem; padding: .6rem 1.1rem; font: inherit; border: 1px solid var(--o-line); border-radius: 2rem; background: transparent; color: var(--o-fg); cursor: pointer; }
+.oidc-card button.primary { background: var(--o-accent); color: var(--o-on-accent); border-color: transparent; }
+.oidc-card a { color: var(--o-accent); }

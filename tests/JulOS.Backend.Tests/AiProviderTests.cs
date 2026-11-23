@@ -84,6 +84,20 @@ public sealed class AiProviderTests
         Assert.Equal("provider_unavailable", (await Assert.ThrowsAsync<AiProviderException>(() => Drain(broken, Hello))).Code);
     }
 
+    [Fact]
+    public async Task A_line_without_an_end_is_refused_while_reading_and_lines_end_at_any_line_break()
+    {
+        var huge = new OpenAiProvider(_ => Task.FromResult<string?>("sk-test-key-0000000000"), new StubHandler(_ => StubHandler.Sse("data: " + new string('x', AiHttp_MaxLine() + 10))));
+        Assert.Equal("provider_error", (await Assert.ThrowsAsync<AiProviderException>(() => Drain(huge, Hello))).Code);
+
+        var reader = new JulOS.Integrations.Ai.LineReader(new StringReader("a\r\nb\rc\n\nd"), 100);
+        var lines = new List<string?>();
+        while (await reader.ReadLineAsync(TestContext.Current.CancellationToken) is { } l) lines.Add(l);
+        Assert.Equal(["a", "b", "c", "", "d"], lines);
+    }
+
+    private static int AiHttp_MaxLine() => 1 << 20;
+
     // ---------------------------------------------------------------- Download des Codex-Programms
 
     private static CodexRelease ReleaseFor(byte[] archive, string? sha = null) => new("9.9.9", "https://example.invalid/codex.tar.gz", sha ?? Convert.ToHexStringLower(SHA256.HashData(archive)), "codex-test-linux");

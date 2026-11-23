@@ -36,13 +36,14 @@ internal sealed class FakeCodexProgram : IDisposable
     private const string Script = """
         #!/usr/bin/env bash
         rec='{{REC}}'
-        echo "$*" >> "$rec/calls.log"
+        echo "$*" >> "$rec/calls.log"; echo $$ >> "$rec/pids-$1"
         echo "$CODEX_HOME" > "$rec/home.txt"; env | sort > "$rec/env.txt"; pwd > "$rec/cwd.txt"
         case "$1" in
           --version) echo "codex-cli 0.0.0-fake"; exit 0;;
           logout) rm -f "$CODEX_HOME/signed-in"; exit 0;;
           login)
             if [ "$2" = "status" ]; then
+              [ -f "$rec/slow-status" ] && sleep 0.4
               if [ -f "$CODEX_HOME/signed-in" ]; then echo "Logged in using ChatGPT"; exit 0; else echo "Not logged in" >&2; exit 1; fi
             fi
             printf '\033[1mOpen this link\033[0m\n   \033[36m{{URL}}\033[0m\n\nEnter this one-time code\n   \033[1mABCD-12345\033[0m\n'
@@ -56,15 +57,19 @@ internal sealed class FakeCodexProgram : IDisposable
             while IFS= read -r line; do
               id=$(printf '%s' "$line" | sed -n 's/^{"id":\([0-9]*\),.*/\1/p')
               case "$line" in
-                *'"method":"initialize"'*) echo "{\"id\":$id,\"result\":{}}";;
+                *'"method":"initialize"'*) [ -f "$rec/slow-init" ] && sleep 20; echo "{\"id\":$id,\"result\":{}}";;
                 *'"method":"model/list"'*) echo "{\"id\":$id,\"result\":{\"data\":[{\"model\":\"fake-1\",\"displayName\":\"Fake 1\",\"supportedReasoningEfforts\":[{\"reasoningEffort\":\"low\"},{\"reasoningEffort\":\"high\"}],\"defaultReasoningEffort\":\"low\"}]}}";;
                 *'"method":"account/rateLimits/read"'*) echo "{\"id\":$id,\"result\":{\"rateLimits\":{\"planType\":\"plus\",\"primary\":{\"usedPercent\":12.5,\"windowDurationMins\":300,\"resetsAt\":1900000000}}}}";;
                 *'"method":"thread/start"'*)
                   n=$((n+1)); echo "$line" > "$rec/thread-start-$n.json"
-                  echo "{\"id\":$id,\"result\":{\"thread\":{\"id\":\"thr_$n\"}}}";;
+                  sandbox='{"type":"readOnly"}'; [ -f "$rec/unsafe" ] && sandbox='{"type":"dangerFullAccess"}'
+                  echo "{\"id\":$id,\"result\":{\"thread\":{\"id\":\"thr_$n\"},\"approvalPolicy\":\"never\",\"sandbox\":$sandbox}}";;
+                *'"method":"turn/interrupt"'*)
+                  touch "$rec/interrupted"; echo "{\"id\":$id,\"result\":{}}";;
                 *'"method":"turn/start"'*)
                   thread=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
                   echo "$line" > "$rec/turn-start.json"
+                  case "$line" in *SLOWSTART*) sleep 1;; esac
                   echo "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"turn_1\"}}}"
                   case "$line" in
                     *CRASH*) exit 3;;
@@ -74,6 +79,11 @@ internal sealed class FakeCodexProgram : IDisposable
                     *LIMIT*)
                       echo "{\"method\":\"error\",\"params\":{\"threadId\":\"$thread\",\"error\":{\"message\":\"You've hit your usage limit. Try again later.\"}}}"
                       echo "{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"$thread\",\"turn\":{\"id\":\"turn_1\",\"status\":\"failed\"}}}";;
+                    *TOOL*)
+                      echo "{\"method\":\"item/started\",\"params\":{\"threadId\":\"$thread\",\"item\":{\"type\":\"commandExecution\",\"command\":\"cat /etc/passwd\"}}}"
+                      while IFS= read -r l2; do
+                        case "$l2" in *'"method":"turn/interrupt"'*) touch "$rec/interrupted"; break;; esac
+                      done;;
                     *SLOW*)
                       echo "{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"$thread\",\"turnId\":\"turn_1\",\"delta\":\"Hi\"}}"
                       while IFS= read -r l2; do

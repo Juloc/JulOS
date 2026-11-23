@@ -57,6 +57,25 @@ public static partial class CodexProtocol
         return new CodexPlanUsage(Text(bucket, "planType"), [.. windows]);
     }
 
+    /// <summary>
+    /// Hat das Programm in seiner Antwort auf thread/start gemeldet, dass der Faden nur lesend laeuft (sandbox read-only) und nie um Freigabe fragt (approvalPolicy never)? Fehlt eine
+    /// der Angaben, gilt es als nicht bestaetigt (fail-closed).
+    /// </summary>
+    public static bool IsLockedDown(JsonElement threadStart)
+    {
+        if (threadStart.ValueKind != JsonValueKind.Object) return false;
+        var approval = Text(threadStart, "approvalPolicy");
+        if (approval != "never") return false;
+        if (!threadStart.TryGetProperty("sandbox", out var sandbox)) return false;
+        var kind = sandbox.ValueKind == JsonValueKind.String ? sandbox.GetString() : Text(sandbox, "type");
+        return kind is not null && kind.Replace("-", "").Equals("readonly", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Ist der Eintrag einer Runde nur Text (Nutzer, Antwort, Denken)? Alles andere (Befehl, Datei, Suche, Werkzeug) ist es nicht; auch Unbekanntes nicht.</summary>
+    public static bool IsPlainItem(JsonElement parameters) =>
+        parameters.ValueKind == JsonValueKind.Object && parameters.TryGetProperty("item", out var item)
+        && Text(item, "type") is "userMessage" or "agentMessage" or "reasoning" or "user_message" or "agent_message";
+
     /// <summary>Das Limit des Tarifs ("You've hit your usage limit ...") als eigener Fehler, sonst null.</summary>
     public static AiProviderException? PlanLimitIn(string? message) =>
         message is not null && message.Contains("usage limit", StringComparison.OrdinalIgnoreCase)

@@ -56,11 +56,16 @@ internal sealed class CodexDeviceLogin : IDisposable
 
     private async Task ReadAsync(StreamReader reader)
     {
-        while (await reader.ReadLineAsync() is { } line)
+        var lines = new LineReader(reader, 64 * 1024);
+        try
         {
-            if (_url is null) { if (CodexProtocol.LoginAddress(line) is { } u) _url = u.AbsoluteUri; }
-            else if (_code is null && CodexProtocol.LoginCode(line) is { } code) { _code = code; _state = "waiting"; }
+            while (await lines.ReadLineAsync(CancellationToken.None) is { } line)
+            {
+                if (_url is null) { if (CodexProtocol.LoginAddress(line) is { } u) _url = u.AbsoluteUri; }
+                else if (_code is null && CodexProtocol.LoginCode(line) is { } code) { _code = code; _state = "waiting"; }
+            }
         }
+        catch (AiProviderException) { Stop(); }       // eine absurd lange Zeile: das Programm wird beendet, die Anmeldung gilt als fehlgeschlagen
     }
 
     private async Task<bool> WatchAsync(Task reading)

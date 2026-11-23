@@ -191,4 +191,98 @@ public sealed class AiBridgeTests : IDisposable
         Assert.False(bridge.Running);
         Assert.Equal("error", (await new CodexBridge(new CodexInstaller(dir.Path, null), _time).GetStateAsync(TestContext.Current.CancellationToken)).Status);
     }
+
+    // ---------------------------------------------------------------- Pruefbefunde (F1, F2, F4, F7)
+
+    private static bool Alive(int pid) => Directory.Exists("/proc/" + pid) && !File.ReadAllText($"/proc/{pid}/stat").Contains(") Z ");
+
+    [Fact]
+    public async Task Cancelling_a_cold_start_ends_the_started_program_and_does_not_count_as_a_failure()
+    {
+        File.WriteAllText(Path.Combine(_fake.Record, "slow-init"), "");
+        var bridge = Bridge();
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(600));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Drain(bridge, Ask("Hallo"), cts.Token));
+        Assert.False(bridge.Running);
+        var pid = int.Parse(File.ReadAllLines(Path.Combine(_fake.Record, "pids-app-server"))[0]);
+        for (var i = 0; i < 100 && Alive(pid); i++) await Task.Delay(50, TestContext.Current.CancellationToken);
+        Assert.False(Alive(pid));                                      // kein verwaister app-server
+
+        // der Abbruch war kein Fehler des Programms: kein Backoff, die naechste Anfrage startet sofort
+        File.Delete(Path.Combine(_fake.Record, "slow-init"));
+        Assert.Equal("Hello", (await Drain(bridge, Ask("Hallo")))[0].Text);
+    }
+
+    [Fact]
+    public async Task Cancelling_before_the_answer_to_turn_start_still_interrupts_the_turn()
+    {
+        var bridge = Bridge();
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(400));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Drain(bridge, Ask("SLOWSTART"), cts.Token));
+        for (var i = 0; i < 100 && !_fake.Has("interrupted"); i++) await Task.Delay(50, TestContext.Current.CancellationToken);
+        Assert.True(_fake.Has("interrupted"));
+    }
+
+    [Fact]
+    public async Task A_thread_that_is_not_confirmed_read_only_gets_no_text_and_a_tool_item_ends_the_turn()
+    {
+        var bridge = Bridge();
+        File.WriteAllText(Path.Combine(_fake.Record, "unsafe"), "");
+        var e = await Assert.ThrowsAsync<AiProviderException>(() => Drain(bridge, Ask("GEHEIM-TEXT")));
+        Assert.Equal("provider_error", e.Code); Assert.Contains("nicht bestätigt", e.Message);
+        Assert.False(_fake.Has("turn-start.json"));                    // fail-closed: der Text ging nie an das Programm
+        File.Delete(Path.Combine(_fake.Record, "unsafe"));
+
+        var tool = await Assert.ThrowsAsync<AiProviderException>(() => Drain(bridge, Ask("TOOL bitte")));
+        Assert.Contains("Werkzeug", tool.Message);
+        for (var i = 0; i < 100 && !_fake.Has("interrupted"); i++) await Task.Delay(50, TestContext.Current.CancellationToken);
+        Assert.True(_fake.Has("interrupted"));                         // die Runde wurde unterbrochen
+
+        Assert.True(CodexProtocol.IsLockedDown(ApiKit.J("""{"approvalPolicy":"never","sandbox":"read-only"}""")));
+        Assert.True(CodexProtocol.IsLockedDown(ApiKit.J("""{"approvalPolicy":"never","sandbox":{"type":"readOnly"}}""")));
+        foreach (var bad in new[] { """{"approvalPolicy":"never"}""", """{"sandbox":"read-only"}""", """{"approvalPolicy":"on-request","sandbox":"read-only"}""", """{"approvalPolicy":"never","sandbox":{"type":"workspaceWrite"}}""", "{}" })
+            Assert.False(CodexProtocol.IsLockedDown(ApiKit.J(bad)), bad);
+    }
+
+    [Fact]
+    public async Task Many_simultaneous_status_questions_start_one_program()
+    {
+        File.WriteAllText(Path.Combine(_fake.Record, "slow-status"), "");
+        var bridge = Bridge();
+        var states = await Task.WhenAll(Enumerable.Range(0, 25).Select(_ => bridge.GetStateAsync(TestContext.Current.CancellationToken)));
+        Assert.All(states, st => Assert.Equal("ready", st.Status));
+        Assert.Single(_fake.Calls, c => c == "login status");
+    }
+
+    [Fact]
+    public async Task The_folders_of_the_bridge_are_private_and_a_changed_program_is_not_started()
+    {
+        using var dir = new AiProviderTests.TempDir();
+        var archive = FakeCodexProgram.Archive(("codex-test-linux", "#!/bin/sh\nexit 0\n"));
+        var release = new CodexRelease("9.9.9", "https://example.invalid/c.tar.gz", Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(archive)), "codex-test-linux");
+        var installer = new CodexInstaller(dir.Path, release, new StubHandler(_ => new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new ByteArrayContent(archive) }));
+        await installer.InstallAsync(TestContext.Current.CancellationToken);
+        if (!OperatingSystem.IsWindows())
+            foreach (var folder in new[] { "ai", Path.Combine("ai", "codex"), Path.Combine("ai", "codex", "bin"), Path.Combine("ai", "codex", "bin", "9.9.9"), Path.Combine("ai", "codex", "tmp") })
+                Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(Path.Combine(dir.Path, folder)));
+        Assert.Equal(installer.InstalledPath, installer.VerifiedPath());
+
+        var bridge = new CodexBridge(installer, _time);
+        _open.Add(bridge);
+        await Assert.ThrowsAnyAsync<AiProviderException>(() => Drain(bridge, Ask("x")));      // das Skript ist kein app-server, aber es wird gestartet (kein Pfad-Fehler)
+        if (!OperatingSystem.IsWindows())
+            foreach (var folder in new[] { installer.Home, installer.Work }) Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(folder));
+
+        File.AppendAllText(installer.InstalledPath!, "# nachtraeglich veraendert\n");
+        Assert.Null(installer.VerifiedPath());
+        Assert.Equal("install_failed", (await bridge.GetStateAsync(TestContext.Current.CancellationToken)).Status);
+        Assert.NotNull(installer.Failure);
+        await Assert.ThrowsAsync<AiProviderException>(() => Drain(bridge, Ask("x")));
+        bridge.Stop();
+
+        // eine Pruefsumme, die keine ist, laedt nichts (fail-closed)
+        using var dir2 = new AiProviderTests.TempDir();
+        var bad = new CodexInstaller(dir2.Path, release with { Sha256 = "nope" }, new StubHandler(_ => throw new InvalidOperationException("kein Download")));
+        Assert.Equal("integrity", (await Assert.ThrowsAsync<AiProviderException>(() => bad.InstallAsync(TestContext.Current.CancellationToken))).Code);
+    }
 }

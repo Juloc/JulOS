@@ -37,12 +37,49 @@ public sealed class CodexInstaller(string dataDir, CodexRelease? release, HttpMe
     private Task? _running;
     private string? _failure;
 
+    private static readonly UnixFileMode Private = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+
+    /// <summary>Legt einen Ordner samt fehlender Ebenen an, jeden mit dem Recht 0700 (nur der Server): im Datenordner liegt die Anmeldung beim ChatGPT-Konto.</summary>
+    public static void CreatePrivate(string path)
+    {
+        if (Directory.Exists(path)) return;
+        var parent = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(parent) && !Directory.Exists(parent)) CreatePrivate(parent);
+        if (OperatingSystem.IsWindows()) Directory.CreateDirectory(path); else Directory.CreateDirectory(path, Private);
+    }
+
     public string Root => Path.Combine(dataDir, CodexRelease.DataSubfolder);
     public string Home => Path.Combine(Root, "home");
     public string Work => Path.Combine(Root, "work");
     public string? InstalledPath => release is null ? null : Path.Combine(Root, "bin", release.Version, "codex");
     public bool Supported => release is not null;
     public bool IsInstalled => InstalledPath is { } p && File.Exists(p);
+
+    private (long Length, long Ticks, bool Ok)? _checked;
+
+    /// <summary>
+    /// Der Pfad des Programms, aber nur wenn die Datei noch die ist, die der Installer nach geprueftem Archiv abgelegt hat (ihre SHA-256 steht neben ihr in codex.sha256). Vor jedem Start
+    /// gefragt: ist sie veraendert oder der Vermerk fort, gibt es keinen Pfad (und Failure sagt warum). Neu gerechnet wird nur, wenn sich Groesse oder Zeitstempel aendern.
+    /// Die Grenze: wer die Datei und den Vermerk zugleich aendern kann (derselbe Benutzer), schlaegt diese Pruefung; sie faengt Unfaelle und schlichte Eingriffe, keinen entschlossenen Angreifer.
+    /// </summary>
+    public string? VerifiedPath()
+    {
+        var path = InstalledPath;
+        if (path is null || !File.Exists(path)) return null;
+        var info = new FileInfo(path);
+        if (_checked is { } c && c.Length == info.Length && c.Ticks == info.LastWriteTimeUtc.Ticks) return c.Ok ? path : null;
+        bool ok;
+        try
+        {
+            var recorded = File.ReadAllText(path + ".sha256").Trim();
+            using var stream = File.OpenRead(path);
+            ok = recorded.Length == 64 && CryptographicOperations.FixedTimeEquals(SHA256.HashData(stream), Convert.FromHexString(recorded));
+        }
+        catch (Exception e) when (e is IOException or FormatException or UnauthorizedAccessException) { ok = false; }
+        _checked = (info.Length, info.LastWriteTimeUtc.Ticks, ok);
+        if (!ok) _failure = "Die Datei des Codex-Programms stimmt nicht mehr mit der geprüften überein; sie wird nicht gestartet. Zum Neuladen den Ordner ai/codex/bin im Datenordner löschen.";
+        return ok ? path : null;
+    }
     public bool IsDownloading { get { lock (_lock) return _running is { IsCompleted: false }; } }
     public string? Failure => _failure;
 
@@ -65,9 +102,11 @@ public sealed class CodexInstaller(string dataDir, CodexRelease? release, HttpMe
     public async Task InstallAsync(CancellationToken ct)
     {
         if (release is null) throw new AiProviderException("provider_unavailable", "Für diesen Rechner gibt es kein Codex-Programm.");
+        // Fail-closed: eine Pruefsumme, die keine ist, ist kein Grund, irgendetwas zu laden
+        if (release.Sha256.Length != 64 || !release.Sha256.All(Uri.IsHexDigit)) throw new AiProviderException("integrity", "Die Prüfsumme der festgelegten Version ist ungültig; es wird nichts geladen.");
         if (IsInstalled) return;
         var temp = Path.Combine(Root, "tmp");
-        Directory.CreateDirectory(temp);
+        CreatePrivate(temp);
         var archive = Path.Combine(temp, Guid.NewGuid().ToString("N") + ".tar.gz");
         try
         {
@@ -109,7 +148,7 @@ public sealed class CodexInstaller(string dataDir, CodexRelease? release, HttpMe
     {
         var dir = Path.Combine(Root, "bin", r.Version);
         var final = Path.Combine(dir, "codex");
-        Directory.CreateDirectory(dir);
+        CreatePrivate(dir);
         var partial = final + ".part";
         using (var gz = new GZipStream(File.OpenRead(archive), CompressionMode.Decompress))
         using (var tar = new TarReader(gz))
@@ -126,6 +165,9 @@ public sealed class CodexInstaller(string dataDir, CodexRelease? release, HttpMe
             }
             if (!found) throw new AiProviderException("provider_error", "Im Archiv fehlt das Codex-Programm.");
         }
+        // Die SHA-256 der entpackten Datei merken, damit sie vor jedem Start wieder geprueft werden kann (VerifiedPath)
+        using (var stream = File.OpenRead(partial)) File.WriteAllText(final + ".sha256", Convert.ToHexStringLower(SHA256.HashData(stream)));
         File.Move(partial, final, overwrite: true);
+        _checked = null;
     }
 }

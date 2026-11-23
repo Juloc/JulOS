@@ -44,10 +44,12 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
     private DateTimeOffset _nextStart;
     private CodexDeviceLogin? _login;
     private (DateTimeOffset At, bool SignedIn)? _signedInCache;
+    private readonly SemaphoreSlim _statusLock = new(1, 1);
 
     public string Id => "codex";
 
-    private string? Executable => _options.Executable ?? (installer.IsInstalled ? installer.InstalledPath : null);
+    // Das geladene Programm nur, wenn es noch die geprueft abgelegte Datei ist (vor jedem Start gefragt)
+    private string? Executable => _options.Executable ?? installer.VerifiedPath();
 
     public bool Running => _connection is { Dead: false };
 
@@ -60,19 +62,29 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
             if (!installer.Supported) return new AiProviderState("error", "unsupported_platform");
             if (installer.IsDownloading) return new AiProviderState("downloading");
             if (!installer.IsInstalled) return installer.Failure is { } f ? new AiProviderState("install_failed", f) : new AiProviderState("not_installed");
+            if (Executable is null) return new AiProviderState("install_failed", installer.Failure);
         }
         if (LoginState().State is "starting" or "waiting") return new AiProviderState("login_waiting");
         return await IsSignedInAsync(ct) ? new AiProviderState("ready") : new AiProviderState("not_signed_in");
     }
 
+    // Einzelflug: viele gleichzeitige Fragen starten nicht je ein Programm; wer wartet, sieht danach den Stand des ersten (5 Sekunden gemerkt)
     private async Task<bool> IsSignedInAsync(CancellationToken ct)
     {
-        if (_signedInCache is { } c && time.GetUtcNow() - c.At < TimeSpan.FromSeconds(5)) return c.SignedIn;
-        var result = await RunAsync(["login", "status"], ct);
-        var signedIn = result is { ExitCode: 0 } && result.Output.Contains("Logged in", StringComparison.OrdinalIgnoreCase);
-        _signedInCache = (time.GetUtcNow(), signedIn);
-        return signedIn;
+        if (FreshStatus() is { } known) return known;
+        await _statusLock.WaitAsync(ct);
+        try
+        {
+            if (FreshStatus() is { } again) return again;
+            var result = await RunAsync(["login", "status"], ct);
+            var signedIn = result is { ExitCode: 0 } && result.Output.Contains("Logged in", StringComparison.OrdinalIgnoreCase);
+            _signedInCache = (time.GetUtcNow(), signedIn);
+            return signedIn;
+        }
+        finally { _statusLock.Release(); }
     }
+
+    private bool? FreshStatus() => _signedInCache is { } c && time.GetUtcNow() - c.At < TimeSpan.FromSeconds(5) ? c.SignedIn : null;
 
     public CodexLoginState LoginState() { lock (_loginLock) return _login?.Snapshot() ?? new CodexLoginState("none", null, null, null); }
 
@@ -115,7 +127,7 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
         c?.Kill(intentional: true);
     }
 
-    public void Dispose() { Stop(); _login?.Dispose(); _startLock.Dispose(); }
+    public void Dispose() { Stop(); _login?.Dispose(); _startLock.Dispose(); _statusLock.Dispose(); }
 
     // ---------------------------------------------------------------- Modelle und Kontingent
 
@@ -173,6 +185,8 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
         }, _options.ControlTimeout, ct);
         var threadId = thread.TryGetProperty("thread", out var created) ? CodexProtocol.Text(created, "id") : null;
         if (threadId is null) throw new AiProviderException("provider_error", "Codex hat keinen Faden begonnen.");
+        // Fail-closed: was das Programm als wirksam meldet, muss "nur lesend, ohne Freigaben" sein; sonst keine Runde (und das Programm sieht keinen Text)
+        if (!CodexProtocol.IsLockedDown(thread)) throw new AiProviderException("provider_error", "Codex hat nicht bestätigt, dass es nur lesend und ohne Freigaben läuft; die Anfrage wurde nicht gesendet.");
 
         var events = c.Open(threadId);
         string? turnId = null;
@@ -182,8 +196,10 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
             var input = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = prompt, ["text_elements"] = new JsonArray() });
             var turn = new JsonObject { ["threadId"] = threadId, ["input"] = input, ["model"] = request.Model };
             if (request.Effort is not null) turn["effort"] = request.Effort;
-            var started = await c.RequestAsync("turn/start", turn, _options.ControlTimeout, ct);
+            // Die Antwort auf turn/start wird auch nach einem Abbruch abgewartet, damit die Runde danach mit ihrer Kennung unterbrochen werden kann (sonst rechnet sie weiter)
+            var started = await c.RequestAsync("turn/start", turn, _options.ControlTimeout, CancellationToken.None);
             turnId = started.TryGetProperty("turn", out var t) ? CodexProtocol.Text(t, "id") : null;
+            ct.ThrowIfCancellationRequested();
 
             AiUsage? usage = null; var any = false; string? failure = null;
             while (await events.WaitToReadAsync(ct))
@@ -204,6 +220,9 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
                             failure = CodexProtocol.Text(problem, "message");
                             if (CodexProtocol.PlanLimitIn(failure) is { } limit) throw limit;
                             break;
+                        case "item/started" or "item/completed" when !CodexProtocol.IsPlainItem(parameters):
+                            // Fail-closed: ein Werkzeug (Befehl, Datei, Suche ...) ist nie vorgesehen; die Runde wird abgebrochen (finally unten unterbricht sie)
+                            throw new AiProviderException("provider_error", "Codex wollte ein Werkzeug benutzen; die Anfrage wurde abgebrochen.");
                         case "__ended":
                             throw new AiProviderException("provider_unavailable", "Das Codex-Programm wurde beendet.");
                         case "turn/completed":
@@ -237,21 +256,22 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
         {
             if (_connection is { Dead: false } again) return again;
             if (_failures > 0 && time.GetUtcNow() < _nextStart) throw new AiProviderException("provider_unavailable", "Das Codex-Programm startet nach einem Fehler neu; bitte gleich noch einmal.");
-            Connection? c = null;
+            Connection? c = null; var established = false;
             try
             {
                 c = Connection.Start(Prepare(exe, ["app-server"]), this);
                 await c.RequestAsync("initialize", new JsonObject { ["clientInfo"] = new JsonObject { ["name"] = "julos", ["title"] = "JulOS", ["version"] = "1" }, ["capabilities"] = new JsonObject { ["experimentalApi"] = false } }, _options.ControlTimeout, ct);
                 await c.SendAsync(new JsonObject { ["method"] = "initialized", ["params"] = new JsonObject() }, ct);
-                _connection = c;
+                _connection = c; established = true;
                 return c;
             }
+            // Ein Abbruch des Aufrufers im Kaltstart zaehlt nicht als Fehler des Programms (sonst sperrte ein Schluessel-Inhaber die Bruecke mit Abbruechen); der Prozess wird trotzdem beendet (finally)
             catch (Exception e) when (e is AiProviderException or Win32Exception or IOException or OperationCanceledException && !ct.IsCancellationRequested)
             {
-                c?.Kill(intentional: true);
                 NoteFailure();
                 throw e as AiProviderException ?? new AiProviderException("provider_unavailable", "Das Codex-Programm lässt sich nicht starten.");
             }
+            finally { if (!established) c?.Kill(intentional: true); }
         }
         finally { _startLock.Release(); }
     }
@@ -266,7 +286,7 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
     /// <summary>Gemeinsame Vorbereitung: keine Shell, eigener Arbeitsordner, eine leere Umgebung mit nur dem Noetigen (nichts von JulOS).</summary>
     private ProcessStartInfo Prepare(string exe, string[] args)
     {
-        Directory.CreateDirectory(installer.Home); Directory.CreateDirectory(installer.Work);
+        CodexInstaller.CreatePrivate(installer.Home); CodexInstaller.CreatePrivate(installer.Work);
         var start = new ProcessStartInfo(exe)
         {
             WorkingDirectory = installer.Work, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true,
@@ -326,7 +346,7 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
             var process = Process.Start(start) ?? throw new Win32Exception();
             var c = new Connection(process, owner);
             // Die Fehlerausgabe kann das Konto nennen: sie wird gelesen und verworfen
-            _ = Task.Run(async () => { try { while (await process.StandardError.ReadLineAsync() is not null) { } } catch (Exception e) when (e is IOException or ObjectDisposedException) { } });
+            _ = Task.Run(async () => { var sink = new char[4096]; try { while (await process.StandardError.ReadAsync(sink.AsMemory()) > 0) { } } catch (Exception e) when (e is IOException or ObjectDisposedException) { } });
             _ = Task.Run(c.ReadLoopAsync);
             return c;
         }
@@ -383,7 +403,8 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
         {
             try
             {
-                while (await _process.StandardOutput.ReadLineAsync() is { } line)
+                var lines = new LineReader(_process.StandardOutput, 4 << 20);
+                while (await lines.ReadLineAsync(CancellationToken.None) is { } line)
                 {
                     if (string.IsNullOrWhiteSpace(line)) continue;
                     JsonDocument doc;
@@ -405,7 +426,7 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
                     }
                 }
             }
-            catch (Exception e) when (e is IOException or ObjectDisposedException or InvalidOperationException) { }
+            catch (Exception e) when (e is IOException or ObjectDisposedException or InvalidOperationException or AiProviderException) { Kill(intentional: false); }
             finally { OnEnded(); }
         }
 

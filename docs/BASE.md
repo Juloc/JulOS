@@ -1,6 +1,6 @@
 # The shared base of the app family and one sign-in through JulOS (draft, not built)
 
-Status: **draft for the owner's decision**, 2026-11-23. Nothing is built. It answers one question: what do all apps of the family share, and how does a person stay signed in everywhere, also after an update, without making anything less safe.
+Status: **agreed draft**, 2026-11-23 (the decisions are at the end). Nothing is built. It answers one question: what do all apps of the family share, and how does a person stay signed in everywhere, also after an update, without making anything less safe.
 
 ## What the owner wants
 
@@ -34,7 +34,7 @@ Status: **draft for the owner's decision**, 2026-11-23. Nothing is built. It ans
 
 Only JulOS has on top: the **sign-in provider**, the **AI gateway**, the **registry and home of the apps**.
 
-Delivery (proposal): the base is **copied** into an app by a script, with its version in the files and a check that shows drift. No package server, every app builds alone. NuGet stays possible later for the C# part.
+Delivery (decided): the base is **copied** into an app by a script, with its version in the files and a check that shows drift. No package server, every app builds alone. NuGet stays possible later for the C# part.
 
 ## Sign-in
 
@@ -59,7 +59,7 @@ What keeps it safe:
 - Each app is registered at JulOS with its exact return address and its own secret; codes live seconds and work once; statements are signed, name the app they are for and are short-lived. The app never sees a password or a passkey.
 - No shared cookie over a whole domain (any other service on that domain could read it).
 - The sign-in at JulOS is the one door, so it gets the strongest lock (below), a second factor for dangerous actions as today, and its own review before release.
-- An app keeps a **local administrator** for the day JulOS is away (off by default once JulOS is connected; switched on in the app's own settings or by an environment variable).
+- An app keeps its **own sign-in form** next to "Sign in with JulOS" (decided), so it works on the day JulOS is away; that form has the same protection as JulOS's.
 
 ### How a person signs in at JulOS (and at an app that runs alone)
 
@@ -68,7 +68,7 @@ What keeps it safe:
 | **Passkey** | the normal way | cannot be phished, nothing to type; several per person (phone, PC, a key in the drawer) |
 | **Password + TOTP** | the fallback | as today; the TOTP secret is stored encrypted |
 | **Recovery codes** | when everything is lost | shown once, stored as hashes |
-| **Google** | optional comfort | Microsoft's handler; only for a person who exists already, and a new device still asks for a passkey or TOTP, so a taken-over Google account alone opens nothing |
+| **Google** | a third way, for comfort (decided) | Microsoft's handler; only for a person who exists already, and a new device still asks for a passkey or TOTP, so a taken-over Google account alone opens nothing |
 | **Mail** | messages, never a key by itself | new device, new passkey, sign-in from a new place; a link in a mail does not sign in an administrator |
 
 Connecting Google for data (calendar for the life app) is a separate thing, a **connection** with its own consent and an encrypted token, not a sign-in.
@@ -79,17 +79,19 @@ Today three apps each carry a copy of the bridge and each is signed in separatel
 
 ## Order of work
 
-1. This draft agreed; the names and the delivery decided.
+1. The walkthrough of JulOS with the owner and the fixes from it (agreed first).
 2. `base` with Core, Data, Web, Look and the start project; the first rules with numbers. **First app on it: the web of `notes`** (small, and its look is the one the owner dislikes).
 3. Accounts in the base (taken out of JulOS, plus passkeys and roles). JulOS itself moves onto it.
 4. JulOS as sign-in provider; `notes` signs in through it. Review of the whole sign-in before release.
 5. The AI gateway in JulOS and the one client; the apps drop their own bridges.
 6. One app after the other moves onto the base; an app is split when it moves (`arr` and `watch`, `finance` and `receipts`), not before.
 
-## Open questions
+## Decisions of the owner (2026-11-23, asked one by one)
 
-- Passkeys only for administrators, or may a password with TOTP stay a full way in? (Proposal: both stay, a passkey is asked for when one exists.)
-- Google sign-in at all, or only the Google connection for data? (It adds comfort and a second party that can lock the door.)
-- Should an app that is connected to JulOS still show its own sign-in form? (Proposal: no, only the local administrator behind a switch.)
-- Where do people of the family other than the owner come from: accounts in JulOS with roles per app (proposal), or accounts per app?
-- The provider: own code limited to the one flow above with Microsoft's token library (proposal, small and reviewed), or a ready library for the whole protocol.
+- **Sign-in at JulOS:** a passkey is the normal way; a password with TOTP stays a full second way.
+- **Google:** also as a sign-in ("Sign in with Google"), not only as a connection for data. A new device still asks for a passkey or TOTP, and Google only signs in a person who exists already.
+- **An app connected to JulOS shows both:** its own sign-in form and "Sign in with JulOS". So an app's own form stays a way in and is protected like JulOS's (rate limit, lockout, second factor, audit); the local accounts of an app are few and named.
+- **Other people (family):** accounts in JulOS with a role per app; one place to manage and to lock.
+- **The sign-in provider in JulOS:** own code, limited to the one flow above, with Microsoft's token library, and a review of its own before release.
+- **Delivery:** the base is copied into an app by a script (version in the files, a check for drift). No package server.
+- **Order:** first the walkthrough of JulOS with the owner and the fixes from it, then the base with `notes` as the first app.

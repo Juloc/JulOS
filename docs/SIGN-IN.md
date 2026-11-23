@@ -45,7 +45,7 @@ The OIDC endpoints are the **reasoned exception** to "every API needs a session"
 |---|---|
 | `GET /.well-known/openid-configuration` | public, read only: issuer, endpoints, what is supported |
 | `GET /oidc/jwks` | public, read only: **public** parts of the signing keys (`kty`, `crv`, `x`, `y`, `kid`), never a private part |
-| `GET /oidc/authorize` | the app and the **exact** return address must be registered (otherwise an error page, **never a redirect**); `response_type=code` only; PKCE `S256` **required**; `state` required; `nonce` supported; scope `openid` required, `profile` optional, other scopes are ignored; `prompt=none` and `login`; `max_age`; `response_mode` only `query`; rate limit 120 per minute and address |
+| `GET /oidc/authorize` | the app and the **exact** return address must be registered (otherwise an error page, **never a redirect**); `response_type=code` only; PKCE `S256` **required**; `state` required; `nonce` supported; scope `openid` required, `profile` optional, other scopes are ignored; `prompt=none` and `login`; `max_age`; `response_mode`: the answer always comes as a query (`form_post`, which Microsoft's handler asks for by default, is answered as a query too and the handler accepts that; fragment and JWT modes are refused); rate limit 120 per minute and address |
 | `POST /oidc/token` | form body only; the app signs in with `client_secret_basic` or `client_secret_post` (never both); code, redirect address and PKCE verifier must match; failed app sign-ins lock the address for a growing time (10 failures); 60 requests per minute; `Cache-Control: no-store` |
 | `GET`/`POST /oidc/userinfo` | the access token in the `Authorization: Bearer` header only (never in the address); valid only while the JulOS session lives, the app is active and the person still has a role |
 | `GET`/`POST /oidc/end-session` | RP-initiated logout: with a valid `id_token_hint` of **this** person it ends the session at once; otherwise it asks first (a form posting to itself, checked for the same `Origin`). It returns to `post_logout_redirect_uri` only if the hint is valid **and** the address is registered exactly |
@@ -128,7 +128,7 @@ send anything (block it first if its sessions must end).
 ## What is missing on purpose
 
 Passkeys and Google sign-in (later steps, BASE.md); refresh tokens (the app keeps its own session); dynamic client registration; implicit/hybrid/password flows;
-`form_post` and fragment responses; consent screens (apps are your own); pairwise subject identifiers; encrypted ID tokens; session management through an iframe or
+`form_post`, fragment and JWT responses (the CSP of JulOS has `form-action 'self'`); consent screens (apps are your own); pairwise subject identifiers; encrypted ID tokens; session management through an iframe or
 front-channel logout; a way to delete an app **and** end its sessions in one step (block, wait, delete); several owners; roles with rights (a role is a key the app interprets).
 
 ## What a security review should look at first

@@ -50,4 +50,20 @@ public sealed class OidcKeyTests
         Assert.Null(await oidc.ReadHintAsync(before.IdToken, ct));                          // nach 30 Tagen auch dafuer nicht mehr
         Assert.NotNull(await oidc.ReadHintAsync(after.IdToken, ct));
     }
+
+    [Fact]
+    public async Task An_active_key_this_server_cannot_open_is_replaced_instead_of_blocking_every_sign_in()
+    {
+        var time = new ManualTime(DateTimeOffset.UtcNow);
+        await using var rig = await OidcRig.CreateAsync(time: time);
+        var app = await rig.AddAppAsync();
+        var first = await rig.SignInAsync(app);
+        // zum Beispiel nach einer Wiederherstellung ohne den alten Server-Schluessel: der verschluesselte Teil ist nicht mehr lesbar
+        await rig.Db.ExecAsync("update oidc_keys set private_sealed = $1", new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30 });
+        time.Advance(TimeSpan.FromMinutes(1));                                           // der Zwischenspeicher der Schluessel ist abgelaufen
+        var second = await rig.SignInAsync(app);
+        Assert.NotEqual(first.Jwt.Kid, second.Jwt.Kid);
+        Assert.Equal(2, await rig.Db.ScalarAsync<long>("select count(*) from oidc_keys"));
+        Assert.Equal(1, await rig.Db.ScalarAsync<long>("select count(*) from oidc_keys where retired_at is null"));
+    }
 }

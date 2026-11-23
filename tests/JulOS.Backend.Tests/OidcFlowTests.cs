@@ -146,6 +146,7 @@ public sealed class OidcFlowTests
         Assert.Equal("invalid_scope", (await Rejected(q => q["scope"] = "profile"))["error"]);                                // openid fehlt
         Assert.Equal("invalid_request", (await Rejected(q => q["prompt"] = "consent"))["error"]);
         Assert.Equal("invalid_request", (await Rejected(q => q["response_mode"] = "fragment"))["error"]);                       // die Antwort kommt nur als Suchteil
+        Assert.Equal("invalid_request", (await Rejected(q => q["response_mode"] = "query.jwt"))["error"]);
         Assert.Equal("invalid_request", (await Rejected(q => q["max_age"] = "-5"))["error"]);
         var noState = await Rejected(q => q["state"] = null);                                                                   // state ist Pflicht
         Assert.Equal("invalid_request", noState["error"]);

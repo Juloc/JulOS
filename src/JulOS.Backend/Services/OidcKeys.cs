@@ -23,7 +23,7 @@ public sealed class OidcKeys(NpgsqlDataSource db, SecretBox box, TimeProvider cl
     public static readonly TimeSpan Keep = TimeSpan.FromDays(30);
 
     private sealed record Row(Guid Id, string Kid, byte[] Public, byte[]? Sealed, DateTimeOffset CreatedAt, DateTimeOffset? RetiredAt);
-    private sealed record Loaded(DateTimeOffset At, ECDsaSecurityKey? Active, IReadOnlyList<(Row Row, ECDsaSecurityKey Key)> All);
+    private sealed record Loaded(DateTimeOffset At, ECDsaSecurityKey? Active, IReadOnlyList<(Row Row, ECDsaSecurityKey Key)> All, bool ActiveUnusable);
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private volatile Loaded? _cache;
@@ -40,9 +40,11 @@ public sealed class OidcKeys(NpgsqlDataSource db, SecretBox box, TimeProvider cl
         try
         {
             _cache = null;
-            if ((await LoadCoreAsync(ct)).Active is null)
+            if (await LoadCoreAsync(ct) is { Active: null } now)
             {
-                try { await InsertAsync(retireOld: false, ct); }
+                // Gibt es einen aktiven Schluessel, den dieser Server nicht oeffnen kann (anderer Server-Schluessel, zum Beispiel nach einer Wiederherstellung ohne ihn), wird er ausgemustert
+                // und ein neuer erzeugt: die Apps sehen eine neue kid, alte Token verlieren ihre Gueltigkeit ohnehin nach Minuten.
+                try { await InsertAsync(retireOld: now.ActiveUnusable, ct); }
                 catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.UniqueViolation) { /* ein anderer Start war schneller */ }
             }
             _cache = null;
@@ -112,13 +114,14 @@ public sealed class OidcKeys(NpgsqlDataSource db, SecretBox box, TimeProvider cl
 
         var all = new List<(Row, ECDsaSecurityKey)>();
         ECDsaSecurityKey? active = null;
+        var unusable = false;
         foreach (var row in rows)
         {
             var ec = ECDsa.Create();
             if (row.RetiredAt is null && row.Sealed is not null)
             {
                 // der aktive Schluessel: mit dem privaten Teil (laesst er sich nicht entschluesseln, ist der Server-Schluessel ein anderer: dann gibt es hier keinen aktiven)
-                if (box.Decrypt(row.Sealed, row.Id) is not { } pkcs8) { ec.Dispose(); continue; }
+                if (box.Decrypt(row.Sealed, row.Id) is not { } pkcs8) { ec.Dispose(); unusable = true; continue; }
                 ec.ImportPkcs8PrivateKey(Convert.FromBase64String(pkcs8), out _);
                 var key = new ECDsaSecurityKey(ec) { KeyId = row.Kid };
                 active = key; all.Add((row, key));
@@ -129,7 +132,7 @@ public sealed class OidcKeys(NpgsqlDataSource db, SecretBox box, TimeProvider cl
                 all.Add((row, new ECDsaSecurityKey(ec) { KeyId = row.Kid }));
             }
         }
-        return new Loaded(clock.GetUtcNow(), active, all);
+        return new Loaded(clock.GetUtcNow(), active, all, unusable);
     }
 
     private async Task<string> InsertAsync(bool retireOld, CancellationToken ct)

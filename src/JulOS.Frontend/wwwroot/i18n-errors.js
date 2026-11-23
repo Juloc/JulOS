@@ -168,6 +168,25 @@ export const SERVER_TEXTS = {
   "Der Setup-Code stimmt nicht. Er steht im Server-Log.": "err.setupCodeWrong2",
   "Das neue Passwort muss sich vom aktuellen unterscheiden.": "err.passwordSame",
   "Die vorige Datei ist noch nicht beendet.": "err.prevFileOpen",
+  // KI-Zugang (ai.js)
+  "enabled fehlt.": "err.ai.fieldMissing",
+  "active fehlt.": "err.ai.fieldMissing",
+  "Das Modell ist anbieter/modell.": "err.ai.modelFormat",
+  "Anbieter nicht gefunden.": "err.ai.notFound",
+  "App nicht gefunden.": "err.ai.notFound",
+  "Die Codex-Brücke hat keinen Schlüssel; sie wird mit dem ChatGPT-Konto angemeldet.": "err.ai.codexNoKey",
+  "Schlüssel speichern ist aus: JULOS_SECRET_KEY setzen oder JULOS_DATA beschreibbar machen.": "err.ai.noSecretBox",
+  "Das ist kein gültiger API-Schlüssel.": "err.ai.badKey",
+  "Der KI-Zugang ist ausgeschaltet.": "err.ai.off",
+  "Dieser Anbieter ist nicht eingeschaltet.": "err.ai.providerOff",
+  "Eine App mit diesem Namen gibt es schon.": "err.ai.nameTaken",
+  "Das Codex-Programm ist noch nicht geladen.": "err.ai.notInstalled",
+  "Ein Name fehlt.": "err.ai.nameMissing",
+  "Der Name enthält Steuerzeichen.": "err.ai.nameBad",
+  "Mindestens einen Anbieter erlauben.": "err.ai.needProvider",
+  "Zu viele Einträge.": "err.ai.tooManyEntries",
+  "Ein Budget muss größer als 0 sein (leer lassen für keine Grenze).": "err.ai.budgetPositive",
+  "Das Tagesbudget darf nicht größer sein als das Monatsbudget.": "err.ai.budgetOrder",
 };
 
 /** [RegExp mit Gruppen, Schluessel, [Parameternamen je Gruppe]] fuer Texte mit eingesetzten Werten */
@@ -187,6 +206,10 @@ export const SERVER_PATTERNS = [
   [/^Helfer: (.*)$/, "err.helperFailed", ["x"]],
   [/^(\S+) ist auf diesem Server nicht eingeschaltet\.$/, "err.moduleOff", ["name"]],
   [/^Die Bildübertragung ist auf diesem Server nicht verfügbar: (.*)$/, "err.streamUnavailable", ["x"]],
+  // KI-Zugang (ai.js)
+  [/^Der Name darf höchstens (\d+) Zeichen haben\.$/, "err.ai.nameLong", ["n"]],
+  [/^Das Ratenlimit muss zwischen 1 und (\d+) Anfragen pro Minute liegen\.$/, "err.ai.rateRange", ["n"]],
+  [/^Unbekannter Anbieter oder Modell: (.{1,41})$/, "err.ai.unknownAllowed", ["entry"]],
 ];
 
 /** Der Text einer Server-Fehlermeldung in der gewaehlten Sprache; unbekannt oder Deutsch: unveraendert. */

@@ -674,7 +674,8 @@ function renderProfile() {
   if (current === 'profile' && !about) loadAbout();
 }
 const SETTING_ACTIONS = { iconOver: () => resetAppearance('iconsOver'), appearanceReset: () => { resetAllAppearance(); applyShellTheme(); }, password: () => ctx.account(), security: () => ctx.security(), devices: () => ctx.devices(), folders: () => ctx.folders(), nettools: () => ctx.nettools(), alerts: () => ctx.alerts(), signout: () => ctx.signOut(),
-  claude: () => launchProgram('claude'), codex: () => launchProgram('codex') };
+  claude: () => launchProgram('claude'), codex: () => launchProgram('codex'),
+  ai: () => import('./ai.js').then((m) => m.openAi({ api: ctx.api, esc })) };     // KI-Zugang (ai.js), erst beim Oeffnen geladen
 function settingAction(id) { const f = SETTING_ACTIONS[id]; if (f) f(); }
 /** Claude oder Codex starten (wie der Schnellstart auf der Verbindungen-Seite) */
 function launchProgram(program) {

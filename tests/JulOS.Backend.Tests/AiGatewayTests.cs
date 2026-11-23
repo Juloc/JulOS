@@ -359,4 +359,119 @@ public sealed class AiGatewayTests
         Assert.Equal(HttpStatusCode.BadRequest, (await env.Admin(HttpMethod.Post, "/api/ai/apps", new { name = "Neu", allowed = new[] { "evil" } })).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await env.Admin(HttpMethod.Post, "/api/ai/apps", new { name = "Neu", allowed = new[] { "fake" }, dailyTokens = 500, monthlyTokens = 100 })).StatusCode);
     }
+
+    // ---------------------------------------------------------------- Pruefbefunde (F3 bis F6, Codex-Freigabe, Pfade)
+
+    [Fact]
+    public async Task A_missing_or_zero_usage_report_is_estimated_and_an_abort_is_booked_with_the_maximum()
+    {
+        await using var env = await Start();
+        var (id, key) = await env.NewApp(daily: 100000);
+        foreach (var word in new[] { "NOUSAGE", "ZERO" })
+        {
+            var r = await Json(await env.Chat(key, word + " " + Forty));
+            Assert.True(r.GetProperty("usage").GetProperty("inputTokens").GetInt64() > 0, word);
+            Assert.True(r.GetProperty("usage").GetProperty("outputTokens").GetInt64() > 0, word);
+        }
+        Assert.True(await env.Db.ScalarAsync<long>("select sum(tokens_in)::bigint from ai_usage where app_id = $1", id) > 0);
+        Assert.True(await env.Db.ScalarAsync<long>("select sum(tokens_out)::bigint from ai_usage where app_id = $1", id) > 0);
+
+        // Abbruch ohne Angabe: mindestens maxTokens als Ausgabe (ein Denkmodell rechnet auch ohne sichtbaren Text)
+        using var cts = new CancellationTokenSource();
+        var slow = await env.Call(HttpMethod.Post, "/api/ai/v1/chat", key, new { model = "fake/echo", maxTokens = 700, stream = true, messages = new[] { new { role = "user", content = "SLOW" } } }, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+        slow.Dispose(); cts.Cancel();
+        for (var i = 0; i < 100 && await env.Db.ScalarAsync<long>("select coalesce(sum(aborted), 0) from ai_usage where app_id = $1", id) < 1; i++) await Task.Delay(50, TestContext.Current.CancellationToken);
+        Assert.True(await env.Db.ScalarAsync<long>("select sum(tokens_out)::bigint from ai_usage where app_id = $1 and aborted > 0", id) >= 700);
+    }
+
+    [Fact]
+    public async Task Models_and_usage_have_the_rate_limit_of_chat_and_the_model_list_is_not_asked_again_and_again()
+    {
+        await using var env = await Start();
+        var (_, key) = await env.NewApp(rate: 5);
+        for (var i = 0; i < 5; i++) Assert.Equal(HttpStatusCode.OK, (await env.Call(HttpMethod.Get, i % 2 == 0 ? "/api/ai/v1/models" : "/api/ai/v1/usage", key)).StatusCode);
+        foreach (var url in new[] { "/api/ai/v1/models", "/api/ai/v1/usage", "/api/ai/v1/models" })
+        {
+            var r = await env.Call(HttpMethod.Get, url, key);
+            Assert.Equal(HttpStatusCode.TooManyRequests, r.StatusCode); Assert.Equal("rate_limited", await Code(r));
+        }
+        Assert.Equal(1, env.Fake.ModelCalls);                          // die Liste ist kurz gemerkt
+        Assert.Equal(0, env.Fake.Calls);
+    }
+
+    [Fact]
+    public async Task Only_models_the_provider_lists_are_called_or_booked_so_made_up_names_fill_no_table()
+    {
+        await using var env = await Start();
+        var (id, key) = await env.NewApp();
+        for (var i = 0; i < 40; i++)
+        {
+            var r = await env.Chat(key, "hi", model: "fake/erfunden-" + i);
+            Assert.Equal(HttpStatusCode.BadRequest, r.StatusCode); Assert.Equal("unknown_model", await Code(r));
+        }
+        Assert.Equal(0, env.Fake.Calls);
+        Assert.Equal(0, await env.Db.ScalarAsync<int>("select count(*)::int from ai_usage where app_id = $1", id));
+        Assert.Equal(HttpStatusCode.OK, (await env.Chat(key, "hi", model: "fake/echo-big")).StatusCode);
+        Assert.Equal(1, await env.Db.ScalarAsync<int>("select count(*)::int from ai_usage where app_id = $1", id));
+    }
+
+    [Fact]
+    public async Task The_Codex_bridge_serves_no_app_until_the_owner_confirmed_the_manual_check_for_this_version()
+    {
+        await using var env = await Start();
+        var (_, key) = await env.NewApp("Notizen", allowed: ["codex", "fake"]);
+        Assert.Equal(HttpStatusCode.NoContent, (await env.Admin(HttpMethod.Put, "/api/ai/providers/codex", new { enabled = true })).StatusCode);
+
+        async Task<bool> Confirmed() => (await Json(await env.Admin(HttpMethod.Get, "/api/ai"))).GetProperty("providers").EnumerateArray().First(p => p.GetProperty("id").GetString() == "codex").GetProperty("codex").GetProperty("confirmed").GetBoolean();
+        Assert.False(await Confirmed());
+        var refused = await env.Chat(key, "hi", model: "codex/gpt-x");
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, refused.StatusCode); Assert.Equal("provider_unverified", await Code(refused));
+        var models = await Json(await env.Call(HttpMethod.Get, "/api/ai/v1/models", key));
+        Assert.DoesNotContain(models.GetProperty("models").EnumerateArray(), m => m.GetProperty("provider").GetString() == "codex");
+
+        Assert.Equal(HttpStatusCode.NoContent, (await env.Admin(HttpMethod.Put, "/api/ai/providers/codex/confirm", new { confirmed = true })).StatusCode);
+        Assert.True(await Confirmed());
+        Assert.NotEqual("provider_unverified", await Code(await env.Chat(key, "hi", model: "codex/gpt-x")));    // jetzt scheitert es erst am fehlenden Programm
+        Assert.Equal(HttpStatusCode.NoContent, (await env.Admin(HttpMethod.Put, "/api/ai/providers/codex/confirm", new { confirmed = false })).StatusCode);
+        Assert.False(await Confirmed());
+        Assert.True(JulOS.Frontend.Auth.StepUpPolicy.Requires("PUT", "/api/ai/providers/codex/confirm"));
+        Assert.Contains("ai.codex.confirm", await env.DumpAsync());
+    }
+
+    [Fact]
+    public async Task Path_tricks_never_lead_a_key_to_the_settings_even_on_a_real_Kestrel()
+    {
+        await using var env = await Start();                         // Einrichtung ueber den Speicher-Server, Pruefung gegen ein echtes Kestrel mit derselben Datenbank
+        var (_, key) = await env.NewApp();
+        await using var kestrelServer = new Server(env.Db, secretKey: Secret);
+        await using var factory = kestrelServer.WithWebHostBuilder(b => b.UseSetting("JULOS_AI_FAKE", "on"));
+        factory.UseKestrel(0);
+        factory.StartServer();
+        var address = new Uri(factory.Services.GetRequiredService<Microsoft.AspNetCore.Hosting.Server.IServer>().Features.Get<Microsoft.AspNetCore.Hosting.Server.Features.IServerAddressesFeature>()!.Addresses.First());
+
+        async Task<(int Status, string Body)> Raw(string target, string? bearer)
+        {
+            using var tcp = new System.Net.Sockets.TcpClient();
+            await tcp.ConnectAsync(address.Host, address.Port);
+            var stream = tcp.GetStream();
+            var head = $"GET {target} HTTP/1.1\r\nHost: {address.Authority}\r\nConnection: close\r\n" + (bearer is null ? "" : $"Authorization: Bearer {bearer}\r\n") + "\r\n";
+            await stream.WriteAsync(Encoding.ASCII.GetBytes(head));
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            var text = await reader.ReadToEndAsync();
+            var status = text.StartsWith("HTTP/1.1 ") ? int.Parse(text.Substring(9, 3)) : 0;
+            return (status, text);
+        }
+
+        // Alles, was nach den Einstellungen riecht, bleibt mit dem Schluessel genauso verschlossen wie ohne
+        foreach (var target in new[] { "/api/ai/v1/../apps", "/api/ai/v1/%2e%2e/apps", "/api/ai/v1/%2E%2E/%2E%2E/hosts", "//api/ai/apps", "/api/ai/v1;/../apps", "/api/ai/v1/..%2fapps", "/API/AI/apps", "/api/ai/v1%2f..%2fapps", "/api/ai" })
+        {
+            var (status, body) = await Raw(target, key);
+            Assert.True(status is 401 or 404 or 400, $"{target} -> {status}");
+            Assert.DoesNotContain("keyHint", body); Assert.DoesNotContain("\"apps\"", body);
+        }
+        // Schreibweise und doppelte Schraegstriche am Anfang: ohne Schluessel nie Zugang, mit Schluessel hoechstens die drei Wege der App
+        Assert.Equal(401, (await Raw("/API/AI/V1/models", null)).Status);
+        Assert.Equal(401, (await Raw("/api/ai/v1/models", "jos_ai_falsch")).Status);
+        Assert.Equal(200, (await Raw("/API/AI/V1/models", key)).Status);
+    }
 }

@@ -117,4 +117,28 @@ public sealed class AiRulesTests
         var (i2, p2) = CodexBridge.Flatten([new AiMessage("system", "Sei kurz."), new AiMessage("user", "A"), new AiMessage("assistant", "B"), new AiMessage("user", "C")]);
         Assert.Equal("Sei kurz.", i2); Assert.Equal("User: A\n\nAssistant: B\n\nUser: C", p2);
     }
+
+    [Fact]
+    public void Booking_takes_the_larger_of_the_report_and_the_estimate_and_an_abort_costs_at_least_the_maximum()
+    {
+        Assert.Equal((10, 12), AiRules.Book(0, 0, 10, 12, false, 1024));                // 0 und 0: nicht gemeldet, die Schaetzung greift
+        Assert.Equal((50, 70), AiRules.Book(50, 70, 10, 12, false, 1024));              // die Angabe des Anbieters, wenn sie hoeher ist
+        Assert.Equal((10, 900), AiRules.Book(0, 900, 10, 12, false, 1024));             // Denkmodell: gemeldet mehr als sichtbar
+        Assert.Equal((10, 1024), AiRules.Book(0, 0, 10, 12, true, 1024));               // Abbruch ohne Angabe: mindestens maxTokens
+        Assert.Equal((10, 12), AiRules.Book(10, 12, 10, 12, true, 1024));               // Abbruch mit Angabe: die Angabe
+        Assert.Equal((0, 0), AiRules.Book(-5, -5, 0, 0, false, 1024));
+    }
+
+    [Fact]
+    public void The_table_of_wrong_addresses_stays_bounded_and_a_full_table_is_swept_once_per_window()
+    {
+        var time = new ManualTime(DateTimeOffset.Parse("2026-11-23T10:00:00Z"));
+        var limiter = new AiAuthLimiter(time, max: 3);
+        for (var i = 0; i < AiAuthLimiter.MaxTracked + 500; i++) limiter.Fail("10.0." + (i / 250) + "." + (i % 250));
+        Assert.Equal(AiAuthLimiter.MaxTracked, limiter.Tracked);                         // waechst nicht weiter
+        Assert.False(limiter.Blocked("10.99.99.99"));
+        time.Advance(TimeSpan.FromSeconds(61));
+        limiter.Fail("11.0.0.1");                                                        // das Fenster ist um: aufgeraeumt, die neue Adresse wird gemerkt
+        Assert.True(limiter.Tracked < 10);
+    }
 }

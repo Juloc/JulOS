@@ -38,6 +38,16 @@ internal sealed class AiGateway(AiAppStore apps, AiUsageStore usage, AiSettings 
         return (app, null);
     }
 
+    /// <summary>Schluessel pruefen und dasselbe Ratenlimit wie fuer /chat anwenden (auch /models und /usage kosten: sie fragen die Datenbank und die Anbieter). Bei einem Fehler ist die Antwort schon geschrieben und das Ergebnis null.</summary>
+    public async Task<AiApp?> AuthorizeAsync(HttpContext ctx)
+    {
+        var (app, fail) = await AuthenticateAsync(ctx);
+        if (fail is null && app is not null && !hits.Allow("ai-rate:" + app.Id, app.RatePerMinute, Minute)) fail = new AiFail(429, "rate_limited", $"Mehr als {app.RatePerMinute} Anfragen pro Minute.", RetryAfter: 15);
+        if (fail is null) return app;
+        await WriteFail(ctx, fail);
+        return null;
+    }
+
     public static async Task WriteFail(HttpContext ctx, AiFail fail)
     {
         if (ctx.Response.HasStarted) return;
@@ -59,7 +69,7 @@ internal sealed class AiGateway(AiAppStore apps, AiUsageStore usage, AiSettings 
     public async Task<(ModelDto[] Models, string[] Unavailable)> ModelsAsync(AiApp? app, CancellationToken ct)
     {
         var models = new List<ModelDto>(); var down = new List<string>();
-        foreach (var p in await registry.ActiveAsync(ct))
+        foreach (var p in await registry.ActiveAsync(ct, forApps: app is not null))
         {
             if (app is not null && !app.Allowed.Any(a => a == p.Id || a.StartsWith(p.Id + "/", StringComparison.Ordinal))) continue;
             try
@@ -90,8 +100,21 @@ internal sealed class AiGateway(AiAppStore apps, AiUsageStore usage, AiSettings 
 
         var (request, stream, providerId, parseFail) = await ParseAsync(ctx, app);
         if (parseFail is not null || request is null) { await WriteFail(ctx, parseFail!); return; }
-        var provider = (await registry.ActiveAsync(ct)).FirstOrDefault(p => p.Id == providerId);
-        if (provider is null) { await WriteFail(ctx, new AiFail(503, "provider_off", "Dieser Anbieter ist nicht eingeschaltet.")); return; }
+        var provider = (await registry.ActiveAsync(ct, forApps: true)).FirstOrDefault(p => p.Id == providerId);
+        if (provider is null)
+        {
+            // Die Codex-Bruecke ist eingeschaltet, aber der Besitzer hat die Pruefung von Hand noch nicht bestaetigt: fuer Apps aus
+            var unverified = providerId == "codex" && (await registry.ActiveAsync(ct)).Any(p => p.Id == "codex");
+            await WriteFail(ctx, unverified ? new AiFail(503, "provider_unverified", "Die Codex-Brücke ist noch nicht vom Besitzer freigegeben.") : new AiFail(503, "provider_off", "Dieser Anbieter ist nicht eingeschaltet."));
+            return;
+        }
+        // Nur Modelle, die der Anbieter selbst nennt (dieselbe Liste wie /models, kurz gemerkt): ein frei erfundener Name erreicht weder den Anbieter noch die Tabelle des Verbrauchs
+        try
+        {
+            if (!(await registry.ModelsAsync(provider, ct)).Any(m => m.Id == request.Model)) { await WriteFail(ctx, new AiFail(400, "unknown_model", "Dieses Modell kennt der Anbieter nicht (siehe GET /models).")); return; }
+        }
+        catch (AiProviderException e) { await WriteFail(ctx, FromProvider(e)); return; }
+        catch (Exception e) when (e is HttpRequestException or IOException) { await WriteFail(ctx, new AiFail(503, "provider_unavailable", "Der Anbieter ist gerade nicht erreichbar.")); return; }
 
         var before = await usage.BudgetAsync(app, ct);
         if (before.Exceeded is { } scope)
@@ -108,16 +131,16 @@ internal sealed class AiGateway(AiAppStore apps, AiUsageStore usage, AiSettings 
         var watch = Stopwatch.StartNew();
         var text = new StringBuilder();
         AiUsage? reported = null;
-        var recorded = false; var started = false;
+        var recorded = false; var started = false; long tin = 0, tout = 0;
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(AiRules.MaxDuration);
 
         async Task<AiBudget> Record(string result)
         {
             recorded = true;
-            // Ohne Angabe des Anbieters (Abbruch, Fehler mitten im Strom) wird grob geschaetzt, damit ein Abbruch das Budget nicht umgeht
-            var tin = reported?.InputTokens ?? request.Messages.Sum(m => AiText.EstimateTokens(m.Text));
-            var tout = reported?.OutputTokens ?? AiText.EstimateTokens(text.ToString());
+            // Gebucht wird das Groessere aus der Angabe des Anbieters und der Schaetzung; ein Abbruch ohne Angabe kostet mindestens maxTokens (AiRules.Book)
+            var estimatedIn = request.Messages.Sum(m => AiText.EstimateTokens(m.Text) + (m.Images?.Count ?? 0) * AiRules.TokensPerImage);
+            (tin, tout) = AiRules.Book(reported?.InputTokens ?? 0, reported?.OutputTokens ?? 0, estimatedIn, AiText.EstimateTokens(text.ToString()), result == "aborted", request.MaxTokens);
             try { await usage.RecordAsync(app.Id, providerId, request.Model, result, tin, tout, watch.ElapsedMilliseconds); await apps.TouchAsync(app.Id); }
             catch (Exception e) when (e is Npgsql.NpgsqlException or InvalidOperationException) { log.LogError(e, "KI: Verbrauch konnte nicht gebucht werden"); }
             return await usage.BudgetAsync(app, CancellationToken.None);
@@ -154,7 +177,7 @@ internal sealed class AiGateway(AiAppStore apps, AiUsageStore usage, AiSettings 
                 has = await chunks.MoveNextAsync();
             }
             var after = await Record("ok");
-            var used = new UsageDto(reported?.InputTokens ?? 0, reported?.OutputTokens ?? 0);
+            var used = new UsageDto(tin, tout);
             if (stream) await Emit("done", JsonSerializer.Serialize(new DoneEventDto(id, model, used, ToDto(after), after.Warning), AiJson.Default.DoneEventDto));
             else await WriteJson(ctx, new ChatResponseDto(id, model, text.ToString(), used, ToDto(after), after.Warning), AiJson.Default.ChatResponseDto);
         }

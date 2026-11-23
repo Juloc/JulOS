@@ -37,8 +37,8 @@ internal static class AiEndpoints
     {
         app.MapGet(AppPrefix + "/models", async (HttpContext ctx, AiGateway gw, AiSettings settings) =>
         {
-            var (a, fail) = await gw.AuthenticateAsync(ctx);
-            if (fail is not null || a is null) { await AiGateway.WriteFail(ctx, fail!); return; }
+            var a = await gw.AuthorizeAsync(ctx);
+            if (a is null) return;
             if (!settings.Enabled) { await AiGateway.WriteFail(ctx, new AiFail(503, "ai_disabled", "Der KI-Zugang ist in JulOS ausgeschaltet.")); return; }
             var (models, down) = await gw.ModelsAsync(a, ctx.RequestAborted);
             await AiGateway.WriteJson(ctx, new ModelsResponseDto(models, settings.DefaultModel is { } d && AiRules.Allows(a.Allowed, d) ? d : null, down), AiJson.Default.ModelsResponseDto);
@@ -46,8 +46,8 @@ internal static class AiEndpoints
 
         app.MapGet(AppPrefix + "/usage", async (HttpContext ctx, AiGateway gw, AiUsageStore usage) =>
         {
-            var (a, fail) = await gw.AuthenticateAsync(ctx);
-            if (fail is not null || a is null) { await AiGateway.WriteFail(ctx, fail!); return; }
+            var a = await gw.AuthorizeAsync(ctx);
+            if (a is null) return;
             var budget = await usage.BudgetAsync(a, ctx.RequestAborted);
             var rows = await usage.ListAsync(a.Id, 7, ctx.RequestAborted);
             await AiGateway.WriteJson(ctx, new UsageResponseDto(a.Name, AiGateway.ToDto(budget), budget.Warning ?? budget.Exceeded, a.RatePerMinute,
@@ -102,7 +102,7 @@ internal static class AiEndpoints
                 if (p is CodexBridge bridge)
                 {
                     var login = bridge.LoginState();
-                    codex = new CodexDto(CodexRelease.PinnedVersion, registry.Installer.Supported, new LoginDto(login.State, login.Url, login.Code, login.ExpiresAt));
+                    codex = new CodexDto(CodexRelease.PinnedVersion, registry.Installer.Supported, registry.CodexConfirmed, new LoginDto(login.State, login.Url, login.Code, login.ExpiresAt));
                     // Das Kontingent nur fragen, wenn die Bruecke ohnehin laeuft (das Ansehen startet nichts)
                     if (enabled && settings.Enabled && bridge.Running && state.Ready)
                     {
@@ -214,6 +214,16 @@ internal static class AiEndpoints
                 return Results.Json(new LoginDto(s.State, s.Url, s.Code, s.ExpiresAt), AiJson.Default.LoginDto);
             }
             catch (AiProviderException e) { return Error(409, e.Message, e.Code); }
+        });
+
+        // Der Besitzer bestaetigt, dass er die Pruefung von Hand gemacht hat (docs/AI-GATEWAY.md); erst dann bedient die Codex-Bruecke Apps. Gilt fuer die festgelegte Version.
+        app.MapPut("/api/ai/providers/codex/confirm", async (ConfirmRequest body, HttpContext ctx, AiSettings settings, SecurityAuditStore audit, HitCounter hits) =>
+        {
+            if (Limited(ctx, hits)) return TooMany();
+            if (body.Confirmed is not { } yes) return Error(400, "confirmed fehlt.");
+            await settings.SetCodexConfirmedAsync(yes ? CodexRelease.PinnedVersion : null, ctx.RequestAborted);
+            await Audit(audit, ctx, yes ? "ai.codex.confirm" : "ai.codex.unconfirm", CodexRelease.PinnedVersion);
+            return Results.NoContent();
         });
 
         app.MapDelete("/api/ai/providers/codex/login", async (HttpContext ctx, AiRegistry registry, SecurityAuditStore audit) =>

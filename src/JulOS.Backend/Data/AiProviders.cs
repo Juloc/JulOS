@@ -55,7 +55,16 @@ public sealed class AiProviderStore(NpgsqlDataSource db, SecretBox box)
 /// <summary>Die Schalter des KI-Zugangs in den Einstellungen der Instanz: an oder aus (aus ist der Anfang) und das Standardmodell ("anbieter/modell").</summary>
 public sealed class AiSettings(InstanceSettings settings)
 {
-    public const string EnabledKey = "ai.enabled", DefaultModelKey = "ai.defaultModel";
+    public const string EnabledKey = "ai.enabled", DefaultModelKey = "ai.defaultModel", CodexConfirmedKey = "ai.codexConfirmed";
+
+    /// <summary>
+    /// Die Version der Codex-Bruecke, deren Pruefung von Hand der Besitzer bestaetigt hat (docs/AI-GATEWAY.md, "Before turning the Codex bridge on, check it by hand"), oder null. Ohne
+    /// Bestaetigung der gerade festgelegten Version dient die Bruecke keiner App (aus per Vorgabe); eine neue Version verlangt die Pruefung neu.
+    /// </summary>
+    public string? CodexConfirmedVersion => settings.GetElement(CodexConfirmedKey) is { ValueKind: System.Text.Json.JsonValueKind.String } e ? e.GetString() : null;
+
+    public Task SetCodexConfirmedAsync(string? version, CancellationToken ct = default) =>
+        version is null ? settings.DeleteAsync(CodexConfirmedKey, ct) : settings.SetAsync(CodexConfirmedKey, System.Text.Json.Nodes.JsonValue.Create(version)!.ToJsonString(), ct);
 
     public bool Enabled => settings.GetElement(EnabledKey) is { ValueKind: System.Text.Json.JsonValueKind.True };
 

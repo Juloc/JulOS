@@ -108,6 +108,22 @@ public static class AiRules
     }
 
     public static bool ValidEffort(string? effort) => effort is null || Efforts.Contains(effort);
+
+    /// <summary>Schaetzung fuer ein Bild in Tokens (pauschal); der Anbieter nennt sie erst, wenn er antwortet.</summary>
+    public const int TokensPerImage = 1000;
+
+    /// <summary>
+    /// Was gebucht wird: das Groessere aus der Angabe des Anbieters und der eigenen Schaetzung, je fuer Eingabe und Ausgabe. Fehlt die Angabe, ist sie 0 oder heisst bei einer anderen
+    /// Version anders, greift die Schaetzung; sie ist die Untergrenze, nicht nur der Notbehelf. Bricht der Aufrufer ab und der Anbieter nannte keine Ausgabe (Denkmodelle rechnen auch
+    /// ohne sichtbaren Text), gilt mindestens maxTokens als Ausgabe: ein Abbruch kommt nicht billiger als ein Ende.
+    /// </summary>
+    public static (long In, long Out) Book(long reportedIn, long reportedOut, long estimatedIn, long estimatedOut, bool aborted, int maxTokens)
+    {
+        var tin = Math.Max(Math.Max(0, reportedIn), estimatedIn);
+        var tout = Math.Max(Math.Max(0, reportedOut), estimatedOut);
+        if (aborted && reportedOut <= 0) tout = Math.Max(tout, maxTokens);
+        return (tin, tout);
+    }
 }
 
 /// <summary>
@@ -127,13 +143,25 @@ public sealed class AiAuthLimiter(TimeProvider time, int max = 20, TimeSpan? win
         return f.Count >= Max;
     }
 
+    /// <summary>Wie viele Adressen die Tabelle hoechstens merkt; mehr gleichzeitig falsche Adressen werden nicht mehr einzeln gezaehlt (der Speicher waechst nicht ohne Grenze).</summary>
+    public const int MaxTracked = 10_000;
+    private DateTimeOffset _lastSweep;
+
+    public int Tracked => _fails.Count;
+
     public void Fail(string client)
     {
         var now = time.GetUtcNow();
+        if (!_fails.ContainsKey(client) && _fails.Count >= MaxTracked)
+        {
+            // Voll: hoechstens einmal je Fenster aufraeumen (nicht bei jedem Fehlversuch die ganze Tabelle ablaufen), sonst die neue Adresse nicht merken
+            if (now - _lastSweep < _window) return;
+            _lastSweep = now;
+            foreach (var (k, v) in _fails) if (now - v.Start >= _window) _fails.TryRemove(k, out _);
+            if (_fails.Count >= MaxTracked) return;
+        }
         _fails.AddOrUpdate(client, _ => (now, 1), (_, old) => now - old.Start >= _window ? (now, 1) : (old.Start, old.Count + 1));
-        if (_fails.Count > 10_000) foreach (var (k, v) in _fails) if (now - v.Start >= _window) _fails.TryRemove(k, out _);
     }
-
 }
 
 /// <summary>Gleichzeitige Anfragen je App begrenzen.</summary>

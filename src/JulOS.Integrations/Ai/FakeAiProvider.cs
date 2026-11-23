@@ -18,8 +18,13 @@ public sealed class FakeAiProvider : IAiProvider
 
     public Task<AiProviderState> GetStateAsync(CancellationToken ct) => Task.FromResult(new AiProviderState("ready"));
 
+    /// <summary>Zaehlt die Aufrufe von ListModelsAsync (Tests pruefen, dass die Modellliste nicht bei jeder Anfrage neu geholt wird).</summary>
+    public int ModelCalls;
+
     public Task<IReadOnlyList<AiModel>> ListModelsAsync(CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<AiModel>>([new AiModel("echo", "Echo", ["low", "high"], "low"), new AiModel("echo-big", "Echo big", [], null)]);
+        Task.FromResult<IReadOnlyList<AiModel>>(Count([new AiModel("echo", "Echo", ["low", "high"], "low"), new AiModel("echo-big", "Echo big", [], null)]));
+
+    private AiModel[] Count(AiModel[] models) { Interlocked.Increment(ref ModelCalls); return models; }
 
     public async IAsyncEnumerable<AiChunk> ChatAsync(AiChatRequest request, [EnumeratorCancellation] CancellationToken ct)
     {
@@ -35,6 +40,8 @@ public sealed class FakeAiProvider : IAiProvider
             catch (OperationCanceledException) { Interlocked.Increment(ref Aborted); throw; }
         }
         if (reply.Length > 6) yield return new AiChunk(reply[6..]);
-        yield return new AiChunk(null, new AiUsage(input, AiText.EstimateTokens(reply)));
+        // NOUSAGE: der Anbieter nennt nichts; ZERO: er nennt 0 und 0 (die Schaetzung der Buchung muss dann greifen)
+        if (last.Contains("NOUSAGE", StringComparison.Ordinal)) yield break;
+        yield return new AiChunk(null, last.Contains("ZERO", StringComparison.Ordinal) ? new AiUsage(0, 0) : new AiUsage(input, AiText.EstimateTokens(reply)));
     }
 }

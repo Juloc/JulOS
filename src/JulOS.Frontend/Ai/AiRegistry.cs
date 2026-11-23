@@ -20,12 +20,18 @@ internal sealed class AiRegistry(IReadOnlyList<IAiProvider> providers, CodexBrid
 
     public IAiProvider? Get(string id) => providers.FirstOrDefault(p => p.Id == id);
 
-    /// <summary>Die Anbieter, die gerade benutzt werden duerfen (Schalter an).</summary>
-    public async Task<IReadOnlyList<IAiProvider>> ActiveAsync(CancellationToken ct)
+    /// <summary>Ob die Codex-Bruecke fuer Apps freigegeben ist: der Besitzer hat die Pruefung von Hand fuer die jetzt festgelegte Version bestaetigt.</summary>
+    public bool CodexConfirmed => settings.CodexConfirmedVersion == CodexRelease.PinnedVersion;
+
+    /// <summary>
+    /// Die Anbieter, die gerade benutzt werden duerfen (Schalter an). forApps: fuer Apps mit Schluessel; die Codex-Bruecke zaehlt dafuer nur mit der Bestaetigung des Besitzers
+    /// (aus per Vorgabe). Ohne forApps (Einstellungen: ausprobieren, anmelden) gilt sie, sobald sie eingeschaltet ist.
+    /// </summary>
+    public async Task<IReadOnlyList<IAiProvider>> ActiveAsync(CancellationToken ct, bool forApps = false)
     {
         if (!settings.Enabled) return [];
         var flags = await store.ListAsync(ct);
-        return [.. providers.Where(p => p.Id == AiRules.FakeId || flags.TryGetValue(p.Id, out var f) && f.Enabled)];
+        return [.. providers.Where(p => p.Id == AiRules.FakeId || flags.TryGetValue(p.Id, out var f) && f.Enabled && (!forApps || p.Id != "codex" || CodexConfirmed))];
     }
 
     public async Task<IReadOnlyList<AiModel>> ModelsAsync(IAiProvider provider, CancellationToken ct)

@@ -23,7 +23,7 @@ internal sealed record UsageResponseDto(string App, BudgetDto Budget, string? Wa
 
 // ---- Verwaltung in den Einstellungen (/api/ai, hinter Sitzung) ----
 internal sealed record LoginDto(string State, string? Url, string? Code, DateTimeOffset? ExpiresAt);
-internal sealed record CodexDto(string Version, bool Supported, LoginDto Login);
+internal sealed record CodexDto(string Version, bool Supported, bool Confirmed, LoginDto Login);
 internal sealed record PlanWindowDto(double UsedPercent, int? Minutes, DateTimeOffset? ResetsAt);
 internal sealed record PlanUsageDto(string? Plan, PlanWindowDto[] Windows);
 internal sealed record ProviderDto(string Id, bool Enabled, bool KeySet, string Status, string? Detail, CodexDto? Codex, PlanUsageDto? Plan);
@@ -41,6 +41,7 @@ internal sealed record DefaultModelRequest(string? Model);
 internal sealed record ProviderRequest(bool? Enabled, string? Key);
 internal sealed record AppRequest(string? Name, string[]? Allowed, long? DailyTokens, long? MonthlyTokens, int? RatePerMinute, bool? AllowFiles);
 internal sealed record ActiveRequest(bool? Active);
+internal sealed record ConfirmRequest(bool? Confirmed);
 
 /// <summary>JSON ohne Reflection fuer den KI-Zugang (eigener Kontext, damit AppJson unberuehrt bleibt).</summary>
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
@@ -65,5 +66,6 @@ internal sealed record ActiveRequest(bool? Active);
 [JsonSerializable(typeof(ProviderRequest))]
 [JsonSerializable(typeof(AppRequest))]
 [JsonSerializable(typeof(ActiveRequest))]
+[JsonSerializable(typeof(ConfirmRequest))]
 [JsonSerializable(typeof(ErrorBody))]
 internal sealed partial class AiJson : JsonSerializerContext;

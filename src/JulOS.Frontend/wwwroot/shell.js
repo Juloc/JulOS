@@ -188,7 +188,7 @@ async function syncPrefs(afterSignIn = false) {
   const got = await prefs.sync();
   // Hat der Server eine andere Sprache als diese Seite: nach der Anmeldung (noch keine Sitzung offen) neu laden, sonst gilt sie ab dem naechsten Laden
   if (afterSignIn && got.lang && isPref(got.lang.lang) && got.lang.lang !== getPref()) { applyServerPrefs({ lang: got.lang }); location.reload(); return; }
-  if (got.keybar || got.theme || got.lang || got.appearance) { applyServerPrefs(got); if (M) M.applyShellTheme(); }
+  if (got.keybar || got.theme || got.lang || got.appearance || got.touch) { applyServerPrefs(got); if (M) M.applyShellTheme(); }
 }
 // Ein anderes Geraet hat etwas geaendert: beim Zurueckkehren zur Seite (hoechstens einmal je Minute) neu abgleichen
 document.addEventListener('visibilitychange', () => { if (!document.hidden && state.user && Date.now() - prefsAt > 60000) syncPrefs(); });

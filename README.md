@@ -29,6 +29,7 @@ Status: Linux (X11, XFCE tested) first. Windows is planned and the agent API is 
 - **Desktop browser, real keyboard**: keys go straight to the remote machine. Shift/Ctrl/Alt are sent together with arrows, Home, End etc.
   (Shift+arrows select, Ctrl+arrows jump by word; F1 to F12 go to the remote machine, so F5 does not reload the page there); Ctrl+V first puts your local clipboard on the remote clipboard, Ctrl+C / Ctrl+X in
   the remote copy its text to your local clipboard (needs HTTPS or localhost).
+- **Touch**: tap, hold for a right click (visible ring), two-finger scroll, double-tap and hold to drag, hold keys, shortcuts and a clipboard sheet; see [docs/TOUCH.md](docs/TOUCH.md) (English).
 - **Window bar and app mode**: switch between *Desktop* and *Apps*. In Apps mode the session's panel is hidden, windows appear as
   chips (with icons) in the app, a "+" starts any installed program. Windows are maximised. Per-application zoom profiles
   (for example a narrow width for apps with a responsive layout).

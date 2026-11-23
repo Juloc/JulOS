@@ -16,7 +16,8 @@ public static partial class SettingsRules
     public const string Lang = "lang";
     public const string Files = "files";
     public const string Appearance = "appearance";
-    public static readonly IReadOnlyList<string> Keys = [Keybar, Theme, Lang, Files, Appearance];
+    public const string Touch = "touch";
+    public static readonly IReadOnlyList<string> Keys = [Keybar, Theme, Lang, Files, Appearance, Touch];
 
     public const int MaxPins = 100, MaxClosed = 200, MaxIconOverrides = 200;
 
@@ -25,7 +26,7 @@ public static partial class SettingsRules
     // Ohne die Ersetzung von + und Umlauten: das Ergebnis ist JSON fuer die Datenbank und die API, kein HTML
     private static readonly JsonWriterOptions Plain = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
-    private static readonly string[] KeyTypes = ["chord", "mod", "text", "action"];
+    private static readonly string[] KeyTypes = ["chord", "mod", "text", "action", "seq"];
     private static readonly string[] Scopes = ["both", "desktop", "terminal"];
     private static readonly string[] Schemes = ["auto", "light", "dark"];
     private static readonly string[] Languages = ["de", "en", "system"];
@@ -46,6 +47,7 @@ public static partial class SettingsRules
                 Lang => (WriteLang(value), null),
                 Files => (WriteFiles(value), null),
                 Appearance => (WriteAppearance(value), null),
+                Touch => (WriteTouch(value), null),
                 _ => (null, "Unbekannte Einstellung."),
             };
         }
@@ -206,6 +208,34 @@ public static partial class SettingsRules
         return allowed.Contains(s) ? s : fallback ?? allowed[0];
     }
 
+    private static readonly string[] TouchModes = ["direct", "pad"], RightClicks = ["hold", "two", "both"], ScrollDirs = ["natural", "classic"], ScrollSpeeds = ["slow", "normal", "fast"];
+    private static readonly string[] TouchFlags = ["tapDrag", "fingerDrag", "vibrate", "clipChip"];
+
+    /// <summary>
+    /// Die Touch-Bedienung am Handy (docs/TOUCH.md): Modus, Rechtsklick-Methode, Haltedauer (300 bis 1000 ms), Scrollen, Zeigergeschwindigkeit und ein paar Schalter. Gespeichert wird nur, was
+    /// gueltig im Wert ist; ein Feld darf fehlen (dann gilt der Standard der Seite), Unbekanntes faellt weg. Die Seite schickt nur Abweichungen vom Standard, ein leeres Objekt heisst "alles Standard".
+    /// </summary>
+    private static string WriteTouch(JsonElement v)
+    {
+        if (v.ValueKind != JsonValueKind.Object) throw new FormatException("Touch erwartet ein Objekt.");
+        string? Pick(string name, string[] allowed) => v.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String && p.GetString() is { } s && allowed.Contains(s) ? s : null;
+        using var ms = new MemoryStream();
+        using (var w = new Utf8JsonWriter(ms, Plain))
+        {
+            w.WriteStartObject();
+            if (Pick("mode", TouchModes) is { } mode) w.WriteString("mode", mode);
+            if (Pick("rightClick", RightClicks) is { } rc) w.WriteString("rightClick", rc);
+            if (Pick("scrollDir", ScrollDirs) is { } sd) w.WriteString("scrollDir", sd);
+            if (Pick("scrollSpeed", ScrollSpeeds) is { } ss) w.WriteString("scrollSpeed", ss);
+            if (v.TryGetProperty("holdMs", out var hold) && hold.ValueKind == JsonValueKind.Number && hold.TryGetDouble(out var ms2)) w.WriteNumber("holdMs", Math.Clamp((int)Math.Round(ms2 / 50) * 50, 300, 1000));
+            if (v.TryGetProperty("padSpeed", out var pad) && pad.ValueKind == JsonValueKind.Number && pad.TryGetDouble(out var speed)) w.WriteNumber("padSpeed", Math.Clamp(Math.Round(speed, 1), 0.6, 3.0));
+            foreach (var flag in TouchFlags)
+                if (v.TryGetProperty(flag, out var f) && f.ValueKind is JsonValueKind.True or JsonValueKind.False) w.WriteBoolean(flag, f.ValueKind == JsonValueKind.True);
+            w.WriteEndObject();
+        }
+        return Encoding.UTF8.GetString(ms.ToArray());
+    }
+
     private static string WriteLang(JsonElement v)
     {
         if (v.ValueKind != JsonValueKind.Object) throw new FormatException("Sprache erwartet ein Objekt.");
@@ -245,8 +275,13 @@ public static partial class SettingsRules
                     if (!KeyTypes.Contains(type)) throw new FormatException("Tastenart ungültig.");
                     var scope = Text(item, "scope", 10, required: false);
                     if (scope.Length > 0 && !Scopes.Contains(scope)) throw new FormatException("Bereich ungültig.");
+                    // icon: Name eines Symbols der Oberflaeche; conn: die Verbindung, an die die Taste gebunden ist (nur eine Kennung, sie gibt nichts frei)
+                    var icon2 = Text(item, "icon", 30, required: false); var conn = Text(item, "conn", 64, required: false);
+                    if ((icon2.Length > 0 && !Token().IsMatch(icon2)) || (conn.Length > 0 && !PlaceId().IsMatch(conn))) throw new FormatException("Symbol oder Verbindung ungültig.");
                     w.WriteStartObject(); w.WriteString("label", Text(item, "label", 24)); w.WriteString("type", type); w.WriteString("value", Text(item, "value", 200));
                     if (scope.Length > 0 && scope != "both") w.WriteString("scope", scope);
+                    if (icon2.Length > 0) w.WriteString("icon", icon2);
+                    if (conn.Length > 0) w.WriteString("conn", conn);
                     w.WriteEndObject();
                 }
                 w.WriteEndArray(); w.WriteEndObject();

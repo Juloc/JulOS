@@ -4,6 +4,7 @@ import { SIZES, SIZE_LABEL, ICON_STYLES, STYLE_LABEL, isDefaultArea } from './ap
 import { Sessions } from './sessions.js';
 import { SCHEMES, normalizeScheme } from './scheme.js';
 import { GROUPS, rowsFor, aboutValues } from './settings.js';
+import { openTouchSettings } from './touch-settings.js';
 import { t, tp, tk, fmtNumber, fmtTime, fmtDay, getPref, LANG_CHOICES } from './i18n.js';
 import { looksLikeAddress } from './quick.js';
 import { tileKind, KIND_KEY, withProgram } from './terminal-programs.js';
@@ -673,7 +674,7 @@ function renderProfile() {
   pg.querySelectorAll('[data-set]').forEach((b) => b.addEventListener('click', () => settingAction(b.dataset.set)));
   if (current === 'profile' && !about) loadAbout();
 }
-const SETTING_ACTIONS = { iconOver: () => resetAppearance('iconsOver'), appearanceReset: () => { resetAllAppearance(); applyShellTheme(); }, password: () => ctx.account(), security: () => ctx.security(), devices: () => ctx.devices(), folders: () => ctx.folders(), nettools: () => ctx.nettools(), alerts: () => ctx.alerts(), signout: () => ctx.signOut(),
+const SETTING_ACTIONS = { touch: () => openTouchSettings(), iconOver: () => resetAppearance('iconsOver'), appearanceReset: () => { resetAllAppearance(); applyShellTheme(); }, password: () => ctx.account(), security: () => ctx.security(), devices: () => ctx.devices(), folders: () => ctx.folders(), nettools: () => ctx.nettools(), alerts: () => ctx.alerts(), signout: () => ctx.signOut(),
   claude: () => launchProgram('claude'), codex: () => launchProgram('codex') };
 function settingAction(id) { const f = SETTING_ACTIONS[id]; if (f) f(); }
 /** Claude oder Codex starten (wie der Schnellstart auf der Verbindungen-Seite) */

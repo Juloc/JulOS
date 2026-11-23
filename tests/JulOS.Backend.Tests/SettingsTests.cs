@@ -59,6 +59,37 @@ public sealed class SettingsTests
     }
 
     [Fact]
+    public void A_keybar_shortcut_may_carry_an_icon_and_a_connection_but_nothing_else()
+    {
+        var good = """{"rows":[{"id":"combos","title":"Combos","items":[{"label":"Task-Manager","type":"seq","value":"ctrl+shift+esc, alt+tab","icon":"bolt","conn":"3f2a-91bc","extra":1}]}]}""";
+        var (json, error) = SettingsRules.Validate("keybar", J(good));
+        Assert.Null(error);
+        Assert.Equal("""{"rows":[{"id":"combos","title":"Combos","items":[{"label":"Task-Manager","type":"seq","value":"ctrl+shift+esc, alt+tab","icon":"bolt","conn":"3f2a-91bc"}]}]}""", json);
+
+        string One(string extra) => $$"""{"rows":[{"id":"a","title":"t","items":[{"label":"x","type":"seq","value":"win+d"{{extra}}}]}]}""";
+        Assert.Null(SettingsRules.Validate("keybar", J(One(""))).Error);
+        foreach (var bad in new[] { ",\"icon\":\"Evil<b>\"", ",\"icon\":\"" + new string('x', 31) + "\"", ",\"conn\":\"../etc\"", ",\"conn\":\"" + new string('a', 65) + "\"" })
+            Assert.NotNull(SettingsRules.Validate("keybar", J(One(bad))).Error);
+    }
+
+    [Fact]
+    public void The_touch_setting_keeps_only_valid_known_fields_and_clamps_numbers()
+    {
+        var (json, error) = SettingsRules.Validate("touch", J("""{"mode":"pad","rightClick":"two","scrollDir":"classic","scrollSpeed":"fast","holdMs":612,"padSpeed":1.46,"tapDrag":false,"vibrate":true,"evil":"x"}"""));
+        Assert.Null(error);
+        Assert.Equal("""{"mode":"pad","rightClick":"two","scrollDir":"classic","scrollSpeed":"fast","holdMs":600,"padSpeed":1.5,"tapDrag":false,"vibrate":true}""", json);
+
+        // Grenzen der Zahlen: Haltedauer 300 bis 1000, Zeigergeschwindigkeit 0,6 bis 3
+        Assert.Equal("""{"holdMs":300,"padSpeed":0.6}""", SettingsRules.Validate("touch", J("""{"holdMs":10,"padSpeed":0}""")).Json);
+        Assert.Equal("""{"holdMs":1000,"padSpeed":3}""", SettingsRules.Validate("touch", J("""{"holdMs":99999,"padSpeed":99}""")).Json);
+        // ungueltige Werte einzelner Felder fallen weg, der Rest bleibt; "alles Standard" ist ein leeres Objekt
+        Assert.Equal("""{"mode":"direct"}""", SettingsRules.Validate("touch", J("""{"mode":"direct","rightClick":"triple","holdMs":"lang","vibrate":"ja"}""")).Json);
+        Assert.Equal("{}", SettingsRules.Validate("touch", J("{}")).Json);
+        foreach (var bad in new[] { "[1]", "\"pad\"", "5", "null" }) Assert.NotNull(SettingsRules.Validate("touch", J(bad)).Error);
+        Assert.Contains("touch", SettingsRules.Keys);
+    }
+
+    [Fact]
     public void The_files_setting_keeps_only_known_fields_and_limits_sizes()
     {
         var good = """{"view":{"mode":"tiles","density":"comfy","sortCol":"size","sortDir":"desc","showHidden":false,"cols":{"name":10,"date":9999,"type":150,"evil":1},"x":1},"pins":[{"place":"3f2b1c9e-1111-4222-8333-444455556666","path":"/home/a","name":"A","extra":1},{"place":"local","path":"docs"},{"place":"local","path":"docs"},{"place":"bad id!","path":"/x"}],"closed":["host:1","local"],"evil":true}""";

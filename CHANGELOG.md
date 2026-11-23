@@ -6,6 +6,12 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt
+- Touch-Bedienung der Sitzung neu: Halten mit sichtbarem Ring = Rechtsklick (300 bis 1000 ms), Zwei-Finger-Scrollen waagerecht und senkrecht, Doppeltipp und halten = Ziehen, Zwei-Finger-Doppeltipp setzt den Zoom zurück, Einstellungen mit Probierfläche (docs/TOUCH.md).
+- Zwischenablage-Blatt mit Anzeige des Geräte-Inhalts, „Als Text tippen“, Bearbeiten, als Datei senden (PNG/JPG) und „Aufs Gerät kopieren“.
+- Haltetasten (Strg, Alt, Umschalt, Win, AltGr) mit Einrasten und sicherem Loslassen; Kürzel als neue Tastenart mit Vorlagen; Eingabe-Abgleich für Diktat der Handy-Tastatur.
+
+
 ### Neu
 - **Diagnose für ständiges Neuverbinden der Bildschirm-Verbindung** ([docs/SESSIONS.md](docs/SESSIONS.md#sitzungserhalt-stream-engine)): Das Server-Log sagt bei „Browser weg“ jetzt, nach wie vielen Sekunden und warum die Leitung endete (Browser schloss selbst, Leitung abgerissen, von einer neuen Verbindung abgelöst); mit `?debug` schreibt der Browser `ws-close` (Code, sauber oder abgerissen, Dauer, Seite versteckt, online). Am Verhalten ändert sich nichts.
 

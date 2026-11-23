@@ -30,6 +30,7 @@ Stand: erst Linux (X11, XFCE getestet). Windows ist eingeplant, die Agent-API is
   Fenster erscheinen als Chips (mit Symbol) in der App, "+" startet jedes installierte Programm. Fenster werden maximiert.
   Zoom-Profil je Programm (zum Beispiel schmale Breite fuer Programme mit responsivem Layout).
 - **Foto einfuegen**: Foto waehlen, wird verkleinert, hochgeladen, in die Remote-Zwischenablage gelegt und mit Strg+V eingefuegt.
+- **Touch**: Tippen, Halten für Rechtsklick (sichtbarer Ring), Zwei-Finger-Scrollen, Doppeltipp und halten zum Ziehen, Haltetasten, Kürzel, Zwischenablage-Blatt; siehe [docs/TOUCH.md](docs/TOUCH.md) (englisch).
 - **Passwortmanager**: Anmeldeformular und Passwort-Dialog sind fuer Autofill erkennbar (Bitwarden usw.).
 - **Touch**: Tippen = Klick, Halten = Rechtsklick, Ziehen, Zwei-Finger-Scrollen, Pinch-Zoom (Aufloesung passt sich an), Touchpad-Modus.
 - **Deutsch und Englisch:** die ganze Oberfläche im Browser gibt es in beiden Sprachen (Auswahl „Deutsch / English / System“ in den Einstellungen, je Benutzer auf dem Server gespeichert; Standard ist Deutsch). Siehe [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#languages).

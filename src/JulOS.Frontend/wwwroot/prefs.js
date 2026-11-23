@@ -11,7 +11,7 @@
 import { t } from './i18n.js';
 
 const PENDING_KEY = 'pd.prefs.pending';
-export const PREF_KEYS = ['keybar', 'theme', 'lang', 'appearance'];
+export const PREF_KEYS = ['keybar', 'theme', 'lang', 'appearance', 'touch'];
 
 /** Kleiner Aufruf der API (Aenderungen tragen die Sonderkopfzeile). Wirft bei einem Fehler. */
 export async function jsonApi(path, { method = 'GET', body } = {}) {
@@ -24,7 +24,7 @@ export async function jsonApi(path, { method = 'GET', body } = {}) {
 }
 
 /**
- * @param {{api?: Function, storage: Storage, local: () => {keybar?: object|null, theme?: object|null, lang?: object|null, appearance?: object|null}, delay?: number, schedule?: Function, cancel?: Function}} o
+ * @param {{api?: Function, storage: Storage, local: () => {keybar?: object|null, theme?: object|null, lang?: object|null, appearance?: object|null, touch?: object|null}, delay?: number, schedule?: Function, cancel?: Function}} o
  * local: was dieses Geraet lokal hat (null: noch nie veraendert, also nichts hochzuladen)
  */
 export function createPrefs({ api = jsonApi, storage, local, delay = 800, schedule = setTimeout, cancel = clearTimeout }) {

@@ -1,0 +1,56 @@
+/* Touch: Ring beim Halten, Markierung beim Ziehen, Anzeige der Zwischenablage, Blatt der Zwischenablage, Einstellungen (touch-ui.js, touch-settings.js, clip-panel.js).
+   Farben nur ueber die Variablen des Designs, damit es in hell und dunkel passt. */
+.tt-layer { position: absolute; inset: 0; z-index: 8; pointer-events: none; overflow: hidden; }
+.tt-ring { position: absolute; width: 64px; height: 64px; margin: -32px 0 0 -32px; transform: scale(.9); opacity: 0; animation: tt-in .12s ease-out forwards; filter: drop-shadow(0 0 3px rgba(0,0,0,.55)); }
+.tt-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.tt-ring circle { fill: none; stroke-width: 5; }
+.tt-ring .tt-track { stroke: rgba(255,255,255,.35); }
+.tt-ring .tt-fill { stroke: var(--md-primary, #9a67ea); stroke-linecap: round; stroke-dasharray: 169.6; stroke-dashoffset: 169.6; animation: tt-fill var(--tt-ms, 400ms) linear forwards; }
+.tt-ring.full { animation: tt-pulse .42s ease-out forwards; }
+.tt-ring.full .tt-fill { animation: none; stroke-dashoffset: 0; stroke: var(--md-primary, #9a67ea); }
+.tt-ring.full .tt-track { stroke: var(--md-primary, #9a67ea); }
+@keyframes tt-in { to { opacity: 1; transform: scale(1); } }
+@keyframes tt-fill { to { stroke-dashoffset: 0; } }
+@keyframes tt-pulse { 0% { opacity: 1; transform: scale(1); } 60% { opacity: 1; transform: scale(1.35); } 100% { opacity: 0; transform: scale(1.5); } }
+.tt-mark { position: absolute; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%; border: 3px dashed var(--md-primary, #9a67ea); background: color-mix(in srgb, var(--md-primary, #9a67ea) 22%, transparent); box-shadow: 0 0 0 2px rgba(0,0,0,.45); }
+@media (prefers-reduced-motion: reduce) { .tt-ring { animation-duration: .01s; } .tt-ring.full { animation-duration: .2s; } }
+
+/* Anzeige der Zwischenablage dieses Geraets: klein, unten links ueber dem Dock */
+.cp-chip { position: absolute; left: 8px; bottom: 8px; z-index: 12; display: inline-flex; align-items: center; gap: 6px; max-width: calc(100% - 16px); min-height: 36px; padding: 0 12px; border: 0; border-radius: 18px;
+  background: color-mix(in srgb, var(--md-surface-container) 88%, transparent); color: var(--md-on-surface); font: inherit; font-size: .78rem; box-shadow: 0 1px 6px rgba(0,0,0,.45); cursor: pointer; backdrop-filter: blur(4px); }
+.cp-chip[hidden] { display: none; }
+.cp-chip svg { width: 16px; height: 16px; fill: currentColor; flex: none; }
+.cp-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-chip.idle { opacity: .72; }
+
+/* Blatt der Zwischenablage (Vorschau und Aktionen) und Einstellungen */
+dialog.tt-sheet { width: min(96vw, 520px); }
+@media (max-width: 700px) { dialog.tt-sheet { margin: auto auto 0; border-radius: 28px 28px 0 0; width: 100vw; max-width: 100vw; } }
+.tt-sheet h3 { display: flex; align-items: center; gap: 8px; }
+.tt-sheet .cp-meta { color: var(--md-on-variant, var(--muted)); font-size: .85rem; margin: 0 0 8px; }
+.tt-sheet .cp-preview { width: 100%; box-sizing: border-box; min-height: 64px; max-height: 32vh; overflow: auto; background: var(--md-surface); border-radius: 12px; padding: 10px; font-family: var(--mono, monospace); font-size: .85rem; white-space: pre-wrap; word-break: break-word; border: 1px solid var(--md-outline); color: var(--md-on-surface); }
+.tt-sheet textarea.cp-preview { resize: vertical; }
+.tt-sheet img.cp-preview { object-fit: contain; max-height: 30vh; padding: 4px; }
+.tt-sheet .tt-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.tt-sheet .tt-actions button { flex: 1 1 140px; }
+.tt-sheet .tt-hint { font-size: .8rem; color: var(--md-on-variant, var(--muted)); margin: 4px 0 8px; }
+.tt-sheet hr { border: 0; border-top: 1px solid var(--md-outline); margin: 14px 0; }
+.tt-sheet .tt-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.tt-sheet .tt-field > span { font-size: .9rem; }
+.tt-seg { display: flex; gap: 6px; flex-wrap: wrap; }
+.tt-seg button { flex: 1 1 auto; min-height: 44px; border-radius: 22px; background: var(--md-surface); color: var(--md-on-surface); box-shadow: inset 0 0 0 1px var(--md-outline); }
+.tt-seg button[aria-checked="true"] { background: var(--md-primary); color: var(--md-on-primary); box-shadow: none; }
+.tt-check { display: flex; align-items: center; gap: 10px; min-height: 44px; margin-bottom: 4px; }
+.tt-check input { width: 22px; height: 22px; flex: none; }
+.tt-range { display: flex; align-items: center; gap: 12px; }
+.tt-range input { flex: 1; min-height: 44px; }
+.tt-range output { min-width: 4.5em; text-align: right; font-variant-numeric: tabular-nums; }
+.tt-try { position: relative; height: 120px; border-radius: 16px; background: #1b1b1f; color: #fff; display: grid; place-items: center; text-align: center; font-size: .9rem; touch-action: none; user-select: none; -webkit-user-select: none; overflow: hidden; margin-bottom: 12px; padding: 0 12px; }
+.tt-try .tt-layer { z-index: 2; }
+.tt-try b { color: var(--md-primary-container, #cdb8ff); }
+
+/* Haltetasten: einmal = Rahmen, eingerastet = gefuellt mit Schloss-Punkt (die Farben der Tasten stehen in style.css) */
+.row .k.mod-lock::after { content: ""; position: absolute; right: 5px; top: 5px; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.row .k.mod-once, .row .k.mod-lock { position: relative; }
+.k.ic.has-label { gap: 4px; }
+.k .klab { margin-left: 4px; }

@@ -216,6 +216,7 @@ dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj    # 
 | `JULOS_CLIP_MAX_MB` | biggest file, and biggest paste in all, the browser may send into the clipboard of the remote desktop (megabytes), default `2048`, at most `65536`; the files lie on the server's disk until pasted; see CLIPBOARD.md |
 | `JULOS_CLIP_DIR` | folder for these files, default `julos-clip` in the server's temp folder (give it a disk with room: up to the limit per open session) |
 | `JULOS_TRUSTED_PROXIES` | **fallback** (since 0.18 the list lives in the app, Settings, Security): networks whose `X-Forwarded-*` headers are trusted (default: private networks, with a warning) |
+| `JULOS_PUBLIC_URL` | **fallback** for the public address of JulOS (the issuer of the sign-in centre, `https`, no path); the app setting (Settings, Security, Anmelde-Zentrale) wins; unset = sign-in centre off, see SIGN-IN.md (the compose files do not pass it on, set it in the app) |
 
 ## Container hardening and health
 

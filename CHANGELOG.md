@@ -7,6 +7,7 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 ## [Unveröffentlicht]
 
 ### Neu
+- **Anmelde-Zentrale** ([docs/SIGN-IN.md](docs/SIGN-IN.md), noch nicht veröffentlicht): JulOS ist OpenID-Connect-Anbieter für die eigenen Apps (nur Authorization Code mit PKCE, ES256-Token mit Microsofts Token-Bibliothek). Apps, Geheimnisse (nur als Hash), Rollen je Person und App und die Signaturschlüssel verwaltet der Eigentümer in Einstellungen, Sicherheit (zweiter Faktor, Verlauf); endet eine JulOS-Sitzung, bekommen die Apps ein Logout-Token (Back-Channel Logout). Migration `024_oidc.sql`; Tests mit Microsofts `AddOpenIdConnect`-Handler als Client.
 - **Diagnose für ständiges Neuverbinden der Bildschirm-Verbindung** ([docs/SESSIONS.md](docs/SESSIONS.md#sitzungserhalt-stream-engine)): Das Server-Log sagt bei „Browser weg“ jetzt, nach wie vielen Sekunden und warum die Leitung endete (Browser schloss selbst, Leitung abgerissen, von einer neuen Verbindung abgelöst); mit `?debug` schreibt der Browser `ws-close` (Code, sauber oder abgerissen, Dauer, Seite versteckt, online). Am Verhalten ändert sich nichts.
 
 ## [0.24.0] - 2026-11-22

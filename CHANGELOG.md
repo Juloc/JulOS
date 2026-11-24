@@ -6,6 +6,8 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+## [0.30.0] - 2026-11-24
+
 ### Neu
 - **Neuladen bringt die Fernsteuer-Sitzung zurück** ([docs/SESSION-KEEP.md](docs/SESSION-KEEP.md), Schritt 1; [docs/SESSIONS.md](docs/SESSIONS.md)): eine erhaltene RDP- oder VNC-Sitzung bekommt eine öffentliche Kennung (128 Bit, nie das Token der Engine). Nach einem Neuladen fragt die Seite `GET /api/remote/kept?conn=…`, holt ihre eigene unbeobachtete Sitzung mit `POST /api/remote/kept/take` (Einmal-Ticket, 20 s, an Person, Sitzung und App-Sitzung gebunden) und hängt sich still wieder an: kein neuer Login am Ziel, ein Schlüsselbild. `POST /api/remote/kept/end` beendet eine. Unbekannte und fremde Kennungen antworten gleich. **Kein zweiter Faktor beim Nehmen**, Entscheidung des Besitzers vom 24.11.2026 (neuer Befund F-47 in [docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md), akzeptiert). Verlauf der Sicherheit: `kept.take` (nur von einer anderen App-Sitzung), `kept.take_denied`, `kept.end`. Die Zeit bleibt der Wert des Servers; der Dialog „hierher holen / neu“, die Zeit je Person und die Geräte kommen in den nächsten Schritten.
 - **Abmelden beendet die erhaltenen Desktops** dieses Geräts sofort (bisher nach spätestens 10 s).

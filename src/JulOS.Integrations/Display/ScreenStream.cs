@@ -697,16 +697,72 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
     public void MouseMove(int x, int y) => _source?.MouseMove(x, y);
 
-    public void MouseButton(int button, bool down) => _source?.MouseButton(button, down);
+    public void MouseButton(int button, bool down)
+    {
+        if (button is >= 0 and <= 4)
+        {
+            lock (_inputGate)
+            {
+                _buttonsDown = down ? _buttonsDown | (1 << button) : _buttonsDown & ~(1 << button);
+            }
+        }
+
+        _source?.MouseButton(button, down);
+    }
 
     public void MouseWheel(int delta, bool horizontal) => _source?.MouseWheel(delta, horizontal);
 
-    public void Key(int scancode, bool extended, bool down) => _source?.Key(scancode, extended, down);
+    public void Key(int scancode, bool extended, bool down)
+    {
+        lock (_inputGate)
+        {
+            if (down) _keysDown.Add(scancode | (extended ? 0x10000 : 0));
+            else _keysDown.Remove(scancode | (extended ? 0x10000 : 0));
+        }
+
+        _source?.Key(scancode, extended, down);
+    }
+
+    /// <summary>Nur fuer Tests: eine Quelle einsetzen, ohne zu verbinden (um zu sehen, was beim Parken am Ziel ankommt).</summary>
+    internal void UseSourceForTests(IScreenSource source) => _source = source;
+
+    // Was der Browser gerade gedrueckt haelt, damit es beim Parken losgelassen werden kann (sonst haengt die Taste am Ziel fest, siehe ReleaseInput)
+    private readonly Lock _inputGate = new();
+    private readonly HashSet<int> _keysDown = [];
+    private readonly HashSet<uint> _keysymsDown = [];
+    private int _buttonsDown;
+
+    /// <summary>Alle gedrueckten Tasten und Maustasten am fernen Rechner loslassen (der Browser ist weg: eine Luecke mitten in einem gehaltenen Tastendruck liesse die Taste dort haengen).</summary>
+    public void ReleaseInput()
+    {
+        int[] keys; uint[] keysyms; int buttons;
+        lock (_inputGate)
+        {
+            keys = [.. _keysDown]; keysyms = [.. _keysymsDown]; buttons = _buttonsDown;
+            _keysDown.Clear(); _keysymsDown.Clear(); _buttonsDown = 0;
+        }
+
+        foreach (var k in keys) _source?.Key(k & 0xFFFF, (k & 0x10000) != 0, false);
+        foreach (var k in keysyms) _vnc?.Keysym(k, false);
+        for (var b = 0; b <= 4; b++)
+        {
+            if ((buttons & (1 << b)) != 0) _source?.MouseButton(b, false);
+        }
+    }
 
     public void Unicode(char unit) => _source?.Unicode(unit);
 
     /// <summary>Eine Taste als X11-Keysym (nur VNC: der Browser schickt dort das getippte Zeichen statt einer Taste; bei RDP ohne Wirkung).</summary>
-    public void Keysym(uint keysym, bool down) => _vnc?.Keysym(keysym, down);
+    public void Keysym(uint keysym, bool down)
+    {
+        lock (_inputGate)
+        {
+            if (down) _keysymsDown.Add(keysym);
+            else _keysymsDown.Remove(keysym);
+        }
+
+        _vnc?.Keysym(keysym, down);
+    }
 
     /// <summary>Der Browser hat Text abgelegt; der ferne Rechner holt ihn, wenn dort eingefuegt wird.</summary>
     public void SetClipboard(string text)
@@ -960,11 +1016,12 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
     }
 
     /// <summary>
-    /// Kein Browser mehr dran (die Verbindung riss ab, die Sitzung wird erhalten): nichts kodieren, den Ton aus. Der Desktop laeuft weiter,
+    /// Kein Browser mehr dran (die Verbindung riss ab, die Sitzung wird erhalten): nichts kodieren, den Ton aus, gedrueckte Tasten loslassen. Der Desktop laeuft weiter,
     /// die Aenderungen sammeln sich im Bild. <see cref="Resume"/> holt den neuen Browser auf den Stand.
     /// </summary>
     public void Park()
     {
+        ReleaseInput();
         Volatile.Write(ref _paused, true);
         Audio.OutputOn = false;
     }

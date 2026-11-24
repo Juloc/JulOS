@@ -3039,4 +3039,5 @@ export default {
   "clip2.noFolders": "Ordner werden nicht hochgeladen, nur Dateien.",
   "clip2.pasteFile": "Datei einfügen",
   "clip2.osc7Hint": "Der Ordner der Shell ist unbekannt: die Datei kommt in den Home-Ordner. Damit das Terminal deinem Ordner folgt, trägt man in bash in ~/.bashrc ein: PROMPT_COMMAND='printf \"\\e]7;file://%s%s\\a\" \"$HOSTNAME\" \"$PWD\"' (zsh: Funktion in precmd). Dieser Hinweis kommt nur einmal.",
+  "err.keptGone": "Diese Sitzung gibt es nicht mehr.",
 };

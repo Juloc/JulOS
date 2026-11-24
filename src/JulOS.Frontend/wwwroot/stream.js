@@ -345,7 +345,7 @@ export class StreamClient {
       }
       case IN.link: this.link.enable(); break;
       case IN.pong: break;
-      case IN.session: if (this.onsession && buffer.byteLength > 3) this.onsession({ keep: v.getUint16(1), token: new TextDecoder().decode(new Uint8Array(buffer, 3)) }); break;
+      case IN.session: if (this.onsession && buffer.byteLength > 3) { const [token, handle] = new TextDecoder().decode(new Uint8Array(buffer, 3)).split(' '); this.onsession({ keep: v.getUint16(1), token, handle: handle || null }); }; break;
       case IN.resumeFailed:
         this.closing = true;
         if (this.onresumefailed) this.onresumefailed();

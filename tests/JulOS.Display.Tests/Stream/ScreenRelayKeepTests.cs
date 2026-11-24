@@ -149,7 +149,10 @@ public sealed class ScreenRelayKeepTests
         }
     }
 
-    private static string TokenOf(byte[] session) => System.Text.Encoding.ASCII.GetString(session, 3, session.Length - 3);
+    // Nachricht 11: "Token Kennung" (das Token zum Wiederaufnehmen, die oeffentliche Kennung zum Nehmen nach einem Neuladen)
+    private static string TokenOf(byte[] session) => System.Text.Encoding.ASCII.GetString(session, 3, session.Length - 3).Split(' ')[0];
+
+    private static string HandleOf(byte[] session) => System.Text.Encoding.ASCII.GetString(session, 3, session.Length - 3).Split(' ')[1];
 
     private static bool IsKeyPicture(byte[] m) => m[0] == ScreenProtocol.ToBrowserPicture && (m[1] & 1) != 0;
 
@@ -205,6 +208,50 @@ public sealed class ScreenRelayKeepTests
         await relay.RunAsync(third.Server, null, Alive, CancellationToken.None, owner: owner, resume: token);
         var refused = await third.ReadAsync(cts.Token);
         Assert.Equal(ScreenProtocol.ToBrowserResumeFailed, refused![0]);
+    }
+
+    [Fact]
+    public async Task A_waiting_session_is_taken_by_its_public_handle_for_its_owner_only_with_a_key_frame_and_no_new_login()
+    {
+        var host = Host();
+        var log = new TestLog();
+        using var relay = new ScreenRelay(log, keep: TimeSpan.FromSeconds(60));
+        using var cts = new CancellationTokenSource(Wait);
+        var owner = Guid.NewGuid();
+        var firstApp = Guid.NewGuid();
+
+        var first = Browser.Create();
+        var run1 = relay.RunAsync(first.Server, Target(host) with { Info = new KeptInfo(Guid.NewGuid(), "Test", "Firefox, Linux") }, Alive, CancellationToken.None, owner: owner, appSession: firstApp);
+        var session = await first.UntilAsync(m => m[0] == ScreenProtocol.ToBrowserSession, cts.Token);
+        var handle = HandleOf(session);
+        Assert.NotEqual(TokenOf(session), handle);                       // die Kennung ist nie das Token der Engine
+        Assert.Equal(22, handle.Length);                                 // 128 Bit
+        await first.UntilAsync(IsKeyPicture, cts.Token);
+        first.ClientSide.Cut();
+        await run1.WaitAsync(Wait);
+        await WaitFor(() => relay.DetachedCount == 1, "die Sitzung wartet");
+        Assert.NotNull(relay.FindKept(owner, handle)!.UnwatchedSince);
+
+        // Eine fremde Person bekommt dieselbe Antwort wie bei einer unbekannten Kennung, die Sitzung bleibt
+        var stranger = Browser.Create();
+        await relay.RunAsync(stranger.Server, null, Alive, CancellationToken.None, owner: Guid.NewGuid(), takeHandle: handle);
+        Assert.Equal(ScreenProtocol.ToBrowserResumeFailed, (await stranger.ReadAsync(cts.Token))![0]);
+        Assert.Equal(1, relay.DetachedCount);
+        Assert.Null(relay.FindKept(Guid.NewGuid(), handle));
+
+        // Die Besitzerin nimmt sie von einer anderen App-Sitzung aus: Schluesselbild, kein zweiter Login, und ab jetzt zaehlt deren Abmeldung
+        var secondApp = Guid.NewGuid();
+        var second = Browser.Create();
+        var run2 = relay.RunAsync(second.Server, null, Alive, CancellationToken.None, owner: owner, appSession: secondApp, takeHandle: handle);
+        await second.UntilAsync(IsKeyPicture, cts.Token);
+        Assert.Equal(1, log.Count("Bildschirm-Verbindung offen"));
+        Assert.Equal(secondApp, relay.FindKept(owner, handle)!.AppSession);
+        Assert.Null(relay.FindKept(owner, handle)!.UnwatchedSince);
+
+        var ended = await relay.EndByAppSessionAsync(secondApp);
+        Assert.Single(ended);
+        await run2.WaitAsync(Wait);
+        Assert.Null(relay.FindKept(owner, handle));
     }
 
     [Fact]

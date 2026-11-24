@@ -41,6 +41,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
     private readonly SemaphoreSlim _slots = new(maxSessions);
     private readonly SessionRegistry _sessions = registry ?? new SessionRegistry(int.MaxValue);   // ohne Angabe (Tests): keine Obergrenze, aber Ablosen je Slot
     private readonly Dictionary<string, Live> _kept = [];
+    private readonly Dictionary<string, Live> _byHandle = [];          // die oeffentliche Kennung (Liste, Nehmen); das Token der Engine kennt nur die Seite, die die Sitzung hat
     private readonly Lock _keptGate = new();
 
     /// <summary>Die vorbereiteten Downloads aus der Zwischenablage der fernen Rechner, die der Browser noch abholen kann (30 s, einmal, nur der Benutzer der Sitzung).</summary>
@@ -61,6 +62,108 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         }
     }
 
+    /// <summary>Eine erhaltene Sitzung, wie die Liste sie zeigt (nur Angaben, die der Besitzer sehen darf).</summary>
+    public sealed record KeptSession(string Handle, Guid ConnectionId, string Name, DateTimeOffset Since, DateTimeOffset? UnwatchedSince, string Device, Guid AppSession, string? Layout = null, string? Drive = null);
+
+    private static KeptSession Snapshot(Live l)
+    {
+        lock (l.Gate)
+        {
+            return new KeptSession(l.Handle, l.Info?.ConnectionId ?? Guid.Empty, l.Info?.ConnectionName ?? "", l.StartedAt, l.DetachedSince, l.Info?.Device ?? "", l.AppSession, l.Info?.Layout, l.Info?.Drive);
+        }
+    }
+
+    /// <summary>Die erhaltenen Sitzungen <b>dieser Person</b> zu einer Verbindung (laufende mit Browser dran eingeschlossen, damit die Seite "wird gerade angesehen" sagen kann). Nie die einer anderen Person.</summary>
+    public IReadOnlyList<KeptSession> ListKept(Guid owner, Guid connectionId)
+    {
+        lock (_keptGate)
+        {
+            return [.. _byHandle.Values.Where(l => !l.Ended && l.Owner == owner && l.Info?.ConnectionId == connectionId).Select(Snapshot).OrderBy(k => k.Since)];
+        }
+    }
+
+    /// <summary>Die erhaltene Sitzung mit dieser Kennung, wenn sie dieser Person gehoert; unbekannt, beendet und fremd ergeben alle null (kein Hinweis, ob es die Kennung gibt).</summary>
+    public KeptSession? FindKept(Guid owner, string handle)
+    {
+        lock (_keptGate)
+        {
+            return _byHandle.TryGetValue(handle, out var l) && !l.Ended && l.Owner == owner ? Snapshot(l) : null;
+        }
+    }
+
+    /// <summary>Beendet eine erhaltene Sitzung dieser Person (die Seite zeigt "beendet", der Desktop am Ziel wird getrennt). Gibt sie zurueck, wenn es sie gab und sie der Person gehoerte.</summary>
+    public async Task<KeptSession?> EndKeptAsync(Guid owner, string handle)
+    {
+        Live? live;
+        lock (_keptGate)
+        {
+            _byHandle.TryGetValue(handle, out live);
+        }
+
+        if (live is null || live.Ended || live.Owner != owner)
+        {
+            return null;
+        }
+
+        var snapshot = Snapshot(live);
+        log.LogInformation("Erhaltene Sitzung von der Person beendet.");
+        await EndAsync(live).ConfigureAwait(false);
+        return snapshot;
+    }
+
+    /// <summary>Beendet alle erhaltenen Sitzungen, die diese App-Sitzung zuletzt hatte (Abmelden an diesem Geraet).</summary>
+    public async Task<IReadOnlyList<(Guid Owner, KeptSession Session)>> EndByAppSessionAsync(Guid appSession)
+    {
+        if (appSession == Guid.Empty)
+        {
+            return [];
+        }
+
+        Live[] mine;
+        lock (_keptGate)
+        {
+            mine = [.. _byHandle.Values.Where(l => !l.Ended && l.AppSession == appSession)];
+        }
+
+        var ended = new List<(Guid, KeptSession)>();
+        foreach (var live in mine)
+        {
+            ended.Add((live.Owner, Snapshot(live)));
+            await EndAsync(live).ConfigureAwait(false);
+        }
+
+        return ended;
+    }
+
+    /// <summary>
+    /// Nur fuer Tests: eine erhaltene Sitzung ohne echtes Ziel anlegen (die Engine wird nie gestartet), damit Liste, Nehmen und Beenden ohne Desktop pruefbar sind.
+    /// Gibt die oeffentliche Kennung zurueck. watched: false = es wartet kein Browser mehr (wie nach einem Neuladen).
+    /// </summary>
+    internal string AddKeptForTests(Guid owner, KeptInfo info, Guid appSession, bool watched, Func<CancellationToken, Task<bool>>? alive = null)
+    {
+        _slots.Wait();
+        var stop = new CancellationTokenSource();
+        var lease = _sessions.TryOpen(owner, $"{owner}:{info.ConnectionId}:{Guid.NewGuid():N}", () => stop.Cancel())!;
+        var target = new ScreenTarget(new Rdp.RdpOptions { Host = "test" }, Info: info);
+        var live = new Live
+        {
+            Token = NewToken(), Owner = owner, Stream = new ScreenStream(target.Options, 16_000, log), Stop = stop, Lease = lease, Target = target, Started = Environment.TickCount64,
+            Run = Task.Delay(Timeout.Infinite, stop.Token), Handle = NewHandle(), AppSession = appSession, Info = info, Alive = alive ?? (_ => Task.FromResult(true)),
+        };
+        lock (_keptGate)
+        {
+            _kept[live.Token] = live;
+            _byHandle[live.Handle] = live;
+        }
+
+        if (!watched)
+        {
+            Detach(live, TimeSpan.FromMinutes(5), "test", 0);
+        }
+
+        return live.Handle;
+    }
+
     /// <summary>Die Sekunden aus JULOS_STREAM_KEEP_SECONDS: leer = Standard, 0 oder Unsinn = aus.</summary>
     public static TimeSpan? ParseKeep(string? value)
     {
@@ -75,12 +178,29 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
     /// <param name="sessionAlive">Wird regelmaessig gefragt; bei false endet die Sitzung (Abmeldung, abgelaufene Sitzung der App).</param>
     /// <param name="owner">Der Benutzer (fuer die Obergrenze offener Sitzungen und das Ablosen im selben Slot).</param>
     /// <param name="clientCodecs">Was der Browser dekodieren kann (aus der Adresse, siehe <see cref="ScreenProtocol.ParseCodecs"/>); ohne Angabe nur H.264.</param>
+    /// <param name="appSession">Die App-Sitzung (Cookie), die diesen WebSocket geoeffnet hat: die erhaltene Sitzung endet mit ihrer Abmeldung (siehe docs/SESSION-KEEP.md).</param>
+    /// <param name="takeHandle">Die oeffentliche Kennung einer erhaltenen Sitzung, die der Browser nehmen will (das Ticket dazu hat der Endpunkt schon eingeloest).</param>
     /// <param name="resume">Das Sitzungs-Token einer wartenden Sitzung (aus der Adresse, <c>resume=</c>): statt eine neue zu bauen, haengt sich der WebSocket an diese.</param>
-    public async Task RunAsync(WebSocket ws, ScreenTarget? target, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan? sessionCheck = null, Guid? owner = null, VideoCodecs clientCodecs = VideoCodecs.H264, string? resume = null)
+    public async Task RunAsync(WebSocket ws, ScreenTarget? target, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan? sessionCheck = null, Guid? owner = null, VideoCodecs clientCodecs = VideoCodecs.H264, string? resume = null, Guid? appSession = null, string? takeHandle = null)
     {
+        if (!string.IsNullOrEmpty(takeHandle))
+        {
+            // Kennung -> Token nur fuer den Besitzer; unbekannt, beendet und fremd ergeben dasselbe (leeres Token, dieselbe Antwort "abgelehnt")
+            string? token = null;
+            lock (_keptGate)
+            {
+                if (_byHandle.TryGetValue(takeHandle, out var l) && !l.Ended && l.Owner == (owner ?? Guid.Empty))
+                {
+                    token = l.Token;
+                }
+            }
+
+            resume = token ?? "-";
+        }
+
         if (!string.IsNullOrEmpty(resume))
         {
-            await ResumeAsync(ws, resume, sessionAlive, ct, sessionCheck ?? SessionCheck, owner ?? Guid.Empty, clientCodecs).ConfigureAwait(false);
+            await ResumeAsync(ws, resume, sessionAlive, ct, sessionCheck ?? SessionCheck, owner ?? Guid.Empty, clientCodecs, appSession ?? Guid.Empty).ConfigureAwait(false);
             return;
         }
 
@@ -99,7 +219,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         Live? live = null;
         try
         {
-            live = await StartAsync(ws, target, sessionAlive, ct, owner ?? Guid.Empty, clientCodecs).ConfigureAwait(false);
+            live = await StartAsync(ws, target, sessionAlive, ct, owner ?? Guid.Empty, clientCodecs, appSession ?? Guid.Empty).ConfigureAwait(false);
             if (live is not null)
             {
                 await ServeAsync(ws, live, sessionAlive, ct, sessionCheck ?? SessionCheck).ConfigureAwait(false);
@@ -126,6 +246,11 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         public required SessionLease Lease;
         public required ScreenTarget Target;
         public required long Started;
+        public required string Handle;                      // oeffentlich: steht in der Liste und im Ticket zum Nehmen, oeffnet allein nichts
+        public Guid AppSession;                             // die App-Sitzung, die die Sitzung zuletzt hatte (Guid.Empty: unbekannt)
+        public KeptInfo? Info;
+        public DateTimeOffset StartedAt = DateTimeOffset.UtcNow;
+        public DateTimeOffset? DetachedSince;               // unter Gate; null solange ein Browser dran ist
         public Func<CancellationToken, Task<bool>> Alive = _ => Task.FromResult(true);
 
         // Ein Browser zur Zeit: wer sich anhaengt, nimmt der Vorgaengerin den Platz (Cancel), wartet bis sie fertig ist und haelt dann die Sperre.
@@ -138,9 +263,11 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         public readonly Lock Gate = new();
     }
 
-    private string NewToken() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(24)).Replace('+', '-').Replace('/', '_').TrimEnd('=');
+    private static string NewToken() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(24)).Replace('+', '-').Replace('/', '_').TrimEnd('=');
 
-    private async Task<Live?> StartAsync(WebSocket ws, ScreenTarget target, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, Guid owner, VideoCodecs clientCodecs)
+    private static string NewHandle() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(16)).Replace('+', '-').Replace('/', '_').TrimEnd('=');      // 128 Bit, nie das Token
+
+    private async Task<Live?> StartAsync(WebSocket ws, ScreenTarget target, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, Guid owner, VideoCodecs clientCodecs, Guid appSession)
     {
         if (!ScreenStream.IsAvailable)
         {
@@ -165,13 +292,14 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         var live = new Live
         {
             Token = NewToken(), Owner = owner, Stream = stream, Stop = stop, Lease = lease, Target = target, Started = Environment.TickCount64,
-            Run = stream.RunAsync(stop.Token), Alive = sessionAlive,
+            Run = stream.RunAsync(stop.Token), Alive = sessionAlive, Handle = NewHandle(), AppSession = appSession, Info = target.Info,
         };
         if (Keep is not null)
         {
             lock (_keptGate)
             {
                 _kept[live.Token] = live;
+                _byHandle[live.Handle] = live;
             }
         }
 
@@ -191,7 +319,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         }
     }
 
-    private async Task ResumeAsync(WebSocket ws, string token, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan sessionCheck, Guid owner, VideoCodecs clientCodecs)
+    private async Task ResumeAsync(WebSocket ws, string token, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan sessionCheck, Guid owner, VideoCodecs clientCodecs, Guid appSession)
     {
         Live? live;
         lock (_keptGate)
@@ -209,6 +337,11 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         }
 
         live.Alive = sessionAlive;
+        if (appSession != Guid.Empty)
+        {
+            live.AppSession = appSession;          // ab jetzt gilt die Abmeldung dieser App-Sitzung (dieses Geraets)
+        }
+
         CancellationTokenSource? previous;
         lock (live.Gate)
         {
@@ -254,6 +387,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             live.Waiting = null;
             live.Drain = null;
             live.Detached = false;
+            live.DetachedSince = null;
         }
 
         if (waiting is not null)
@@ -296,7 +430,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             {
                 if (Keep is { } keepFor)
                 {
-                    await SendOnceAsync(ws, ScreenProtocol.Session(live.Token, (int)keepFor.TotalSeconds), ct).ConfigureAwait(false);
+                    await SendOnceAsync(ws, ScreenProtocol.Session(live.Token, (int)keepFor.TotalSeconds, live.Handle), ct).ConfigureAwait(false);
                 }
 
                 var limits = live.Stream.ClipboardLimits;
@@ -433,6 +567,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         lock (live.Gate)
         {
             live.Detached = true;
+            live.DetachedSince = DateTimeOffset.UtcNow;
             live.Waiting = waiting;
             live.Drain = DrainAsync(live.Stream, waiting.Token);
         }
@@ -513,6 +648,11 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             if (_kept.TryGetValue(live.Token, out var current) && ReferenceEquals(current, live))
             {
                 _kept.Remove(live.Token);
+            }
+
+            if (_byHandle.TryGetValue(live.Handle, out var byHandle) && ReferenceEquals(byHandle, live))
+            {
+                _byHandle.Remove(live.Handle);
             }
         }
 

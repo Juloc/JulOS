@@ -3039,4 +3039,5 @@ export default {
   "clip2.noFolders": "Folders are not uploaded, only files.",
   "clip2.pasteFile": "Paste file",
   "clip2.osc7Hint": "The shell's folder is unknown: the file goes to your home folder. To make the terminal follow your folder, add this to ~/.bashrc in bash: PROMPT_COMMAND='printf \"\\e]7;file://%s%s\\a\" \"$HOSTNAME\" \"$PWD\"' (zsh: a precmd function). This hint shows only once.",
+  "err.keptGone": "This session no longer exists.",
 };

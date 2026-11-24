@@ -3,6 +3,7 @@ using System.Text.Json;
 using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
 using JulOS.Backend.Services;
+using JulOS.Integrations.Display;
 
 namespace JulOS.Frontend.Auth;
 
@@ -56,10 +57,13 @@ internal static class AuthEndpoints
             return Results.Json(new LoginResponse(r.User!, r.RecoveryLeft, r.RecoveryUsed), AppJson.Default.LoginResponse);
         });
 
-        app.MapPost("/api/auth/logout", async (HttpContext ctx, AuthService auth, Files.SftpPool pool) =>
+        app.MapPost("/api/auth/logout", async (HttpContext ctx, AuthService auth, Files.SftpPool pool, ScreenRelay relay, SecurityAuditStore audit) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             await auth.LogoutAsync(id.Hash, ctx.RequestAborted);
+            // Die erhaltenen Desktops, die dieses Geraet zuletzt hatte, enden mit seiner Abmeldung (sofort; die wartenden haetten es sonst erst bei der naechsten Pruefung nach hoechstens 10 s gemerkt)
+            foreach (var (_, ended) in await relay.EndByAppSessionAsync(id.Id))
+                await Remote.RemoteEndpoints.AuditKeptAsync(audit, id, "kept.end", $"{ended.Name} · sign-out");
             await pool.InvalidateUserAsync(id.UserId);          // die Dateien-App haelt nach dem Abmelden keine SFTP-Sitzung offen
             SessionCookie.Clear(ctx);
             return Results.NoContent();

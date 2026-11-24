@@ -291,10 +291,10 @@ public static class ScreenProtocol
         return m;
     }
 
-    /// <summary>Das Token der Sitzung und wie lange sie ohne Browser wartet.</summary>
-    public static byte[] Session(string token, int keepSeconds)
+    /// <summary>Das Token der Sitzung und wie lange sie ohne Browser wartet; mit der oeffentlichen Kennung dahinter, durch ein Leerzeichen getrennt (beides Base64url).</summary>
+    public static byte[] Session(string token, int keepSeconds, string? handle = null)
     {
-        var text = System.Text.Encoding.ASCII.GetBytes(token);
+        var text = System.Text.Encoding.ASCII.GetBytes(handle is null ? token : token + " " + handle);
         var result = new byte[3 + text.Length];
         result[0] = ToBrowserSession;
         BinaryPrimitives.WriteUInt16BigEndian(result.AsSpan(1), (ushort)Math.Clamp(keepSeconds, 0, ushort.MaxValue));

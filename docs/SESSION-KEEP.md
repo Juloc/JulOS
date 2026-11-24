@@ -1,6 +1,6 @@
-# Kept remote sessions: survive a reload, move to another device (plan, nothing built yet)
+# Kept remote sessions: survive a reload, move to another device (plan; step 1 built)
 
-Status: **agreed plan, nothing built** (the owner's decisions of 2026-11-24 are at the end and overrule the proposals above them where they differ). Written 2026-11-24. Effort: **S** = hours, **M** = a day or two, **L** = several days. Nothing here is built; the code names below were read in the 0.28.0 tree, the measurements are not made yet (marked "to measure").
+Status: **step 1 built (a reload on the same device gets its session back, see "Step 1: what was built" at the end)**, steps 2 to 4 not built. The text above "Step 1" is the plan as written; where it says step-up or reload grace, the owner's decisions at the end overrule it. (The owner's decisions of 2026-11-24 are at the end and overrule the proposals above them where they differ). Written 2026-11-24. Effort: **S** = hours, **M** = a day or two, **L** = several days. Nothing here is built; the code names below were read in the 0.28.0 tree, the measurements are not made yet (marked "to measure").
 
 Reference: the MIT-licensed project MatGate (`real-ttx/Matgate`) has this feature. Every statement about it is marked **(read in its code)** or **(from a commit message)**. No code is copied; the ideas are small and the JulOS code already has most of the parts.
 
@@ -138,3 +138,32 @@ The first step already fixes the most common pain (a reload) and is the only one
 - **A session that is being watched on another device: ask**, say where it is watched, and show "taken by <device>" with "bring back" on the other device (question 4 as proposed).
 - **All steps, one after the other**, each released on its own: 1 reload on the same device, 2 keep time, caps and the list in the account, 3 another device, 4 phone and remembered windows. Step 5 (tmux program sessions) only if asked for. A security review of step 1 before its release.
 - Questions 3, 5, 6 and 7 stand with their proposals (no plain SSH shells, one dialog per window, a closed tab does not end its session, no per-connection override).
+
+## Step 1: what was built (2026-11-24)
+
+A reload on the same device gets its remote session back, silently, without a second login on the target. Released with the version named in the CHANGELOG.
+
+**Server** (`ScreenRelay.cs`, `ScreenTarget.cs` with `ScreenTickets`, `RemoteEndpoints.cs`, `KeptTakeRule.cs`, `DeviceLabel.cs`)
+- A kept session gets a **public handle** (128 bit, random, never the engine token), remembers connection id and name, the device label (browser and system from the User-Agent, for display only), the app session that last had it and, while nobody watches, since when. The handle reaches the page in message 11 (after the token, separated by a space).
+- `GET /api/remote/kept?conn=<id>`: the person's own kept sessions of that connection: `{ id, name, since, unwatchedSince?, device, own }` (`own` = this app session had it last). `Cache-Control: no-store`; never host, address, target user or token.
+- `POST /api/remote/kept/take {id}` answers `{ ticket, layout, drive }`: a one-time ticket, **20 s**, bound to the person, the kept session **and the app session that asked** (`ScreenTickets.CreateKept` and `Redeem`: the second kind of ticket on the existing class). The WebSocket takes only the ticket (`?ticket=`); `ScreenRelay.RunAsync(takeHandle: ...)` re-attaches (the old resume path, so the same owner check, key frame and re-sent state). Unknown, expired and foreign handles answer exactly alike (404 "gone"). Rate limit 30 per minute and person.
+- `POST /api/remote/kept/end {id}` ends one (204 whatever it was).
+- **Who may take it:** the owner check (`ScreenRelay.FindKept` and the lookup in `RunAsync`: the handle resolves only for the owner), the app-session binding of the ticket (`ScreenTickets.Redeem`), and the one named place `KeptTakeRule.Allows`, which today returns true. **No step-up and no reload grace** (owner's decision of 2026-11-24); the comment there says where the optional second factor would go.
+- **Ending:** signing out ends the kept sessions that app session last had, at once (`POST /api/auth/logout` calls `ScreenRelay.EndByAppSessionAsync`, audit `kept.end` with "sign-out"). The check every 10 s of a waiting session against its last app session already existed and covers the rest: "sign out everywhere" (the CLI `user logout`, `logout-others`), a removed device, a password change and a replaced authenticator all delete app sessions, so those kept sessions end within 10 s. **What step 3 still has to add** is the immediacy and an audit line for those paths; no extra hook was needed for correctness.
+- **Audit** (`SecurityAuditStore`): `kept.take` only when the take comes from another app session than the one that last had the desktop (written when the ticket is issued), `kept.take_denied` (unknown or refused), `kept.end` (by the person, by sign-out); detail is `connection name · device · minutes unwatched`, never a handle or token.
+- **While nobody watches** (`ScreenStream.Park`): encoding stopped, sound off, events discarded, and now **all pressed keys and mouse buttons released** (`ReleaseInput`; `Park` did *not* do this before, a held key would have stuck). Nothing is sent to the clipboard (events are drained). On return `Resume` sends a key frame, size, encoder, **pointer shape** and the sound state; the server keeps no pointer *position*, the browser sends its next move.
+- Keep time stays the server-wide value (`JULOS_STREAM_KEEP_SECONDS`).
+
+**Browser** (`kept.js`, `app.js`, `stream.js`)
+- `kept.js` (pure, `tests/frontend/kept.test.mjs`): `decide` and `reclaim`. The page keeps `{connection id -> handle}` in `sessionStorage` (per tab, not a secret). `RemoteSession.start` asks the list **before** it asks for a new ticket, only on the first connect of a session, only when no other session of the same target is open in the page, not for Quick Connect. Its own handle unwatched: take, silently. Still "watched" (the old socket of the reload not yet noticed by the server): ask again up to four times, 0.5 s apart. Anything else (no remembered handle, gone, several, a copied tab): a new session as before. The dialog "bring here / new session" is step 3.
+- **The page no longer ends the session when it is left.** `beforeunload` used to call `disconnect()`, which sends "end" (message 17); it now calls `leave()`, which only cuts the line. Without this a reload would have ended the desktop before the page could ask. "Close session" in the app and `disconnect()` still end it and forget the handle.
+
+**Differences from the plan**
+- No step-up, no grace window, `needsStepUp` is not in the list (owner's decision).
+- The list also shows `name` (the connection's name, allowed by the plan) and `own`; the plan's `ownLastDevice` is called `own`.
+- The ticket carries no device; the audit uses the asking request's User-Agent for the device label.
+- The audit line `kept.take` is written when the ticket is issued, not when the WebSocket redeems it (the server side of the take has no database handle; the two are seconds apart; an unused ticket leaves a line).
+- No `kept.` i18n keys: the silent take shows no text in step 1. The only new text is the server's "this session no longer exists", which the page never shows (it falls back to a new session) but the error-text table requires: `err.keptGone` (the `err.` prefix is what the i18n test checks for that table).
+- The reload text of [SESSIONS.md](SESSIONS.md) changed accordingly.
+
+**Not verified:** a real phone, a killed installed app (PWA), VNC (the code path is shared; not run), Windows targets, the memory of a kept session (the plan's "to measure" stays open), a real device change (step 3).

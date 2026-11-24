@@ -14,6 +14,7 @@ export const SERVER_TEXTS = {
   "Es gibt keinen Schlüssel für gespeicherte Passwörter, also ist auch nichts zu sichern.": "err.secNoKey",
   "Es wartet kein neuer Wiederherstellungsschlüssel.": "err.secNoPending",
   "Zu viele Anfragen, bitte kurz warten.": "err.tooMany",
+  "Diese Sitzung gibt es nicht mehr.": "err.keptGone",
   "Push-Meldungen brauchen den Schlüssel des Servers.": "err.pushNoKey",
   "Der Endpunkt des Push-Dienstes ist nicht zulässig.": "err.pushEndpoint",
   "Die Schlüssel des Abos sind ungültig.": "err.pushKeys",

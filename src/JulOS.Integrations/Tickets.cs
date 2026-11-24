@@ -15,13 +15,14 @@ public class Tickets<T>(TimeProvider time) where T : class
     private sealed record Entry(Guid UserId, T Payload, DateTimeOffset Expires);
     private readonly ConcurrentDictionary<string, Entry> _tickets = new(StringComparer.Ordinal);
 
+    /// <param name="lifetime">Kuerzer als die Standarddauer, wenn das Ticket etwas Empfindlicheres oeffnet (ohne Angabe <see cref="Lifetime"/>).</param>
     /// <returns>Das Ticket, oder null wenn der Benutzer zu viele offene hat.</returns>
-    public string? Create(Guid userId, T payload)
+    public string? Create(Guid userId, T payload, TimeSpan? lifetime = null)
     {
         Sweep();
         if (_tickets.Values.Count(e => e.UserId == userId) >= MaxPerUser) return null;
         var ticket = Convert.ToBase64String(RandomNumberGenerator.GetBytes(16)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-        _tickets[ticket] = new Entry(userId, payload, time.GetUtcNow() + Lifetime);
+        _tickets[ticket] = new Entry(userId, payload, time.GetUtcNow() + (lifetime ?? Lifetime));
         return ticket;
     }
 

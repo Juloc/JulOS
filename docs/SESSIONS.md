@@ -127,8 +127,8 @@ Desktop bleiben, sofort ein Schlüsselbild. Die Überlagerung zeigt „Verbindun
   - **Agenten:** siehe [AGENT_API.md](AGENT_API.md) (Ping alle 5 s, Frist 10 s, gestreutes Neuverbinden, TCP-Keepalive).
 - **Was die Sitzung wirklich beendet:** „Schließen“ in der App (Nachricht 17, der Browser sagt es ausdrücklich), der ferne Rechner (Abmelden,
   Ziel weg, von einer anderen Sitzung übernommen), das Ablösen im selben Slot (neuer Login), der Ablauf der Zeit, die **Abmeldung aus der App**
-  (wartende Sitzungen prüfen das alle 10 s) und das Herunterfahren des Servers. Der Browser, der ein Neuladen oder das Schließen des Tabs
-  erlebt, sagt nichts: die Sitzung wartet dann bis zum Ablauf.
+  (wartende Sitzungen prüfen das alle 10 s) und das Herunterfahren des Servers. Ein Neuladen oder Schließen des Tabs beendet sie nicht mehr: die
+  Seite kappt nur die Leitung (`RemoteSession.leave`, kein „beenden“), die Sitzung wartet bis zum Ablauf (siehe „Neuladen“ unten).
 - **Token abgelehnt** (abgelaufen, Neustart, Sitzung dort beendet, fremder Benutzer): Nachricht 12, der Browser baut ganz normal neu auf (Ticket,
   neuer Login). Unbekannt und fremd sind für den Browser nicht zu unterscheiden. Ist die Ursache eine andere Sitzung zum selben Ziel, zeigt der
   Browser „Übernommen“ und holt den Desktop nicht zurück.
@@ -138,6 +138,16 @@ Desktop bleiben, sofort ein Schlüsselbild. Die Überlagerung zeigt „Verbindun
 - **Sicherheit:** das Token gehört einem Benutzer und gilt nur, solange die Sitzung wartet; es steht in der Adresse des WebSockets (wie das Ticket)
   und nirgends sonst. Der WebSocket braucht weiterhin die App-Sitzung und denselben Ursprung. Ein wartender Desktop läuft weiter: wer ihn
   nicht fünf Minuten offen lassen will, stellt die Zeit kleiner. SSH hat diesen Erhalt nicht; die Arbeit bleibt dort nur mit tmux auf dem Ziel erhalten, und der Browser hängt eine tmux-Sitzung nach einem Abriss nach denselben Fristen von `resume.js` wieder an (Programm-Sitzungen, [CLI-SESSIONS.md](CLI-SESSIONS.md)).
+
+### Neuladen: dieselbe Sitzung zurück (Stream-Engine, [SESSION-KEEP.md](SESSION-KEEP.md), Schritt 1)
+
+Ein Neuladen der Seite war bisher eine **Grenze**: das Token (Nachricht 11) lebt nur im Arbeitsspeicher der Seite, die erhaltene Sitzung blieb verwaist. Jetzt gibt es neben dem Token eine **öffentliche Kennung** (128 Bit, ebenfalls Nachricht 11, hinter dem Token, durch ein Leerzeichen getrennt), die die Seite je Verbindung in `sessionStorage` merkt (je Tab, verschwindet mit dem Tab, kein Geheimnis).
+
+- **Ablauf:** die Seite fragt `GET /api/remote/kept?conn=<Verbindung>`, findet ihre Kennung **ohne Beobachter** und holt sich mit `POST /api/remote/kept/take` ein Einmal-Ticket (20 s, an Person, Sitzung und App-Sitzung gebunden), das der WebSocket einlöst (`?ticket=`). Kein neuer Login am Ziel, kein Passwort, ein Schlüsselbild. Alles andere (nichts gemerkt, mehrere, gerade angesehen, ein kopierter Tab, ein neuer Tab) bleibt wie bisher eine neue Sitzung; die Frage „hierher holen oder neu“ kommt mit Schritt 3.
+- **Beenden:** Abmelden an dem Gerät, das die Sitzung zuletzt hatte, beendet sie sofort (Verlauf `kept.end`); jede andere beendete App-Sitzung („überall abmelden“, Gerät entfernt, Passwort geändert) beendet sie spätestens nach 10 s. „Sitzung schließen“ in der App beendet sie wie immer sofort.
+- **Beim Parken** lässt der Server am Ziel **alle gedrückten Tasten und Maustasten los** (`ScreenStream.ReleaseInput`), bevor die Kodierung ruht.
+- **Grenzen:** die Zeit ist weiter der Wert des Servers für alle (`JULOS_STREAM_KEEP_SECONDS`); ein Tab mit gemerkter Kennung, die ein anderer Tab gerade ansieht (kopierter Tab), bekommt nach etwa 2 s eine neue Sitzung; ein Neustart des Servers beendet alles Erhaltene; ein Handy, dessen App beendet wurde, hat keine gemerkte Kennung (Schritt 4).
+- **Sicherheit:** wer die App-Sitzung hat (auch ein Dieb des Cookies), kann ein erhaltenes Desktop nehmen; das ist eine Entscheidung des Besitzers ([SECURITY-REVIEW.md](SECURITY-REVIEW.md), F-47).
 
 ## Anmeldung in der Sitzung (Stream-Engine)
 

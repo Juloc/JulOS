@@ -34,6 +34,16 @@ internal static class RemoteEndpoints
     /// <summary>Benutzer und Domaene aus dem Anmeldedialog: hoechstens 256 Zeichen, keine Steuerzeichen (null: nicht angegeben).</summary>
     internal static bool ValidLoginPart(string? value) => value is null || (value.Length <= 256 && !value.Any(char.IsControl));
 
+    /// <summary>Kurzer Text fuer den Verlauf: seit wie vielen Minuten niemand zusieht (oder dass jemand zusieht). Kein Geheimnis.</summary>
+    private static string Minutes(ScreenRelay.KeptSession k) => k.UnwatchedSince is { } since ? $"{(int)(DateTimeOffset.UtcNow - since).TotalMinutes} min unwatched" : "watched";
+
+    /// <summary>Eintrag im Verlauf der Sicherheit (docs/SESSION-KEEP.md): kurzer Code, Verbindungsname, Geraet, Minuten; nie ein Token, eine Kennung oder ein Ziel. Ein Fehler beim Schreiben stoppt nichts.</summary>
+    internal static async Task AuditKeptAsync(SecurityAuditStore audit, SessionIdentity who, string evt, string? detail)
+    {
+        try { await audit.AddAsync(who.UserName, evt, detail, CancellationToken.None); }
+        catch (Exception e) when (e is not OutOfMemoryException) { /* der Verlauf ist kein Grund, die Sitzung zu blockieren */ }
+    }
+
     public static void MapRemote(this IEndpointRouteBuilder app)
     {
         // Schritt 1: Verbindung waehlen und das Passwort tippen -> Einmal-Ticket (30 s, nur im Speicher)
@@ -103,7 +113,7 @@ internal static class RemoteEndpoints
                 if (!ScreenStream.IsAvailable) return Error(503, "Die Bildübertragung ist auf diesem Server nicht verfügbar: " + ScreenStream.UnavailableReason);
                 var vncTrust = new CertificateTrust(c.CertFingerprint, body.AcceptCert, saveCert);
                 var vnc = new VncOptions { Host = c.Host, Port = c.Port, Password = password, UserName = string.IsNullOrWhiteSpace(body.Username) ? loginUser : body.Username.Trim(), CertificateCheck = vncTrust.Check };
-                var vncTicket = screenTickets.Create(id.UserId, ScreenTarget.ForVnc(vnc, SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid), trust: vncTrust));
+                var vncTicket = screenTickets.Create(id.UserId, ScreenTarget.ForVnc(vnc, SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid), trust: vncTrust) with { Info = new KeptInfo(c.Id, c.Name, DeviceLabel.From(ctx.Request.Headers.UserAgent), KeyboardLayouts.ClientKey(KeyboardLayouts.Default)) });
                 var vw = Math.Clamp(body.Width ?? 900, 400, 4096) & ~1;
                 var vh = Math.Clamp(body.Height ?? 1600, 300, 4096) & ~1;
                 return vncTicket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(vncTicket, c.Kind, vw, vh, "stream", null, KeyboardLayouts.ClientKey(KeyboardLayouts.Default)), AppJson.Default.TicketResponse);
@@ -123,7 +133,7 @@ internal static class RemoteEndpoints
             };
             // Laufwerk: nur, wenn die Verbindung es verlangt (beide Schalter standardmaessig aus) und der Server eine Wurzel hat; die Wurzel kommt nur aus der Server-Einstellung
             var drive = c.DriveShare ? drives.For(c.DriveWrite) : null;
-            var screenTicket = screenTickets.Create(id.UserId, new ScreenTarget(rdp, SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid), Trust: trust, Drive: drive));
+            var screenTicket = screenTickets.Create(id.UserId, new ScreenTarget(rdp, SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid), Trust: trust, Drive: drive, Info: new KeptInfo(c.Id, c.Name, DeviceLabel.From(ctx.Request.Headers.UserAgent), KeyboardLayouts.ClientKey(c.KeyboardLayout), drive is null ? null : drive.Writable ? "rw" : "ro")));
             return screenTicket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(screenTicket, c.Kind, w & ~1, h & ~1, "stream", drive is null ? null : drive.Writable ? "rw" : "ro", KeyboardLayouts.ClientKey(c.KeyboardLayout)), AppJson.Default.TicketResponse);
         });
 
@@ -137,16 +147,62 @@ internal static class RemoteEndpoints
             // das Token gehoert genau diesem Benutzer, gilt nur solange die Sitzung wartet und ist nicht erratbar)
             var resume = ctx.Request.Query["resume"].ToString();
             ScreenTarget? target = null;
+            string? takeHandle = null;
             if (resume.Length is 0 or > 64)
             {
                 resume = "";
-                target = tickets.Take(ctx.Request.Query["ticket"].ToString(), id.UserId);
+                // Redeem: ein Ticket zum Nehmen einer erhaltenen Sitzung gilt nur fuer die App-Sitzung, die es geholt hat (ScreenTickets)
+                target = tickets.Redeem(ctx.Request.Query["ticket"].ToString(), id.UserId, id.Id);
                 if (target is null) return Error(403, "Ticket ungültig oder abgelaufen.");
+                if (target.Kept is { } take) { takeHandle = take.Handle; target = null; }
             }
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
             await relay.RunAsync(ws, target, ct => auth.IsSessionAliveAsync(id.Id, ct), ctx.RequestAborted, owner: id.UserId,
-                clientCodecs: ScreenProtocol.ParseCodecs(ctx.Request.Query["codecs"]), resume: resume);
+                clientCodecs: ScreenProtocol.ParseCodecs(ctx.Request.Query["codecs"]), resume: resume, appSession: id.Id, takeHandle: takeHandle);
             return Results.Empty;
+        });
+        // Erhaltene Sitzungen (docs/SESSION-KEEP.md, Schritt 1): ein Neuladen holt die eigene Sitzung zurueck. Alles hinter der Sitzung der App, Kopfzeile und Origin (ApiGuard);
+        // nur die eigenen Sitzungen der Person, unbekannt und fremd antworten gleich, keine Antwort verraet Host, Adresse, Ziel-Benutzer oder ein Token.
+        app.MapGet("/api/remote/kept", (Guid? conn, HttpContext ctx, ScreenRelay relay) =>
+        {
+            var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
+            ctx.Response.Headers.CacheControl = "no-store";
+            if (conn is not { } connectionId) return Error(400, "Verbindung fehlt.");
+            var list = relay.ListKept(id.UserId, connectionId).Select(k => new KeptItem(k.Handle, k.Name, k.Since, k.UnwatchedSince, k.Device, k.AppSession == id.Id)).ToArray();
+            return Results.Json(new KeptListResponse(list), AppJson.Default.KeptListResponse);
+        });
+
+        // Die Sitzung nehmen: ein Einmal-Ticket (20 s) fuer diese Person, diese Sitzung und genau diese App-Sitzung; der WebSocket nimmt nur das Ticket.
+        app.MapPost("/api/remote/kept/take", async (KeptIdRequest body, HttpContext ctx, ScreenRelay relay, ScreenTickets tickets, HitCounter hits, SecurityAuditStore audit) =>
+        {
+            var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
+            ctx.Response.Headers.CacheControl = "no-store";
+            // Ratenbegrenzung, damit Raten nach Kennungen (128 Bit, aussichtslos) nicht den Verlauf der Sicherheit fuellt
+            if (!hits.Allow("kept-take:" + id.UserId, 30, TimeSpan.FromMinutes(1))) return Error(429, "Zu viele Anfragen, bitte kurz warten.");
+            var kept = body.Id is { Length: > 0 and <= 64 } handle ? relay.FindKept(id.UserId, handle) : null;
+            if (kept is null || !KeptTakeRule.Allows(id, kept))
+            {
+                await AuditKeptAsync(audit, id, "kept.take_denied", kept is null ? "unknown" : "refused");
+                return Error(404, "Diese Sitzung gibt es nicht mehr.");           // unbekannt, abgelaufen und fremd: dieselbe Antwort
+            }
+
+            var ticket = tickets.CreateKept(id.UserId, new KeptTake(kept.Handle, id.Id));
+            if (ticket is null) return Error(429, "Zu viele offene Verbindungen.");
+            // Nur ein Nehmen von einer anderen App-Sitzung aus wird aufgeschrieben; ein Neuladen am selben Geraet nicht (der Verlauf behaelt 500 Eintraege).
+            // Geschrieben wird beim Ausstellen des Tickets (Einloesen und Ausstellen folgen im Abstand von Sekunden; ein ungenutztes Ticket bleibt als Eintrag stehen).
+            if (kept.AppSession != Guid.Empty && kept.AppSession != id.Id)
+                await AuditKeptAsync(audit, id, "kept.take", $"{kept.Name} · {DeviceLabel.From(ctx.Request.Headers.UserAgent)} · {Minutes(kept)}");
+            return Results.Json(new KeptTicketResponse(ticket, kept.Layout, kept.Drive), AppJson.Default.KeptTicketResponse);
+        });
+
+        // Eine erhaltene Sitzung beenden. Immer 204, auch wenn es sie nicht (mehr) gab oder sie fremd ist.
+        app.MapPost("/api/remote/kept/end", async (KeptIdRequest body, HttpContext ctx, ScreenRelay relay, SecurityAuditStore audit) =>
+        {
+            var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
+            ctx.Response.Headers.CacheControl = "no-store";
+            if (body.Id is { Length: > 0 and <= 64 } handle && await relay.EndKeptAsync(id.UserId, handle) is { } ended)
+                await AuditKeptAsync(audit, id, "kept.end", $"{ended.Name} · {Minutes(ended)}");
+            return Results.NoContent();
         });
         // Download aus der Zwischenablage des fernen Rechners: der Server holt die Stuecke der Reihe nach vom Ziel und schreibt jedes erst, wenn das vorige beim
         // Browser angekommen ist (nichts liegt auf dem Server). Eine Datei kommt als sie selbst, Ordner und mehrere Eintraege als ZIP. Das Ticket (Nachricht 9 des

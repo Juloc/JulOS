@@ -34,5 +34,17 @@ Voice typing of the phone keyboard arrives through `input`/composition events an
 Modes "with images" and "with suggestions" allow voice typing; the password-type mode ("without suggestions") normally does not. A browser speech-recognition button was left out:
 Chrome sends the audio to Google, it conflicts with the app's own microphone use and cannot be verified without a device.
 
+## Why there is no purely visual zoom (yet)
+Pinch changes the VM resolution (sharp text, picture always fits). A second, purely visual stage (CSS scale of the picture, two fingers pan, no new size to the VM) is not a
+small addition: every pointer position goes through `remoteXY` (it divides by the display scale, so it would also need the CSS factor and the pan offset), the same transform is used by the
+keyboard pan and the taskbar offset in `applyPan`, and two-finger slide already means scrolling, so panning a magnified picture would need its own rule (for example scroll only at the
+edge, or a one-finger edge pan) that can only be tuned on a real phone. Design for a later step: a setting "Zoom: resolution / magnify", one `view` object {scale, x, y} used by
+`remoteXY` and `applyPan`, and the machine emitting `pan` instead of `scroll` while magnified.
+
+## Checked
+Against a server built from this branch: the `touch` setting is stored, normalised (unknown fields dropped, hold time rounded to 50 ms) and rejected for non-objects; a shortcut key with icon and
+connection is accepted. In the browser pane (375x812, light and dark): the settings sheet with its test area, a saved shortcut (Ctrl+Alt+T opened a terminal), a text snippet (typed into it)
+and a multi-step shortcut (`ctrl+c, e, x, i, t, enter` closed it). A shortcut bound to one connection did not show for another connection.
+
 ## Not verified
 Only synthetic touch events in a desktop browser pane (375x812) were used. Real finger feel (hold time), vibration, the real Android keyboard and its dictation, iOS: untested.

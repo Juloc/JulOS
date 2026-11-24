@@ -34,6 +34,9 @@ public enum ClipNote : byte
 
     /// <summary>Die VM hat die Ankuendigung des Browsers abgelehnt (Format-Liste verweigert).</summary>
     ListRefused = 7,
+
+    /// <summary>Die VM hat die letzte Ankuendigung des Browsers angenommen (keine weitere ist unbeantwortet): jetzt holt sie beim Einfuegen den neuen Inhalt. Der Browser schickt dann die Einfuegen-Taste.</summary>
+    ListAccepted = 8,
 }
 
 /// <summary>Wohin die Bruecke meldet, was der ferne Rechner kopiert hat. Wird auf dem Lesefaden des RDP-Clients gerufen: schnell zurueckkehren.</summary>
@@ -206,6 +209,11 @@ public sealed class ClipboardBridge : IDisposable
             if (!accepted)
             {
                 _sink.Note?.Invoke(ClipNote.ListRefused, 0);
+            }
+            else if (channel.ListsUnanswered == 0)
+            {
+                // nur die Antwort auf die neueste Liste zaehlt: eine ältere darf das Einfuegen nicht vor der neuen ausloesen
+                _sink.Note?.Invoke(ClipNote.ListAccepted, 0);
             }
         };
         channel.DataReceived += OnDataReceived;

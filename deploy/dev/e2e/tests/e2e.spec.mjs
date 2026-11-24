@@ -738,3 +738,95 @@ test('18 Zweiter Faktor: bei "immer fragen" öffnet eine Aktion das Sheet, ein f
   }
   expect(errors.filter((e) => !/401|403/.test(e))).toEqual([]);          // der falsche Code (401) und die Aufforderung (403) stehen als Konsolenmeldung des Browsers
 });
+
+test('19 Zwischenablage: zwanzigmal nacheinander kopieren und einfügen, es kommt nie der alte Text an (die Taste folgt der Annahme der VM) @full', async ({ browser }) => {
+  test.setTimeout(120_000);
+  const { context, page, errors } = await signedIn(browser);
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://127.0.0.1:8080' });
+  const sockets = watchSockets(page);
+  await page.goto('/');
+  const id = await connectionId(page, DESKTOP_CONN.name);
+  await connect(page, DESKTOP_CONN.name, RDP.password);
+  await waitForPicture(page, sockets);
+  await page.bringToFront();
+  await expect.poll(async () => { const r = await page.request.get('/api/agent/health?c=' + id); return r.ok() && (await r.json()).available; }, { message: 'der Agent im Ziel meldet sich', timeout: 40_000 }).toBe(true);
+  await probe('/entry', { method: 'POST', body: '' });
+  const entryWindow = async () => (await windowsOf(page, id)).find((w) => w.title === 'clip-entry');
+  await expect.poll(async () => !!(await entryWindow()), { message: 'das Eingabefenster der VM erscheint', timeout: 20_000 }).toBe(true);
+  await page.request.post(`/api/agent/windows/${(await entryWindow()).id}/activate`, { headers: API });
+  await expect.poll(async () => (await entryWindow())?.active, { message: 'das Eingabefenster hat den Fokus', timeout: 10_000 }).toBe(true);
+  const entryText = async () => { const r = await probe('/entry-text'); return r.ok ? await r.text() : null; };
+  // der erste Einfuegevorgang wartet, bis der Kanal der VM bereit ist
+  await page.evaluate(() => navigator.clipboard.writeText('start'));
+  await page.keyboard.press('Control+v');
+  await expect.poll(entryText, { timeout: 30_000, intervals: [300] }).toBe('start');
+  let expected = 'start';
+  const stamp = Date.now().toString(36);
+  for (let i = 1; i <= 20; i++) {
+    const text = `[${i}-${stamp}]`;
+    await page.evaluate((v) => navigator.clipboard.writeText(v), text);
+    await page.keyboard.press('Control+v');
+    expected += text;
+    await expect.poll(entryText, { message: `Einfügen ${i} bringt genau den neuen Text`, timeout: 6_000, intervals: [100] }).toBe(expected);
+  }
+  await probe('/entry-close', { method: 'POST' });
+  expect(errors).toEqual([]);
+  await context.close();
+});
+
+test('20 Terminal: ein Bild und eine Datei mit Leerzeichen und Anführungszeichen aus der Zwischenablage landen im Ordner der Shell, der Pfad steht gequotet auf der Zeile, ohne Enter; mit ausgeschaltetem Schalter kommt nichts hoch @full', async ({ browser }) => {
+  test.setTimeout(150_000);
+  const { context, page, errors } = await signedIn(browser);
+  await context.addInitScript(() => localStorage.setItem('pd.termGl', 'false'));
+  await approve(page);
+  expect((await page.request.put('/api/security/files-write', { headers: API, data: { enabled: false } })).status()).toBe(200);
+  await page.goto('/');
+  await connect(page, SSH_CONN.name, SSH.password);
+  const rows = page.locator('.sv-terminal .xterm-rows');
+  await expect(rows).toContainText(/[$#] *$/m, { timeout: 30_000 });
+  // die Shell meldet ihren Ordner (OSC 7), dann in einen Ordner mit Leerzeichen und Hochkomma wechseln
+  await page.keyboard.type(`PROMPT_COMMAND='printf "\\e]7;file://%s%s\\a" "$HOSTNAME" "$PWD"'`);
+  await page.keyboard.press('Enter');
+  await page.keyboard.type(`mkdir -p "$HOME/it's here" && cd "$HOME/it's here" && echo ready-$((6*7))`);
+  await page.keyboard.press('Enter');
+  await expect(rows).toContainText('ready-42');
+  const pasteFiles = (files) => page.evaluate((specs) => {
+    const dt = new DataTransfer();
+    for (const s of specs) dt.items.add(new File([new Uint8Array(s.bytes)], s.name, { type: s.type }));
+    const ta = document.querySelector('.sv-terminal .xterm-helper-textarea');
+    ta.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, files);
+  const png = [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0];
+
+  // Schreiben aus: ein Dialog erklärt es, nichts wird hochgeladen, nichts steht auf der Zeile
+  await pasteFiles([{ name: 'image.png', type: 'image/png', bytes: png }]);
+  await expect(page.getByText('Schreiben ist ausgeschaltet').first()).toBeVisible({ timeout: 15_000 });
+  await page.locator('button:visible', { hasText: 'Schließen' }).last().click();
+
+  await approve(page);
+  expect((await page.request.put('/api/security/files-write', { headers: API, data: { enabled: true } })).status()).toBe(200);
+  // ein Bild (heißt paste-<Zeit>.png) und eine Datei mit Leerzeichen und Hochkomma
+  await pasteFiles([{ name: 'image.png', type: 'image/png', bytes: png }, { name: "mein Bild's $x.txt", type: 'text/plain', bytes: [104, 105] }]);
+  // der Pool hat für diese Verbindung noch keine Sitzung und kein gespeichertes Passwort: dieselbe Frage wie in der Dateien-App (die Eingabe ist das Wegwerf-Passwort des Stacks)
+  const pw = page.locator('input[type=password]:visible').last();
+  if (await pw.waitFor({ state: 'visible', timeout: 8_000 }).then(() => true, () => false)) {      // beim zweiten Versuch des Tests steht die Sitzung schon im Pool
+    await pw.fill(SSH.password);
+    await page.getByRole('button', { name: 'Verbinden' }).last().click();
+  }
+  const confirm = page.getByRole('button', { name: 'Hochladen' }).last();
+  await expect(confirm).toBeVisible({ timeout: 15_000 });
+  await confirm.click();
+  await expect(page.getByText(/2 Dateien hochgeladen|hochgeladen/).first()).toBeVisible({ timeout: 30_000 });
+  await page.locator('button:visible', { hasText: 'Schließen' }).last().click();
+  // die Zeile trägt beide Pfade, gequotet; Enter hat der Mensch noch nicht gedrückt
+  await expect(rows).toContainText(/paste-\d{8}-\d{6}\.png/, { timeout: 10_000 });
+  await expect(rows).toContainText("'\\''");
+  await page.locator('.sv-terminal .xterm-helper-textarea').focus();
+  await page.keyboard.press('Control+u');
+  await page.keyboard.type('ls -1 "$HOME/it\'s here" | tr "\\n" "|"; echo end-$((1+1))');
+  await page.keyboard.press('Enter');
+  await expect(rows).toContainText(/paste-\d{8}-\d{6}\.png\|/);
+  await expect(rows).toContainText("mein Bild's $x.txt");
+  expect(errors.filter((e) => !/409/.test(e))).toEqual([]);        // 409: die erwartete Passwortfrage des Pools (password_required), die Seite fragt danach
+  await context.close();
+});

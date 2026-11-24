@@ -7,7 +7,7 @@ import { t, tk } from './i18n.js';
 import { stateWord, beforeReadHint, deniedHint } from './clipperm.js';
 
 /** Die Arten der Nachricht 15 (Reihenfolge wie ClipNote im Server). */
-export const NOTE = { status: 0, textFromVm: 1, textFromVmLost: 2, textFetchedByVm: 3, textTooLong: 4, textFromVmTooLong: 5, textWaiting: 6, listRefused: 7 };
+export const NOTE = { status: 0, textFromVm: 1, textFromVmLost: 2, textFetchedByVm: 3, textTooLong: 4, textFromVmTooLong: 5, textWaiting: 6, listRefused: 7, listAccepted: 8 };
 
 /** So lange darf der Kanal der VM nach dem Verbinden auf sich warten lassen, bevor die Diagnose ihn "fehlt" nennt (xrdp meldet ihn meist nach ein bis zwei Sekunden). */
 export const CHANNEL_WAIT_MS = 8000;

@@ -154,7 +154,8 @@ test('Nachricht 15 kommt als onclipnote mit Kanalstand, Art und Zahl', () => {
   const got = []; c.onclipnote = (n) => got.push(n);
   c.receive(Uint8Array.of(15, 3, 3, 0, 0, 1, 0x2c).buffer);
   c.receive(Uint8Array.of(15, 0, 0, 0, 0, 0, 0).buffer);
+  c.receive(Uint8Array.of(15, 5, 8, 0, 0, 0, 0).buffer);        // Bit 2: der Server meldet "Liste angenommen" (Art 8)
   c.receive(Uint8Array.of(15, 1).buffer);                       // zu kurz: ignoriert
-  assert.deepEqual(got, [{ ready: true, files: true, note: 3, count: 300 }, { ready: false, files: false, note: 0, count: 0 }]);
+  assert.deepEqual(got, [{ ready: true, files: true, acks: false, note: 3, count: 300 }, { ready: false, files: false, acks: false, note: 0, count: 0 }, { ready: true, files: false, acks: true, note: 8, count: 0 }]);
   c.disconnect();
 });

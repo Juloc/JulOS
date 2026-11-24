@@ -21,7 +21,8 @@ import { qrSvg } from './qr.js';
 import { showDialog, focusField } from './desktop-window.js';
 import { t, tp, tk, relativeTime, getPref, isPref } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
-import './terminal-session.js';      // Sitzungsart 'terminal' (natives SSH-Terminal)
+import { setTerminalApi } from './terminal-session.js';      // Sitzungsart 'terminal' (natives SSH-Terminal)
+setTerminalApi((path, options) => api(path, options));      // Dateien einfuegen im Terminal: dieselbe Abfrage mit zweitem Faktor
 
 /* =====================================================================
  * Startseite und Konto: Ersteinrichtung, Anmeldung, gespeicherte Verbindungen, Geraete.

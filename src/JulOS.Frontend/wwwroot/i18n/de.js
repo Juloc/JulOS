@@ -3034,4 +3034,9 @@ export default {
   "pk.checkAll.other": "Du hast {n} Passkeys. Prüfe, ob alle deine sind: ein fremder Passkey bleibt auch nach einer Änderung von Passwort oder Authenticator gültig.",
   "pk.checkAllRecovery.one": "Du hast dich mit einem Wiederherstellungscode angemeldet, vielleicht weil ein Gerät weg ist. Du hast 1 Passkey. Prüfe, ob er deiner ist.",
   "pk.checkAllRecovery.other": "Du hast dich mit einem Wiederherstellungscode angemeldet, vielleicht weil ein Gerät weg ist. Du hast {n} Passkeys. Prüfe, ob alle deine sind.",
+  "clip2.noApi": "Hier ist kein Hochladen möglich (Seite neu laden).",
+  "clip2.noStored": "Dateien einfügen geht nur bei einer gespeicherten SSH-Verbindung, nicht bei einer Schnellverbindung.",
+  "clip2.noFolders": "Ordner werden nicht hochgeladen, nur Dateien.",
+  "clip2.pasteFile": "Datei einfügen",
+  "clip2.osc7Hint": "Der Ordner der Shell ist unbekannt: die Datei kommt in den Home-Ordner. Damit das Terminal deinem Ordner folgt, trägt man in bash in ~/.bashrc ein: PROMPT_COMMAND='printf \"\\e]7;file://%s%s\\a\" \"$HOSTNAME\" \"$PWD\"' (zsh: Funktion in precmd). Dieser Hinweis kommt nur einmal.",
 };

@@ -231,7 +231,7 @@ public sealed class ClipboardBridgeTests
         bridge.SetLocalText("Geheim äö");
         wire.Take();
         Pasted(channel, wire);
-        Assert.Equal([(ClipNote.TextFetchedByVm, 9)], notes);                     // Zeichen, nicht Bytes
+        Assert.Equal([(ClipNote.ListAccepted, 0), (ClipNote.TextFetchedByVm, 9)], notes);                     // Zeichen, nicht Bytes
         notes.Clear();
 
         channel.Receive(ClipServer.LongFormatList((Text, null)));
@@ -262,5 +262,23 @@ public sealed class ClipboardBridgeTests
         Assert.Equal([(ClipNote.TextWaiting, 5), (ClipNote.Status, 0)], notes);
         channel.Receive(ClipServer.FormatListResponse(false));
         Assert.Equal((ClipNote.ListRefused, 0), notes[^1]);
+    }
+
+    [Fact]
+    public void The_browser_hears_that_the_vm_accepted_the_newest_list_and_an_older_answer_does_not_count()
+    {
+        var (channel, wire, bridge, _, notes) = StartedWith();
+        bridge.SetLocalText("eins");
+        bridge.SetLocalText("zwei");
+        wire.Take();
+        channel.Receive(ClipServer.FormatListResponse(true));                     // Antwort auf "eins": "zwei" ist noch offen
+        Assert.Empty(notes);
+        channel.Receive(ClipServer.FormatListResponse(true));
+        Assert.Equal([(ClipNote.ListAccepted, 0)], notes);
+        bridge.SetLocalText("drei");
+        wire.Take();
+        channel.Receive(ClipServer.FormatListResponse(false));
+        Assert.Equal((ClipNote.ListRefused, 0), notes[^1]);
+        Assert.DoesNotContain(notes.Skip(1), n => n.Note == ClipNote.ListAccepted);
     }
 }

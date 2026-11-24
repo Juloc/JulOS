@@ -11,6 +11,11 @@ import { TerminalBar, prefillState } from './terminal-input.js';
 import { programOf } from './terminal-programs.js';
 import { t } from './i18n.js';
 import { LinkStats } from './link-health.js';
+import { dialogWindowsAvailable } from './desktop-window.js';
+
+// Die Abfrage mit Freigabe durch den zweiten Faktor kommt von shell.js (setTerminalApi); ohne sie gibt es kein Einfuegen von Dateien
+let filesApi = null;
+export function setTerminalApi(api) { filesApi = api; }
 
 // Maus und echte Tastatur: xterm nimmt die Tasten selbst an. ?softkb in der Adresse erzwingt zum Testen die Handy-Tastatur (Eingabefeld der Seite).
 const HW_KB = matchMedia('(pointer: fine) and (hover: hover)').matches && !location.search.includes('softkb');
@@ -43,6 +48,8 @@ export class TerminalSession extends RemoteSession {
       onKeyUsed: () => this.consumeOnce(),
       onTap: () => { if (!HW_KB && softKeyboard.auto() && !softKeyboard.isOpen()) softKeyboard.open(); else if (HW_KB) view.focusInput({ force: true }); },
       onAuthExpired: () => this.requestClose(t('term.authExpired'), 'auth'),
+      // Bild oder Datei eingefuegt oder abgelegt: auf den Host laden (term-upload.js, der SFTP-Weg der Dateien-App); die Pfade schreibt die Ansicht auf die Kommandozeile
+      onFiles: async (files, { dir }) => { const m = await import('./term-upload.js'); return m.uploadToShell({ api: filesApi, conn: this.conn, dir, files, kit: !dialogWindowsAvailable(), say: (text) => this.toast(text, 4200) }); },
     });
     this.view = view;
     this.client = view;                       // die Leiste ruft this.client.sendKeyEvent(gedrueckt, keysym)

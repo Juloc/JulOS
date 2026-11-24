@@ -215,8 +215,8 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         Audio.StatusChanged += status => _events.Writer.TryWrite(new ScreenAudioStatus(status));
     }
 
-    // Stand des Kanals der Zwischenablage fuer die Diagnose: Bit0 bereit (chansrv der VM hat sich gemeldet), Bit1 Dateien moeglich
-    private byte ClipboardFlags() => (byte)((_clipboardChannel.IsReady ? 1 : 0) | (_clipboardChannel.CanTransferFiles ? 2 : 0));
+    // Stand des Kanals der Zwischenablage fuer die Diagnose: Bit0 bereit (chansrv der VM hat sich gemeldet), Bit1 Dateien moeglich, Bit2 immer: dieser Server meldet ClipNote.ListAccepted
+    private byte ClipboardFlags() => (byte)((_clipboardChannel.IsReady ? 1 : 0) | (_clipboardChannel.CanTransferFiles ? 2 : 0) | 4);
 
     /// <summary>Der Ton der Sitzung: pro Verbindung aus, bis der Browser ihn einschaltet.</summary>
     public AudioBridge Audio { get; }

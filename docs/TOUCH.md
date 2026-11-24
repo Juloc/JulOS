@@ -58,6 +58,10 @@ Mode "Maus" (internally `direct`; the old default) and "Touchpad" (`pad`) work a
 | Pinch | zoom that changes the VM resolution (sharp text, the picture fills the screen; no panning needed) |
 | Two-finger double tap | reset zoom (only when zoomed; the first right click then waits 380 ms) |
 
+The Touchpad pointer position is kept in VM pixels and clamped to the picture (`padStep` in `touch-pointer.js`); the top-left corner (0/0) is an ordinary position. Until the first move it sits in the middle.
+
+Mouse moves are coalesced in `stream.js`: at most one move message per animation frame (latest position; 50 ms fallback in a background tab). A button, a wheel step or a key sends a pending move first, so order and click position stay exact; the server does not merge moves itself.
+
 In Tablet mode the setting "Pinch" can also be "change the resolution" (the old behaviour).
 
 ## Why Linux sees no real fingers

@@ -22,6 +22,7 @@ import { ClipDiag } from './clipdiag.js';
 import { queryState, browserKind, readDeviceText, copyToDevice } from './clipperm.js';
 import { KS, MODSYM, MODNAME, charKeysym, parseChord, parseSequence, sequenceOps, heldAfter, textOps, chunk, TEMPLATES, LIMITS as KEY_LIMITS, validateKeyDef, keyApplies, looksLikeSecret } from './keys-shortcuts.js';
 import { StickyMods } from './keys-sticky.js';
+import { padStep } from './touch-pointer.js';
 import { TouchGestures, normalizeTouch, compactTouch, scrollStep, WheelAccum, VIEW_ONE, clampView, zoomAbout, panView, toVm, LOG_MAX } from './touch-gestures.js';
 import { TouchUi, bindSurface } from './touch-ui.js';
 import { bindTouchSettings, openTouchSettings } from './touch-settings.js';
@@ -610,7 +611,7 @@ export class RemoteSession extends Session {
     this.W = { available: false, list: [], mode: 'desktop', timer: null, lastCls: null, candCls: null, candN: 0, profileAt: 0, apps: null };
     this.winSig = '';
     this.gest = new TouchGestures(S.touch);        // Gesten (touch-gestures.js); die Aktionen fuehrt runGesture aus
-    this.pad = { x: 0, y: 0 };                     // Zeigerstelle im Touchpad-Modus (Pixel der VM)
+    this.pad = null;                               // Zeigerstelle im Touchpad-Modus (Pixel der VM); null = noch nicht gesetzt, dann Mitte (0/0 ist eine echte Stelle)
     this.pinch = { k0: 0, newK: 0 };               // Zoom zu Beginn eines Pinch und der neue Wert waehrenddessen
     this.dragging = false;                         // linke Taste durch eine Geste gehalten (Ziehen)
     this.wheel = new WheelAccum(scrollStep(S.touch.scrollSpeed));
@@ -1684,9 +1685,8 @@ export class RemoteSession extends Session {
     this.consumeOnce();
   }
   padPoint() {
-    const P = this.pad;
-    if (!P.x && !P.y && this.display) { P.x = this.display.getWidth() / 2; P.y = this.display.getHeight() / 2; }
-    return { x: P.x, y: P.y };
+    if (!this.pad && this.display) this.pad = padStep(null, 0, 0, 1, this.display.getWidth(), this.display.getHeight());
+    return this.pad ? { ...this.pad } : { x: 0, y: 0 };
   }
 
 
@@ -1858,10 +1858,10 @@ export class RemoteSession extends Session {
       case 'press': { const q = this.gestPoint(a); this.mouseSend(q.x, q.y); this.mouseSend(q.x, q.y, true); this.dragging = true; break; }
       case 'move': {
         if (a.where === 'pointer') {
-          const P = this.pad, s = this.display ? this.display.getScale() : 1;
+          const d = this.display, w = d ? d.getWidth() : 0, h = d ? d.getHeight() : 0;
           this.padPoint();
-          P.x = clamp(P.x + a.dx / s, 0, this.display ? this.display.getWidth() : 0); P.y = clamp(P.y + a.dy / s, 0, this.display ? this.display.getHeight() : 0);
-          this.mouseSend(P.x, P.y, !!this.dragging);
+          this.pad = padStep(this.pad, a.dx, a.dy, d ? d.getScale() : 1, w, h);
+          this.mouseSend(this.pad.x, this.pad.y, !!this.dragging);
         } else { const q = this.remoteXY(a.x, a.y); this.mouseSend(q.x, q.y, true); }
         break;
       }

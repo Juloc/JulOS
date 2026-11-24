@@ -33,14 +33,14 @@ public sealed class RouteSecurityTests
         ["GET /api/ai/v1/usage"] = "KI-API der Apps: Schluessel der App statt Sitzung",
         ["POST /api/ai/v1/chat"] = "KI-API der Apps: Schluessel der App statt Sitzung",
         // Anmelde-Zentrale (docs/SIGN-IN.md): die begruendete Ausnahme, jeder Weg schuetzt sich selbst (OidcTests prueft jeden einzeln)
-        ["GET /.well-known/openid-configuration"] = "OIDC: Beschreibung der Zentrale (oeffentlich, nur lesen)",
+        ["GET /.well-known/openid-configuration"] = "OIDC: Beschreibung der Zentrale (oeffentlich, nur lesen; dazu der Anzeigename \"julos_display_name\", damit Apps den Knopf ohne Sitzung beschriften; Ratenlimit 120/min; keine Version, kein Host)",
         ["GET /oidc/jwks"] = "OIDC: oeffentliche Schluessel (nur der oeffentliche Teil)",
         ["GET /oidc/authorize"] = "OIDC: die App schickt die Person hierher; ohne Sitzung kommt die Anmeldung, nie ein Code",
         ["POST /oidc/token"] = "OIDC: die App tauscht Code gegen Token (Geheimnis der App, Code, PKCE)",
         ["GET /oidc/userinfo"] = "OIDC: Angaben zur Person mit Zugriffs-Token der App",
         ["POST /oidc/userinfo"] = "OIDC: wie GET",
         ["GET /oidc/end-session"] = "OIDC: Abmelden, von der App angestossen (gueltiger id_token_hint, sonst Rueckfrage)",
-        ["POST /oidc/end-session"] = "OIDC: Abmelden bestaetigen (nur mit eigenem Origin)",
+        ["POST /oidc/end-session"] = "OIDC: Abmelden bestaetigen (eigener Origin, oder \"null\" mit Sec-Fetch-Site same-origin, und immer das Einmal-Zeichen der Sitzung)",
     };
 
     private static string Fill(string pattern) =>

@@ -6,6 +6,12 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+### Behoben
+- **Abmelden über die Zentrale** scheiterte in Chromium („Bei JulOS abmelden?“ endete in einem Fehler, die Sitzung blieb): Das Formular trägt jetzt ein Einmal-Zeichen der Sitzung, und nur für diese Route gilt `Origin: null` mit `Sec-Fetch-Site: same-origin` ([docs/SIGN-IN.md](docs/SIGN-IN.md#the-sign-out-form)).
+
+### Neu
+- Die Beschreibung der Zentrale nennt den Anzeigenamen (`julos_display_name`), den Apps ohne Sitzung für „Mit JulOS anmelden“ lesen. Nach dem Abmelden ohne Hinweis gibt es „Zurück zu <App>“, wenn für die App genau eine Adresse eingetragen ist. Doku: `*.localhost`, zwei Dienste auf einer Maschine, Einladungslink als Vorschlag.
+
 ## [0.26.0] - 2026-11-24
 
 ### Neu

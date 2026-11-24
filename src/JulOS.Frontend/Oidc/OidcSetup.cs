@@ -10,6 +10,7 @@ internal static class OidcSetup
     {
         services.AddSingleton<OidcAppStore>();
         services.AddSingleton<OidcFlowStore>();
+        services.AddSingleton<OidcFormTokens>();
         services.AddSingleton<OidcKeys>();
         services.AddSingleton(sp => new OidcIssuer(sp.GetRequiredService<InstanceSettings>(), k => config[k]));
         services.AddSingleton<OidcHttp>();

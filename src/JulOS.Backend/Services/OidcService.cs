@@ -185,6 +185,16 @@ public sealed class OidcService(OidcAppStore apps, OidcFlowStore flow, OidcKeys 
         catch (Exception e) when (e is not OperationCanceledException) { return null; }          // ein kaputtes Token ist einfach kein Hinweis
     }
 
+    /// <summary>
+    /// Fuer den Link "Zurueck zu App" nach dem Abmelden ohne gueltigen Hinweis: nur wenn die App (client_id) aktiv ist und GENAU EINE Adresse nach dem Abmelden eingetragen ist.
+    /// Es ist immer die eingetragene Adresse, nie etwas aus der Anfrage; die client_id ist oeffentlich, der Link darum kein Hinweis auf etwas Geheimes.
+    /// </summary>
+    public async Task<(string Name, string Uri)?> BackLinkAsync(string? clientId, CancellationToken ct = default)
+    {
+        if (clientId is null || await apps.FindByClientIdAsync(clientId, ct) is not { Enabled: true, PostLogoutUris: { Length: 1 } one } app) return null;
+        return (app.Name, one[0]);
+    }
+
     public async Task AuditAsync(string user, string evt, string? detail = null)
     {
         try { await audit.AddAsync(user, evt, detail, CancellationToken.None); }

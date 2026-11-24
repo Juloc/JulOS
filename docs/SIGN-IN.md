@@ -43,17 +43,70 @@ The OIDC endpoints are the **reasoned exception** to "every API needs a session"
 
 | Endpoint | Protection |
 |---|---|
-| `GET /.well-known/openid-configuration` | public, read only: issuer, endpoints, what is supported |
+| `GET /.well-known/openid-configuration` | public, read only: issuer, endpoints, what is supported, and **`julos_display_name`** (see "The name of the centre"); 120 requests per minute and address |
 | `GET /oidc/jwks` | public, read only: **public** parts of the signing keys (`kty`, `crv`, `x`, `y`, `kid`), never a private part |
 | `GET /oidc/authorize` | the app and the **exact** return address must be registered (otherwise an error page, **never a redirect**); `response_type=code` only; PKCE `S256` **required**; `state` required; `nonce` supported; scope `openid` required, `profile` optional, other scopes are ignored; `prompt=none` and `login`; `max_age`; `response_mode`: the answer always comes as a query (`form_post`, which Microsoft's handler asks for by default, is answered as a query too and the handler accepts that; fragment and JWT modes are refused); rate limit 120 per minute and address |
 | `POST /oidc/token` | form body only; the app signs in with `client_secret_basic` or `client_secret_post` (never both); code, redirect address and PKCE verifier must match; failed app sign-ins lock the address for a growing time (10 failures), **but the lock only turns away wrong secrets**: the right secret is always let through (otherwise whoever shares an app's outgoing address could block its token exchange); 60 requests per minute; `Cache-Control: no-store` |
 | `GET`/`POST /oidc/userinfo` | the access token in the `Authorization: Bearer` header only (never in the address); valid only while the JulOS session lives, the app is active and the person still has a role |
-| `GET`/`POST /oidc/end-session` | RP-initiated logout: with a valid `id_token_hint` that was issued **for the session being ended and this app** (its `sid` is the one this session got from the app; an old token, a token of another session of the same person and a logout token do not count) it ends the session at once; otherwise it asks first (a form posting to itself, checked for the same `Origin`). It returns to `post_logout_redirect_uri` only if the hint is valid **and** the address is registered exactly |
+| `GET`/`POST /oidc/end-session` | RP-initiated logout: with a valid `id_token_hint` that was issued **for the session being ended and this app** (its `sid` is the one this session got from the app; an old token, a token of another session of the same person and a logout token do not count) it ends the session at once; otherwise it asks first (a form posting to itself; see "The sign-out form" for what is checked). It returns to `post_logout_redirect_uri` only if the hint is valid **and** the address is registered exactly. Without that, the page says "signed out" and, if the request names a `client_id` of an active app with **exactly one** registered address after sign-out, adds a link "Back to <app>" to that registered address (a link, never a redirect; never an address from the request) |
 
 There is no CORS: a browser may not read any of these from another site. The pages (sign-in, no access, error, sign-out) cannot be framed
 (`X-Frame-Options: DENY`, `frame-ancestors 'none'`, set for every answer of the server) and use no inline script (CSP).
 Errors for an unknown app, a wrong return address, a blocked app look **the same** (one page, no hint whether the app exists); `invalid_client` at the token endpoint is the same
 for an unknown app and a wrong secret, and a hash is compared in both cases (same time).
+
+## The sign-out form
+
+The question "Sign out of JulOS?" (an app that sends no valid hint) is a form that posts to `/oidc/end-session`. Two things had to be right:
+
+- **Why it failed in Chromium (0.26.0 and before).** The server sends `Referrer-Policy: no-referrer` on every answer. With that policy Chromium sends **`Origin: null`** on a form
+  POST to the same site, and the check "`Origin` equals this host" refused it: the page ended in "Sign-in not possible" and the session stayed. Found by the first real trial of an app.
+- **The fix, and why this one.** (1) The page carries a **one-time form token** (`form_token`, hidden field): 256 bit, **bound to the JulOS session** that is shown the page, valid
+  10 minutes, **used up by the first POST** (also by a wrong one: a guess burns it). Only a page that this server gave to this very session has it, so a POST from anywhere
+  else cannot sign anybody out, with or without a readable `Origin`. It lives in memory (a restart only means the person is asked once more). (2) The `Origin` check stays, and
+  **for this one route** `Origin: null` is also accepted, but only together with **`Sec-Fetch-Site: same-origin`** (a header the page cannot forge and a browser always sends for
+  a same-site form); a foreign `Origin`, `null` with `cross-site`, `same-site`, `none` or no `Sec-Fetch-Site` are refused. No other route changed: `ApiGuard.SameOrigin` is the same
+  as before. Not chosen: relaxing `Referrer-Policy` for `/oidc/`; it would repair only this one symptom, while the token also protects when the header is missing or odd for any other reason.
+- Checked for the same problem: the other pages of the centre (sign-in, bounce, no access, errors, signed out) are **GET pages with no form**; the sign-in page posts by `fetch` to
+  `/api/auth/login` (the normal sign-in route with its own checks), and the authorize step is a redirect. The only form POST is this one.
+
+## The name of the centre
+
+Apps want to label their button "Sign in with JulOS" without a session. `/api/about` needs one (it names the version and the host system), so the **discovery document** has one
+extra field: **`julos_display_name`** (`"JulOS"`). Apps read it from `GET <issuer>/.well-known/openid-configuration`, which they fetch anyway. Nothing else was opened up: no
+version, no host data; the document is rate limited (120 per minute and address) and listed by name in `RouteSecurityTests`. Unknown fields are ignored by standard clients.
+
+## Setting it up: what a person must know
+
+- **Register all three addresses of the app exactly** (return, after sign-out, back-channel), as the app's settings card shows them. The return address is compared **exactly**,
+  including the port and the trailing path.
+- **Tick "App on the local network"** when the app runs behind the same router (almost always); without it a private address is refused for the back channel.
+- **The secret is shown once.** The app's "Check connection" cannot test it (JulOS only asks for it when a person signs in).
+- **Roles:** the keys must be the app's own role keys; the owner always has `admin`; a person without an entry sees "No access" and gets no token.
+- A JulOS that is away locks nobody out: the app's own form keeps working.
+- **A public address under `*.localhost` is treated like `localhost`:** `http` is allowed for the issuer and for the app's addresses, and the back channel may use `http` (the check
+  looks at the address, not at the name only; every browser and glibc resolve `*.localhost` to 127.0.0.1).
+
+### Two services on one machine (development, containers)
+
+JulOS (the issuer) and the app call each other (description, keys, token; back-channel logout), and the **browser, the app and JulOS must use the same address for each of them**:
+the issuer is in every token and the app compares it, the return address is compared exactly. Inside a container `localhost` is the container itself, so it cannot be the address.
+The solution that needs nothing on the host (proved in the first real trial with the start app of the shared base):
+
+1. One shared Docker network (`docker network create hubtrial-net`).
+2. Give every service a name under `.localhost` and use **the same name as a network alias** on that network, and **the same port inside as is published outside**
+   (`ASPNETCORE_HTTP_PORTS` = the published port; `JULOS_PUBLIC_URL=http://julos.localhost:18390`; ports `127.0.0.1:18390:18390`; alias `julos.localhost`; the app likewise as `app.localhost`).
+   Then `http://julos.localhost:18390` is the same address from the browser and from the other container.
+3. At JulOS register the app's three addresses with these names and tick "App on the local network" (the alias resolves to the Docker network, a private address).
+4. Take care that a health check of the image does not ask the old port (the trial had to turn the sample's check off).
+
+## Adding more people (proposal, not built)
+
+Today a person is created only with `dotnet JulOS.dll user add NAME` in a terminal (the password is typed there). A trial, a script or a family member helping needs a terminal.
+Proposal, like the invitation link of the shared base: **an invitation link**, made by the **owner only** (settings, with step-up), **valid once and for 24 hours**, stored as a hash,
+that opens a page where the invited person chooses name and password and enrols the authenticator code (the same steps as the first set-up, which exist), after which the
+owner gives a role per app. Not built here because it is a whole sign-up flow (new public page, token store, migration, rate limits, enrolment), not a small patch; it belongs to
+the account work (see IDEAS.md).
 
 ## Claims of the ID token
 

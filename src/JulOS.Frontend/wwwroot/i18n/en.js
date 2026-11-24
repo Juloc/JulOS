@@ -2962,4 +2962,13 @@ export default {
   "keys.tplRunLinux": "Run a command",
   "keys.tplTermCopy": "Terminal: copy",
   "keys.tplTermPaste": "Terminal: paste",
+  "link.label": "Reconnects",
+  "link.none": "none",
+  "link.title": "How often the line to the server was rebuilt in this session, and why the last time",
+  "link.reconnecting": "reconnecting",
+  "link.reason.silence": "line went silent",
+  "link.reason.closed": "closed by the server",
+  "link.reason.dropped": "line dropped",
+  "link.reason.hidden": "page in background",
+  "link.reason.restart": "restarted",
 };

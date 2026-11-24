@@ -5,6 +5,10 @@
  * Ausgeblendet kostet sie nichts: kein Zeitgeber, keine Rechnung. Eingeblendet liest sie einmal je Sekunde die Zaehler des Clients.
  * ===================================================================== */
 import { perfItems, qualityOf } from './perf.js';
+import { linkSummary } from './link-health.js';
+import { t, tk } from './i18n.js';
+
+const REASON = { silence: tk('link.reason.silence'), closed: tk('link.reason.closed'), dropped: tk('link.reason.dropped'), hidden: tk('link.reason.hidden'), restart: tk('link.reason.restart') };
 
 export class StatusBar {
   /** @param {HTMLElement} el das Element, das die Leiste zeigt (wird gefuellt) */
@@ -14,6 +18,26 @@ export class StatusBar {
     this.cells = new Map();
     el.hidden = true;
     el.setAttribute('role', 'status');
+    this.link = null; this.linkBusy = false; this.pill = null;
+  }
+
+  /**
+   * Zustand der Leitung (link-health.js, LinkStats): die Zahl der Neuverbindungen und der letzte Grund stehen als Zelle in der Leiste; solange neu verbunden wird,
+   * zeigt ein kleines ruhiges Zeichen "verbinde neu" (auch bei ausgeblendeter Leiste, statt einer Ueberlagerung).
+   */
+  setLink(stats, busy) {
+    this.link = stats; this.linkBusy = !!busy && stats.busy;
+    this.renderPill(); this.render();
+  }
+
+  renderPill() {
+    if (this.linkBusy && !this.pill && this.el.parentNode) {
+      const p = document.createElement('div');
+      p.className = 'sv-linkpill'; p.setAttribute('role', 'status');
+      p.style.cssText = 'position:absolute;right:10px;top:8px;z-index:19;padding:3px 10px;border-radius:999px;background:rgba(12,14,20,.72);color:#fff;font-size:12px;pointer-events:none;opacity:.9';
+      p.textContent = t('link.reconnecting');
+      this.el.parentNode.appendChild(p); this.pill = p;
+    } else if (!this.linkBusy && this.pill) { this.pill.remove(); this.pill = null; }
   }
 
   /** Der Client der Sitzung (oder null, solange keiner da ist). */
@@ -50,7 +74,14 @@ export class StatusBar {
       }
     }
     for (const it of items) { const v = this.cells.get(it.id); if (v && v.textContent !== it.value) v.textContent = it.value; }
+    if (!this.cells.has('link')) {
+      const cell = document.createElement('span'); cell.className = 'sv-perfc sv-perf-link'; cell.title = t('link.title');
+      const k = document.createElement('i'); k.textContent = t('link.label'); const v = document.createElement('b');
+      cell.append(k, v); this.el.appendChild(cell); this.cells.set('link', v);
+    }
+    const lv = this.cells.get('link'), text = this.link ? linkSummary(this.link, (r) => (REASON[r] ? t(REASON[r]) : '')) || t('link.none') : t('link.none');
+    if (lv.textContent !== text) lv.textContent = text;
   }
 
-  dispose() { clearInterval(this.timer); this.timer = 0; this.client = null; }
+  dispose() { clearInterval(this.timer); this.timer = 0; this.client = null; this.pill?.remove(); this.pill = null; }
 }

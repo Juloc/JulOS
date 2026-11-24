@@ -21,7 +21,7 @@ namespace JulOS.Integrations.Display;
 /// Ende des fernen Rechners, ein Ablosen im selben Slot, eine abgemeldete App-Sitzung und der Ablauf beenden sie wirklich. Ohne <paramref name="keep"/>
 /// (null oder 0) endet sie mit dem WebSocket wie frueher.
 /// </summary>
-public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, SessionRegistry? registry = null, EncoderSelector? encoders = null, TimeSpan? keep = null) : IDisposable
+public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, SessionRegistry? registry = null, EncoderSelector? encoders = null, TimeSpan? keep = null, TimeSpan? linkDeadAfter = null) : IDisposable
 {
     public static readonly TimeSpan SessionCheck = TimeSpan.FromSeconds(15);
 
@@ -302,10 +302,15 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                 var limits = live.Stream.ClipboardLimits;
                 await SendOnceAsync(ws, live.Stream.SupportsFiles ? ScreenProtocol.Limits(limits.MaxFileBytes, ClipboardOptions.MaxFiles, ClipboardOptions.MaxEntries) : ScreenProtocol.Limits(0, 0, 0), ct).ConfigureAwait(false);
 
+                // Lebenszeichen: ein neuer Browser pingt, wenn sonst nichts fliesst; bleibt alles still, ist die Leitung halbtot (Router, Mobilfunk) und wird geschlossen,
+                // statt bis zum naechsten Schreiben stehenzubleiben. Ein alter Browser pingt nie und wird nie so beendet.
+                await SendOnceAsync(ws, ScreenProtocol.LinkCapable(), ct).ConfigureAwait(false);
+                var link = new LinkWatch(null, linkDeadAfter);
                 var send = PumpToBrowserAsync(ws, live.Stream, live.Owner, Downloads, attach.Token);
-                var receive = ReceiveFromBrowserAsync(ws, live.Stream, attach.Token);
+                var receive = ReceiveFromBrowserAsync(ws, live.Stream, link, attach.Token);
                 var watch = WatchAsync(sessionAlive, sessionCheck, attach.Token);
-                var first = await Task.WhenAny(live.Run, send, receive, watch).ConfigureAwait(false);
+                var silent = link.WaitDeadAsync(attach.Token);
+                var first = await Task.WhenAny(live.Run, send, receive, watch, silent).ConfigureAwait(false);
 
                 // Die Ereignisse enden, wenn die Sitzung endet (RunAsync schliesst sie in seinem finally), also einen Atemzug bevor die Sitzung selbst
                 // als beendet gilt: dann ist es das Ende der Sitzung (mit ihrem Grund, etwa einer abgelehnten Anmeldung), kein Abriss des Browsers.
@@ -333,6 +338,11 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                 {
                     outcome = Outcome.UserEnded;
                 }
+                else if (first == silent && silent.IsCompletedSuccessfully)
+                {
+                    gone = $"Leitung still: seit {link.SilentMs / 1000} s kein Lebenszeichen";
+                    ws.Abort();                        // der Browser hoert nicht mehr: nicht noch auf einen Abschluss warten
+                }
                 else
                 {
                     gone = WhyBrowserGone(first == send ? "Senden" : first == receive ? "Empfangen" : "Sitzung", first, ws);
@@ -351,7 +361,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                 }
 
                 await attach.CancelAsync().ConfigureAwait(false);
-                foreach (var task in new[] { send, receive, watch })
+                foreach (var task in new[] { send, receive, watch, silent })
                 {
                     try { await task.ConfigureAwait(false); }
                     catch (Exception e) when (e is OperationCanceledException or WebSocketException or IOException or ObjectDisposedException or RdpException)
@@ -587,6 +597,9 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                     case ScreenClipboardNote note:
                         await SendOnceAsync(ws, ScreenProtocol.ClipboardNote(note.Flags, note.Note, note.Count), ct).ConfigureAwait(false);
                         continue;
+                    case ScreenLinkPong pong:
+                        await SendOnceAsync(ws, ScreenProtocol.Pong(pong.Id), ct).ConfigureAwait(false);
+                        continue;
                     case ScreenAudioStatus audio:
                         buffer = pool.Rent(ScreenProtocol.AudioStatusLength);
                         length = ScreenProtocol.WriteAudioStatus(buffer, audio.Status);
@@ -668,7 +681,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         ws.SendAsync(message, WebSocketMessageType.Binary, true, ct);
 
     /// <summary>Browser -> Stream: kleine binaere Nachrichten (siehe ScreenProtocol); nur die Zwischenablage darf laenger sein und kommt dann in Teilen.</summary>
-    private static async Task<bool> ReceiveFromBrowserAsync(WebSocket ws, ScreenStream stream, CancellationToken ct)
+    internal static async Task<bool> ReceiveFromBrowserAsync(WebSocket ws, ScreenStream stream, LinkWatch link, CancellationToken ct)
     {
         const int maxMessage = 1 + ClipboardBridge.MaxTextBytes;
         var buffer = new byte[ReceiveBuffer];
@@ -690,6 +703,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                 }
 
                 result = await ws.ReceiveAsync(buffer.AsMemory(used), ct).ConfigureAwait(false);
+                link.Heard();
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
                     return false;
@@ -716,6 +730,22 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             if (buffer[0] == ScreenProtocol.FromBrowserEnd)
             {
                 return true;
+            }
+
+            if (buffer[0] == ScreenProtocol.FromBrowserPing)
+            {
+                link.MarkCapable();
+                if (used >= 5)
+                {
+                    stream.Echo(BinaryPrimitives.ReadUInt32BigEndian(buffer.AsSpan(1)));
+                }
+
+                continue;
+            }
+
+            if (buffer[0] == ScreenProtocol.FromBrowserPause && used >= 2)
+            {
+                link.SetRelaxed(buffer[1] != 0);
             }
 
             Handle(stream, buffer.AsSpan(0, used));

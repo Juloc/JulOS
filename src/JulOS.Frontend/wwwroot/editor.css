@@ -62,4 +62,4 @@ html[data-scheme="dark"] .f-ed {
 .f-ed-name { overflow: hidden; text-overflow: ellipsis; }
 .f-ed-mark { font-size: 12px; font-weight: 600; color: #b86a0c; padding: 1px 8px; border-radius: 999px; background: rgba(184, 106, 12, .15); }
 html[data-scheme="dark"] .f-ed-mark { color: #f2b866; background: rgba(242, 184, 102, .16); }
-@media (max-width: 600px) { .f-ed-pos { display: none; } .f-ed-btn { min-height: 36px; } }
+@media (max-width: 600px) { .f-ed-pos { display: none; } .f-ed-btn { min-height: 44px; } .f-ed-tools { gap: 4px; flex-wrap: wrap; } }

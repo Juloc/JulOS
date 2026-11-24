@@ -388,3 +388,18 @@ test('Root: die neuen Texte stehen in Deutsch und Englisch', () => {
   for (const k of ['files.root.banner', 'files.root.dialogNote', 'files.rootAddress', 'app.allowFilesRoot', 'files.read.titleText', 'files.read.titleDownload']) assert.ok(de[k] && en[k], k);
   assert.match(de['files.root.banner'], /\{host\}/); assert.match(en['files.root.banner'], /\{host\}/);
 });
+
+test('Langes Druecken (Handy): feuert nur im Stand, Scrollen/Loslassen/zweiter Finger entschaerfen, der Klick danach wird verschluckt', () => {
+  const ev = []; let fn = null, cleared = 0;
+  const mk = () => C.createLongPress({ set: (f) => { fn = f; return 1; }, clear: () => { fn = null; cleared++; }, onArm: (t) => ev.push('arm:' + t), onFire: (t) => ev.push('fire:' + t), onCancel: () => ev.push('cancel') });
+  let p = mk();
+  p.down(10, 10, 'a'); p.move(14, 12); fn();                                   // kleine Bewegung (< Toleranz) zaehlt als Stillhalten
+  assert.deepEqual(ev, ['arm:a', 'fire:a']); assert.equal(p.consumeClick(), true); assert.equal(p.consumeClick(), false);
+  ev.length = 0; p = mk(); p.down(10, 10, 'b'); p.move(10, 40);                // Scrollen: weg
+  assert.deepEqual(ev, ['arm:b', 'cancel']); assert.equal(fn, null); assert.equal(p.consumeClick(), false);
+  ev.length = 0; p = mk(); p.down(0, 0, 'c'); p.up(); p.up();                  // Loslassen vor der Zeit, doppeltes Loslassen meldet nur einmal
+  assert.deepEqual(ev, ['arm:c', 'cancel']);
+  ev.length = 0; p = mk(); p.down(0, 0, 'd'); p.down(5, 5, 'e'); fn();         // ein neuer Druck ersetzt den alten
+  assert.deepEqual(ev, ['arm:d', 'cancel', 'arm:e', 'fire:e']);
+  p.down(0, 0, 'f'); assert.equal(p.consumeClick(), false);                    // ein neuer Druck loescht ein altes "gefeuert"
+});

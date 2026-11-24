@@ -159,3 +159,10 @@ html.m3, html.m3 body { background: var(--m3-surface); }
 .m3-taskpage .hu-live { max-height: 38vh; }
 .m3-taskpage .tp-hint { margin: 0; }
 @media (prefers-reduced-motion: reduce) { .m3-tasks .tbar.ind i { animation: none; width: 100%; opacity: .45; } }
+
+/* Touch (Dateien, Hosts, Einstellungen): der Hinweis ueber dem Menue statt davor, Felder und Haken in den Blaettern 44 px */
+.sec-hint { bottom: calc(var(--m3-nav-h, 56px) + 12px + env(safe-area-inset-bottom, 0px)); }
+.sec-hint button { min-height: 44px; min-width: 44px; padding: 0 14px; }
+dialog.m3sheet input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"]), dialog.m3sheet select { min-height: 44px; }
+dialog.m3sheet label:has(> input[type="checkbox"], > input[type="radio"]) { min-height: 44px; padding-block: 6px; box-sizing: border-box; align-items: center; }
+dialog.m3sheet input[type="checkbox"], dialog.m3sheet input[type="radio"] { width: 24px; height: 24px; flex: none; }

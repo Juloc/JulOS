@@ -560,17 +560,18 @@ export function mountFiles(box, deps) {
   }
   /** Handy: Antippen oeffnet (im Auswahlmodus schaltet es um), langes Druecken waehlt, schaltet den Auswahlmodus ein und zeigt das Menue */
   function wireTouch(L) {
-    let timer = null, fired = false, x0 = 0, y0 = 0;
-    const cancel = () => { clearTimeout(timer); timer = null; };
-    L.addEventListener('pointerdown', (e) => {
-      fired = false; const r = inRow(e.target); if (!r) return;
-      x0 = e.clientX; y0 = e.clientY;
-      timer = setTimeout(() => { fired = true; st.multi = true; if (!st.sel.has(r.dataset.path)) st.sel.click(r.dataset.path, { ctrl: true }); paint(); if (navigator.vibrate) navigator.vibrate(15); contextMenu({ clientX: x0, clientY: y0, preventDefault() {} }, true, r); }, 480);
+    const mark = (r, on) => { if (r) r.classList.toggle('pressing', on); };
+    let armed = null;                                                        // die Zeile, deren Druck gerade zaehlt (bekommt eine Markierung, die sich beim Halten fuellt)
+    const press = C.createLongPress({
+      onArm: (r) => { armed = r; mark(r, true); },
+      onCancel: () => { mark(armed, false); armed = null; },
+      onFire: (r, x, y) => { mark(r, false); armed = null; st.multi = true; if (!st.sel.has(r.dataset.path)) st.sel.click(r.dataset.path, { ctrl: true }); paint(); if (navigator.vibrate) navigator.vibrate(15); contextMenu({ clientX: x, clientY: y, preventDefault() {} }, true, r); },
     });
-    L.addEventListener('pointermove', (e) => { if (timer && Math.hypot(e.clientX - x0, e.clientY - y0) > 10) cancel(); });
-    for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) L.addEventListener(ev, cancel);
+    L.addEventListener('pointerdown', (e) => { const r = inRow(e.target); if (!r || !e.isPrimary) { press.cancel(); return; } press.down(e.clientX, e.clientY, r); });
+    L.addEventListener('pointermove', (e) => press.move(e.clientX, e.clientY));
+    for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) L.addEventListener(ev, press.cancel);
     L.addEventListener('click', (e) => {
-      if (fired) { fired = false; return; }
+      if (press.consumeClick()) return;
       const r = inRow(e.target);
       if (!r) { if (!st.multi) { st.sel.clear(); paint(); } return; }
       const en = st.byPath.get(r.dataset.path); if (!en) return;

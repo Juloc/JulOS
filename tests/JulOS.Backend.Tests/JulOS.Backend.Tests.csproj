@@ -12,6 +12,7 @@
   <ItemGroup>
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" />
     <ProjectReference Include="..\..\src\JulOS.Backend\JulOS.Backend.csproj" />
     <ProjectReference Include="..\..\src\JulOS.Integrations\JulOS.Integrations.csproj" />
     <ProjectReference Include="..\..\src\JulOS.Frontend\JulOS.Frontend.csproj" />

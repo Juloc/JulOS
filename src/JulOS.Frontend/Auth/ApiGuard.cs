@@ -50,7 +50,7 @@ internal sealed class ApiGuard(RequestDelegate next, AuthService auth)
         if (identity is null) { await Reject(ctx, 401, "Nicht angemeldet."); return; }
         ctx.Items[IdentityKey] = identity;
         // Aktionen, die Hosts, Dateien oder die Sicherheit aendern, brauchen eine frische Freigabe mit dem zweiten Faktor (Tabelle in StepUpPolicy, F-04)
-        if (StepUpPolicy.Requires(ctx.Request.Method, ctx.Request.Path) && !await auth.StepUpFreshAsync(identity, ctx.RequestAborted))
+        if (StepUpPolicy.Requires(ctx.Request.Method, ctx.Request.Path) && !await auth.StepUpFreshAsync(identity, ctx.RequestAborted, StepUpPolicy.Always(ctx.Request.Method, ctx.Request.Path)))
         {
             await Reject(ctx, 403, "Bitte mit dem Code aus der Authenticator-App bestätigen.", StepUpPolicy.Code);
             return;

@@ -32,6 +32,15 @@ public sealed class RouteSecurityTests
         ["GET /api/ai/v1/models"] = "KI-API der Apps: Schluessel der App statt Sitzung (docs/AI-GATEWAY.md)",
         ["GET /api/ai/v1/usage"] = "KI-API der Apps: Schluessel der App statt Sitzung",
         ["POST /api/ai/v1/chat"] = "KI-API der Apps: Schluessel der App statt Sitzung",
+        // Anmelde-Zentrale (docs/SIGN-IN.md): die begruendete Ausnahme, jeder Weg schuetzt sich selbst (OidcTests prueft jeden einzeln)
+        ["GET /.well-known/openid-configuration"] = "OIDC: Beschreibung der Zentrale (oeffentlich, nur lesen)",
+        ["GET /oidc/jwks"] = "OIDC: oeffentliche Schluessel (nur der oeffentliche Teil)",
+        ["GET /oidc/authorize"] = "OIDC: die App schickt die Person hierher; ohne Sitzung kommt die Anmeldung, nie ein Code",
+        ["POST /oidc/token"] = "OIDC: die App tauscht Code gegen Token (Geheimnis der App, Code, PKCE)",
+        ["GET /oidc/userinfo"] = "OIDC: Angaben zur Person mit Zugriffs-Token der App",
+        ["POST /oidc/userinfo"] = "OIDC: wie GET",
+        ["GET /oidc/end-session"] = "OIDC: Abmelden, von der App angestossen (gueltiger id_token_hint, sonst Rueckfrage)",
+        ["POST /oidc/end-session"] = "OIDC: Abmelden bestaetigen (nur mit eigenem Origin)",
     };
 
     private static string Fill(string pattern) =>
@@ -118,6 +127,8 @@ public sealed class RouteSecurityTests
             if (method is "GET" or "HEAD") continue;
             if (pattern.StartsWith("/api/agent-link")) continue;                 // der Agent ist kein Browser: Token statt Cookie und Origin
             if (pattern.StartsWith("/api/ai/v1/")) continue;                     // Apps der Familie: Schluessel statt Cookie, kein Browser, kein Origin
+            // Anmelde-Zentrale: nur diese drei, namentlich: token/userinfo haben kein Cookie (kein CSRF), end-session prueft den Origin selbst (OidcLogoutTests). Ein kuenftiger POST unter /oidc/ faellt hier auf.
+            if (pattern is "/oidc/token" or "/oidc/userinfo" or "/oidc/end-session") continue;
             foreach (var (name, tweak) in new (string, Action<HttpRequestMessage>)[]
             {
                 ("ohne Kopfzeile", r => r.Headers.Remove("X-JulOS")),

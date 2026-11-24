@@ -16,6 +16,7 @@ export const GROUPS = [
   ] },
   { id: 'security', title: tk('set.security'), help: tk('set.securityHelp'), rows: [
     { id: 'security', ctl: 'button', label: tk('set.securityPage'), help: tk('set.securityPageHelp'), action: tk('set.open') },
+    { id: 'oidcApps', ctl: 'button', label: tk('oidc.settingsLabel'), help: tk('oidc.settingsHelp'), action: tk('oidc.settingsOpen') },
   ] },
   { id: 'appearance', title: tk('set.appearance'), help: tk('set.appearanceHelp'), rows: [
     { id: 'scheme', ctl: 'choice', label: tk('set.scheme'), help: tk('set.schemeHelp') },

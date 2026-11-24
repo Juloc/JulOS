@@ -36,6 +36,14 @@ internal static class StepUpPolicy
     // Die Vorschau der Zielhosts aendert nichts und braucht keine Freigabe
     private static readonly string[] Exempt = ["api/security/hosts/preview"];
 
+    /// <summary>
+    /// Wege, die die Freigabe auch dann verlangen, wenn der Schalter "zweiter Faktor fuer Aktionen" aus ist: die Verwaltung der Anmelde-Zentrale (Apps, Geheimnisse, Rueckkehr-Adressen, Rollen).
+    /// Der Eigentuemer ist in jeder App admin; mit einem gestohlenen Cookie ohne diese Sperre liesse sich eine App umbiegen und dort als admin anmelden.
+    /// </summary>
+    public static bool Always(string method, PathString path) =>
+        !HttpMethods.IsGet(method) && !HttpMethods.IsHead(method) && Requires(method, path)
+        && (path.Value ?? "").Trim('/').StartsWith("api/security/oidc", StringComparison.OrdinalIgnoreCase);
+
     public static bool Requires(string method, PathString path)
     {
         var segments = (path.Value ?? "").Trim('/').Split('/');

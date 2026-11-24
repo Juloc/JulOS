@@ -95,6 +95,7 @@ Browsers only install PWAs and allow the clipboard API on **HTTPS**. Put a rever
 Remote control must not be protected by the desktop password alone.
 
 - **Own login:** password (Argon2id) plus authenticator code, ten recovery codes, long-lived rotating sessions kept as hashes in PostgreSQL, lockout with growing delay. Every API and the WebSocket need a session; see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+- **Sign-in centre (built, not released):** other apps of the family can sign in through JulOS with standard OpenID Connect (authorization code with PKCE); each app gets a secret and a role per person, and signing out at JulOS ends their sessions. See [docs/SIGN-IN.md](docs/SIGN-IN.md).
 - **First start:** the first account is created in the browser with a one-time setup code from the server log. Afterwards the setup is closed.
 - **Connections** use one-time tickets (30 s). The target password is typed per connection (held in memory for at most 30 s, never logged) or, on request, stored AES-256-GCM encrypted with a key that lives only in the server settings, either per connection or once per host (the host login, bound to the host's addresses); it is never sent back to the browser. Root has no stored password: root actions go through the agent.
 - PostgreSQL has no published port. Open connections end when their session ends.

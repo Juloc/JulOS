@@ -129,8 +129,9 @@ public sealed class AuthService(UserStore users, SessionStore sessions, Password
     private DateTimeOffset? LoginGrant() => security?.StepUp is { Enabled: true, Minutes: > 0 } s ? clock.GetUtcNow().AddMinutes(s.Minutes) : null;
 
     /// <summary>Ob die Sitzung Aktionen ausfuehren darf: die Freigabe ist abgeschaltet oder gilt noch. Eine Freigabe "fuer eine Aktion" wird verbraucht.</summary>
-    public async Task<bool> StepUpFreshAsync(SessionIdentity who, CancellationToken ct = default) =>
-        security is not { StepUp.Enabled: true } || await sessions.TakeStepUpAsync(who.Id, clock.GetUtcNow(), ct);
+    /// <param name="always">Der Weg verlangt die Freigabe auch bei ausgeschaltetem Schalter (Anmelde-Zentrale: wer sie verwaltet, kann sich in jeder App als admin anmelden).</param>
+    public async Task<bool> StepUpFreshAsync(SessionIdentity who, CancellationToken ct = default, bool always = false) =>
+        (!always && security is not { StepUp.Enabled: true }) || await sessions.TakeStepUpAsync(who.Id, clock.GetUtcNow(), ct);
 
     public sealed record StepUpResult(bool Ok, int Status, string? Error = null, int RetryAfter = 0, DateTimeOffset? Until = null, int Minutes = 0);
 

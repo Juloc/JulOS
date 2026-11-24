@@ -673,7 +673,7 @@ function renderProfile() {
   pg.querySelectorAll('[data-set]').forEach((b) => b.addEventListener('click', () => settingAction(b.dataset.set)));
   if (current === 'profile' && !about) loadAbout();
 }
-const SETTING_ACTIONS = { iconOver: () => resetAppearance('iconsOver'), appearanceReset: () => { resetAllAppearance(); applyShellTheme(); }, password: () => ctx.account(), security: () => ctx.security(), devices: () => ctx.devices(), folders: () => ctx.folders(), nettools: () => ctx.nettools(), alerts: () => ctx.alerts(), signout: () => ctx.signOut(),
+const SETTING_ACTIONS = { iconOver: () => resetAppearance('iconsOver'), appearanceReset: () => { resetAllAppearance(); applyShellTheme(); }, password: () => ctx.account(), security: () => ctx.security(), oidcApps: () => import('./oidc-apps.js').then((m) => m.openOidcApps(ctx)), devices: () => ctx.devices(), folders: () => ctx.folders(), nettools: () => ctx.nettools(), alerts: () => ctx.alerts(), signout: () => ctx.signOut(),
   claude: () => launchProgram('claude'), codex: () => launchProgram('codex'),
   ai: () => import('./ai.js').then((m) => m.openAi({ api: ctx.api, esc })) };     // KI-Zugang (ai.js), erst beim Oeffnen geladen
 function settingAction(id) { const f = SETTING_ACTIONS[id]; if (f) f(); }

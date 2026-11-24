@@ -53,6 +53,8 @@ Line endings: `CRLF` files keep `CRLF` on save; a file with mixed endings is mad
 
 The phone keeps its own layout: a list (two lines per item: name with extension, then size and date), **long press** selects the item, turns the multi-select mode on (a tap then toggles) and opens the **same context menu as a bottom sheet**; a **bottom action bar** appears with the selection (Download, Copy, Cut, Delete, More, Clear). The "place" button opens the **same tree** (hosts, places, pins) in a sheet; pin and unpin work through the menus (on the phone a long press on a pin opens its menu where the browser sends a context menu event). Hidden files dimmed, extensions shown, compact by default; the View menu works the same. Light and dark follow the app.
 
+**Touch details** (pass of 2026-11-24, [MOBILE-TOUCH.md](MOBILE-TOUCH.md)): every target is at least 44 x 44 px with 4 to 6 px between them (toolbar, address bar, selection bar, viewer bar, editor tools). The long press is a small state machine (`createLongPress` in `files-core.js`: 480 ms, 10 px slop, a second finger or a scroll disarms it, the click after the release is swallowed); while it is armed the row fills with the selection colour, and rows allow no text selection or browser callout. The context sheet has a handle and closes with a swipe down; a greyed entry shows its reason once as small text (a tap has no tooltip). In the image viewer a quick horizontal swipe on the fitted image goes to the next or previous image (`swipeDir` in `files-viewer.js`). The selection bar sits above the global security hint, so its actions are never hidden.
+
 ## Repairs after the first live look (unreleased)
 
 The owner found the 0.19.0 explorer "very buggy and not finished". Found live in the browser pane and fixed:

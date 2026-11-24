@@ -6,6 +6,9 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+### Geändert
+- Dateien, Hosts und Einstellungen am Handy (Touch-Durchgang, docs/MOBILE-TOUCH.md): alle Tasten mindestens 44 px mit Abstand, langes Drücken auf eine Zeile zeigt vorher eine Markierung und wählt keinen Text mehr aus, Kontextblatt mit Griff zum Wegwischen und mit Grund für graue Einträge, Bilder lassen sich wischend durchblättern, der Sicherheitshinweis verdeckt weder Menü noch Auswahlleiste.
+
 ## [0.25.0] - 2026-11-24
 
 ### Hinzugefügt

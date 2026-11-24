@@ -107,7 +107,11 @@ ClipboardOptions.Configure(ClipboardOptions.Parse(builder.Configuration["JULOS_C
 ClipboardBridge.SweepOld(ClipboardOptions.Default.TempRoot);
 // Sitzungserhalt: so lange lebt eine RDP-Sitzung ohne Browser weiter (JULOS_STREAM_KEEP_SECONDS, Standard 300, 0 = aus), siehe docs/SESSIONS.md
 builder.Services.AddSingleton(sp => new ScreenRelay(sp.GetRequiredService<ILogger<ScreenRelay>>(), registry: sp.GetRequiredService<SessionRegistry>(),
-    encoders: sp.GetRequiredService<EncoderSelector>(), keep: ScreenRelay.ParseKeep(builder.Configuration["JULOS_STREAM_KEEP_SECONDS"])));
+    encoders: sp.GetRequiredService<EncoderSelector>(), keep: ScreenRelay.ParseKeep(builder.Configuration["JULOS_STREAM_KEEP_SECONDS"]))
+{
+    // Macht der Server selbst Platz (Obergrenze der wartenden Sitzungen), steht das im Verlauf der Sicherheit (kept.end, Grund "limit")
+    KeptEnded = (k, why) => JulOS.Frontend.Remote.RemoteEndpoints.AuditKeptAsync(sp.GetRequiredService<SecurityAuditStore>(), k.User, "kept.end", $"{JulOS.Frontend.Remote.RemoteEndpoints.NameOf(k)} · {why}"),
+});
 builder.Services.AddSingleton<SshRelay>(sp => new SshRelay(sp.GetRequiredService<ILogger<SshRelay>>(), registry: sp.GetRequiredService<SessionRegistry>()));
 // Agent in der Sitzung der Ziel-Maschine (Unix-Socket) und der gemeinsame Ordner fuer Foto-Uploads, beide vom Host eingebunden
 builder.Services.AddSingleton(new AgentOptions(builder.Configuration["JULOS_AGENT_SOCKET"] ?? "/uploads/.agent/agent.sock"));

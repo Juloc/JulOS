@@ -3,6 +3,7 @@ using System.Text.Json;
 using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
 using JulOS.Backend.Services;
+using JulOS.Integrations.Display;
 
 namespace JulOS.Frontend.Auth;
 
@@ -56,12 +57,23 @@ internal static class AuthEndpoints
             return Results.Json(new LoginResponse(r.User!, r.RecoveryLeft, r.RecoveryUsed), AppJson.Default.LoginResponse);
         });
 
-        app.MapPost("/api/auth/logout", async (HttpContext ctx, AuthService auth, Files.SftpPool pool) =>
+        app.MapPost("/api/auth/logout", async (HttpContext ctx, AuthService auth, Files.SftpPool pool, ScreenRelay relay, SecurityAuditStore audit) =>
         {
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             await auth.LogoutAsync(id.Hash, ctx.RequestAborted);
             await pool.InvalidateUserAsync(id.UserId);          // die Dateien-App haelt nach dem Abmelden keine SFTP-Sitzung offen
             SessionCookie.Clear(ctx);
+            // Zuletzt, mit Frist und Fehlerbehandlung: ein haengender oder werfender Abbau eines Desktops darf Cookie und SFTP-Sitzungen nie am Enden hindern.
+            // Die erhaltenen Desktops, die dieses Geraet zuletzt hatte, enden mit seiner Abmeldung (sonst haette es die Pruefung der wartenden erst nach hoechstens 10 s gemerkt).
+            try
+            {
+                foreach (var (_, ended) in await relay.EndByAppSessionAsync(id.Id).WaitAsync(TimeSpan.FromSeconds(5)))
+                    await Remote.RemoteEndpoints.AuditKeptAsync(audit, id.UserName, "kept.end", $"{Remote.RemoteEndpoints.NameOf(ended)} · sign-out");
+            }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                ctx.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("JulOS.Kept").LogWarning("Erhaltene Sitzungen beim Abmelden nicht sauber beendet: {Type} (die Wache der wartenden beendet sie spaetestens nach 10 s)", e.GetType().Name);
+            }
             return Results.NoContent();
         });
 

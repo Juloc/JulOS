@@ -2,6 +2,7 @@ import { StreamClient } from './stream.js';
 import { MouseInput, mouseState } from './mouse.js';
 import { normalizeTb, vmSize, workRect, displayOffset } from './desktop-taskbar-geom.js';
 import { Resume } from './resume.js';
+import { reclaim, remember as rememberKept, forget as forgetKept } from './kept.js';
 import { LinkStats } from './link-health.js';
 import { isLoginError, loginStep, userOfTarget, readLogin } from './login.js';
 import { StatusBar } from './statusbar.js';
@@ -590,6 +591,19 @@ async function agent(connId, path, method = 'GET', body = null) {
   return r.json();
 }
 
+/** Die erhaltenen Sitzungen dieser Person zu einer Verbindung (kept.js ruft das auf). */
+async function keptList(connId) {
+  const r = await fetch('/api/remote/kept?conn=' + encodeURIComponent(connId), { headers: { 'X-JulOS': '1' }, cache: 'no-store', signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error('kept ' + r.status);
+  return (await r.json()).sessions || [];
+}
+/** Ein Einmal-Ticket zum Nehmen einer erhaltenen Sitzung. */
+async function keptTake(id) {
+  const r = await fetch('/api/remote/kept/take', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, signal: AbortSignal.timeout(8000), body: JSON.stringify({ id }) });
+  if (!r.ok) throw new Error('kept ' + r.status);
+  return r.json();
+}
+
 export class RemoteSession extends Session {
   constructor(conn, opts = {}) {
     super({ id: opts.sid, conn, title: opts.title });
@@ -840,7 +854,9 @@ export class RemoteSession extends Session {
     this.password = null;
     this.unmount();
   }
-  disconnect() { this.intentional = true; this.teardown(); this.setState('disconnected', t('app.stateDisconnected')); }
+  disconnect() { this.intentional = true; forgetKept(sessionStorage, this.conn.id); this.teardown(); this.setState('disconnected', t('app.stateDisconnected')); }
+  /** Die Seite wird verlassen oder neu geladen: nur die Leitung kappen, die Sitzung bleibt auf dem Server erhalten (ohne die Nachricht "beenden") und wird nach dem Laden zurueckgeholt (kept.js). */
+  leave() { this.intentional = true; this.teardown(true); }
   /** Seite war im Hintergrund oder gesperrt (Handy): die Verbindung ist danach meist tot, das Bild aber noch da. Beim Zurueckkommen neu verbinden. */
   onPageVisible(away) {
     this.applyPause();
@@ -1001,10 +1017,18 @@ export class RemoteSession extends Session {
       return this.streamFailed(t('app.errNoDecoder'));
     }
     if (stale()) return;
-    let ticket, driveMode = null, keyLayout = 'de';
+    let ticket, driveMode = null, keyLayout = 'de', tookKept = false;
     // Eine erhaltene Sitzung des Servers wieder aufnehmen: kein Ticket, kein Passwort, kein neuer Login am Ziel (der Server nimmt das Token, siehe resume.js)
     const resumeToken = this.everConnected && this.resume.usable() ? this.resume.token : null;
-    if (!resumeToken) try {
+    // Neuladen: die eigene, gerade unbeobachtete Sitzung dieser Verbindung zurueckholen (Einmal-Ticket, kein Passwort, kein neuer Login am Ziel; siehe kept.js).
+    // Nur beim ersten Aufbau dieser Sitzung, nicht bei Verbindungen mit Schwestersitzung (die gemerkte Kennung gehoert der ersten) und nicht bei Quick Connect.
+    if (!resumeToken && !this.everConnected && !this.keptTried && isScreen(this.kind) && !this.conn.quick && !this.hasSibling()) {
+      this.keptTried = true;
+      const got = await reclaim(this.conn.id, { storage: sessionStorage, sleep, list: keptList, take: keptTake });
+      if (stale()) return;
+      if (got) { ticket = got.ticket; driveMode = got.drive || null; keyLayout = got.layout || 'de'; tookKept = true; this.dbg('kept-taken', {}); }
+    }
+    if (!resumeToken && !tookKept) try {
       const acceptCert = this.acceptCert; this.acceptCert = null;      // gilt nur fuer diesen einen Versuch (siehe certDialog)
       const resp = await fetch('/api/remote/ticket', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, signal: AbortSignal.timeout(10000),
         body: JSON.stringify({ ...ticketTarget(this.conn), sid: this.id, password: this.password || undefined, username: this.loginUser, domain: this.loginDomain, width: w, height: h, acceptCert: acceptCert || undefined }) });
@@ -1022,10 +1046,10 @@ export class RemoteSession extends Session {
     }
 
     const wsBase = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
-    const client = new StreamClient(wsBase + '/api/remote/screen', keyLayout, { keysyms: this.conn.kind === 'vnc', display: prevDisplay || undefined, resumed: !!resumeToken });
+    const client = new StreamClient(wsBase + '/api/remote/screen', keyLayout, { keysyms: this.conn.kind === 'vnc', display: prevDisplay || undefined, resumed: !!resumeToken || tookKept });
     this.clipDiag.connected(); this.pasteGate.connected();
     this.wireAudio(client);
-    client.onsession = (o) => { if (this.client === client) this.resume.offered(o.token, o.keep); };
+    client.onsession = (o) => { if (this.client === client) { this.resume.offered(o.token, o.keep); if (!this.hasSibling()) rememberKept(sessionStorage, this.conn.id, o.handle); } };
     // Der Server kennt das Token nicht mehr (abgelaufen, Neustart, Sitzung dort beendet): ganz normal neu aufbauen, mit Ticket und neuem Login
     client.onresumefailed = () => {
       if (this.client !== client) return;
@@ -1092,7 +1116,7 @@ export class RemoteSession extends Session {
       const known = ERROR_TEXT[code] ? t(ERROR_TEXT[code]) : null;
       const msg = known || ((err && err.message) ? serverMsg(err.message) : t('app.errConnection'));
       this.connected = false;
-      if (code === 777) { this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); this.setState('taken', t('app.stateTaken')); return this.showOverlay(msg); }   // anderswo uebernommen: nicht zurueckholen, sonst streiten sich zwei Fenster
+      if (code === 777) { forgetKept(sessionStorage, this.conn.id); this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); this.setState('taken', t('app.stateTaken')); return this.showOverlay(msg); }   // anderswo uebernommen: nicht zurueckholen, sonst streiten sich zwei Fenster
       if (code === 797) { this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); return this.requestClose(msg); }   // Obergrenze der Sitzungen: Meldung des Servers, Sitzung zu
       if (!this.everConnected) this.requestClose(known || t('app.errCannotConnect', { msg }));
       else if (this.hasSibling()) this.takenBySibling();
@@ -2455,7 +2479,7 @@ el.pwDlg.addEventListener('close', () => { el.pwUser.value = ''; el.pwPass.value
 /* =====================================================================
  *  Start
  * ===================================================================== */
-window.addEventListener('beforeunload', () => { for (const s of Sessions.list()) { try { s.disconnect(); } catch { /* egal */ } } });
+window.addEventListener('beforeunload', () => { for (const s of Sessions.list()) { try { if (s.leave) s.leave(); else s.disconnect(); } catch { /* egal */ } } });
 // Handy gesperrt oder App im Hintergrund: die Verbindung ist danach meist tot, das Bild aber noch da. Beim Zurueckkommen sofort neu verbinden
 // (nach laengerer Pause) oder, wenn schon getrennt, ebenfalls. Kurzes Wegwischen (unter 4 s) laesst die Verbindung in Ruhe. Gilt je Sitzung.
 let hiddenAt = 0;

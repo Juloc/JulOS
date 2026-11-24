@@ -38,3 +38,9 @@ internal sealed record TicketRequest(Guid? Connection, string? Password, int? Wi
 /// <summary>Quick Connect: Ziel einer Sitzung ohne gespeicherte Verbindung (das Passwort steht im Ticket selbst und wird nirgends abgelegt).</summary>
 internal sealed record QuickTarget(string? Kind, string? Host, int? Port, string? Username);
 internal sealed record TicketResponse(string Ticket, string Kind, int Width, int Height, string Engine = "stream", string? Drive = null, string? Layout = null);
+
+/// <summary>Eine erhaltene Sitzung in der Liste (docs/SESSION-KEEP.md): nur die Kennung und was die Person selbst sehen darf, nie Host, Adresse, Ziel-Benutzer oder ein Token. Own: diese App-Sitzung hatte sie zuletzt.</summary>
+internal sealed record KeptItem(string Id, string Name, DateTimeOffset Since, DateTimeOffset? UnwatchedSince, string Device, bool Own);
+internal sealed record KeptListResponse(KeptItem[] Sessions);
+internal sealed record KeptIdRequest(string? Id);
+internal sealed record KeptTicketResponse(string Ticket, string? Layout = null, string? Drive = null);

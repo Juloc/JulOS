@@ -133,7 +133,9 @@ test('the session message hands the token and the keep time to the page', async 
   const { c } = await connected({ h264: true, hevc: false });
   let got = null; c.onsession = (o) => { got = o; };
   c.receive(sessionMessage(300, 'abc-DEF_123'));
-  assert.deepEqual(got, { keep: 300, token: 'abc-DEF_123' });
+  assert.deepEqual(got, { keep: 300, token: 'abc-DEF_123', handle: null });
+  c.receive(sessionMessage(300, 'abc-DEF_123 pub_handle-1'));            // mit der oeffentlichen Kennung dahinter (docs/SESSION-KEEP.md)
+  assert.deepEqual(got, { keep: 300, token: 'abc-DEF_123', handle: 'pub_handle-1' });
   c.disconnect(true);
 });
 

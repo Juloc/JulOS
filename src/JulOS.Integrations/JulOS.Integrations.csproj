@@ -5,6 +5,7 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="JulOS.Display.Tests" />
+    <InternalsVisibleTo Include="JulOS.Backend.Tests" />
   </ItemGroup>
   <ItemGroup>
     <!-- Nur fuer Logging-Schnittstellen; die Bibliothek kennt weder Datenbank noch Konten -->

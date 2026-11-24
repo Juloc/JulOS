@@ -15,7 +15,7 @@ internal sealed class ApiGuard(RequestDelegate next, AuthService auth)
 
     private static readonly HashSet<string> PublicPaths = new(StringComparer.Ordinal)
     {
-        "/api/health", "/api/auth/me", "/api/auth/login", "/api/setup/status", "/api/setup/begin", "/api/setup/finish",
+        "/api/health", "/api/auth/me", "/api/auth/login", "/api/auth/passkey/login/begin", "/api/auth/passkey/login/finish", "/api/setup/status", "/api/setup/begin", "/api/setup/finish",
     };
 
     public const long MaxSmallBody = 64 * 1024;
@@ -37,7 +37,10 @@ internal sealed class ApiGuard(RequestDelegate next, AuthService auth)
         {
             if (ctx.Request.Headers["X-JulOS"] != "1" || !SameOrigin(ctx.Request)) { await Reject(ctx, 403, "Anfrage abgelehnt."); return; }
             var small = ctx.Request.Path.StartsWithSegments("/api/auth") || ctx.Request.Path.StartsWithSegments("/api/setup");
-            if (small && ctx.Request.ContentLength is null or > 4096) { await Reject(ctx, 413, "Anfrage zu groß."); return; }
+            // Antworten eines Browsers auf WebAuthn sind groesser als ein Passwortformular, aber auch sie haben eine Grenze
+            var bodyMax = ctx.Request.Path.StartsWithSegments("/api/auth/passkey") || ctx.Request.Path.StartsWithSegments("/api/auth/passkeys") || ctx.Request.Path.StartsWithSegments("/api/auth/step-up/passkey") ? PasskeyEndpoints.MaxBody : 4096;
+            // ein DELETE ohne Koerper (Passkey entfernen) hat keine Laenge; wer doch einen schickt, bleibt unter der Grenze
+            if (small && ((ctx.Request.ContentLength is null && !HttpMethods.IsDelete(ctx.Request.Method)) || ctx.Request.ContentLength > bodyMax)) { await Reject(ctx, 413, "Anfrage zu groß."); return; }
             // Alles ausser den Uploads (die setzen ihre eigene Grenze) sind kleine JSON-Koerper; Kestrel erlaubt sonst 30 MB je Anfrage
             if (!LargeBodyPaths.Contains(ctx.Request.Path.Value ?? "") && ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
                 limit.MaxRequestBodySize = MaxSmallBody;
@@ -52,7 +55,7 @@ internal sealed class ApiGuard(RequestDelegate next, AuthService auth)
         // Aktionen, die Hosts, Dateien oder die Sicherheit aendern, brauchen eine frische Freigabe mit dem zweiten Faktor (Tabelle in StepUpPolicy, F-04)
         if (StepUpPolicy.Requires(ctx.Request.Method, ctx.Request.Path) && !await auth.StepUpFreshAsync(identity, ctx.RequestAborted, StepUpPolicy.Always(ctx.Request.Method, ctx.Request.Path)))
         {
-            await Reject(ctx, 403, "Bitte mit dem Code aus der Authenticator-App bestätigen.", StepUpPolicy.Code);
+            await Reject(ctx, 403, "Bitte mit dem Code aus der Authenticator-App oder mit einem Passkey bestätigen.", StepUpPolicy.Code);
             return;
         }
         await next(ctx);

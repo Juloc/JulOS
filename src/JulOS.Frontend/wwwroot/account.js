@@ -1,6 +1,7 @@
 import { qrSvg } from './qr.js';
 import { t } from './i18n.js';
 import { showDialog } from './desktop-window.js';
+import { initPasskeyList, showPasskeyHint } from './passkeys.js';
 
 /* Konto: Passwort aendern und Authenticator (TOTP) neu einrichten. Der Dialog #accountDlg steht in index.html und gilt fuer die
  * Handy-Shell (als Sheet) und die Desktop-Oberflaeche. Jede Aenderung verlangt das aktuelle Passwort; der Server beendet danach
@@ -13,6 +14,9 @@ const spaced = (secret) => secret.replace(/(.{4})/g, '$1 ').trim();
 /** Gibt die Funktion zurueck, die den Dialog oeffnet. api und setMsg kommen aus shell.js. */
 export function initAccount({ api, setMsg }) {
   const dlg = $('#accountDlg');
+  const refreshPasskeys = initPasskeyList({ api, setMsg });
+  const hintEl = $('#pkHint'), toList = () => $('#pkSection').scrollIntoView({ block: 'start' });
+  const hint = (opts = {}) => showPasskeyHint(hintEl, api, { open: toList, ...opts, done: () => { hint(); refreshPasskeys(); } });
   const steps = { main: $('#acctMain'), code: $('#totpFinishForm'), done: $('#totpDone') };
   const show = (name) => { for (const [k, el] of Object.entries(steps)) el.hidden = k !== name; };
   const busy = (form, on) => { for (const b of form.querySelectorAll('button[type=submit]')) b.disabled = on; };
@@ -40,6 +44,7 @@ export function initAccount({ api, setMsg }) {
       await api('/api/auth/password', { method: 'POST', body: { current, next } });
       form.reset();
       setMsg(msg, t('account.pwChanged'), true);
+      hint();
     } catch (err) { setMsg(msg, err.message); }
     finally { busy(form, false); }
   });
@@ -68,7 +73,7 @@ export function initAccount({ api, setMsg }) {
       const r = await api('/api/auth/totp/finish', { method: 'POST', body: { code: $('#totpCode').value } });
       $('#acctSecret').textContent = ''; $('#acctQr').replaceChildren(); form.reset();
       $('#acctRecovery').textContent = r.recovery.join('\n');
-      show('done');
+      show('done'); hint();
     } catch (err) { setMsg(msg, err.message); }
     finally { busy(form, false); }
   });
@@ -80,5 +85,6 @@ export function initAccount({ api, setMsg }) {
     catch { setMsg(msg, t('account.copyFailed')); }
   });
 
-  return () => { reset(); showDialog(dlg, { system: true, width: 480 }); };
+  // after: 'recovery' (Anmeldung mit Wiederherstellungscode: Hinweis mit Angebot, alle Passkeys zu entfernen)
+  return ({ after } = {}) => { reset(); showDialog(dlg, { system: true, width: 480 }); refreshPasskeys(); if (after === 'recovery') hint({ removeAll: true }); };
 }

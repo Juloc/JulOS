@@ -55,9 +55,10 @@ login lockout, the migration runner, the SQL access helpers, security headers an
 | Cryptographic primitives (HMAC, AES, random) | .NET base library | No hand-rolled crypto |
 | Password hash | Argon2id from one small library (Konscious), hash format versioned | Memory-hard hash is the one place where a custom version would be risky |
 | SSH client | SSH.NET (MIT) behind our `ISshSession` | A full SSH client (key exchange, ciphers, channels) is large and a crypto building block; the interface keeps it replaceable and the relay testable without a network |
+| Passkeys (WebAuthn) | Fido2 4.x (MIT) behind our `IPasskeys`; it brings NSec (libsodium, native), `System.Formats.Cbor` and `Fido2.Models` | Verifying attestation and assertions (CBOR, COSE keys, flags, signatures, counters) is protocol and crypto work that must not be hand-written; one file (`Fido2Passkeys.cs`) knows the library, see [PASSKEYS.md](PASSKEYS.md) |
 | Terminal emulator in the browser | xterm.js (MIT, vendored in `wwwroot/lib/xterm`, no CDN) | Terminal emulation (escape sequences, unicode widths, selection, scrollback, renderers) is years of work; we write the session, key mapping, touch handling and host key dialog around it |
 
-Target for runtime NuGet packages: **three** (Npgsql, the Argon2 library and SSH.NET). Test packages are separate. Versions are centralised in `Directory.Packages.props`.
+Target for runtime NuGet packages: **four** (Npgsql, the Argon2 library, SSH.NET and Fido2 with its parts NSec/libsodium, CBOR and Fido2.Models). Test packages are separate. Versions are centralised in `Directory.Packages.props`.
 
 ## Security model
 

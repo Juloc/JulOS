@@ -148,7 +148,7 @@ public sealed class OidcService(OidcAppStore apps, OidcFlowStore flow, OidcKeys 
         catch (OidcKeysUnusableException) { return Err(503, "temporarily_unavailable", "Die Anmeldung ist nicht eingerichtet."); }
         var sid = await redeem.UpsertGrantAsync(row.SessionId, app.Id, session.UserId, session.Sub, session.UserName, now, ct);
         var withProfile = row.Scope.Split(' ').Contains(OidcRules.Profile);
-        var idToken = OidcTokens.CreateIdToken(new IdTokenClaims(issuer.Value!, app.ClientId, session.Sub.ToString(), sid, now, row.AuthTime, row.Nonce, withProfile ? session.UserName : null, role),
+        var idToken = OidcTokens.CreateIdToken(new IdTokenClaims(issuer.Value!, app.ClientId, session.Sub.ToString(), sid, now, row.AuthTime, row.Nonce, withProfile ? session.UserName : null, role, session.Strength),
             signing, OidcRules.TokenLifetime);
 
         var access = OidcRules.NewCode();

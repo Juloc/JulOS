@@ -18,6 +18,9 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 ### Behoben
 - Zwei-Finger-Scrollen und Wischen verloren Rasten, wenn mehrere in einer Nachricht standen (xrdp wertet je Nachricht eine); jede Raste geht jetzt einzeln.
 
+### Hinzugefügt
+- **Passkeys** ([docs/PASSKEYS.md](docs/PASSKEYS.md)): Anmelden ohne Benutzernamen mit Fingerabdruck, Gesicht oder Geräte-PIN (Knopf auf der Anmeldeseite und Autofill im Feld für den Benutzernamen), Registrieren, Umbenennen und Entfernen in Konto (Hinzufügen und Entfernen nur mit frischem Nachweis, auch bei ausgeschaltetem Schalter), Freigabe gefährlicher Aktionen mit einem Passkey statt Code. Prüfung durch die Bibliothek Fido2 4.x (hinter `IPasskeys`; neu mit NSec/libsodium), Herausforderung 32 Byte, nur als Hash gespeichert, einmal und 5 Minuten gültig; Nutzerprüfung verlangt, keine Attestation; Zähler rückwärts lehnt ab und schreibt `passkey.clone_suspected`; Ratenlimit und Sperre je Adresse, nie je Konto. RP-Id und Ursprung kommen aus der öffentlichen Adresse der Anmelde-Zentrale. Migration 027. `amr` im ID-Token: `["hwk", "user"]` für eine Passkey-Sitzung. Die zwei Wege der Passkey-Anmeldung vor der Sitzung stehen in `RouteSecurityTests`. Neuer und entfernter Passkey gehen in den Verlauf und als Push an die Person; nach Passwortwechsel, neuem Authenticator, „andere Sitzungen beenden“ und Anmeldung mit Wiederherstellungscode zeigt die Seite „Du hast N Passkeys. Prüfe, ob alle deine sind.“ (nach dem Code mit dem Angebot, alle zu entfernen). Algorithmen ausdrücklich ES256, EdDSA, RS256; Fido2 genau 4.3.3 mit festgelegten Teilen; offene Anmelde-Herausforderungen verdrängen die ältesten statt abzulehnen. Anmeldung von einem neuen Gerät steht nur im Verlauf.
+
 ## [0.26.0] - 2026-11-24
 
 ### Neu

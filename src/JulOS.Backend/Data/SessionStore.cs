@@ -28,13 +28,14 @@ public sealed class SessionStore(NpgsqlDataSource db)
 
     private static readonly string Valid = $"s.created_at > now() - interval '{MaxDays} days' and s.last_seen > now() - interval '{IdleDays} days' and u.totp_confirmed";
 
+    /// <param name="strength">womit die Sitzung angemeldet wurde: "password" (mit Code) oder "passkey"; daraus entsteht amr im ID-Token der Anmelde-Zentrale.</param>
     /// <param name="stepUpUntil">Eine frische Anmeldung (mit Code aus der Authenticator-App) gilt zugleich als Freigabe fuer Aktionen bis zu diesem Zeitpunkt, null: keine.</param>
-    public async Task<string> CreateAsync(Guid userId, string? ip, string? userAgent, CancellationToken ct = default, DateTimeOffset? stepUpUntil = null)
+    public async Task<string> CreateAsync(Guid userId, string? ip, string? userAgent, CancellationToken ct = default, DateTimeOffset? stepUpUntil = null, string strength = "password")
     {
         var token = SessionTokens.New();
         await using var cmd = db.Cmd(
-            "insert into sessions (hash, user_id, created_at, last_seen, rotated_at, user_agent, ip, step_up_until) values ($1, $2, now(), now(), now(), $3, $4, $5)",
-            SessionTokens.Hash(token), userId, userAgent is { Length: > 120 } ? userAgent[..120] : userAgent, ip, stepUpUntil);
+            "insert into sessions (hash, user_id, created_at, last_seen, rotated_at, user_agent, ip, step_up_until, strength) values ($1, $2, now(), now(), now(), $3, $4, $5, $6)",
+            SessionTokens.Hash(token), userId, userAgent is { Length: > 120 } ? userAgent[..120] : userAgent, ip, stepUpUntil, strength);
         await cmd.ExecuteNonQueryAsync(ct);
         return token;
     }
@@ -122,6 +123,21 @@ public sealed class SessionStore(NpgsqlDataSource db)
     public async Task<int> DeleteOthersAsync(Guid userId, string keepHash, CancellationToken ct = default)
     {
         await using var cmd = db.Cmd("delete from sessions where user_id = $1 and hash <> $2", userId, keepHash);
+        return await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>Ob die Person eine Sitzung mit genau diesem Browser-Kennzeichen hat (Hinweis "neues Geraet" im Verlauf; kein Beweis, ein User-Agent ist leicht zu aendern).</summary>
+    public async Task<bool> UserAgentKnownAsync(Guid userId, string? userAgent, CancellationToken ct = default)
+    {
+        var ua = userAgent is { Length: > 120 } ? userAgent[..120] : userAgent;
+        await using var cmd = db.Cmd("select exists (select 1 from sessions where user_id = $1 and user_agent is not distinct from $2)", userId, ua);
+        return (bool)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
+    /// <summary>Beendet die Sitzungen einer Staerke (nach dem Entfernen eines Passkeys: wer ihn gestohlen hatte, ist damit nicht mehr angemeldet). <paramref name="keep"/> bleibt.</summary>
+    public async Task<int> DeleteByStrengthAsync(Guid userId, string strength, Guid keep, CancellationToken ct = default)
+    {
+        await using var cmd = db.Cmd("delete from sessions where user_id = $1 and strength = $2 and id <> $3", userId, strength, keep);
         return await cmd.ExecuteNonQueryAsync(ct);
     }
 

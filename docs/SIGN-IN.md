@@ -121,7 +121,7 @@ the account work (see IDEAS.md).
 | `auth_time` | when the **JulOS session** began (what `max_age` is measured against) |
 | `nonce` | as sent |
 | `sid` | an identifier of this JulOS session **for this app** (random, not the cookie value); the same in the logout token |
-| `amr` | `["pwd", "otp"]` (JulOS signs in with password and second factor today) |
+| `amr` | how the JulOS session began (RFC 8176): `["pwd", "otp"]` for password and second factor, `["hwk", "user"]` for a passkey (possession of a device key, user verified; no `mfa`). An app that wants a phishing-resistant sign-in checks for `hwk`; see [PASSKEYS.md](PASSKEYS.md#amr-in-the-id-token) |
 | `name`, `preferred_username` | the user name (with the `profile` scope) |
 | `role` | the person's role **in this app** |
 

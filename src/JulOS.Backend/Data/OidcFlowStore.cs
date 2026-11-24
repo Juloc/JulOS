@@ -5,7 +5,7 @@ namespace JulOS.Backend.Data;
 
 public sealed record OidcCode(Guid UserId, Guid SessionId, string RedirectUri, string CodeChallenge, string? Nonce, string Scope, DateTimeOffset AuthTime);
 
-public sealed record OidcSessionInfo(Guid UserId, string UserName, Guid Sub, DateTimeOffset AuthTime);
+public sealed record OidcSessionInfo(Guid UserId, string UserName, Guid Sub, DateTimeOffset AuthTime, string Strength = "password");
 
 public sealed record OidcAccessToken(Guid AppId, Guid UserId, Guid SessionId, string Scope);
 
@@ -108,9 +108,9 @@ public sealed class OidcFlowStore(NpgsqlDataSource db)
     /// <summary>Die JulOS-Sitzung, wenn sie gilt: wer, und wann sie begonnen hat (auth_time).</summary>
     public async Task<OidcSessionInfo?> SessionAsync(Guid sessionId, CancellationToken ct = default)
     {
-        await using var cmd = db.Cmd($"select u.id, u.name, u.oidc_sub, s.created_at from sessions s join users u on u.id = s.user_id where s.id = $1 and {Valid}", sessionId);
+        await using var cmd = db.Cmd($"select u.id, u.name, u.oidc_sub, s.created_at, s.strength from sessions s join users u on u.id = s.user_id where s.id = $1 and {Valid}", sessionId);
         await using var r = await cmd.ExecuteReaderAsync(ct);
-        return await r.ReadAsync(ct) ? new OidcSessionInfo(r.GetGuid(0), r.GetString(1), r.GetGuid(2), r.GetFieldValue<DateTimeOffset>(3)) : null;
+        return await r.ReadAsync(ct) ? new OidcSessionInfo(r.GetGuid(0), r.GetString(1), r.GetGuid(2), r.GetFieldValue<DateTimeOffset>(3), r.GetString(4)) : null;
     }
 
     /// <summary>Die "sid", die diese JulOS-Sitzung der App gegeben hat (null: noch kein Token dorthin ausgestellt oder der Grant ist beendet).</summary>

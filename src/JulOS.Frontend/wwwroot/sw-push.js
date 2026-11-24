@@ -3,12 +3,12 @@
  * des Ereignisses: kein Pfad, keine Ausgabe, kein Geheimnis. Jede Push-Nachricht zeigt eine Benachrichtigung (der Browser verlangt das). */
 const PUSH_TEXT = {
   de: {
-    rule: { security: 'Neue Sicherheitsupdates', disk: 'Platte fast voll', service: 'Dienst oder Container ausgefallen', offline: 'Agent offline', reboot: 'Neustart nötig', test: 'Testmeldung: Meldungen funktionieren' },
+    rule: { security: 'Neue Sicherheitsupdates', disk: 'Platte fast voll', service: 'Dienst oder Container ausgefallen', offline: 'Agent offline', reboot: 'Neustart nötig', test: 'Testmeldung: Meldungen funktionieren', passkey_added: 'Neuer Passkey eingerichtet', passkey_removed: 'Passkey entfernt' },
     ok: { offline: 'Agent wieder online', disk: 'Platte wieder in Ordnung', service: 'Dienst oder Container wieder in Ordnung' },
     many: (n) => `JulOS: ${n} Meldungen`, more: (n) => `und ${n} weitere`, plain: 'Neue Meldung',
   },
   en: {
-    rule: { security: 'New security updates', disk: 'Disk almost full', service: 'Service or container failed', offline: 'Agent offline', reboot: 'Restart needed', test: 'Test message: notifications work' },
+    rule: { security: 'New security updates', disk: 'Disk almost full', service: 'Service or container failed', offline: 'Agent offline', reboot: 'Restart needed', test: 'Test message: notifications work', passkey_added: 'New passkey set up', passkey_removed: 'Passkey removed' },
     ok: { offline: 'Agent back online', disk: 'Disk back to normal', service: 'Service or container back to normal' },
     many: (n) => `JulOS: ${n} messages`, more: (n) => `and ${n} more`, plain: 'New message',
   },

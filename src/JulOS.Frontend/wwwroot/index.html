@@ -19,6 +19,7 @@
   <link rel="stylesheet" href="files.css">
   <link rel="stylesheet" href="editor.css">
   <link rel="stylesheet" href="alerts.css">
+  <link rel="stylesheet" href="passkeys.css">
   <link rel="stylesheet" href="touch.css">
   <title>JulOS</title>
 </head>
@@ -75,7 +76,7 @@
         <h1>JulOS</h1>
         <p class="sub" data-i18n="app.signIn">Anmelden</p>
         <label data-i18n="app.username">Benutzername
-          <input id="loginUser" name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required>
+          <input id="loginUser" name="username" type="text" autocomplete="username webauthn" autocapitalize="none" autocorrect="off" spellcheck="false" required>
         </label>
         <label data-i18n="app.password">Passwort
           <input id="loginPw" name="password" type="password" autocomplete="current-password" required>
@@ -84,6 +85,8 @@
           <input id="loginCode" type="text" autocomplete="one-time-code" autocapitalize="none" autocorrect="off" spellcheck="false" required>
         </label>
         <button id="loginBtn" type="submit" class="primary" data-i18n="app.signIn">Anmelden</button>
+        <div id="loginPasskeyOr" hidden><span data-i18n="pk.or">oder</span></div>
+        <button id="loginPasskey" type="button" class="ghost" hidden data-i18n="pk.signIn">Mit Passkey anmelden</button>
         <p id="loginMsg" class="msg" role="alert"></p>
       </form>
     </section>
@@ -331,6 +334,7 @@
       <h2 data-i18n="app.devices">Geräte und Sitzungen</h2>
       <div id="devicesList" class="devlist"></div>
       <p id="devicesMsg" class="msg" role="alert"></p>
+      <p id="devicesPkHint" class="msg warn pk-hint" role="alert" hidden></p>
       <div class="row">
         <button id="logoutOthers" type="button" class="danger" data-i18n="app.signOutOthers">Alle anderen abmelden</button>
         <button class="ghost close" data-act="close" type="button" data-i18n="common.close">Schließen</button>
@@ -352,6 +356,7 @@
         <label data-i18n="app.codeFromApp">Code aus der App <input id="suCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="24" required></label>
         <p class="hint" data-i18n="su.hint">Jeder Code gilt nur einmal. Wurde er eben schon benutzt, warte auf den nächsten.</p>
         <div class="dlg-btns"><button type="submit" class="primary" data-i18n="su.confirm">Bestätigen</button><button id="suCancel" type="button" class="ghost" data-i18n="common.cancel">Abbrechen</button></div>
+        <button id="suPasskey" type="button" class="ghost" hidden data-i18n="pk.stepUp">Stattdessen mit Passkey bestätigen</button>
         <p id="suMsg" class="msg" role="alert"></p>
       </form>
     </dialog>
@@ -367,6 +372,18 @@
     <dialog id="accountDlg">
       <h2 data-i18n="app.account">Konto</h2>
       <div id="acctMain">
+        <p id="pkHint" class="msg warn pk-hint" role="alert" hidden></p>
+        <div id="pkSection">
+          <h3 data-i18n="pk.title">Passkeys</h3>
+          <p class="hint" data-i18n="pk.hint">Mit einem Passkey meldest du dich ohne Passwort und Code an: Fingerabdruck, Gesicht oder Geräte-PIN genügen. Passwort mit Authenticator-App bleibt als zweiter Weg.</p>
+          <ul id="pkList"></ul>
+          <p id="pkNote" class="hint"></p>
+          <form id="pkForm" autocomplete="off" hidden>
+            <label data-i18n="pk.nameLabel">Name für den neuen Passkey <input id="pkName" type="text" maxlength="60" data-i18n-placeholder="pk.defaultName" placeholder="Dieses Gerät"></label>
+            <div class="dlg-btns"><button type="submit" class="primary" data-i18n="pk.add">Passkey hinzufügen</button></div>
+          </form>
+          <p id="pkMsg" class="msg" role="alert"></p>
+        </div>
         <h3 data-i18n="app.changePassword">Passwort ändern</h3>
         <form id="pwForm" autocomplete="on">
           <label data-i18n="app.currentPassword">Aktuelles Passwort <input id="pwCur" type="password" autocomplete="current-password" required></label>

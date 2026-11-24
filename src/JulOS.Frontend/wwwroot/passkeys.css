@@ -1,0 +1,21 @@
+/* Passkeys (passkeys.js): Anmeldeseite und Liste im Konto-Dialog */
+#loginPasskeyOr { display: flex; align-items: center; gap: 12px; margin: 14px 0 10px; font-size: .85em; opacity: .7; }
+#loginPasskeyOr::before, #loginPasskeyOr::after { content: ''; flex: 1; height: 1px; background: currentColor; opacity: .3; }
+#loginPasskey { width: 100%; min-height: 44px; }
+#pkSection { margin-bottom: 8px; }
+#pkSection h3 { margin-top: 4px; }
+#pkList { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+#pkList .pk-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; border-radius: 12px; background: var(--md-surface-high, rgba(128,128,128,.15)); }
+#pkList .pk-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+#pkList .pk-name { font-weight: 600; overflow-wrap: anywhere; }
+#pkList .pk-meta { font-size: .82em; opacity: .75; }
+#pkList .pk-acts { display: flex; gap: 6px; flex: none; }
+#pkList .pk-act { min-height: 36px; padding: 0 12px; }
+#pkList .pk-edit { width: 100%; min-height: 36px; }
+#pkList .danger { color: var(--md-error, #b3261e); border-color: currentColor; }
+#pkForm { margin-top: 8px; }
+#pkNote:empty { display: none; }
+#suPasskey { margin-top: 6px; }
+@media (max-width: 480px) { #pkList .pk-row { flex-direction: column; align-items: stretch; } #pkList .pk-acts { justify-content: flex-end; } }
+.pk-hint { display: block; margin: 8px 0; padding: 8px 12px; border-radius: 12px; background: var(--md-surface-high, rgba(128,128,128,.15)); }
+.pk-hint .pk-act { margin: 4px 6px 0 0; min-height: 36px; padding: 0 12px; }

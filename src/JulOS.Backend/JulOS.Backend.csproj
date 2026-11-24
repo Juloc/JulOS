@@ -13,6 +13,7 @@
     <PackageReference Include="Npgsql" />
     <PackageReference Include="Konscious.Security.Cryptography.Argon2" />
     <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" />
+    <PackageReference Include="Fido2" />
   </ItemGroup>
   <ItemGroup>
     <!-- Die SQL-Migrationen liegen im Ordner database/ und werden in die Bibliothek eingebettet -->

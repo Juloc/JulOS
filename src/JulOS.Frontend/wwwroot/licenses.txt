@@ -64,6 +64,7 @@ libva (VA-API, Ubuntu-Pakete libva2 und libva-drm2, zur Laufzeit geladen, fuer d
 Intel Media Driver (Ubuntu-Paket intel-media-va-driver, Treiber fuer Intel-Grafikkarten), MIT License und BSD 3-Clause License, Intel Corporation.
 Npgsql (PostgreSQL-Treiber fuer .NET), PostgreSQL License.
 Konscious.Security.Cryptography.Argon2 (Passwort-Hash), MIT License.
+Fido2 und Fido2.Models (Pruefung von Passkeys, WebAuthn), MIT License, Fido2-Mitwirkende; darin NSec.Cryptography (MIT License, Klaus Hartke) mit libsodium (ISC License, Frank Denis und Mitwirkende, als native Bibliothek aus dem NuGet-Paket libsodium) und System.Formats.Cbor (MIT License, .NET Foundation und Mitwirkende); Microsoft.Extensions.Http und Microsoft.IdentityModel.JsonWebTokens (MIT License, Microsoft).
 .NET und ASP.NET Core (Laufzeit), MIT License, .NET Foundation und Mitwirkende.
 PostgreSQL (Datenbank, getrennter Container), PostgreSQL License.
 CodeMirror 6 (Editor der Dateien-App: @codemirror/state, view, commands, language, search, lint, autocomplete, lang-yaml, lang-json, lang-markdown, lang-javascript, lang-python, lang-xml, legacy-modes und die Parser @lezer/*), MIT License, Marijn Haverbeke und Mitwirkende; js-yaml (YAML-Pruefung), MIT License, Vitaly Puzrin und Mitwirkende. Mitgeliefert als vorgebaute Dateien in vendor/codemirror/ (Quelle, Versionen, Pruefsummen: vendor/README.md; die Lizenztexte aller Pakete: vendor/codemirror/6.43.15/LICENSE.txt).

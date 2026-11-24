@@ -6,7 +6,7 @@ using Microsoft.IdentityModel.Tokens;
 namespace JulOS.Backend.Logic;
 
 /// <summary>Was ein ID-Token sagt (docs/SIGN-IN.md, Ansprueche).</summary>
-public sealed record IdTokenClaims(string Issuer, string ClientId, string Subject, string Sid, DateTimeOffset IssuedAt, DateTimeOffset AuthTime, string? Nonce, string? Name, string Role);
+public sealed record IdTokenClaims(string Issuer, string ClientId, string Subject, string Sid, DateTimeOffset IssuedAt, DateTimeOffset AuthTime, string? Nonce, string? Name, string Role, string Strength = "password");
 
 /// <summary>Was ein Logout-Token sagt (OIDC Back-Channel Logout 1.0).</summary>
 public sealed record LogoutTokenClaims(string Issuer, string ClientId, string Subject, string Sid, DateTimeOffset IssuedAt, string Jti);
@@ -41,7 +41,7 @@ public static class OidcTokens
             w.WriteNumber("auth_time", c.AuthTime.ToUnixTimeSeconds());
             if (c.Nonce is not null) w.WriteString("nonce", c.Nonce);
             w.WriteString("sid", c.Sid);
-            w.WriteStartArray("amr"); w.WriteStringValue("pwd"); w.WriteStringValue("otp"); w.WriteEndArray();
+            w.WriteStartArray("amr"); foreach (var m in PasskeyRules.Amr(c.Strength)) w.WriteStringValue(m); w.WriteEndArray();
             if (c.Name is not null) { w.WriteString("name", c.Name); w.WriteString("preferred_username", c.Name); }
             w.WriteString("role", c.Role);
         });

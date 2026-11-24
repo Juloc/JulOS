@@ -205,9 +205,10 @@ test('5 Natives SSH-Terminal zeigt eine Eingabeaufforderung und führt Befehle a
 
 test('6 Handy- und Desktop-Oberfläche laden ohne Konsolenfehler', async ({ browser }) => {
   const checks = [
-    { name: 'phone', url: '/?phone', options: PHONE, root: '#mobile', tile: '#mobile [data-conn]', before: (page) => page.locator('#mobile').getByText('Verbindungen', { exact: true }).last().click() },
+    { name: 'phone', url: '/?phone', options: PHONE, root: '#mobile', tile: '#mobile [data-conn]:visible', before: (page) => page.locator('#mobile').getByText('Verbindungen', { exact: true }).last().click() },
     { name: 'desktop', url: '/?desktop', options: DESKTOP, root: '#desktop', tile: '#desktop .dk-tile' },
   ];
+  // The phone's Home page can hold a tile of the same connection (a desktop kept from an earlier test is "live" there): take the visible one.
   for (const c of checks) {
     const { context, page, errors } = await signedIn(browser, c.options);
     await page.goto(c.url);

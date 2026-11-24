@@ -74,9 +74,11 @@ public sealed class AgentLinks(ILogger<AgentLinks> log)
         try { await link.LoopAsync(ct).ConfigureAwait(false); }
         finally
         {
-            _links.TryRemove(new KeyValuePair<Guid, AgentLink>(hostId, link));
-            log.LogInformation("Agent-Link {Host}: getrennt", hostId);
-            try { await touch(new AgentInfo(null, null)).ConfigureAwait(false); } catch (Exception e) when (e is not OutOfMemoryException) { /* nur Anzeigewert */ }
+            // Hat inzwischen eine neue Verbindung desselben Agenten uebernommen (die alte war halbtot), ist es nicht mehr "getrennt": die neue behaelt ihren Zustand
+            var current = _links.TryRemove(new KeyValuePair<Guid, AgentLink>(hostId, link));
+            log.LogInformation("Agent-Link {Host}: getrennt{Replaced}", hostId, current ? "" : " (durch eine neue Verbindung ersetzt)");
+            if (current)
+                try { await touch(new AgentInfo(null, null)).ConfigureAwait(false); } catch (Exception e) when (e is not OutOfMemoryException) { /* nur Anzeigewert */ }
         }
     }
 }

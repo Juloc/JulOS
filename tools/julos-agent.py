@@ -42,7 +42,7 @@ if sys.version_info < MIN_PYTHON:
 import argparse, base64, hashlib, hmac, http.client, http.server, json, logging, logging.handlers, os, queue, random, re, shutil, signal, socket, socketserver, ssl, stat, struct, subprocess, tempfile, threading, time
 import urllib.error, urllib.parse, urllib.request
 
-AGENT_VERSION = "0.9.0"      # der Server lehnt aeltere ab (AgentLinks.MinAgentVersion); ab 0.4.0 aktualisiert er sich auf Anweisung selbst; ab 0.5.0 gibt es den Host-Modus; ab 0.6.0 Schreib-Aktionen; ab 0.7.0 beantwortet auch der Desktop-Agent die Host-Anfragen (hello: caps desktop/host); ab 0.8.0 Dateien als root (Wort files-root, /v1/host/files/*)
+AGENT_VERSION = "0.9.1"      # der Server lehnt aeltere ab (AgentLinks.MinAgentVersion); ab 0.4.0 aktualisiert er sich auf Anweisung selbst; ab 0.5.0 gibt es den Host-Modus; ab 0.6.0 Schreib-Aktionen; ab 0.7.0 beantwortet auch der Desktop-Agent die Host-Anfragen (hello: caps desktop/host); ab 0.8.0 Dateien als root (Wort files-root, /v1/host/files/*); ab 0.9.1 erkennt der Agent eine tote Verbindung in rund 10 s (Ping alle 5 s, Frist 10 s, hello: hb) und verbindet mit zufaellig gestreutem Abstand neu
 API_VERSION = 1
 PLATFORM = "linux-x11"         # im Host-Modus "linux-host" (HOST_PLATFORM)
 HOST_PLATFORM = "linux-host"
@@ -2286,8 +2286,29 @@ def serve():
 
 # ---------------------------------------------------------------- WebSocket-Client (RFC 6455, nur was gebraucht wird)
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-IDLE_S = 75                  # so lange darf der Server schweigen (er pingt alle 30 s)
-HEARTBEAT_S = 20
+DEAD_S = 10                  # so lange darf der Server schweigen: der Agent pingt alle HEARTBEAT_S, die Antwort (Pong) kommt binnen Sekundenbruchteilen; ohne sie ist die Leitung tot
+HEARTBEAT_S = 5              # Ping und "hb" (der Server haelt eine Verbindung ohne Meldung des Agenten nach drei Takten fuer tot, siehe hello: hb)
+
+
+def enable_keepalive(sock):
+    """TCP-Keepalive, wo das System es kann: das Betriebssystem erkennt eine tote Leitung dann selbst (nach rund 25 s), auch wenn der Agent gerade nichts liest."""
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        for name, value in (("TCP_KEEPIDLE", 10), ("TCP_KEEPINTVL", 5), ("TCP_KEEPCNT", 3)):
+            opt = getattr(socket, name, None)
+            if opt is not None:
+                sock.setsockopt(socket.IPPROTO_TCP, opt, value)
+    except OSError:
+        pass                                   # nicht jedes System erlaubt es: dann bleibt es bei Ping und Frist
+
+
+def reconnect_delay(previous, lived, uniform=random.uniform):
+    """Pause vor dem naechsten Verbindungsversuch: (neuer Grundwert, Schlaf in Sekunden). Nach einer langen Verbindung (ein Abriss des Netzes) kurz und zufaellig gestreut,
+    damit nicht alle Agenten, die zugleich getrennt wurden, zugleich anklopfen; sonst wachsend bis 60 s (Server weg), ebenfalls gestreut."""
+    if lived > 30:
+        return 2, uniform(0.3, 2.5)
+    base = min(previous * 2, 60)
+    return base, base * uniform(0.7, 1.3)
 
 
 class WsError(Exception):
@@ -2329,6 +2350,7 @@ class WsClient:
             raise WsError("unverschluesselte Verbindung abgelehnt")
         port = u.port or (443 if tls else 80)
         raw = socket.create_connection((u.hostname, port), timeout=15)
+        enable_keepalive(raw)
         try:
             # Zertifikat und Name werden mit den System-Zertifikaten geprueft (kein "unsicher"-Schalter)
             sock = ssl.create_default_context().wrap_socket(raw, server_hostname=u.hostname) if tls else raw
@@ -2353,7 +2375,7 @@ class WsClient:
             want = base64.b64encode(hashlib.sha1((key + WS_GUID).encode()).digest()).decode()
             if hdrs.get("sec-websocket-accept") != want:
                 raise WsError("Antwort des Servers gehoert nicht zu dieser Anfrage")
-            sock.settimeout(IDLE_S)
+            sock.settimeout(DEAD_S)
             return cls(sock, rest)
         except BaseException:
             raw.close()
@@ -2619,15 +2641,15 @@ class Link:
             if nap:
                 time.sleep(nap); nap = 0
                 continue
-            delay = 2 if time.time() - started > 30 else min(delay * 2, 60)       # nach langer Verbindung sofort wieder, sonst langsamer
-            time.sleep(delay * random.uniform(0.7, 1.3))
+            delay, nap_s = reconnect_delay(delay, time.time() - started)       # nach langer Verbindung gleich wieder (gestreut), sonst langsamer
+            time.sleep(nap_s)
 
     def session(self):
         ws = WsClient.connect(self.cfg["server"], {"Authorization": "Bearer " + self.cfg["token"]}, bool(self.cfg.get("allow_http")))
         self.ws = ws
         try:
             extra = self.hello_extra() if callable(self.hello_extra) else (self.hello_extra or {})
-            ws.send_text(json.dumps({"t": "hello", "agent": AGENT_VERSION, "platform": PLATFORM, "api": API_VERSION, **host_info(), **extra}))
+            ws.send_text(json.dumps({"t": "hello", "agent": AGENT_VERSION, "platform": PLATFORM, "api": API_VERSION, "hb": HEARTBEAT_S, **host_info(), **extra}))
             stop = threading.Event()
             threading.Thread(target=self.heartbeat, args=(ws, stop), daemon=True).start()
             try:
@@ -2646,6 +2668,7 @@ class Link:
         while not stop.wait(HEARTBEAT_S):
             try:
                 ws.send_text('{"t":"hb"}')
+                ws.send_frame(0x9)             # WebSocket-Ping: der Server antwortet gleich mit Pong, das hebt die Frist DEAD_S an (ohne Antwort endet der Empfang mit "Server antwortet nicht")
             except OSError:
                 return
 

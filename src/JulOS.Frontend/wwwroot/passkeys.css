@@ -2,7 +2,8 @@
 #loginPasskeyOr { display: flex; align-items: center; gap: 12px; margin: 14px 0 10px; font-size: .85em; opacity: .7; }
 #loginPasskeyOr::before, #loginPasskeyOr::after { content: ''; flex: 1; height: 1px; background: currentColor; opacity: .3; }
 #loginPasskey { width: 100%; min-height: 44px; }
-#pkSection h3 { margin-top: 20px; }
+#pkSection { margin-bottom: 8px; }
+#pkSection h3 { margin-top: 4px; }
 #pkList { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 #pkList .pk-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; border-radius: 12px; background: var(--md-surface-high, rgba(128,128,128,.15)); }
 #pkList .pk-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }

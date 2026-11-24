@@ -4,6 +4,7 @@ using JulOS.Backend.Data;
 using JulOS.Integrations;
 using JulOS.Integrations.Display;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using static JulOS.Backend.Tests.ApiKit;
 
 namespace JulOS.Backend.Tests;
@@ -137,8 +138,11 @@ public sealed class RemoteKeptTests
         var t3 = await Ticket(me);
         Assert.Equal(handle, tickets.Redeem(t3, me.User, me.App)!.Kept!.Handle);        // richtige Person, richtige App-Sitzung: einmal
         Assert.Null(tickets.Redeem(t3, me.User, me.App));
-        // das Ticket der neuen Sitzungsart ist keine Verbindung: der Weg fuer neue Sitzungen darf damit nie ein Ziel bekommen
-        Assert.All([t1, t2, t3], t => Assert.Null(tickets.Take(t, me.User)));
+        // das Ticket der neuen Art ist fuer den Weg neuer Sitzungen ungueltig (und verbraucht): es bekommt dort nie ein Ziel, auch kein leeres
+        Assert.Null(tickets.Take(await Ticket(me), me.User));
+        var t5 = await Ticket(me);
+        Assert.Null(tickets.Take(t5, me.User));
+        Assert.Null(tickets.Redeem(t5, me.User, me.App));
     }
 
     [Fact]
@@ -227,5 +231,124 @@ public sealed class RemoteKeptTests
         await Assert.ThrowsAnyAsync<Exception>(() => again.ConnectAsync(new Uri("ws://localhost/api/remote/screen?ticket=" + ticket), CancellationToken.None));
         await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
         _ = got;
+    }
+
+    [Fact]
+    public async Task A_session_that_is_watched_cannot_be_taken_from_another_app_session_but_can_from_the_same_one()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db);
+        var c = app.Http();
+        var laptop = await FirstAsync(app, c, db);
+        var thief = await SecondSessionAsync(app, laptop.User);
+        var relay = app.Services.GetRequiredService<ScreenRelay>();
+        var watched = Add(app, laptop, Guid.NewGuid(), watched: true);
+
+        var denied = await c.SendAsync(Req(HttpMethod.Post, "/api/remote/kept/take", thief.Cookie, new { id = watched }));
+        Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode);
+        var unknown = await c.SendAsync(Req(HttpMethod.Post, "/api/remote/kept/take", thief.Cookie, new { id = "gibtsnicht0123456789" }));
+        Assert.Equal(await unknown.Content.ReadAsStringAsync(), await denied.Content.ReadAsStringAsync());      // wie unbekannt
+        Assert.Equal(AppOf(laptop), relay.FindKept(laptop.User, watched)!.AppSession);                         // der Betrachter bleibt
+        Assert.Null(relay.FindKept(laptop.User, watched)!.UnwatchedSince);
+        Assert.Equal(2, await db.ScalarAsync<long>("select count(*) from security_audit where event = 'kept.take_denied'"));
+
+        // dieselbe App-Sitzung (ein Neuladen, dessen alter Socket noch nicht als weg erkannt ist) darf
+        Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Req(HttpMethod.Post, "/api/remote/kept/take", laptop.Cookie, new { id = watched }))).StatusCode);
+
+        static Guid AppOf(Who w) => w.App;
+    }
+
+    [Fact]
+    public async Task Denied_takes_write_only_a_few_history_entries_per_minute()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db);
+        var c = app.Http();
+        var me = await FirstAsync(app, c, db);
+        for (var i = 0; i < 12; i++) await c.SendAsync(Req(HttpMethod.Post, "/api/remote/kept/take", me.Cookie, new { id = "gibtsnicht" + i }));
+        Assert.Equal(3, await db.ScalarAsync<long>("select count(*) from security_audit where event = 'kept.take_denied'"));
+    }
+
+    [Fact]
+    public async Task Two_parallel_redemptions_of_one_ticket_let_exactly_one_through()
+    {
+        var tickets = new ScreenTickets(TimeProvider.System);
+        var user = Guid.NewGuid(); var app = Guid.NewGuid();
+        for (var round = 0; round < 20; round++)
+        {
+            var ticket = tickets.CreateKept(user, new KeptTake("h", app))!;
+            var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => Task.Run(() => tickets.Redeem(ticket, user, app))));
+            Assert.Equal(1, results.Count(r => r is not null));
+        }
+    }
+
+    [Fact]
+    public async Task A_failing_teardown_of_a_kept_desktop_never_keeps_the_cookie_alive_on_sign_out()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db);
+        var c = app.Http();
+        var me = await FirstAsync(app, c, db);
+        app.Services.GetRequiredService<ScreenRelay>().AddKeptForTests(me.User, new KeptInfo(Guid.NewGuid(), "S", "d"), me.App, false, run: Task.FromException(new InvalidCastException("Abbau kaputt")));
+
+        var res = await c.SendAsync(Req(HttpMethod.Post, "/api/auth/logout", me.Cookie, new { }));
+        Assert.Equal(HttpStatusCode.NoContent, res.StatusCode);
+        Assert.Contains(res.Headers.GetValues("Set-Cookie"), v => v.StartsWith("julos_sid=;") || v.StartsWith("julos_sid=,") || v.Contains("julos_sid=; "));      // das Cookie wird geloescht
+        Assert.False(await app.Services.GetRequiredService<SessionStore>().IsAliveAsync(me.App));                                                      // und die Sitzung ist weg
+    }
+
+    [Fact]
+    public async Task Without_room_the_oldest_waiting_session_ends_instead_of_refusing_the_new_one_and_watched_ones_are_never_evicted()
+    {
+        var owner = Guid.NewGuid(); var info = new KeptInfo(Guid.NewGuid(), "S", "d");
+        var reasons = new List<string>();
+        using var relay = new ScreenRelay(NullLogger<ScreenRelay>.Instance, registry: new SessionRegistry(3), keep: TimeSpan.FromSeconds(60)) { KeptEnded = (k, why) => { reasons.Add(why); return Task.CompletedTask; } };
+        var watched = relay.AddKeptForTests(owner, info, Guid.NewGuid(), watched: true);
+        var oldest = relay.AddKeptForTests(owner, info, Guid.NewGuid(), watched: false);
+        await Task.Delay(30);
+        var newer = relay.AddKeptForTests(owner, info, Guid.NewGuid(), watched: false);
+
+        var lease = await relay.OpenLeaseAsync(owner, "slot-new", () => { });
+        Assert.NotNull(lease);
+        Assert.Null(relay.FindKept(owner, oldest));                 // die am laengsten wartende musste gehen
+        Assert.NotNull(relay.FindKept(owner, newer));
+        Assert.NotNull(relay.FindKept(owner, watched));
+        Assert.Equal(["limit"], reasons);
+
+        // jetzt ist ausser der wartenden `newer` alles belegt: sie geht auch; danach gibt es nur noch die angesehene, und die wird nie verdraengt
+        Assert.NotNull(await relay.OpenLeaseAsync(owner, "slot-new-2", () => { }));
+        Assert.Null(await relay.OpenLeaseAsync(owner, "slot-new-3", () => { }));
+        Assert.NotNull(relay.FindKept(owner, watched));
+    }
+
+    [Fact]
+    public async Task At_most_four_sessions_per_person_wait_the_oldest_goes_first()
+    {
+        var owner = Guid.NewGuid(); var info = new KeptInfo(Guid.NewGuid(), "S", "d");
+        using var relay = new ScreenRelay(NullLogger<ScreenRelay>.Instance, keep: TimeSpan.FromSeconds(60));
+        var handles = new List<string>();
+        for (var i = 0; i < 5; i++) { handles.Add(relay.AddKeptForTests(owner, info, Guid.NewGuid(), watched: false)); await Task.Delay(30); }
+        var until = DateTime.UtcNow.AddSeconds(10);
+        while (relay.FindKept(owner, handles[0]) is not null && DateTime.UtcNow < until) await Task.Delay(50);
+        Assert.Null(relay.FindKept(owner, handles[0]));
+        Assert.All(handles.Skip(1), h => Assert.NotNull(relay.FindKept(owner, h)));
+        Assert.Equal(ScreenRelay.MaxUnwatchedPerUser, relay.DetachedCount);
+    }
+
+    [Fact]
+    public async Task Signing_out_everywhere_ends_a_waiting_desktop_within_the_ten_second_check()
+    {
+        await using var db = await TestDb.CreateAsync();
+        await using var app = new Server(db);
+        var c = app.Http();
+        var me = await FirstAsync(app, c, db);
+        var sessions = app.Services.GetRequiredService<SessionStore>();
+        var relay = app.Services.GetRequiredService<ScreenRelay>();
+        var handle = relay.AddKeptForTests(me.User, new KeptInfo(Guid.NewGuid(), "S", "d"), me.App, false, alive: ct => sessions.IsAliveAsync(me.App, ct));
+
+        await sessions.DeleteAllAsync(me.User);                     // "ueberall abmelden", Passwortwechsel, Authenticator ersetzt: alle loeschen die Zeilen
+        var until = DateTime.UtcNow.AddSeconds(15);
+        while (relay.FindKept(me.User, handle) is not null && DateTime.UtcNow < until) await Task.Delay(100);
+        Assert.Null(relay.FindKept(me.User, handle));
     }
 }

@@ -18,8 +18,8 @@ public sealed record ScreenTarget(RdpOptions Options, string? Slot = null, int M
     public static ScreenTarget ForVnc(VncOptions vnc, string? slot = null, int maxKilobitsPerSecond = 16_000, CertificateTrust? trust = null) => new(new RdpOptions { Host = vnc.Host, Port = vnc.Port }, slot, maxKilobitsPerSecond, trust, null, vnc);
 }
 
-/// <summary>Was die Liste der erhaltenen Sitzungen ueber eine Sitzung weiss: die Verbindung, ihr Name (wie die Person ihn vergeben hat) und das Geraet (kurzer Text aus dem Browser); Layout und Drive (ro/rw) nur, damit die Seite beim Nehmen dasselbe weiss wie nach einem Ticket. Nie Host, Adresse oder Ziel-Benutzer.</summary>
-public sealed record KeptInfo(Guid ConnectionId, string ConnectionName, string Device, string? Layout = null, string? Drive = null);
+/// <summary>Was die Liste der erhaltenen Sitzungen ueber eine Sitzung weiss: die Verbindung, ihr Name (wie die Person ihn vergeben hat) und das Geraet (kurzer Text aus dem Browser); Layout und Drive (ro/rw) nur, damit die Seite beim Nehmen dasselbe weiss wie nach einem Ticket. Nie Host, Adresse oder Ziel-Benutzer. User: der Name der Person fuer den Verlauf (nie angezeigt). Quick Connect hat keine Info (der Name waere der Host): solche Sitzungen stehen in keiner Liste.</summary>
+public sealed record KeptInfo(Guid ConnectionId, string ConnectionName, string Device, string? Layout = null, string? Drive = null, string User = "");
 
 /// <summary>Eine erhaltene Sitzung nehmen: ihre oeffentliche Kennung und die App-Sitzung, die danach gefragt hat (nur diese darf das Ticket einloesen).</summary>
 public sealed record KeptTake(string Handle, Guid AppSession);
@@ -39,9 +39,12 @@ public sealed class ScreenTickets(TimeProvider time) : Tickets<ScreenTarget>(tim
     /// Loest ein Ticket am WebSocket ein (einmal, nur die Person, nicht abgelaufen). Ein Ticket zum Nehmen gilt zusaetzlich nur fuer die App-Sitzung, die es geholt hat:
     /// ein anderes Geraet derselben Person mit demselben Ticket bekommt null (das Ticket ist dann trotzdem verbraucht).
     /// </summary>
+    /// <summary>Wie <see cref="Tickets{T}.Take"/>, aber nur fuer neue Sitzungen: ein Ticket zum Nehmen ist fuer diesen Weg ungueltig (und verbraucht), es geht nur ueber <see cref="Redeem"/>.</summary>
+    public new ScreenTarget? Take(string ticket, Guid userId) => base.Take(ticket, userId) is { Kept: null } target ? target : null;
+
     public ScreenTarget? Redeem(string ticket, Guid userId, Guid appSession)
     {
-        var target = Take(ticket, userId);
+        var target = base.Take(ticket, userId);
         return target?.Kept is { } k && k.AppSession != appSession ? null : target;
     }
 }

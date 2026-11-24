@@ -271,6 +271,7 @@ public sealed class ScreenRelayKeepTests
         var second = Browser.Create();
         var run2 = relay.RunAsync(second.Server, null, Alive, CancellationToken.None, owner: owner, resume: token);
         await second.UntilAsync(IsKeyPicture, cts.Token);
+        await first.UntilAsync(m => m[0] == ScreenProtocol.ToBrowserTaken, cts.Token);      // der abgeloeste Betrachter erfaehrt es ("uebernommen"), sonst gaebe es Ping-Pong
         await run1.WaitAsync(Wait);
         Assert.Equal(0, relay.DetachedCount);
 

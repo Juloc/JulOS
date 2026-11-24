@@ -35,12 +35,15 @@ internal static class RemoteEndpoints
     internal static bool ValidLoginPart(string? value) => value is null || (value.Length <= 256 && !value.Any(char.IsControl));
 
     /// <summary>Kurzer Text fuer den Verlauf: seit wie vielen Minuten niemand zusieht (oder dass jemand zusieht). Kein Geheimnis.</summary>
+    /// <summary>Der Name fuer den Verlauf: der der Verbindung, bei Quick Connect (dort waere es der Host) ein neutraler Text.</summary>
+    internal static string NameOf(ScreenRelay.KeptSession k) => k.Name.Length == 0 ? "Quick Connect" : k.Name;
+
     private static string Minutes(ScreenRelay.KeptSession k) => k.UnwatchedSince is { } since ? $"{(int)(DateTimeOffset.UtcNow - since).TotalMinutes} min unwatched" : "watched";
 
     /// <summary>Eintrag im Verlauf der Sicherheit (docs/SESSION-KEEP.md): kurzer Code, Verbindungsname, Geraet, Minuten; nie ein Token, eine Kennung oder ein Ziel. Ein Fehler beim Schreiben stoppt nichts.</summary>
-    internal static async Task AuditKeptAsync(SecurityAuditStore audit, SessionIdentity who, string evt, string? detail)
+    internal static async Task AuditKeptAsync(SecurityAuditStore audit, string user, string evt, string? detail)
     {
-        try { await audit.AddAsync(who.UserName, evt, detail, CancellationToken.None); }
+        try { await audit.AddAsync(user, evt, detail, CancellationToken.None); }
         catch (Exception e) when (e is not OutOfMemoryException) { /* der Verlauf ist kein Grund, die Sitzung zu blockieren */ }
     }
 
@@ -113,7 +116,7 @@ internal static class RemoteEndpoints
                 if (!ScreenStream.IsAvailable) return Error(503, "Die Bildübertragung ist auf diesem Server nicht verfügbar: " + ScreenStream.UnavailableReason);
                 var vncTrust = new CertificateTrust(c.CertFingerprint, body.AcceptCert, saveCert);
                 var vnc = new VncOptions { Host = c.Host, Port = c.Port, Password = password, UserName = string.IsNullOrWhiteSpace(body.Username) ? loginUser : body.Username.Trim(), CertificateCheck = vncTrust.Check };
-                var vncTicket = screenTickets.Create(id.UserId, ScreenTarget.ForVnc(vnc, SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid), trust: vncTrust) with { Info = new KeptInfo(c.Id, c.Name, DeviceLabel.From(ctx.Request.Headers.UserAgent), KeyboardLayouts.ClientKey(KeyboardLayouts.Default)) });
+                var vncTicket = screenTickets.Create(id.UserId, ScreenTarget.ForVnc(vnc, SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid), trust: vncTrust) with { Info = body.Quick is null ? new KeptInfo(c.Id, c.Name, DeviceLabel.From(ctx.Request.Headers.UserAgent), KeyboardLayouts.ClientKey(KeyboardLayouts.Default), User: id.UserName) : null });
                 var vw = Math.Clamp(body.Width ?? 900, 400, 4096) & ~1;
                 var vh = Math.Clamp(body.Height ?? 1600, 300, 4096) & ~1;
                 return vncTicket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(vncTicket, c.Kind, vw, vh, "stream", null, KeyboardLayouts.ClientKey(KeyboardLayouts.Default)), AppJson.Default.TicketResponse);
@@ -133,7 +136,7 @@ internal static class RemoteEndpoints
             };
             // Laufwerk: nur, wenn die Verbindung es verlangt (beide Schalter standardmaessig aus) und der Server eine Wurzel hat; die Wurzel kommt nur aus der Server-Einstellung
             var drive = c.DriveShare ? drives.For(c.DriveWrite) : null;
-            var screenTicket = screenTickets.Create(id.UserId, new ScreenTarget(rdp, SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid), Trust: trust, Drive: drive, Info: new KeptInfo(c.Id, c.Name, DeviceLabel.From(ctx.Request.Headers.UserAgent), KeyboardLayouts.ClientKey(c.KeyboardLayout), drive is null ? null : drive.Writable ? "rw" : "ro")));
+            var screenTicket = screenTickets.Create(id.UserId, new ScreenTarget(rdp, SessionRegistry.SlotOf(id.UserId, c.Id, body.Sid), Trust: trust, Drive: drive, Info: body.Quick is null ? new KeptInfo(c.Id, c.Name, DeviceLabel.From(ctx.Request.Headers.UserAgent), KeyboardLayouts.ClientKey(c.KeyboardLayout), drive is null ? null : drive.Writable ? "rw" : "ro", id.UserName) : null));
             return screenTicket is null ? Error(429, "Zu viele offene Verbindungen.") : Results.Json(new TicketResponse(screenTicket, c.Kind, w & ~1, h & ~1, "stream", drive is null ? null : drive.Writable ? "rw" : "ro", KeyboardLayouts.ClientKey(c.KeyboardLayout)), AppJson.Default.TicketResponse);
         });
 
@@ -182,7 +185,9 @@ internal static class RemoteEndpoints
             var kept = body.Id is { Length: > 0 and <= 64 } handle ? relay.FindKept(id.UserId, handle) : null;
             if (kept is null || !KeptTakeRule.Allows(id, kept))
             {
-                await AuditKeptAsync(audit, id, "kept.take_denied", kept is null ? "unknown" : "refused");
+                // Hoechstens 3 Eintraege je Person und Minute (der Verlauf behaelt 500); der Rest steht nur im Server-Log, ohne Kennung
+                if (hits.Allow("kept-denied-audit:" + id.UserId, 3, TimeSpan.FromMinutes(1))) await AuditKeptAsync(audit, id.UserName, "kept.take_denied", kept is null ? "unknown" : "watched");
+                else ctx.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("JulOS.Kept").LogInformation("Nehmen abgelehnt (zu viele Eintraege, nicht im Verlauf)");
                 return Error(404, "Diese Sitzung gibt es nicht mehr.");           // unbekannt, abgelaufen und fremd: dieselbe Antwort
             }
 
@@ -191,7 +196,7 @@ internal static class RemoteEndpoints
             // Nur ein Nehmen von einer anderen App-Sitzung aus wird aufgeschrieben; ein Neuladen am selben Geraet nicht (der Verlauf behaelt 500 Eintraege).
             // Geschrieben wird beim Ausstellen des Tickets (Einloesen und Ausstellen folgen im Abstand von Sekunden; ein ungenutztes Ticket bleibt als Eintrag stehen).
             if (kept.AppSession != Guid.Empty && kept.AppSession != id.Id)
-                await AuditKeptAsync(audit, id, "kept.take", $"{kept.Name} · {DeviceLabel.From(ctx.Request.Headers.UserAgent)} · {Minutes(kept)}");
+                await AuditKeptAsync(audit, id.UserName, "kept.take", $"{NameOf(kept)} · {DeviceLabel.From(ctx.Request.Headers.UserAgent)} · {Minutes(kept)}");
             return Results.Json(new KeptTicketResponse(ticket, kept.Layout, kept.Drive), AppJson.Default.KeptTicketResponse);
         });
 
@@ -201,7 +206,7 @@ internal static class RemoteEndpoints
             var id = (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
             ctx.Response.Headers.CacheControl = "no-store";
             if (body.Id is { Length: > 0 and <= 64 } handle && await relay.EndKeptAsync(id.UserId, handle) is { } ended)
-                await AuditKeptAsync(audit, id, "kept.end", $"{ended.Name} · {Minutes(ended)}");
+                await AuditKeptAsync(audit, id.UserName, "kept.end", $"{NameOf(ended)} · {Minutes(ended)}");
             return Results.NoContent();
         });
         // Download aus der Zwischenablage des fernen Rechners: der Server holt die Stuecke der Reihe nach vom Ziel und schreibt jedes erst, wenn das vorige beim

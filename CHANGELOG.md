@@ -11,6 +11,7 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 - **Abmelden beendet die erhaltenen Desktops** dieses Geräts sofort (bisher nach spätestens 10 s).
 
 ### Geändert
+- **Erhaltene Sitzungen: Obergrenze und Betrachter.** Ist die Obergrenze der Person erreicht, endet die älteste wartende Sitzung statt die neue abzulehnen (höchstens 4 wartende je Person, Verlauf `kept.end`/`limit`); eine anderswo angesehene Sitzung nimmt der Server nicht still; der abgelöste Betrachter bekommt „übernommen“; Quick-Connect-Sitzungen stehen in keiner Liste; `kept.take_denied` schreibt höchstens 3 Einträge je Person und Minute; Abmelden löscht Cookie und SFTP-Sitzungen vor dem Beenden der Desktops (mit Frist).
 - **Neuladen oder Schließen des Tabs beendet die Sitzung nicht mehr**, die Seite kappt nur die Leitung (vorher schickte `beforeunload` „beenden“); sie bleibt bis zum Ablauf der Zeit. „Sitzung schließen“ beendet sie wie immer.
 
 ### Behoben

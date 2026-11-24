@@ -1116,7 +1116,7 @@ export class RemoteSession extends Session {
       const known = ERROR_TEXT[code] ? t(ERROR_TEXT[code]) : null;
       const msg = known || ((err && err.message) ? serverMsg(err.message) : t('app.errConnection'));
       this.connected = false;
-      if (code === 777) { this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); this.setState('taken', t('app.stateTaken')); return this.showOverlay(msg); }   // anderswo uebernommen: nicht zurueckholen, sonst streiten sich zwei Fenster
+      if (code === 777) { forgetKept(sessionStorage, this.conn.id); this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); this.setState('taken', t('app.stateTaken')); return this.showOverlay(msg); }   // anderswo uebernommen: nicht zurueckholen, sonst streiten sich zwei Fenster
       if (code === 797) { this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); return this.requestClose(msg); }   // Obergrenze der Sitzungen: Meldung des Servers, Sitzung zu
       if (!this.everConnected) this.requestClose(known || t('app.errCannotConnect', { msg }));
       else if (this.hasSibling()) this.takenBySibling();

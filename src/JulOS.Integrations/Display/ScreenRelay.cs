@@ -62,14 +62,20 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         }
     }
 
+    /// <summary>Hoechstens so viele Sitzungen einer Person warten ohne Browser; die aelteste wartende endet, wenn eine weitere dazukommt.</summary>
+    public const int MaxUnwatchedPerUser = 4;
+
+    /// <summary>Wird gerufen, wenn der Server selbst eine wartende Sitzung beendet, um Platz zu schaffen (Grund "limit"); der Verlauf der Sicherheit haengt sich hier ein. Fehler darin stoppen nichts.</summary>
+    public Func<KeptSession, string, Task>? KeptEnded { get; set; }
+
     /// <summary>Eine erhaltene Sitzung, wie die Liste sie zeigt (nur Angaben, die der Besitzer sehen darf).</summary>
-    public sealed record KeptSession(string Handle, Guid ConnectionId, string Name, DateTimeOffset Since, DateTimeOffset? UnwatchedSince, string Device, Guid AppSession, string? Layout = null, string? Drive = null);
+    public sealed record KeptSession(string Handle, Guid ConnectionId, string Name, DateTimeOffset Since, DateTimeOffset? UnwatchedSince, string Device, Guid AppSession, string? Layout = null, string? Drive = null, string User = "");
 
     private static KeptSession Snapshot(Live l)
     {
         lock (l.Gate)
         {
-            return new KeptSession(l.Handle, l.Info?.ConnectionId ?? Guid.Empty, l.Info?.ConnectionName ?? "", l.StartedAt, l.DetachedSince, l.Info?.Device ?? "", l.AppSession, l.Info?.Layout, l.Info?.Drive);
+            return new KeptSession(l.Handle, l.Info?.ConnectionId ?? Guid.Empty, l.Info?.ConnectionName ?? "", l.StartedAt, l.DetachedSince, l.Info?.Device ?? "", l.AppSession, l.Info?.Layout, l.Info?.Drive, l.Info?.User ?? "");
         }
     }
 
@@ -139,7 +145,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
     /// Nur fuer Tests: eine erhaltene Sitzung ohne echtes Ziel anlegen (die Engine wird nie gestartet), damit Liste, Nehmen und Beenden ohne Desktop pruefbar sind.
     /// Gibt die oeffentliche Kennung zurueck. watched: false = es wartet kein Browser mehr (wie nach einem Neuladen).
     /// </summary>
-    internal string AddKeptForTests(Guid owner, KeptInfo info, Guid appSession, bool watched, Func<CancellationToken, Task<bool>>? alive = null)
+    internal string AddKeptForTests(Guid owner, KeptInfo info, Guid appSession, bool watched, Func<CancellationToken, Task<bool>>? alive = null, Task? run = null)
     {
         _slots.Wait();
         var stop = new CancellationTokenSource();
@@ -148,7 +154,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         var live = new Live
         {
             Token = NewToken(), Owner = owner, Stream = new ScreenStream(target.Options, 16_000, log), Stop = stop, Lease = lease, Target = target, Started = Environment.TickCount64,
-            Run = Task.Delay(Timeout.Infinite, stop.Token), Handle = NewHandle(), AppSession = appSession, Info = info, Alive = alive ?? (_ => Task.FromResult(true)),
+            Run = run ?? Task.Delay(Timeout.Infinite, stop.Token), Handle = NewHandle(), AppSession = appSession, Info = info, Alive = alive ?? (_ => Task.FromResult(true)),
         };
         lock (_keptGate)
         {
@@ -210,7 +216,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             return;
         }
 
-        if (!await _slots.WaitAsync(0, ct).ConfigureAwait(false))
+        if (!await _slots.WaitAsync(0, ct).ConfigureAwait(false) && !(await EvictOldestWaitingAsync(owner ?? Guid.Empty).ConfigureAwait(false) && await _slots.WaitAsync(0, ct).ConfigureAwait(false)))
         {
             await FinishAsync(ws, ScreenProtocol.Error(ErrorBusy, "Zu viele gleichzeitige Verbindungen."), ct).ConfigureAwait(false);
             return;
@@ -258,6 +264,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         public CancellationTokenSource? Attached;          // unter Gate: bricht den laufenden Anschluss ab
         public volatile bool Detached;                      // kein Browser dran (Ereignisse werden verworfen)
         public volatile bool Ended;
+        public volatile bool TakenOver;                     // ein anderer Browser hat sich angehaengt, waehrend dieser dran war: dem alten wird "uebernommen" gesagt
         public CancellationTokenSource? Waiting;            // Verwerfen und Ablaufzeit
         public Task? Drain;
         public readonly Lock Gate = new();
@@ -277,7 +284,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         }
 
         var stop = new CancellationTokenSource();
-        var lease = _sessions.TryOpen(owner, target.Slot, () => stop.Cancel());
+        var lease = await OpenLeaseAsync(owner, target.Slot, () => stop.Cancel()).ConfigureAwait(false);
         if (lease is null)
         {
             stop.Dispose();
@@ -299,7 +306,10 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             lock (_keptGate)
             {
                 _kept[live.Token] = live;
-                _byHandle[live.Handle] = live;
+                if (live.Info is not null)
+                {
+                    _byHandle[live.Handle] = live;          // nur Sitzungen mit Info (nicht Quick Connect) stehen in der Liste und lassen sich nehmen
+                }
             }
         }
 
@@ -348,6 +358,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             previous = live.Attached;
         }
 
+        live.TakenOver = previous is not null;
         try { previous?.Cancel(); }
         catch (ObjectDisposedException) { /* war schon fertig */ }
         try
@@ -420,6 +431,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             live.Attached = attach;
         }
 
+        live.TakenOver = false;
         byte[]? last = null;
         var outcome = Outcome.BrowserGone;
         var attachedAt = Environment.TickCount64;
@@ -430,7 +442,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
             {
                 if (Keep is { } keepFor)
                 {
-                    await SendOnceAsync(ws, ScreenProtocol.Session(live.Token, (int)keepFor.TotalSeconds, live.Handle), ct).ConfigureAwait(false);
+                    await SendOnceAsync(ws, ScreenProtocol.Session(live.Token, (int)keepFor.TotalSeconds, live.Info is null ? null : live.Handle), ct).ConfigureAwait(false);
                 }
 
                 var limits = live.Stream.ClipboardLimits;
@@ -457,6 +469,12 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                 {
                     outcome = Outcome.Replaced;
                     last = ScreenProtocol.Taken();
+                }
+                else if (live.TakenOver && attach.IsCancellationRequested && !ct.IsCancellationRequested)
+                {
+                    // Ein anderer Browser hat die Sitzung genommen: der alte erfaehrt es (Status 777, "uebernommen") und holt sie nicht zurueck; die Sitzung selbst bleibt
+                    last = ScreenProtocol.Taken();
+                    gone = "von einem anderen Browser genommen";
                 }
                 else if (first == live.Run)
                 {
@@ -576,6 +594,71 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         // Server, "Browser schloss selbst" vom Browser (Seite war im Hintergrund, Neuladen, eigenes Neuverbinden), "abgebrochen" von einer neuen Verbindung derselben Sitzung.
         log.LogInformation("Browser weg nach {Connected} s ({Reason}): die Sitzung bleibt {Seconds} s erhalten.", connectedSeconds, reason, (int)keepFor.TotalSeconds);
         _ = ExpireAsync(live, keepFor, waiting.Token);
+        _ = EnforceUnwatchedCapAsync(live.Owner);
+    }
+
+    // ---- Platz schaffen: wartende Sitzungen verdraengen die neuen nicht, sondern umgekehrt (aelteste zuerst) ----
+
+    /// <summary>Beendet die am laengsten wartende Sitzung dieser Person (Grund "limit"); false, wenn keine wartet.</summary>
+    internal async Task<bool> EvictOldestWaitingAsync(Guid owner)
+    {
+        Live? oldest;
+        lock (_keptGate)
+        {
+            oldest = _kept.Values.Where(l => !l.Ended && l.Detached && l.Owner == owner).OrderBy(l => l.DetachedSince ?? l.StartedAt).FirstOrDefault();
+        }
+
+        if (oldest is null)
+        {
+            return false;
+        }
+
+        var snapshot = Snapshot(oldest);
+        log.LogInformation("Wartende Sitzung beendet, um Platz zu schaffen (Obergrenze).");
+        await EndAsync(oldest).ConfigureAwait(false);
+        if (KeptEnded is { } hook)
+        {
+            try { await hook(snapshot, "limit").ConfigureAwait(false); }
+            catch (Exception e) when (e is not OutOfMemoryException) { log.LogDebug("Verlauf: {Type}", e.GetType().Name); }
+        }
+
+        return true;
+    }
+
+    private async Task EnforceUnwatchedCapAsync(Guid owner)
+    {
+        try
+        {
+            while (true)
+            {
+                int waiting;
+                lock (_keptGate)
+                {
+                    waiting = _kept.Values.Count(l => !l.Ended && l.Detached && l.Owner == owner);
+                }
+
+                if (waiting <= MaxUnwatchedPerUser || !await EvictOldestWaitingAsync(owner).ConfigureAwait(false))
+                {
+                    return;
+                }
+            }
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            log.LogDebug("Obergrenze der wartenden Sitzungen: {Type} {Message}", e.GetType().Name, e.Message);
+        }
+    }
+
+    /// <summary>Ein Platz in der Obergrenze der Person; ist sie erreicht, endet zuerst die aelteste wartende Sitzung (die neue wird nicht abgelehnt, solange es eine gibt).</summary>
+    internal async Task<SessionLease?> OpenLeaseAsync(Guid owner, string? slot, Action onReplaced)
+    {
+        var lease = _sessions.TryOpen(owner, slot, onReplaced);
+        while (lease is null && await EvictOldestWaitingAsync(owner).ConfigureAwait(false))
+        {
+            lease = _sessions.TryOpen(owner, slot, onReplaced);
+        }
+
+        return lease;
     }
 
     /// <summary>Der Grund, warum die erste der Aufgaben der Leitung zum Browser endete, als kurzer Text fuers Log (keine Inhalte).</summary>

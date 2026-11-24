@@ -22,7 +22,7 @@ import { ClipDiag } from './clipdiag.js';
 import { queryState, browserKind, readDeviceText, copyToDevice } from './clipperm.js';
 import { KS, MODSYM, MODNAME, charKeysym, parseChord, parseSequence, sequenceOps, heldAfter, textOps, chunk, TEMPLATES, LIMITS as KEY_LIMITS, validateKeyDef, keyApplies, looksLikeSecret } from './keys-shortcuts.js';
 import { StickyMods } from './keys-sticky.js';
-import { TouchGestures, normalizeTouch, compactTouch, scrollStep, WheelAccum } from './touch-gestures.js';
+import { TouchGestures, normalizeTouch, compactTouch, scrollStep, WheelAccum, VIEW_ONE, clampView, zoomAbout, panView, toVm, LOG_MAX } from './touch-gestures.js';
 import { TouchUi, bindSurface } from './touch-ui.js';
 import { bindTouchSettings, openTouchSettings } from './touch-settings.js';
 import { KbSync } from './kb-input.js';
@@ -141,10 +141,20 @@ const el = {
   pwDlg: $('#pwDlg'), pwUser: $('#pwUser'), pwPass: $('#pwPass'), pwTypePass: $('#pwTypePass'), pwTypeBoth: $('#pwTypeBoth'),
 };
 
+/** Gespeicherte Touch-Einstellungen. Bis 0.26 war 'direct' die Vorgabe und wurde mitgespeichert: wer nie etwas anderes als 'direct' hatte, bekommt einmalig den Tablet-Modus (die Vorgabe jetzt);
+ *  wer 'pad' gewaehlt hat, behaelt es. Danach wird eine bewusste Wahl von 'direct' (Maus) so gemerkt. */
+function loadTouch() {
+  const saved = store.get('touch', {}) || {};
+  if (!store.get('tabMig1', false)) {
+    store.set('tabMig1', true);
+    if (saved.mode === 'direct') { delete saved.mode; store.set('touch', saved); }
+  }
+  return normalizeTouch({ mode: store.get('touchMode') === 'pad' ? 'pad' : undefined, ...saved });
+}
 const S = {
   kbMode: store.get('kbMode2', 'rich'),       // 'rich' (Bilder aus der Tastatur) | 'normal' (mit Vorschlaegen) | 'direct' (ohne Vorschlaege)
   kbResize: normalizeKbMode(store.get('kbResize', 'pan')),   // Bildschirmtastatur auf: 'pan' (Bild verschieben, Aufloesung bleibt) | 'follow' (Aufloesung folgt der Flaeche), siehe kbpan.js
-  touch: normalizeTouch({ mode: store.get('touchMode', 'direct'), ...store.get('touch', {}) }),   // Touch-Bedienung (touch-gestures.js, docs/TOUCH.md): Modus 'direct' | 'pad', Haltedauer, Rechtsklick, Scrollen ...
+  touch: loadTouch(),   // Touch-Bedienung (touch-gestures.js, docs/TOUCH.md): Modus 'tablet' (Vorgabe) | 'direct' (Maus) | 'pad', Haltedauer, Rechtsklick, Scrollen ...
   sizeHoldUntil: 0,                           // solange die Bildschirmtastatur faehrt, geht keine neue Groesse an die VMs (gilt fuer alle Sitzungen)
   expanded: store.get('expanded', false), group: store.get('group', 'keys'), editing: false,
   autoKb: store.get('autoKb', true),   // Tastatur oeffnet sich beim Tippen auf ein Textfeld (Erkennung am Mauszeiger)
@@ -604,6 +614,10 @@ export class RemoteSession extends Session {
     this.pinch = { k0: 0, newK: 0 };               // Zoom zu Beginn eines Pinch und der neue Wert waehrenddessen
     this.dragging = false;                         // linke Taste durch eine Geste gehalten (Ziehen)
     this.wheel = new WheelAccum(scrollStep(S.touch.scrollSpeed));
+    this.view = { ...VIEW_ONE };                   // optischer Zoom des Bildes im Tablet-Modus (touch-gestures.js: clampView/zoomAbout), die Aufloesung der VM bleibt
+    this.viewBase = { x: 0, y: 0 };                // Grundverschiebung des Bildes (Taskleiste), siehe applyPan
+    this.zoomFrom = null;                          // Ansicht zu Beginn eines Pinch
+    this.gestLogN = 0; this.gestSteps = 0;         // Eintraege der Gesten im Protokoll (hoechstens LOG_MAX) und Rad-Schritte seit dem letzten Eintrag
     this.typing = null;                            // laufendes "Als Text tippen": { abort } (docs/TOUCH.md)
     this.buildDom();
     this.wireTouch();
@@ -1134,7 +1148,7 @@ export class RemoteSession extends Session {
       if (probes++ % 4 === 0 && probes < 120) this.dbg('frameprobe', { ms: age, ...seen });
       if (sizedAt || age > 4000) release(sizedAt ? 'groesse' : 'zeit');
       if (ok) this.frameSeen = true;
-      if (ok || age > 25000) { this.frameSeen = true; this.dbg('firstframe', { ms: age, ok, ...seen }); release('bild'); return; }
+      if (ok || age > 25000) { this.frameSeen = true; this.dbg('firstframe', { ms: age, ok, ...seen }); release('bild'); if (ok) this.tabletHint(); return; }
       setTimeout(tick, 250);
     };
     tick();
@@ -1218,8 +1232,18 @@ export class RemoteSession extends Session {
     // Taskleiste oben oder links: der Streifen rutscht aus dem Bild (Verschiebung in Pixeln der VM mal Massstab)
     const o = displayOffset({ w: this.display.getWidth(), h: this.display.getHeight() }, this.taskbar()), sc = this.display.getScale();
     const dx = o.x * sc, dy = o.y * sc - this.panY;
-    this.el.display.style.transform = dx || dy ? `translate(${dx}px, ${dy}px)` : '';
+    this.viewBase = { x: dx, y: dy };
+    if (this.view.z > 1) this.view = clampView(this.view, this.viewBounds());
+    const v = this.view, z = v.z > 1 ? ` scale(${v.z})` : '';
+    this.el.display.style.transform = dx || dy || v.z > 1 ? `translate(${dx + v.x}px, ${dy + v.y}px)${z}` : '';
   }
+  /** Bildflaeche, Bild (bei Zoom 1, in Pixeln des Schirms) und Grundverschiebung fuer die Zoom-Rechnung. */
+  viewBounds() {
+    const r = this.el.stage.getBoundingClientRect(), s = this.display ? this.display.getScale() : 1;
+    return { stage: { w: r.width, h: r.height }, content: { w: this.display ? this.display.getWidth() * s : 0, h: this.display ? this.display.getHeight() * s : 0 }, base: this.viewBase };
+  }
+  /** Optischen Zoom zuruecknehmen (Tablet): das Bild steht wieder, wie die Aufloesung es vorgibt. */
+  resetView() { if (this.view.z === 1 && !this.view.x && !this.view.y) return; this.view = { ...VIEW_ONE }; this.applyPan(); this.applyZoomState(); }
   // Wann die Groesse wirklich an die VM geht, entscheidet SizeGate (layoutlog.js): nur bei echtem Unterschied (8 x 16 Geraetepixel Toleranz),
   // nicht waehrend die Tastatur faehrt, hoechstens einmal pro Sekunde und mit Notbremse (4 Aenderungen in 20 s, dann 5 s Pause).
   // Jede Aenderung baut das Bild der VM neu auf; so landet das Handy auch dann nicht in einer Dauerschleife, wenn ein Geraet Groessen
@@ -1580,7 +1604,8 @@ export class RemoteSession extends Session {
     const set = (c, txt) => { const n = this.el.menu.querySelector(c); if (n) n.textContent = txt; };
     set('.mv-kb', S.kbMode === 'rich' ? t('app.kbWithImages') : S.kbMode === 'normal' ? t('app.kbWithSuggestions') : t('app.kbWithoutSuggestions'));
     set('.mv-kbresize', kbModeLabel(S.kbResize));
-    set('.mv-touch', S.touch.mode === 'direct' ? t('app.touchTap') : t('app.touchPad'));
+    set('.mv-touch', S.touch.mode === 'tablet' ? t('tab.menuMode') : S.touch.mode === 'direct' ? t('app.touchTap') : t('app.touchPad'));
+    set('.mv-dsize', t('app.percent', { n: this.zoomPercent() }));
     set('.mv-autokb', S.autoKb ? t('app.on') : t('app.off'));
     set('.mv-autopaste', S.autoPaste ? t('app.on') : t('app.off'));
     set('.mv-count', String(Sessions.count));
@@ -1604,12 +1629,13 @@ export class RemoteSession extends Session {
     if (act === 'perf') { setPerf(!S.perf); return; }
     if (act === 'quality') { this.setQualityMode(nextQuality(this.quality)); return; }
     if (act === 'touchSettings') { this.closeMenu(); openTouchSettings(); return; }
+    if (act === 'dispSize') { const steps = [60, 80, 100, 130, 160], now = this.zoomPercent(); this.setK(100 / (steps.find((p) => p > now + 2) || steps[0]), false); this.rememberProfile(); this.updateMenuLabels(); return; }       // Anzeigegroesse: aendert die Aufloesung der VM (nicht der optische Zoom)
     if (act === 'clipPanel') { this.closeMenu(); this.clipPanel.openSheet(); return; }
     if (['kbMode', 'autoKb', 'touchMode', 'autoPaste'].includes(act)) {
       if (act === 'kbMode') S.kbMode = S.kbMode === 'rich' ? 'normal' : S.kbMode === 'normal' ? 'direct' : 'rich';
       if (act === 'autoKb') S.autoKb = !S.autoKb;
       if (act === 'autoPaste') S.autoPaste = !S.autoPaste;
-      if (act === 'touchMode') setTouch({ mode: S.touch.mode === 'direct' ? 'pad' : 'direct' });
+      if (act === 'touchMode') { const next = { tablet: 'direct', direct: 'pad', pad: 'tablet' }[S.touch.mode] || 'tablet'; setTouch({ mode: next }); toast(next === 'tablet' ? t('tab.toastTablet') : next === 'direct' ? t('tab.toastMouse') : t('tab.toastPad'), 2600); }
       applyKbMode(); return;
     }
     this.closeMenu();
@@ -1629,9 +1655,8 @@ export class RemoteSession extends Session {
    *  Maus (Desktop-Browser) und Touch (Handy)
    * ===================================================================== */
   remoteXY(cx, cy) {
-    const r = this.el.display.getBoundingClientRect();
-    const s = this.display ? this.display.getScale() : 1;
-    return { x: Math.round((cx - r.left) / s), y: Math.round((cy - r.top) / s) };
+    const r = this.el.display.getBoundingClientRect();      // enthaelt Verschiebung und optischen Zoom schon
+    return toVm(cx, cy, r, this.display ? this.display.getScale() : 1, this.view.z);
   }
   mouseSend(x, y, l = false, m = false, r = false, up = false, down = false) {
     if (this.client) this.client.sendMouseState(mouseState(x, y, l, m, r, up, down));
@@ -1799,12 +1824,13 @@ export class RemoteSession extends Session {
     this.touchUi = new TouchUi(this.el.stage, () => S.touch.vibrate);
     this.gestChain = Promise.resolve();
     this.gestSurface = bindSurface(this.el.touch, this.gest, (acts) => { for (const a of acts) this.runGesture(a); });
+    try { this.gest.setOptions({ reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches }); } catch { /* egal */ }
     this.applyZoomState();
   }
   /** Neue Touch-Einstellungen (S.touch) in die Maschine und die Scrollschritte uebernehmen. */
-  applyTouchConfig() { this.gest.setConfig(S.touch); this.wheel.step = scrollStep(S.touch.scrollSpeed); }
+  applyTouchConfig() { this.gest.setConfig(S.touch); this.wheel.step = scrollStep(S.touch.scrollSpeed); if (S.touch.mode !== 'tablet') this.resetView(); }
   /** Ein Zwei-Finger-Doppeltipp setzt den Zoom nur zurueck, wenn gezoomt ist (sonst bleibt der Rechtsklick sofort). */
-  applyZoomState() { this.gest.setOptions({ zoomed: Math.abs(this.k - pcDefaultK()) > 0.02 }); }
+  applyZoomState() { this.gest.setOptions({ zoomed: this.view.z > 1 || Math.abs(this.k - pcDefaultK()) > 0.02 }); }
   /** Stelle einer Aktion in Pixeln der VM: direkt an der Stelle des Fingers, im Touchpad-Modus am Zeiger. */
   gestPoint(a) { return a.where === 'pointer' ? this.padPoint() : this.remoteXY(a.x, a.y); }
   runGesture(a) {
@@ -1814,6 +1840,8 @@ export class RemoteSession extends Session {
       if (tapLogN++ < 40) this.dbg('tap', { ibeam: this.cursor.ibeam, kb: kbOpen, auto: S.autoKb, cur: this.cursor.sig || '' });
       if (S.autoKb && this.cursor.ibeam && !kbOpen) { this.dbg('autokb', { when: 'tap' }); el.kb.blur(); el.kb.focus(); }
     }
+    // optischer Zoom und Verschieben des Bildes sind reine Anzeige: sofort, nicht hinter einem Klick in der Warteschlange
+    if (a.type === 'zoom' || a.type === 'zoomEnd' || a.type === 'pan') { this.viewGesture(a); return; }
     // alles andere der Reihe nach (ein Klick dauert 45 ms, ein Zug darf nicht davor losgehen)
     this.gestChain = this.gestChain.then(() => this.execGesture(a)).catch(() => {});
   }
@@ -1850,8 +1878,34 @@ export class RemoteSession extends Session {
         if (k0 && newK && Math.abs(newK - k0) > 0.01) { this.setK(newK, false); this.showZoomPop(); this.rememberProfile(); }
         break;
       }
-      case 'zoomReset': this.setK(pcDefaultK(), false); this.showZoomPop(); this.rememberProfile(); this.toast(t('touch.zoomReset'), 1200); break;
+      case 'zoomReset':
+        if (this.view.z > 1) this.resetView();
+        else { this.setK(pcDefaultK(), false); this.showZoomPop(); this.rememberProfile(); }
+        this.toast(t('touch.zoomReset'), 1200); break;
+      case 'log':        // was die Geste war (keine Inhalte): im Server-Protokoll steht dann, was das Handy wirklich getan hat; hoechstens LOG_MAX je Sitzung
+        if (this.gestLogN++ < LOG_MAX) this.dbg('gest', { kind: a.kind, fingers: a.fingers, ms: a.ms, px: a.px, steps: this.gestSteps, ...(a.was ? { was: a.was } : {}), z: this.view.z > 1 ? Math.round(this.view.z * 100) / 100 : 1 });
+        this.gestSteps = 0; break;
     }
+  }
+  /** Einmaliger Hinweis auf den neuen Standard am Handy (grober Zeiger), sobald das erste Bild da ist. */
+  tabletHint() {
+    let coarse = false; try { coarse = matchMedia('(pointer: coarse)').matches; } catch { /* egal */ }
+    if (!coarse || S.touch.mode !== 'tablet' || store.get('tabHint1', false)) return;
+    store.set('tabHint1', true);
+    this.toast(t('tab.hint'), 6000);
+  }
+  /** Tablet: Pinch zoomt das Bild im Browser (um die Mitte der Finger), zwei Finger verschieben das vergroesserte Bild. Fingerstellen kommen im Fenster, gerechnet wird in der Bildflaeche. */
+  viewGesture(a) {
+    const r = this.el.stage.getBoundingClientRect(), b = this.viewBounds();
+    if (a.type === 'zoom') {
+      if (a.start || !this.zoomFrom) this.zoomFrom = { view: { ...this.view } };
+      this.view = zoomAbout(this.zoomFrom.view, a.ratio, { x: a.from.x - r.left, y: a.from.y - r.top }, { x: a.x - r.left, y: a.y - r.top }, b);
+      this.toast(t('app.percent', { n: Math.round(this.view.z * 100) }), 600);
+    } else if (a.type === 'zoomEnd') {
+      this.zoomFrom = null;
+      if (this.view.z < 1.05) this.view = { ...VIEW_ONE };
+    } else this.view = panView(this.view, a.dx, a.dy, b);
+    this.applyPan(); this.applyZoomState();
   }
   /** Zeigerform kommt erst nach der Mausbewegung an. Electron-Programme wie Claude liefern den I-Balken erst nach rund einer Sekunde, deshalb ein Zeitfenster statt einer Pruefung. */
   watchForTextField() {
@@ -1872,10 +1926,16 @@ export class RemoteSession extends Session {
       this.panY = p.offset; dy = a.dy * (p.rest / a.fdy);
       this.el.display.style.transform = this.panY ? `translateY(${-this.panY}px)` : '';
     }
+    // Tablet: eine Raste entspricht etwa dem gleichen Stueck Bild, egal wie gross es gezeigt wird (Massstab der Anzeige mal optischer Zoom)
+    if (S.touch.mode === 'tablet' && this.display) this.wheel.step = scrollStep(S.touch.scrollSpeed, this.display.getScale() * this.view.z);
     const n = this.wheel.add(a.dx, dy);
     if (!n.v && !n.h) return;
     const q = this.remoteXY(a.x, a.y);
-    this.client.sendMouseState(mouseState(q.x, q.y, false, false, false, false, false, false, false, -120 * n.v, 120 * n.h));
+    // Jede Raste als eigene Nachricht: xrdp wertet je Nachricht genau eine Raste, gleich wie gross der Wert ist (gemessen, docs/TOUCH.md); mehrere in einem Wert gingen verloren
+    const send = (wheel, hwheel) => this.client.sendMouseState(mouseState(q.x, q.y, false, false, false, false, false, false, false, wheel, hwheel));
+    for (let i = 0; i < Math.min(Math.abs(n.v), 8); i++) send(n.v > 0 ? -120 : 120, 0);
+    for (let i = 0; i < Math.min(Math.abs(n.h), 8); i++) send(0, n.h > 0 ? 120 : -120);
+    this.gestSteps += Math.abs(n.v) + Math.abs(n.h);
   }
 }
 

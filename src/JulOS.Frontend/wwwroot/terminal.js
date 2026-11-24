@@ -9,7 +9,7 @@
 import { t } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
 import { noticeTexts } from './terminal-programs.js';
-import { LinkHealth } from './link-health.js';
+import { LinkHealth, PROBE_MS } from './link-health.js';
 
 const LIB = '/lib/xterm/';
 let libPromise = null;
@@ -192,10 +192,7 @@ export class TerminalView {
     this.ws = ws;
     let ended = false;
     this.link.reset(); clearInterval(this.linkTimer);
-    this.linkTimer = setInterval(() => {
-      const a = this.link.tick();
-      if (a === 'ping') this._ping(); else if (a === 'dead') this._lineDead('silence');
-    }, 1000);
+    this.linkTimer = setInterval(() => this._linkTick(), 1000);
     ws.onmessage = (ev) => { if (gen === this.generation) this._onMessage(new Uint8Array(ev.data), (e) => { ended = e; }); };
     ws.onclose = (ev) => {
       if (gen !== this.generation || this.destroyed) return;
@@ -205,6 +202,11 @@ export class TerminalView {
       this._setState(this.everConnected ? 'closed' : 'error', { message: this.everConnected ? t('term.closedShellEnded') : t('term.noServer'), fatal: false });
     };
     ws.onerror = () => { /* onclose folgt */ };
+  }
+
+  _linkTick() {
+    const a = this.link.tick();
+    if (a === 'ping') this._ping(); else if (a === 'dead') this._lineDead('silence');
   }
 
   _ping() { const id = ++this.pingId >>> 0; this._sendRaw(TO.ping, new Uint8Array([id >>> 24, (id >>> 16) & 255, (id >>> 8) & 255, id & 255])); }
@@ -221,7 +223,7 @@ export class TerminalView {
   /** Seite wieder sichtbar nach awayMs: 'ping' (Probe laeuft), 'reconnect' (Server ohne Lebenszeichen) oder null. */
   probe(awayMs) {
     const a = this.link.visible(awayMs);
-    if (a === 'ping') this._ping();
+    if (a === 'ping') { this._ping(); setTimeout(() => { if (this.ws) this._linkTick(); }, PROBE_MS + 60); }
     return a;
   }
 

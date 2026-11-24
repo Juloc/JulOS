@@ -36,12 +36,13 @@ test('being connected again resets the clock and the retry counter', () => {
   r.lost(); r.nextDelay(); r.nextDelay();
   c.add(20_000); r.connected();
   assert.equal(r.usable(), true);
-  assert.equal(r.nextDelay(), 1000);
+  assert.equal(r.nextDelay(), 300);
 });
 
-test('retry delays grow from 1 s to 3 s and stay there', () => {
+test('retry delays: the first almost at once, then 1 s growing to 3 s', () => {
   const r = new Resume();
-  assert.deepEqual([1, 2, 3, 4, 5].map(() => r.nextDelay()), [1000, 1500, 2000, 2500, 3000]);
+  assert.deepEqual([1, 2, 3, 4, 5].map(() => r.nextDelay()), [300, 1000, 1500, 2000, 2500]);
+  assert.equal(r.nextDelay(), 3000);
   assert.equal(r.nextDelay(), 3000);
 });
 

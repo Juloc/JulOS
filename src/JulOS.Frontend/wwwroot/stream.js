@@ -36,7 +36,7 @@ import { StreamPerf, normalizeQuality, qualityOf } from './perf.js';
 import { codecMask, probeCodecs, codecStringOf, decoderConfig, CODEC_H264, CODEC_HEVC } from './codecs.js';
 import { t } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
-import { LinkHealth } from './link-health.js';
+import { LinkHealth, PROBE_MS } from './link-health.js';
 
 const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, image: 7, files: 8, fileState: 9, result: 10, session: 11, resumeFailed: 12, limits: 14, clipNote: 15, audio: 20, audioStatus: 21, encoder: 30, refine: 40, refineClear: 41, link: 50, pong: 51 };
 const OUT = { ack: 1, move: 2, button: 3, wheel: 4, key: 5, unicode: 6, resize: 7, keyframe: 8, clipboard: 9,
@@ -308,7 +308,7 @@ export class StreamClient {
   /** Seite wieder sichtbar nach awayMs: 'ping' (Probe laeuft, bei Stille meldet sich linkTick mit dropLine), 'reconnect' (Server ohne Lebenszeichen: wie bisher neu verbinden) oder null. */
   probe(awayMs) {
     const a = this.link.visible(awayMs);
-    if (a === 'ping') this.sendPing();
+    if (a === 'ping') { this.sendPing(); setTimeout(() => this.linkTick(), PROBE_MS + 60); }       // die Frist des Probe-Pings nicht erst beim naechsten Sekundentakt pruefen
     return a;
   }
 

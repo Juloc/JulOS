@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
+using Microsoft.Extensions.DependencyInjection;
 using static JulOS.Backend.Tests.ApiKit;
 
 namespace JulOS.Backend.Tests;
@@ -120,6 +121,35 @@ public sealed class OidcAdminTests
         Assert.Equal("https://julos.example", (await Json(set)).GetProperty("issuer").GetString());            // der abschliessende Schraegstrich entfaellt
         Assert.Equal("app", (await Json(set)).GetProperty("source").GetString());
         Assert.Equal("https://julos.example", (await Json(await rig.Http.GetAsync("/.well-known/openid-configuration", ct))).GetProperty("issuer").GetString());
+    }
+
+    [Fact]
+    public async Task Management_writes_need_a_fresh_second_factor_even_when_the_step_up_switch_is_off()
+    {
+        // F2: ein gestohlenes Eigentuemer-Cookie darf ohne Code keine App umbiegen (Geheimnis erneuern, Rueckkehr-Adresse aendern), auch wenn der Schalter aus ist
+        await using var rig = await OidcRig.CreateAsync();
+        var app = await rig.AddAppAsync();
+        var ct = TestContext.Current.CancellationToken;
+        await rig.Server.Services.GetRequiredService<SecurityConfig>().SetStepUpAsync(false, StepUpConfig.DefaultMinutes, ct);
+        await rig.Db.ExecAsync("update sessions set step_up_until = null");
+
+        var change = new { name = "Notes", redirectUris = new[] { "https://evil.example/cb" }, postLogoutUris = Array.Empty<string>(), roles = new[] { "admin" } };
+        foreach (var (method, url, body) in new (HttpMethod, string, object?)[] { (HttpMethod.Post, $"/api/security/oidc/apps/{app.Id}/secret", new { }), (HttpMethod.Put, $"/api/security/oidc/apps/{app.Id}", change),
+            (HttpMethod.Put, $"/api/security/oidc/apps/{app.Id}/enabled", new { enabled = false }), (HttpMethod.Delete, $"/api/security/oidc/apps/{app.Id}", null), (HttpMethod.Post, "/api/security/oidc/keys/rotate", new { }),
+            (HttpMethod.Put, "/api/security/oidc/issuer", new { issuer = "https://x.example" }) })
+        {
+            var res = await rig.Http.SendAsync(Req(method, url, rig.Cookie, body), ct);
+            Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
+            Assert.Equal("step_up_required", (await Json(res)).GetProperty("code").GetString());
+        }
+        Assert.Equal(OidcRules.Hash(app.Secret), await rig.Db.ScalarAsync<string>("select secret_hash from oidc_apps where id = $1", app.Id));        // nichts hat sich geaendert
+        Assert.Equal(HttpStatusCode.OK, (await rig.Http.SendAsync(Req(HttpMethod.Get, "/api/security/oidc", rig.Cookie), ct)).StatusCode);                // Lesen braucht sie nicht
+
+        // mit frischer Freigabe geht es; andere Sicherheits-Wege bleiben beim Schalter (aus = keine Freigabe noetig)
+        await rig.Db.ExecAsync("update sessions set step_up_until = now() + interval '5 minutes'");
+        Assert.Equal(HttpStatusCode.OK, (await rig.Http.SendAsync(Req(HttpMethod.Post, $"/api/security/oidc/apps/{app.Id}/secret", rig.Cookie, new { }), ct)).StatusCode);
+        await rig.Db.ExecAsync("update sessions set step_up_until = null");
+        Assert.NotEqual(HttpStatusCode.Forbidden, (await rig.Http.SendAsync(Req(HttpMethod.Put, "/api/security/step-up", rig.Cookie, new { enabled = false, minutes = 10 }), ct)).StatusCode);
     }
 
     [Fact]

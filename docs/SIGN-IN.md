@@ -76,7 +76,7 @@ The access token is an opaque random value (kept only as a hash) for `/oidc/user
 
 ## What an app must enter, and what JulOS asks of it
 
-Settings, Security, **Anmelde-Zentrale** (only the owner; every change needs the second factor and is in the security history). Per app:
+Settings, Security, **Anmelde-Zentrale** (only the owner; every change needs a fresh second factor **even when the step-up switch is off**, and is in the security history). Per app:
 
 - **Name**, **return addresses** (exact, one per line; `https`, or `http` only to `localhost`, `127.0.0.1`, `[::1]`, `*.localhost`; no wildcards, no fragment, no user:password),
   **addresses after sign-out** (optional), the **address for back-channel logout** (optional), the **roles** the app knows (for example `admin, member, viewer`).
@@ -137,7 +137,7 @@ front-channel logout; a way to delete an app **and** end its sessions in one ste
 2. `Data/OidcFlowStore.cs`: the atomic redeem (`update ... returning`), the grant and queue SQL, the "ended session" test (a copy of the session validity of `SessionStore`).
 3. `Oidc/OidcEndpoints.cs`: the end-session rules (when it signs out without a question), client authentication parsing (Basic, form), the bounce page and its loop guard.
 4. `Services/OidcKeys.cs`: creation race, the sealed private key (`SecretBox`, key id as associated data), rotation, what `id_token_hint` accepts.
-5. `Oidc/OidcAdminEndpoints.cs`: owner check, that step-up really covers every route (it does through `api/security/**` in `StepUpPolicy`), role changes and logout.
+5. `Oidc/OidcAdminEndpoints.cs`: owner check, that step-up really covers every route (it does through `api/security/**` in `StepUpPolicy`; `StepUpPolicy.Always` makes it independent of the step-up switch), role changes and logout.
 6. Whether the exception in `RouteSecurityTests` for `/oidc/*` write routes (no CSRF header there) is acceptable: token and userinfo have no cookie, end-session checks `Origin`.
 7. The outbound call of the logout token (`OidcLogoutService`): the target is an address an owner registered (it can be inside the home network on purpose); no redirect, no proxy.
 

@@ -40,6 +40,9 @@ export const GROUPS = [
     { id: 'folders', ctl: 'button', label: tk('set.folders'), help: tk('set.foldersHelp'), action: tk('set.manage') },
     { id: 'remote', ctl: 'note', only: 'desktop', label: tk('desktop.remoteControl'), help: tk('desktop.remoteControlText') },
   ] },
+  { id: 'touch', title: tk('touch.setGroup'), help: tk('touch.setGroupHelp'), rows: [
+    { id: 'touch', ctl: 'button', only: 'phone', label: tk('touch.setRow'), help: tk('touch.setRowHelp'), action: tk('touch.open') },
+  ] },
   { id: 'programs', title: tk('set.programs'), help: tk('set.programsHelp'), rows: [
     { id: 'claude', ctl: 'button', label: tk('set.claude'), help: tk('set.claudeHelp'), action: tk('set.start') },
     { id: 'codex', ctl: 'button', label: tk('set.codex'), help: tk('set.codexHelp'), action: tk('set.start') },

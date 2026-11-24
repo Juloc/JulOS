@@ -19,6 +19,13 @@ import { serverMsg } from './i18n-errors.js';
 import { showDialog, focusField, askWindow } from './desktop-window.js';
 import { ClipDiag } from './clipdiag.js';
 import { queryState, browserKind, readDeviceText, copyToDevice } from './clipperm.js';
+import { KS, MODSYM, MODNAME, charKeysym, parseChord, parseSequence, sequenceOps, heldAfter, textOps, chunk, TEMPLATES, LIMITS as KEY_LIMITS, validateKeyDef, keyApplies, looksLikeSecret } from './keys-shortcuts.js';
+import { StickyMods } from './keys-sticky.js';
+import { TouchGestures, normalizeTouch, compactTouch, scrollStep, WheelAccum } from './touch-gestures.js';
+import { TouchUi, bindSurface } from './touch-ui.js';
+import { bindTouchSettings, openTouchSettings } from './touch-settings.js';
+import { KbSync } from './kb-input.js';
+import { ClipPanel } from './clip-panel.js';
 import { LIMITS, fmtSize, bmpFromImage, pngFromImage, agentImageEligible, pngFromBytes, filesFromTransfer, itemsFromFiles, planSend, topLevel, progressText, startDownload, saveBlob } from './clip.js';
 
 /* =====================================================================
@@ -49,6 +56,7 @@ export const prefs = createPrefs({
   storage: localStorage,
   local: () => ({
     keybar: normalizeRows(store.get('rows4', null)) ? { rows: store.get('rows4', null) } : null,       // null: nie veraendert, nichts hochzuladen
+    touch: localStorage.getItem('pd.touch') !== null ? compactTouch(S.touch) : null,
     lang: localStorage.getItem('pd.lang') !== null ? { lang: getPref() } : null,
     theme: localStorage.getItem('pd.seed') !== null || localStorage.getItem('pd.scheme') !== null ? { seed: validSeed(S.seed) ? S.seed : 'system', scheme: S.scheme } : null,
     appearance: localStorage.getItem('pd.appearance') !== null ? compactAppearance(appearance) : null,
@@ -126,6 +134,7 @@ const el = {
   keyDlg: $('#keyDlg'), keyDlgTitle: $('#keyDlgTitle'), keyLabel: $('#keyLabel'), keyType: $('#keyType'), keyScope: $('#keyScope'), keyValue: $('#keyValue'),
   keyValueLabel: $('#keyValueLabel'), keyHint: $('#keyHint'), keyLeft: $('#keyLeft'), keyRight: $('#keyRight'),
   keySave: $('#keySave'), keyDelete: $('#keyDelete'),
+  keyTplRow: $('#keyTplRow'), keyTpl: $('#keyTpl'), keyIconRow: $('#keyIconRow'), keyIcon: $('#keyIcon'), keyConnRow: $('#keyConnRow'), keyConn: $('#keyConn'), keySecretHint: $('#keySecretHint'),
   photoInput: $('#photoInput'),
   themeDlg: $('#themeDlg'), swatches: $('#swatches'), seedInput: $('#seedInput'), schemeSel: $('#schemeSel'),
   pwDlg: $('#pwDlg'), pwUser: $('#pwUser'), pwPass: $('#pwPass'), pwTypePass: $('#pwTypePass'), pwTypeBoth: $('#pwTypeBoth'),
@@ -134,7 +143,7 @@ const el = {
 const S = {
   kbMode: store.get('kbMode2', 'rich'),       // 'rich' (Bilder aus der Tastatur) | 'normal' (mit Vorschlaegen) | 'direct' (ohne Vorschlaege)
   kbResize: normalizeKbMode(store.get('kbResize', 'pan')),   // Bildschirmtastatur auf: 'pan' (Bild verschieben, Aufloesung bleibt) | 'follow' (Aufloesung folgt der Flaeche), siehe kbpan.js
-  touchMode: store.get('touchMode', 'direct'),// 'direct' (Tippen = Klick an der Stelle) | 'pad' (Touchpad)
+  touch: normalizeTouch({ mode: store.get('touchMode', 'direct'), ...store.get('touch', {}) }),   // Touch-Bedienung (touch-gestures.js, docs/TOUCH.md): Modus 'direct' | 'pad', Haltedauer, Rechtsklick, Scrollen ...
   sizeHoldUntil: 0,                           // solange die Bildschirmtastatur faehrt, geht keine neue Groesse an die VMs (gilt fuer alle Sitzungen)
   expanded: store.get('expanded', false), group: store.get('group', 'keys'), editing: false,
   autoKb: store.get('autoKb', true),   // Tastatur oeffnet sich beim Tippen auf ein Textfeld (Erkennung am Mauszeiger)
@@ -235,42 +244,13 @@ applyViewport('init');
 /* =====================================================================
  *  Tasten: Namen -> X11-Keysyms, Umschalter (Strg/Alt/Shift/Win)
  * ===================================================================== */
-const KS = {
-  esc: 0xff1b, escape: 0xff1b, tab: 0xff09, enter: 0xff0d, return: 0xff0d, backspace: 0xff08, bs: 0xff08,
-  delete: 0xffff, del: 0xffff, entf: 0xffff, home: 0xff50, pos1: 0xff50, end: 0xff57, ende: 0xff57,
-  left: 0xff51, up: 0xff52, right: 0xff53, down: 0xff54, pageup: 0xff55, pgup: 0xff55, bildauf: 0xff55,
-  pagedown: 0xff56, pgdn: 0xff56, bildab: 0xff56, insert: 0xff63, einfg: 0xff63, space: 0x20, menu: 0xff67,
-  ctrl: 0xffe3, strg: 0xffe3, control: 0xffe3, shift: 0xffe1, alt: 0xffe9, altgr: 0xfe03,
-  super: 0xffeb, win: 0xffeb, meta: 0xffeb, print: 0xff61, printscreen: 0xff61, capslock: 0xffe5,
-  plus: 0x2b, minus: 0x2d,
-};
-for (let i = 1; i <= 12; i++) KS['f' + i] = 0xffbd + i;
-const MODSYM = { ctrl: 0xffe3, alt: 0xffe9, shift: 0xffe1, super: 0xffeb };
-const MODNAME = { ctrl: 'ctrl', strg: 'ctrl', control: 'ctrl', alt: 'alt', shift: 'shift', super: 'super', win: 'super', meta: 'super' };
-
-const charKeysym = (ch) => {
-  const cp = ch.codePointAt(0);
-  if (cp === 10 || cp === 13) return KS.enter;
-  if (cp === 9) return KS.tab;
-  return cp < 0x100 ? cp : 0x01000000 + cp;
-};
-
-function parseChord(str) {
-  const parts = String(str).split('+').map((s) => s.trim().toLowerCase()).filter(Boolean);
-  if (!parts.length) throw new Error(t('app.errNoKeys'));
-  return parts.map((p) => {
-    if (KS[p] !== undefined) return KS[p];
-    if ([...p].length === 1) return charKeysym(p);
-    throw new Error(t('app.errUnknownKey', { key: p }));
-  });
-}
-
+/* Tastennamen, Keysyms und das Lesen von Kombinationen und Kuerzeln: keys-shortcuts.js; die Haltetasten: keys-sticky.js */
 const ITEM = (label, type, value) => ({ label, type, value });
 const ACT = (icon, action) => ITEM(':' + icon, 'action', action);
 const DEFAULT_ROWS = [
   // drei Gruppen (Akkordeon): nur Symbol und Pfeil als Kopf, darunter die Tasten der geoeffneten Gruppe
   { id: 'keys', title: 'Tasten', icon: 'keyboard', items: [
-    ITEM('Alt', 'mod', 'alt'), ITEM('Shift', 'mod', 'shift'),
+    ITEM('Alt', 'mod', 'alt'), ITEM('Shift', 'mod', 'shift'), ITEM('Win', 'mod', 'super'),
     ITEM('←', 'chord', 'left'), ITEM('↑', 'chord', 'up'), ITEM('↓', 'chord', 'down'), ITEM('→', 'chord', 'right'),
     ITEM(':ret', 'chord', 'enter'), ITEM(':backspace', 'chord', 'backspace'), ITEM('Entf', 'chord', 'delete'),
     ITEM('Pos1', 'chord', 'home'), ITEM('Ende', 'chord', 'end'), ITEM('Bild↑', 'chord', 'pageup'), ITEM('Bild↓', 'chord', 'pagedown'), ITEM('⇧Tab', 'chord', 'shift+tab') ] },
@@ -317,12 +297,21 @@ function loadRows() {
 }
 let rows = loadRows();
 let suppressClick = false;
-let editRow = 0, editIndex = -1;      // editIndex -1 = neue Taste
+let editRow = 0, editIndex = -1, editConn = '';      // editIndex -1 = neue Taste; editConn: die Verbindung, an die "Nur fuer diese Verbindung" bindet
 const saveRows = () => { store.set('rows4', rows); prefs.push('keybar', { rows }); };
+// Einmalig je Geraet: die Windows-Taste als Haltetaste in die Gruppe "Tasten" (Strg+Klick, Win+D ... brauchen Haltetasten, docs/TOUCH.md); wer sie nicht will, loescht sie im Editor
+if (!store.get('keysTouch1', false)) {
+  store.set('keysTouch1', true);
+  const g = rows.find((r) => r.id === 'keys');
+  if (g && !g.items.some((k) => k.type === 'mod' && ['win', 'super', 'meta', 'windows'].includes(String(k.value).toLowerCase()))) {
+    const i = g.items.findIndex((k) => k.type === 'mod' && String(k.value).toLowerCase() === 'shift');
+    g.items.splice(i < 0 ? g.items.length : i + 1, 0, ITEM('Win', 'mod', 'super'));
+    saveRows();
+  }
+}
 /** Bereich einer Taste: 'both' (Standard), 'desktop' oder 'terminal'; eine Sitzung zeigt nur die Tasten ihrer Art. */
 /** Bildschirm-Sitzungen: RDP (Art 'desktop') und VNC; beide laufen durch dieselbe Strom-Engine. */
 const isScreen = (kind) => kind === 'desktop' || kind === 'vnc';
-const keyInScope = (def, kind) => !def.scope || def.scope === 'both' || def.scope === kind;
 
 /* Tasten per langem Druecken ziehen: innerhalb der Zeile und in andere Zeilen */
 function enableDrag(btn) {
@@ -367,10 +356,33 @@ function enableDrag(btn) {
 function updateKeyEditorHints() {
   const type = el.keyType.value;
   if (type === 'chord') { el.keyValueLabel.textContent = t('app.keys'); el.keyHint.textContent = t('app.keyHintChord'); }
+  else if (type === 'seq') { el.keyValueLabel.textContent = t('keys.sequence'); el.keyHint.textContent = t('keys.hintSeq'); }
   else if (type === 'mod') { el.keyValueLabel.textContent = t('app.keyValToggle'); el.keyHint.textContent = t('app.keyHintMod'); }
   else if (type === 'action') { el.keyValueLabel.textContent = t('app.keyValAction'); el.keyHint.textContent = t('app.keyHintAction', { actions: Object.keys(ACTIONS).join(', ') }); }
   else { el.keyValueLabel.textContent = t('app.keyValText'); el.keyHint.textContent = t('app.keyHintText'); }
+  el.keyTplRow.hidden = type !== 'seq';
+  el.keySecretHint.hidden = type !== 'text' && type !== 'seq';        // Textbausteine und Kuerzel sind kein Ort fuer Passwoerter: der Hinweis steht immer dabei
+  el.keyIconRow.hidden = type === 'mod' || type === 'action';
 }
+/** Vorlagen (Windows und Linux) und Symbole fuer den Tasten-Editor einmal einfuellen. */
+const KEY_ICONS = ['keyboard', 'bolt', 'apps', 'window', 'desktop', 'terminal', 'key', 'home', 'refresh', 'paste', 'image', 'speed', 'layers', 'palette', 'edit', 'info'];
+function fillKeyEditorChoices() {
+  if (el.keyIcon.options.length) return;
+  el.keyIcon.add(new Option(t('keys.iconNone'), ''));
+  for (const name of KEY_ICONS) el.keyIcon.add(new Option(name, name));
+  el.keyTpl.add(new Option(t('keys.templatePick'), ''));
+  for (const [os, title] of [['windows', 'Windows'], ['linux', 'Linux']]) {
+    const g = document.createElement('optgroup'); g.label = title;
+    for (const tpl of TEMPLATES[os]) g.appendChild(new Option(t(tpl.nameKey), os + ':' + tpl.value));
+    el.keyTpl.add(g);
+  }
+}
+el.keyTpl.addEventListener('change', () => {
+  const v = el.keyTpl.value; if (!v) return;
+  const value = v.slice(v.indexOf(':') + 1), name = el.keyTpl.selectedOptions[0].textContent;
+  el.keyValue.value = value; if (!el.keyLabel.value.trim()) el.keyLabel.value = name.slice(0, 16);
+  el.keyTpl.value = '';
+});
 /** Sondertasten auf Standard: die Rueckfrage ist auf dem Desktop ein Fenster (confirm() sperrt die ganze Seite), Schliessen heisst Nein */
 async function resetKeys() {
   if (!(await askWindow({ title: t('app.menuResetKeys'), text: t('app.confirmResetKeys'), yes: t('common.reset'), no: t('common.cancel') }))) return;
@@ -379,23 +391,25 @@ async function resetKeys() {
 function openKeyEditor(r, i) {
   editRow = r; editIndex = i;
   const def = i >= 0 ? rows[r].items[i] : { label: '', type: 'chord', value: '' };
+  fillKeyEditorChoices();
   el.keyDlgTitle.textContent = i >= 0 ? t('app.keyEditTitle') : t('app.keyNewIn', { group: rowTitle(rows[r]) });
   el.keyLabel.value = def.label; el.keyType.value = def.type; el.keyValue.value = def.value; el.keyScope.value = def.scope || 'both';
+  el.keyIcon.value = def.icon || '';
+  // an eine Verbindung gebunden: nur wenn gerade eine Sitzung da ist (ihre Kennung) oder die Taste schon an eine gebunden ist
+  editConn = def.conn || (cur() && cur().conn.id) || '';
+  el.keyConn.checked = !!def.conn; el.keyConnRow.hidden = !editConn;
   el.keyDelete.hidden = i < 0; el.keyLeft.hidden = i < 0; el.keyRight.hidden = i < 0;
   updateKeyEditorHints();
   showDialog(el.keyDlg);
 }
 el.keyType.addEventListener('change', updateKeyEditorHints);
-el.keySave.addEventListener('click', () => {
-  const def = { label: el.keyLabel.value.trim() || el.keyValue.value.trim().slice(0, 10) || '?', type: el.keyType.value, value: el.keyValue.value.trim() };
-  if (el.keyScope.value !== 'both') def.scope = el.keyScope.value;
-  if (!def.value) { toast(t('app.keyNeedValue')); return; }
-  try {
-    if (def.type === 'chord') parseChord(def.value);
-    if (def.type === 'mod' && !MODNAME[def.value.toLowerCase()]) throw new Error(t('app.errModValue'));
-    if (def.type === 'action' && !ACTIONS[def.value.toLowerCase()]) throw new Error(t('app.errActionList', { actions: Object.keys(ACTIONS).join(', ') }));
-  } catch (e) { toast(e.message, 2600); return; }
-  if (editIndex >= 0) rows[editRow].items[editIndex] = def; else rows[editRow].items.push(def);
+el.keySave.addEventListener('click', async () => {
+  const v = validateKeyDef({ label: el.keyLabel.value, type: el.keyType.value, value: el.keyValue.value, scope: el.keyScope.value, icon: el.keyIcon.value, conn: el.keyConn.checked ? editConn : '' }, { actions: Object.keys(ACTIONS) });
+  if (!v.ok) { toast(v.error, 2600); return; }
+  // Textbausteine liegen im Klartext auf dem Server: sieht es nach einem Passwort aus, erst fragen
+  if (v.def.type === 'text' && looksLikeSecret(v.def.label, v.def.value) &&
+      !(await askWindow({ title: t('keys.secretTitle'), text: t('keys.secretText'), yes: t('keys.secretSave'), no: t('common.cancel') }))) return;
+  if (editIndex >= 0) rows[editRow].items[editIndex] = v.def; else rows[editRow].items.push(v.def);
   saveRows(); el.keyDlg.close(); renderAllRows();
 });
 el.keyDelete.addEventListener('click', () => { if (editIndex >= 0) { rows[editRow].items.splice(editIndex, 1); saveRows(); el.keyDlg.close(); renderAllRows(); } });
@@ -476,6 +490,7 @@ const ACTIONS = {
   sendfile: () => pickFile(),
   sendfolder: () => pickFolder(),
   clip: () => openClipDlg(),
+  clippanel: (s) => s.clipPanel.openSheet(),
   password: () => openPwDialog(),
   sessions: () => Sessions.requestSwitcher(),
   home: () => Sessions.requestHome(),
@@ -532,8 +547,6 @@ function cursorInfo(canvas, hx, hy) {
   return { w, h, bw, bh, hx, hy, ibeam, sig: `${w}x${h}:${bw}x${bh}@${hx},${hy}` };
 }
 let tapLogN = 0;
-const dist2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-const mid2 = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 
 /* =====================================================================
  *  RemoteSession: eine Fernsteuer-Sitzung (Vertrag: docs/SESSIONS.md, Basisklasse in sessions.js)
@@ -574,7 +587,7 @@ export class RemoteSession extends Session {
     this.retry = 0; this.retryTimer = null; this.resizeTimer = null; this.connectTimer = null; this.toastTimer = null; this.zoomTimer = null;
     this.connectedAt = 0; this.connectStarted = 0; this.frameSeen = false;
     this.cursor = { ibeam: false };
-    this.mods = { ctrl: 'off', alt: 'off', shift: 'off', super: 'off' };
+    this.sticky = new StickyMods({ down: (sym) => this.kdown(sym), up: (sym) => this.kup(sym), changed: () => this.refreshModButtons() });   // Haltetasten (keys-sticky.js)
     this.keyChain = Promise.resolve();
     this.actOn = {};
     this.clipText = ''; this.clipDiag = new ClipDiag(); this.clipPending = null;
@@ -584,12 +597,22 @@ export class RemoteSession extends Session {
     this.panY = 0; this.focusY = null;             // Verschiebung des Bildes nach oben und Stelle mit dem Fokus (Pixel der VM), nur mit offener Tastatur im Modus 'pan'
     this.W = { available: false, list: [], mode: 'desktop', timer: null, lastCls: null, candCls: null, candN: 0, profileAt: 0, apps: null };
     this.winSig = '';
-    this.G = { pts: new Map(), mode: 'idle', timer: null, sx: 0, sy: 0, st: 0, lx: 0, ly: 0, d0: 0, k0: 0, mid0: null, midLast: null,
-      decided: null, scrollAcc: 0, pressed: false, px: 0, py: 0, newK: 0, moved: false };
+    this.gest = new TouchGestures(S.touch);        // Gesten (touch-gestures.js); die Aktionen fuehrt runGesture aus
+    this.pad = { x: 0, y: 0 };                     // Zeigerstelle im Touchpad-Modus (Pixel der VM)
+    this.pinch = { k0: 0, newK: 0 };               // Zoom zu Beginn eines Pinch und der neue Wert waehrenddessen
+    this.dragging = false;                         // linke Taste durch eine Geste gehalten (Ziehen)
+    this.wheel = new WheelAccum(scrollStep(S.touch.scrollSpeed));
+    this.typing = null;                            // laufendes "Als Text tippen": { abort } (docs/TOUCH.md)
     this.buildDom();
     this.wireTouch();
     this.wireUi();
     this.wireDrop();
+    // Anzeige und Blatt der Zwischenablage dieses Geraets (clip-panel.js); nur bei Bildschirm-Sitzungen
+    this.clipPanel = new ClipPanel(this, { host: this.el.stage, enabled: () => S.touch.clipChip && isScreen(this.kind), onMore: () => openClipDlg() });
+    this.addEventListener('statechange', () => this.clipPanel.render());
+    // Seite im Hintergrund oder ohne Fokus: das Loslassen kommt dann nie bei uns an (stream.js laesst im Ziel schon alles los), also auch hier alles loslassen
+    this.onAway = () => { if (document.hidden || !document.hasFocus()) { this.releaseMods(); this.gestSurface.cancel(); } };
+    window.addEventListener('blur', this.onAway); document.addEventListener('visibilitychange', this.onAway);
     this.setState('disconnected', t('app.stateNotConnected'));
   }
 
@@ -660,13 +683,13 @@ export class RemoteSession extends Session {
   /** Im Hintergrund (nicht sichtbar): Ansicht aus, keine Groessenmeldungen, Fensterleiste ruht, der Stream pausiert (Server kodiert nicht, Browser dekodiert nicht). */
   setVisible(on) {
     on = !!on;
-    this.visible = on; this.element.hidden = !on; this.statusBar.setActive(on);
+    this.visible = on; this.element.hidden = !on; this.statusBar.setActive(on); this.clipPanel.render();
     this.applyPause(); this.applyAudio();
     if (on) {
       this.fitDisplay(); this.scheduleSize(80); if (this.W.available) this.pollWindows(); this.refreshAll();
-      if (cur() === this && prevValue) { setKbVal(''); prevValue = ''; }       // Text, der fuer die vorige Sitzung im Eingabefeld stand, nicht in diese uebertragen
+      if (cur() === this && kbSync.prev) { setKbVal(''); kbSync.clear(); }       // Text, der fuer die vorige Sitzung im Eingabefeld stand, nicht in diese uebertragen
     }
-    else { this.closeMenu(); this.closeWinSheet(); }
+    else { this.closeMenu(); this.closeWinSheet(); this.releaseMods(); this.gestSurface.cancel(); }       // im Hintergrund haelt die Sitzung keine Taste und keine Geste
   }
   /* ---------- Ton (nur beim Stream; jede Sitzung hat ihr eigenes Audio, siehe stream-audio.js) ---------- */
   audioOf() { return this.client instanceof StreamClient ? this.client.audio : null; }
@@ -787,6 +810,8 @@ export class RemoteSession extends Session {
     this.teardown();
     this.ro.disconnect(); this.lay.dispose(); document.removeEventListener('fullscreenchange', this.onFullscreen);
     clearTimeout(this.toastTimer); clearTimeout(this.zoomTimer); this.statusBar.dispose();
+    this.gestSurface.dispose(); this.touchUi.dispose(); this.clipPanel.dispose();
+    window.removeEventListener('blur', this.onAway); document.removeEventListener('visibilitychange', this.onAway);
     this.password = null;
     this.unmount();
   }
@@ -886,13 +911,14 @@ export class RemoteSession extends Session {
     // Erst den alten Client abkoppeln, dann trennen: sein "getrennt"-Ereignis kommt sofort und wuerde sonst (this.client waere noch er selbst)
     // einen neuen Wiederholungs-Timer setzen, der die frische Verbindung nach 1,5/3/4,5 s wieder abschiesst.
     this.gen++;
+    this.stopTyping(); this.gestSurface && this.gestSurface.cancel();
+    this.releaseMods(true);                        // nichts gedrueckt lassen: im Ziel (das bei keep die Sitzung behaelt) darf keine Taste haengen bleiben
     const old = this.client;
     this.client = null; this.display = null; this.mouse = null; this.connected = false;
     try { old && old.disconnect(keep); } catch { /* egal */ }
     clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); clearTimeout(this.resizeTimer);
     this.stopWindowBar(); this.el.topbar.hidden = true;
     this.el.display.replaceChildren();
-    this.resetMods();
     this.updateAudioMenu();
   }
 
@@ -986,6 +1012,7 @@ export class RemoteSession extends Session {
         clearTimeout(this.connectTimer);
         this.connected = true; this.everConnected = true; this.connectedAt = Date.now(); this.frameSeen = false; this.resume.connected();
         this.setState('connected', t('app.stateConnected'));
+        this.releaseMods(true);                    // nach einem Abriss koennte das Ziel noch eine Taste halten (die Sitzung bleibt dort erhalten): alle loslassen
         if (driveMode && !this.driveNoted) { this.driveNoted = true; this.toast(driveMode === 'rw' ? t('app.driveSharedRw') : t('app.driveSharedRo'), 4000); }
         if (this.hasSibling()) this.toast(t('app.siblingNote'), 6000);
         this.startWindowBar(); this.fitDisplay(); this.pushSize(); this.waitForFrame(client); this.applyPause();
@@ -995,7 +1022,7 @@ export class RemoteSession extends Session {
         // Die Zaehler der Wiederholung gelten erst als zurueckgesetzt, wenn die Verbindung wirklich haelt (sonst endlos: verbunden, sofort getrennt, neu ...)
         setTimeout(() => { if (this.client === client && this.connected) { this.firstLogin = false; this.retry = 0; this.loginTries = 0; } }, 12000);
       } else if (st === 5) { // getrennt
-        this.connected = false;
+        this.connected = false; this.releaseMods(); this.gestSurface.cancel();
         // Diagnose (?debug): wie lange die Leitung hielt, wie sie endete (Code, sauber geschlossen oder abgerissen) und was die Seite gerade tat; so sieht man, ob das Neuverbinden vom Netz oder von der Seite selbst kommt
         if (client.lastClose) this.dbg('ws-close', { code: client.lastClose.code, clean: client.lastClose.clean, up: Math.round((client.lastClose.at - this.connectStarted) / 1000), hidden: document.hidden, online: navigator.onLine, resume: this.resume.usable() });
         if (client.drawn) { this.streamWorked = true; this.resume.confirm(); }      // die Sitzung am Ziel gibt es wirklich: ein Token darf sie wieder aufnehmen
@@ -1220,6 +1247,7 @@ export class RemoteSession extends Session {
   setK(k, announce = true) {
     this.k = clamp(k, 0.35, 1.8); if (!this.conn.quick) store.set('k.' + this.conn.id, this.k);          // je Verbindung gemerkt
     if (announce) this.showZoomPop();
+    this.applyZoomState();
     this.scheduleSize();
   }
 
@@ -1324,17 +1352,14 @@ export class RemoteSession extends Session {
    * ===================================================================== */
   kdown(s) { return this.client && this.client.sendKeyEvent(1, s); }
   kup(s) { return this.client && this.client.sendKeyEvent(0, s); }
-  setMod(name, mode) {
-    const prev = this.mods[name];
-    if (prev === mode) return;
-    if (prev === 'off') this.kdown(MODSYM[name]);
-    if (mode === 'off') this.kup(MODSYM[name]);
-    this.mods[name] = mode;
-    this.refreshModButtons();
-  }
-  cycleMod(name) { this.setMod(name, this.mods[name] === 'off' ? 'once' : this.mods[name] === 'once' ? 'lock' : 'off'); }
-  consumeOnce() { for (const n of Object.keys(this.mods)) if (this.mods[n] === 'once') this.setMod(n, 'off'); }
-  resetMods() { for (const n of Object.keys(this.mods)) this.mods[n] = 'off'; this.refreshModButtons(); }
+  get mods() { return this.sticky.state; }
+  /** Ein Tipp auf eine Haltetaste der Leiste: einmal = naechste Taste, zweimal schnell = eingerastet, spaeter noch einmal = aus (keys-sticky.js). */
+  tapMod(name) { this.sticky.tap(name, performance.now()); }
+  /** Weiterschalten ohne Zeitregel (Menue der Desktop-Oberflaeche: dort liegen die Tipps weit auseinander): aus, einmal, eingerastet, aus. */
+  cycleMod(name) { const m = this.sticky.get(name); this.sticky.set(name, m === 'off' ? 'once' : m === 'once' ? 'lock' : 'off'); }
+  consumeOnce() { this.sticky.consume(); }
+  /** Alle Haltetasten loslassen (Sitzung verlassen, Seite im Hintergrund, Abriss); force: auch an das Ziel, wenn wir nur meinen, es sei nichts gedrueckt (nach dem Wiederverbinden). */
+  releaseMods(force = false) { this.sticky.releaseAll(force && !!this.client); }
   // Alle Tasten laufen strikt nacheinander durch eine Warteschlange (sonst vertauscht sich die Reihenfolge,
   // zum Beispiel bei "Backspace x3, dann neues Wort" nach einer Autokorrektur). Jede Sitzung hat ihre eigene.
   enqueue(fn) { this.keyChain = this.keyChain.then(fn).catch(() => {}); return this.keyChain; }
@@ -1353,6 +1378,45 @@ export class RemoteSession extends Session {
         this.kdown(sym); await sleep(6); this.kup(sym); await sleep(4);
         this.consumeOnce();
       }
+    });
+  }
+  /**
+   * "Als Text tippen" (Zwischenablage-Blatt, Textbausteine mit Abbruch): die Zeichen gehen als Tastendruecke hinaus, in Stuecken, damit abgebrochen werden kann. Hoechstens
+   * KEY_LIMITS.typeChars Zeichen (der Rest wird nicht getippt, das meldet der Aufrufer vorher). Zeigt den Fortschritt in der Leiste der Uebertragungen mit "Abbrechen".
+   * Gibt { typed, aborted } zurueck.
+   */
+  async typeTextSafely(text) {
+    const { keys } = textOps(text);
+    if (!keys.length || !this.client) return { typed: 0, aborted: false };
+    const job = this.typing = { abort: false };
+    let typed = 0;
+    this.showXfer(t('clipp.typing', { done: 0, total: keys.length }), () => { job.abort = true; });
+    this.xferAbort = new AbortController();
+    try {
+      for (const part of chunk(keys, 20)) {
+        if (job.abort || !this.client) break;
+        await this.enqueue(async () => {
+          for (const k of part) { this.kdown(k.sym); await sleep(6); this.kup(k.sym); await sleep(4); this.consumeOnce(); }
+        });
+        typed += part.length;
+        this.showXfer(t('clipp.typing', { done: typed, total: keys.length }), () => { job.abort = true; });
+      }
+    } finally { if (this.typing === job) this.typing = null; this.hideXfer(); }
+    return { typed, aborted: job.abort };
+  }
+  stopTyping() { if (this.typing) this.typing.abort = true; }
+  /** Ein Kuerzel (Folge von Kombinationen, keys-shortcuts.js) abspielen: jede Taste wird wieder losgelassen, auch wenn die Verbindung mittendrin abreisst. */
+  playSequence(value) {
+    const ops = sequenceOps(parseSequence(value));
+    return this.enqueue(async () => {
+      let done = 0;
+      try {
+        for (const o of ops) {
+          if (!this.client) break;
+          if (o.op === 'wait') await sleep(o.ms); else if (o.op === 'down') this.kdown(o.sym); else this.kup(o.sym);
+          done++;
+        }
+      } finally { for (const sym of heldAfter(ops, done).reverse()) this.kup(sym); this.consumeOnce(); }
     });
   }
   // Text aus der VM in die Zwischenablage dieses Browsers; scheitert das, steht der Text im Dialog (die Meldung fuehrt dorthin) und die Diagnose nennt den Grund
@@ -1395,7 +1459,9 @@ export class RemoteSession extends Session {
       if (def.type === 'mod') {
         const name = MODNAME[String(def.value).toLowerCase()];
         if (!name) throw new Error(t('app.errUnknownMod'));
-        this.cycleMod(name);
+        this.tapMod(name);
+      } else if (def.type === 'seq') {
+        await this.playSequence(def.value || '');
       } else if (def.type === 'text') {
         await this.typeText(def.value || '');
       } else if (def.type === 'action') {
@@ -1424,6 +1490,8 @@ export class RemoteSession extends Session {
       b.innerHTML = ico(icon); b.classList.add('ic');
       const name = def.type === 'action' ? ACT_NAME[String(def.value).toLowerCase()] : null;          // Symbole brauchen einen Namen (Vorlesen, Tooltip)
       if (name) { const text = t(name === 'expand' ? (S.expanded ? tk('app.actCollapse') : tk('app.actExpand')) : name); b.setAttribute('aria-label', text); b.title = text; }
+    } else if (def.icon && ICONS[def.icon]) {        // eigene Taste mit Name und Symbol
+      b.innerHTML = ico(def.icon) + '<span class="klab"></span>'; b.classList.add('ic', 'has-label'); b.querySelector('.klab').textContent = keyLabel(def.label);
     } else b.textContent = keyLabel(def.label);
     b.dataset.r = String(r); b.dataset.i = String(i);
     if (def.type === 'mod') b.dataset.mod = MODNAME[String(def.value).toLowerCase()] || '';
@@ -1440,7 +1508,7 @@ export class RemoteSession extends Session {
     const rk = document.createElement('div'); rk.className = 'rk'; rk.dataset.r = String(r);
     if (label && !bar) { const t = document.createElement('div'); t.className = 'gt'; t.textContent = rowTitle(row); rk.appendChild(t); }
     // Im Terminal hat die Eingabeleiste (terminal-input.js) Esc, Tab und Strg+C selbst: die Leiste der Fernsteuerung zeigt dort nur ihre Symbol-Tasten
-    row.items.forEach((def, i) => { if (S.editing || (keyInScope(def, this.kind === 'vnc' ? 'desktop' : this.kind) && !(bar && this.kind === 'terminal' && def.type !== 'action'))) rk.appendChild(this.keyEl(def, r, i)); });
+    row.items.forEach((def, i) => { if (S.editing || (keyApplies(def, { kind: this.kind === 'vnc' ? 'desktop' : this.kind, connId: this.conn.id }) && !(bar && this.kind === 'terminal' && def.type !== 'action'))) rk.appendChild(this.keyEl(def, r, i)); });
     if (S.editing) {
       const add = document.createElement('div'); add.setAttribute('role', 'button'); add.className = 'k add'; add.innerHTML = ico('add') + `<span>${t('app.key')}</span>`;
       add.addEventListener('click', () => openKeyEditor(r, -1)); rk.appendChild(add);
@@ -1487,7 +1555,7 @@ export class RemoteSession extends Session {
     const set = (c, txt) => { const n = this.el.menu.querySelector(c); if (n) n.textContent = txt; };
     set('.mv-kb', S.kbMode === 'rich' ? t('app.kbWithImages') : S.kbMode === 'normal' ? t('app.kbWithSuggestions') : t('app.kbWithoutSuggestions'));
     set('.mv-kbresize', kbModeLabel(S.kbResize));
-    set('.mv-touch', S.touchMode === 'direct' ? t('app.touchTap') : t('app.touchPad'));
+    set('.mv-touch', S.touch.mode === 'direct' ? t('app.touchTap') : t('app.touchPad'));
     set('.mv-autokb', S.autoKb ? t('app.on') : t('app.off'));
     set('.mv-autopaste', S.autoPaste ? t('app.on') : t('app.off'));
     set('.mv-count', String(Sessions.count));
@@ -1510,11 +1578,13 @@ export class RemoteSession extends Session {
     }
     if (act === 'perf') { setPerf(!S.perf); return; }
     if (act === 'quality') { this.setQualityMode(nextQuality(this.quality)); return; }
+    if (act === 'touchSettings') { this.closeMenu(); openTouchSettings(); return; }
+    if (act === 'clipPanel') { this.closeMenu(); this.clipPanel.openSheet(); return; }
     if (['kbMode', 'autoKb', 'touchMode', 'autoPaste'].includes(act)) {
       if (act === 'kbMode') S.kbMode = S.kbMode === 'rich' ? 'normal' : S.kbMode === 'normal' ? 'direct' : 'rich';
       if (act === 'autoKb') S.autoKb = !S.autoKb;
       if (act === 'autoPaste') S.autoPaste = !S.autoPaste;
-      if (act === 'touchMode') S.touchMode = S.touchMode === 'direct' ? 'pad' : 'direct';
+      if (act === 'touchMode') setTouch({ mode: S.touch.mode === 'direct' ? 'pad' : 'direct' });
       applyKbMode(); return;
     }
     this.closeMenu();
@@ -1564,9 +1634,9 @@ export class RemoteSession extends Session {
     this.consumeOnce();
   }
   padPoint() {
-    const G = this.G;
-    if (!G.px && !G.py && this.display) { G.px = this.display.getWidth() / 2; G.py = this.display.getHeight() / 2; }
-    return { x: G.px, y: G.py };
+    const P = this.pad;
+    if (!P.x && !P.y && this.display) { P.x = this.display.getWidth() / 2; P.y = this.display.getHeight() / 2; }
+    return { x: P.x, y: P.y };
   }
 
 
@@ -1698,125 +1768,89 @@ export class RemoteSession extends Session {
     this.el.xferCancel.addEventListener('click', () => { if (this.xferAbort) this.xferAbort.abort(); if (this.xferCancelExtra) this.xferCancelExtra(); this.hideXfer(); this.toast(t('app.cancelled')); });
   }
 
-  /* ---------- Touch-Gesten (je Sitzung, auf deren Touch-Ebene) ---------- */
+  /* ---------- Touch-Gesten (je Sitzung, auf deren Touch-Ebene) ----------
+     touch-gestures.js entscheidet (reine Zustandsmaschine, mit Tests), touch-ui.js zeigt Ring und Markierung, hier wird ausgefuehrt. docs/TOUCH.md */
   wireTouch() {
-    const G = this.G, touch = this.el.touch;
-    touch.addEventListener('touchstart', (e) => {
-      e.preventDefault();
-      for (const t of e.changedTouches) G.pts.set(t.identifier, { x: t.clientX, y: t.clientY });
-      const pts = [...G.pts.values()];
-      if (pts.length === 1) {
-        G.mode = 'pending'; G.sx = pts[0].x; G.sy = pts[0].y; G.lx = pts[0].x; G.ly = pts[0].y; G.st = Date.now(); G.moved = false;
-        clearTimeout(G.timer);
-        if (S.touchMode !== 'pad') { const q0 = this.remoteXY(pts[0].x, pts[0].y); this.mouseSend(q0.x, q0.y); } // Zeiger vorab hinbewegen: Cursorform (Textfeld?) aktualisiert sich
-        G.timer = setTimeout(() => { if (G.mode === 'pending') { G.mode = 'long'; if (navigator.vibrate) navigator.vibrate(15); } }, 520);
-      } else if (pts.length === 2) {
-        clearTimeout(G.timer);
-        if (G.pressed) { const p = this.remoteXY(G.lx, G.ly); this.mouseSend(p.x, p.y); G.pressed = false; }
-        G.mode = 'two'; G.d0 = dist2(pts[0], pts[1]); G.k0 = this.k; G.newK = this.k;
-        G.mid0 = mid2(pts[0], pts[1]); G.midLast = G.mid0; G.decided = null; G.scrollAcc = 0; G.moved = false; G.st = Date.now();
+    this.touchUi = new TouchUi(this.el.stage, () => S.touch.vibrate);
+    this.gestChain = Promise.resolve();
+    this.gestSurface = bindSurface(this.el.touch, this.gest, (acts) => { for (const a of acts) this.runGesture(a); });
+    this.applyZoomState();
+  }
+  /** Neue Touch-Einstellungen (S.touch) in die Maschine und die Scrollschritte uebernehmen. */
+  applyTouchConfig() { this.gest.setConfig(S.touch); this.wheel.step = scrollStep(S.touch.scrollSpeed); }
+  /** Ein Zwei-Finger-Doppeltipp setzt den Zoom nur zurueck, wenn gezoomt ist (sonst bleibt der Rechtsklick sofort). */
+  applyZoomState() { this.gest.setOptions({ zoomed: Math.abs(this.k - pcDefaultK()) > 0.02 }); }
+  /** Stelle einer Aktion in Pixeln der VM: direkt an der Stelle des Fingers, im Touchpad-Modus am Zeiger. */
+  gestPoint(a) { return a.where === 'pointer' ? this.padPoint() : this.remoteXY(a.x, a.y); }
+  runGesture(a) {
+    this.touchUi.show(a);
+    // Die Tastatur muss in der Geste aufgehen, in der getippt wurde: darum vor der Warteschlange (Zeiger steht schon, die Form kam beim Aufsetzen an)
+    if (a.type === 'click' && a.how === 'tap') {
+      if (tapLogN++ < 40) this.dbg('tap', { ibeam: this.cursor.ibeam, kb: kbOpen, auto: S.autoKb, cur: this.cursor.sig || '' });
+      if (S.autoKb && this.cursor.ibeam && !kbOpen) { this.dbg('autokb', { when: 'tap' }); el.kb.blur(); el.kb.focus(); }
+    }
+    // alles andere der Reihe nach (ein Klick dauert 45 ms, ein Zug darf nicht davor losgehen)
+    this.gestChain = this.gestChain.then(() => this.execGesture(a)).catch(() => {});
+  }
+  async execGesture(a) {
+    if (!this.client) return;
+    switch (a.type) {
+      case 'hover': { const q = this.remoteXY(a.x, a.y); this.mouseSend(q.x, q.y); break; }          // Zeiger vorab hinbewegen: Cursorform (Textfeld?) aktualisiert sich
+      case 'click': {
+        const q = this.gestPoint(a);
+        await this.clickAt(q.x, q.y, a.button);
+        if (a.how === 'tap') this.watchForTextField();
+        break;
       }
-    }, { passive: false });
-
-    touch.addEventListener('touchmove', (e) => {
-      e.preventDefault();
-      for (const t of e.changedTouches) if (G.pts.has(t.identifier)) G.pts.set(t.identifier, { x: t.clientX, y: t.clientY });
-      const pts = [...G.pts.values()];
-      if (pts.length === 1 && (G.mode === 'pending' || G.mode === 'long' || G.mode === 'drag' || G.mode === 'pad')) {
-        const p = pts[0];
-        const moved = Math.hypot(p.x - G.sx, p.y - G.sy);
-        if (G.mode === 'pending' && moved > 10) {
-          clearTimeout(G.timer);
-          if (S.touchMode === 'pad') { G.mode = 'pad'; } else { G.mode = 'drag'; const s0 = this.remoteXY(G.sx, G.sy); this.mouseSend(s0.x, s0.y); this.mouseSend(s0.x, s0.y, true); G.pressed = true; }
-        } else if (G.mode === 'long' && moved > 10) {
-          G.mode = 'drag';
-          if (S.touchMode === 'pad') { const q = this.padPoint(); this.mouseSend(q.x, q.y, true); } else { const s0 = this.remoteXY(G.sx, G.sy); this.mouseSend(s0.x, s0.y); this.mouseSend(s0.x, s0.y, true); }
-          G.pressed = true;
-        }
-        if (G.mode === 'drag' || G.mode === 'pad') {
-          G.moved = true;
-          if (S.touchMode === 'pad') {
-            const s = this.display ? this.display.getScale() : 1;
-            this.padPoint();
-            G.px += ((p.x - G.lx) / s) * 1.6; G.py += ((p.y - G.ly) / s) * 1.6;
-            G.px = clamp(G.px, 0, this.display ? this.display.getWidth() : 0); G.py = clamp(G.py, 0, this.display ? this.display.getHeight() : 0);
-            this.mouseSend(G.px, G.py, G.pressed);
-          } else {
-            const q = this.remoteXY(p.x, p.y); this.mouseSend(q.x, q.y, true);
-          }
-        }
-        G.lx = p.x; G.ly = p.y;
-      } else if (pts.length === 2 && G.mode === 'two') {
-        const d = dist2(pts[0], pts[1]); const m = mid2(pts[0], pts[1]);
-        if (!G.decided) {
-          if (Math.abs(d - G.d0) > 28) G.decided = 'pinch';
-          else if (Math.hypot(m.x - G.mid0.x, m.y - G.mid0.y) > 18) G.decided = 'scroll';
-        }
-        if (G.decided) G.moved = true;
-        if (G.decided === 'pinch' && d > 10) {
-          G.newK = clamp(G.k0 * (G.d0 / d), 0.35, 1.8);
-          this.toast(t('app.displayPct', { p: Math.round(100 / G.newK) }), 600);
-        } else if (G.decided === 'scroll') {
-          let dy = m.y - G.midLast.y; G.midLast = m;
-          const max = this.panMax();
-          if (max > 0) { const p = panDrag(this.panY, max, dy); this.panY = p.offset; dy = p.rest; this.el.display.style.transform = this.panY ? `translateY(${-this.panY}px)` : ''; }   // Bild verschieben, erst der Rest scrollt die VM
-          G.scrollAcc += dy;
-          const q = this.remoteXY(m.x, m.y);
-          while (Math.abs(G.scrollAcc) >= 34) {
-            const down = G.scrollAcc < 0; // Finger nach oben = nach unten scrollen
-            this.mouseSend(q.x, q.y, false, false, false, !down, down);
-            this.mouseSend(q.x, q.y, false, false, false, false, false);
-            G.scrollAcc += down ? 34 : -34;
-          }
-        }
+      case 'press': { const q = this.gestPoint(a); this.mouseSend(q.x, q.y); this.mouseSend(q.x, q.y, true); this.dragging = true; break; }
+      case 'move': {
+        if (a.where === 'pointer') {
+          const P = this.pad, s = this.display ? this.display.getScale() : 1;
+          this.padPoint();
+          P.x = clamp(P.x + a.dx / s, 0, this.display ? this.display.getWidth() : 0); P.y = clamp(P.y + a.dy / s, 0, this.display ? this.display.getHeight() : 0);
+          this.mouseSend(P.x, P.y, !!this.dragging);
+        } else { const q = this.remoteXY(a.x, a.y); this.mouseSend(q.x, q.y, true); }
+        break;
       }
-    }, { passive: false });
-
-    const endTouch = async (e) => {
-      e.preventDefault();
-      const before = G.pts.size;
-      for (const t of e.changedTouches) G.pts.delete(t.identifier);
-      if (before === 1 && G.pts.size === 0) {
-        clearTimeout(G.timer);
-        const dur = Date.now() - G.st;
-        if (G.mode === 'pending' && dur < 380) {
-          // Tippen auf ein Textfeld (Zeiger ist ein I-Balken): Tastatur gleich in der Geste oeffnen
-          if (tapLogN++ < 40) this.dbg('tap', { ibeam: this.cursor.ibeam, kb: kbOpen, auto: S.autoKb, cur: this.cursor.sig || '' });
-          if (S.autoKb && this.cursor.ibeam && !kbOpen) { this.dbg('autokb', { when: 'tap' }); el.kb.blur(); el.kb.focus(); }
-          if (S.touchMode === 'pad') { const q = this.padPoint(); await this.clickAt(q.x, q.y, 'left'); }
-          else { const q = this.remoteXY(G.sx, G.sy); await this.clickAt(q.x, q.y, 'left'); }
-          // Zeigerform kommt erst nach der Mausbewegung an. Electron-Programme wie Claude liefern den I-Balken erst nach rund einer
-          // Sekunde, deshalb ein Zeitfenster statt einer einzelnen Pruefung.
-          const t0 = Date.now();
-          const poll = () => {
-            if (!S.autoKb || !this.connected || kbOpen || Date.now() - t0 > 1600) return;
-            if (this.cursor.ibeam) { this.dbg('autokb', { when: 'late', ms: Date.now() - t0 }); el.kb.focus(); return; }
-            setTimeout(poll, 100);
-          };
-          setTimeout(poll, 120);
-        } else if (G.mode === 'long') {
-          if (S.touchMode === 'pad') { const q = this.padPoint(); await this.clickAt(q.x, q.y, 'right'); }
-          else { const q = this.remoteXY(G.sx, G.sy); await this.clickAt(q.x, q.y, 'right'); }
-        } else if (G.mode === 'drag' || G.mode === 'pad') {
-          if (G.pressed) {
-            if (S.touchMode === 'pad') this.mouseSend(G.px, G.py, false); else { const q = this.remoteXY(G.lx, G.ly); this.mouseSend(q.x, q.y, false); }
-            G.pressed = false; this.consumeOnce();
-          }
-        }
-        G.mode = 'idle';
-      } else if (G.mode === 'two' && G.pts.size === 0) {
-        const dur = Date.now() - G.st;
-        if (!G.decided && !G.moved && dur < 350) { // Zwei-Finger-Tipp = Rechtsklick
-          const q = S.touchMode === 'pad' ? this.padPoint() : this.remoteXY(G.midLast.x, G.midLast.y); await this.clickAt(q.x, q.y, 'right');
-        } else if (G.decided === 'pinch' && Math.abs(G.newK - G.k0) > 0.01) {
-          this.setK(G.newK, false); this.showZoomPop(); this.rememberProfile();
-        }
-        G.mode = 'idle';
-      } else if (G.pts.size === 0) { G.mode = 'idle'; }
+      case 'release': { const q = this.gestPoint(a); this.mouseSend(q.x, q.y, false); this.dragging = false; this.consumeOnce(); break; }
+      case 'scroll': this.gestScroll(a); break;
+      case 'pinch': {
+        if (a.start || !this.pinch.k0) this.pinch.k0 = this.k;
+        this.pinch.newK = clamp(this.pinch.k0 / a.ratio, 0.35, 1.8);
+        this.toast(t('app.displayPct', { p: Math.round(100 / this.pinch.newK) }), 600);
+        break;
+      }
+      case 'pinchEnd': {
+        const { k0, newK } = this.pinch; this.pinch = { k0: 0 };
+        if (k0 && newK && Math.abs(newK - k0) > 0.01) { this.setK(newK, false); this.showZoomPop(); this.rememberProfile(); }
+        break;
+      }
+      case 'zoomReset': this.setK(pcDefaultK(), false); this.showZoomPop(); this.rememberProfile(); this.toast(t('touch.zoomReset'), 1200); break;
+    }
+  }
+  /** Zeigerform kommt erst nach der Mausbewegung an. Electron-Programme wie Claude liefern den I-Balken erst nach rund einer Sekunde, deshalb ein Zeitfenster statt einer Pruefung. */
+  watchForTextField() {
+    const t0 = Date.now();
+    const poll = () => {
+      if (!S.autoKb || !this.connected || kbOpen || Date.now() - t0 > 1600) return;
+      if (this.cursor.ibeam) { this.dbg('autokb', { when: 'late', ms: Date.now() - t0 }); el.kb.focus(); return; }
+      setTimeout(poll, 100);
     };
-    touch.addEventListener('contextmenu', (e) => e.preventDefault());
-    touch.addEventListener('touchend', endTouch, { passive: false });
-    touch.addEventListener('touchcancel', endTouch, { passive: false });
+    setTimeout(poll, 120);
+  }
+  /** Zwei Finger schieben: bei offener Tastatur (Modus 'pan') erst das Bild verschieben, der Rest scrollt die VM; waagerecht und senkrecht als Rastschritte des Rads. */
+  gestScroll(a) {
+    let dy = a.dy;
+    const max = this.panMax();
+    if (max > 0 && a.fdy) {
+      const p = panDrag(this.panY, max, a.fdy);
+      this.panY = p.offset; dy = a.dy * (p.rest / a.fdy);
+      this.el.display.style.transform = this.panY ? `translateY(${-this.panY}px)` : '';
+    }
+    const n = this.wheel.add(a.dx, dy);
+    if (!n.v && !n.h) return;
+    const q = this.remoteXY(a.x, a.y);
+    this.client.sendMouseState(mouseState(q.x, q.y, false, false, false, false, false, false, false, -120 * n.v, 120 * n.h));
   }
 }
 
@@ -1836,7 +1870,8 @@ export const softKeyboard = {
  *  Das unsichtbare Eingabefeld gibt es nur einmal; was darin passiert, geht an die aktive Sitzung (Sessions.active).
  * ===================================================================== */
 let lastNamedAt = 0;
-let prevValue = '';
+const kbSync = new KbSync();       // Abgleich des Eingabefelds mit der VM (kb-input.js): ganze Woerter, Korrekturen und Diktat
+let kbComposing = false;           // die Tastatur bearbeitet gerade einen Zwischenstand (Composition)
 const kbVal = () => (el.kb.isContentEditable ? el.kb.textContent : el.kb.value);
 const setKbVal = (v) => { if (el.kb.isContentEditable) el.kb.textContent = v; else el.kb.value = v; };
 
@@ -1847,10 +1882,10 @@ function applyKbMode() {
   if (kbFocused()) { el.kbInput.blur(); el.kbRich.blur(); }
   el.kb = S.kbMode === 'rich' ? el.kbRich : el.kbInput;
   if (S.kbMode !== 'rich') { const t = S.kbMode === 'direct' ? 'password' : 'text'; if (el.kbInput.type !== t) el.kbInput.type = t; }
-  setKbVal(''); prevValue = '';
+  setKbVal(''); kbSync.clear();
   for (const s of remotes()) s.updateMenuLabels();
   store.set('autoPaste', S.autoPaste); store.set('autoKb', S.autoKb);
-  store.set('kbMode2', S.kbMode); store.set('touchMode', S.touchMode);
+  store.set('kbMode2', S.kbMode); store.set('touchMode', S.touch.mode);
 }
 const NAMED = { Enter: KS.enter, Backspace: KS.backspace, Tab: KS.tab, Escape: KS.esc, ArrowLeft: KS.left, ArrowRight: KS.right,
   ArrowUp: KS.up, ArrowDown: KS.down, Delete: KS.delete, Home: KS.home, End: KS.end, PageUp: KS.pageup, PageDown: KS.pagedown, Insert: KS.insert };
@@ -1878,19 +1913,22 @@ function onKbPaste(e) {
 function onKbBeforeInput(e) {
   if (kbEvCount++ < 60) dbg('beforeinput', { it: e.inputType, comp: e.isComposing, len: (e.data || '').length, files: (e.dataTransfer && e.dataTransfer.files ? e.dataTransfer.files.length : 0), mode: S.kbMode });
   const files = e.dataTransfer && e.dataTransfer.files;
-  if (files && files.length) { e.preventDefault(); handleKbFiles(files); }
+  if (files && files.length) { e.preventDefault(); handleKbFiles(files); return; }
+  // Zeilenumbruch aus dem Diktat ("neue Zeile") oder von der Tastatur ohne Enter-Ereignis: als Enter senden, im Feld entsteht nichts (ein bearbeitbares Feld bekaeme sonst
+  // einen Absatz, der in textContent nicht auftaucht und so verloren ginge)
+  if ((e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak') && !e.isComposing) {
+    const s = cur();
+    if (s && s.connected && keyOwner()) { e.preventDefault(); syncDiff(); s.tapKey(KS.enter); lastNamedAt = Date.now(); }
+  }
 }
 function syncDiff() {
   const s = cur();
   if (!s || !s.connected) return;
-  if (!keyOwner()) { setKbVal(''); prevValue = ''; return; }   // Desktop-Layout: ein anderes Fenster hat die Tasten, nichts an die VM senden
-  const v = kbVal();
-  const a = [...prevValue], b = [...v];
-  let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
-  for (let n = 0; n < a.length - i; n++) s.tapKey(KS.backspace);
-  const add = b.slice(i).join(''); if (add) s.typeText(add);
-  prevValue = v;
-  if (b.length > 300) { setKbVal(''); prevValue = ''; }
+  if (!keyOwner()) { setKbVal(''); kbSync.clear(); return; }   // Desktop-Layout: ein anderes Fenster hat die Tasten, nichts an die VM senden
+  const d = kbSync.feed(kbVal(), { composing: kbComposing });
+  for (let n = 0; n < d.back; n++) s.tapKey(KS.backspace);
+  if (d.add) s.typeText(d.add);
+  if (d.reset) setKbVal('');        // zu lang geworden und die Tastatur bearbeitet nichts mehr: von vorn (mitten in einem Zwischenstand wuerde sie ihn sonst wieder einsetzen)
 }
 let kbEvCount = 0;
 // Umschalter, die an der echten Tastatur gerade gehalten werden (ohne die, die schon ueber die Leiste gedrueckt sind)
@@ -1919,7 +1957,7 @@ function onKbKeydown(e) {
     // Backspace mit Text im Feld kommt ueber das input-Ereignis (Abgleich), nur bei leerem Feld oder mit Umschaltern direkt senden
     if (e.key === 'Backspace' && kbVal().length > 0 && !held.length) return;
     e.preventDefault(); lastNamedAt = Date.now();
-    if (e.key === 'Enter' || e.key === 'Tab' || (e.key === 'Backspace' && held.length)) { setKbVal(''); prevValue = ''; }
+    if (e.key === 'Enter' || e.key === 'Tab' || (e.key === 'Backspace' && held.length)) { setKbVal(''); kbSync.clear(); }
     // mit gehaltenem Shift/Strg/Alt als Kombination, sonst geht Umschalt+Pfeil (Markieren), Strg+Pfeil (Wortsprung) usw. verloren
     if (held.length) s.sendChord([...held, NAMED[e.key]], 3); else s.tapKey(NAMED[e.key]);
     return;
@@ -1935,9 +1973,10 @@ function wireKb(node) {
   node.addEventListener('beforeinput', onKbBeforeInput);
   node.addEventListener('paste', onKbPaste);
   node.addEventListener('drop', (e) => { if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) { e.preventDefault(); handleKbFiles(e.dataTransfer.files); } });
-  node.addEventListener('compositionend', () => syncDiff());
-  node.addEventListener('input', () => syncDiff());
-  node.addEventListener('blur', () => { if (!HW_KB) holdSize(); setActOnAll('keyboard', kbOpen); if (node === el.kb) { setKbVal(''); prevValue = ''; } dbg('kbblur', {}); keyFocusHook(); });
+  node.addEventListener('compositionstart', () => { kbComposing = true; });
+  node.addEventListener('compositionend', () => { kbComposing = false; syncDiff(); });
+  node.addEventListener('input', (e) => { if (e.isComposing) kbComposing = true; syncDiff(); });
+  node.addEventListener('blur', () => { if (!HW_KB) holdSize(); setActOnAll('keyboard', kbOpen); if (node === el.kb) { setKbVal(''); kbSync.clear(); } dbg('kbblur', {}); keyFocusHook(); });
   node.addEventListener('focus', () => { if (!HW_KB) holdSize(); setActOnAll('keyboard', true); dbg('kbfocus', { mode: S.kbMode }); keyFocusHook(); });
 }
 wireKb(el.kbInput); wireKb(el.kbRich);
@@ -1987,7 +2026,7 @@ new MutationObserver((list) => {
       const src = im.currentSrc || im.src; im.remove();
       if (src) fetch(src).then((r) => r.blob()).then((b) => handleKbFiles([new File([b], 'tastatur-bild', { type: b.type || 'image/png' })])).catch(() => {});
     }
-    if (n.nodeType === 1 && el.kbRich.children.length) el.kbRich.textContent = prevValue;
+    if (n.nodeType === 1 && el.kbRich.children.length) el.kbRich.textContent = kbSync.prev;
   }
 }).observe(el.kbRich, { childList: true, subtree: true });
 
@@ -2180,9 +2219,21 @@ export function setLanguage(choice) {
   prefs.push('lang', { lang: choice });          // geht nach dem Neuladen hinaus, falls es vorher nicht mehr klappt (prefs.js merkt es als offen)
   setTimeout(() => location.reload(), 150);
 }
+/** Touch-Einstellungen aendern (touch-settings.js, Menue): pruefen, lokal je Geraet merken, zum Server schicken, in alle Sitzungen uebernehmen. */
+export function setTouch(patch) {
+  S.touch = normalizeTouch({ ...S.touch, ...patch });
+  store.set('touch', S.touch); store.set('touchMode', S.touch.mode);
+  prefs.push('touch', compactTouch(S.touch));
+  for (const s of remotes()) { s.applyTouchConfig(); s.updateMenuLabels(); s.clipPanel.render(); }
+}
+bindTouchSettings({ get: () => S.touch, set: (patch) => setTouch(patch) });
 export function setTheme({ seed, scheme }) { if (seed) S.seed = seed; if (scheme) S.scheme = scheme; saveTheme(); applyTheme(); }
 /** Was der Server fuer diesen Benutzer hat (prefs.sync): Tastenleiste, Theme und Sprache uebernehmen, lokale Kopie auffrischen, neu zeichnen. */
-export function applyServerPrefs({ keybar, theme, lang, appearance: ap } = {}) {
+export function applyServerPrefs({ keybar, theme, lang, appearance: ap, touch } = {}) {
+  if (touch && typeof touch === 'object') {
+    S.touch = normalizeTouch(touch); store.set('touch', S.touch); store.set('touchMode', S.touch.mode);
+    for (const s of remotes()) { s.applyTouchConfig(); s.updateMenuLabels(); s.clipPanel.render(); }
+  }
   if (lang && isPref(lang.lang) && lang.lang !== getPref()) setPref(lang.lang);   // gilt ab dem naechsten Laden der Seite (shell.js laedt beim Anmelden neu)
   const r = keybar && normalizeRows(keybar.rows);
   if (r) { rows = r; store.set('rows4', rows); renderAllRows(); }

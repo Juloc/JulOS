@@ -6,6 +6,12 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt
+- Touch-Bedienung der Sitzung neu: Halten mit sichtbarem Ring = Rechtsklick (300 bis 1000 ms), Zwei-Finger-Scrollen waagerecht und senkrecht, Doppeltipp und halten = Ziehen, Zwei-Finger-Doppeltipp setzt den Zoom zurück, Einstellungen mit Probierfläche (docs/TOUCH.md).
+- Zwischenablage-Blatt mit Anzeige des Geräte-Inhalts, „Als Text tippen“, Bearbeiten, als Datei senden (PNG/JPG) und „Aufs Gerät kopieren“.
+- Haltetasten (Strg, Alt, Umschalt, Win, AltGr) mit Einrasten und sicherem Loslassen; Kürzel als neue Tastenart mit Vorlagen; Eingabe-Abgleich für Diktat der Handy-Tastatur.
+
+
 ### Neu
 - **KI-Zugang für die Apps der Familie** ([docs/AI-GATEWAY.md](docs/AI-GATEWAY.md)): Einstellungen, *KI* (aus per Vorgabe: nichts läuft, nichts wird geladen): Anbieter einmal einrichten (Codex-Brücke mit ChatGPT-Konto per Geräte-Code, das Programm wird erst beim Einschalten in den Datenordner geladen, gepinnte Version mit SHA-256-Prüfung; OpenAI- und Anthropic-Schlüssel verschlüsselt) und Apps mit eigenem Schlüssel, Modellwahl, Tages- und Monatsbudget (Hinweis bei 80 %, Stopp bei 100 %), Ratenlimit und Verbrauch je Tag; die API `/api/ai/v1` (`models`, `chat` als Antwort oder Server-Sent-Events-Strom, `usage`) geht nur mit dem App-Schlüssel und öffnet sonst nichts in JulOS; gespeichert werden nur Zähler, nie ein Text. Änderungen verlangen den zweiten Faktor und stehen im Verlauf. Migration `026_ai.sql`. Die echte Codex-Anmeldung und die echten Anbieter sind noch nicht geprüft.
 - **Anmelde-Zentrale** ([docs/SIGN-IN.md](docs/SIGN-IN.md), noch nicht veröffentlicht): JulOS ist OpenID-Connect-Anbieter für die eigenen Apps (nur Authorization Code mit PKCE, ES256-Token mit Microsofts Token-Bibliothek). Apps, Geheimnisse (nur als Hash), Rollen je Person und App und die Signaturschlüssel verwaltet der Eigentümer in Einstellungen, Sicherheit (zweiter Faktor, Verlauf); endet eine JulOS-Sitzung, bekommen die Apps ein Logout-Token (Back-Channel Logout). Migration `024_oidc.sql`; Tests mit Microsofts `AddOpenIdConnect`-Handler als Client.

@@ -21,7 +21,7 @@ test('jede Gruppe hat Titel und eine Zeile Hilfe, jede Zeile Beschriftung, Erkla
 });
 
 test('die Gruppen stehen in der festen Reihenfolge, Gefaehrliches steht allein am Ende', () => {
-  assert.deepEqual(GROUPS.map((g) => g.id), ['account', 'security', 'appearance', 'workspace', 'connections', 'programs', 'alerts', 'ai', 'sync', 'backup', 'about', 'danger']);
+  assert.deepEqual(GROUPS.map((g) => g.id), ['account', 'security', 'appearance', 'workspace', 'connections', 'touch', 'programs', 'alerts', 'ai', 'sync', 'backup', 'about', 'danger']);
   assert.deepEqual(GROUPS.filter((g) => g.danger).map((g) => g.id), ['danger']);
   assert.equal(GROUPS.at(-1).danger, true);
 });
@@ -30,7 +30,7 @@ test('Handy und Desktop zeigen dieselben Gruppen; die Farbe nur am Handy, der Do
   const ids = (p) => GROUPS.flatMap((g) => rowsFor(g, p).map((r) => r.id));
   assert.ok(ids('phone').includes('color') && !ids('phone').includes('dock'));
   assert.ok(ids('desktop').includes('dock') && !ids('desktop').includes('color'));
-  for (const g of GROUPS) { assert.ok(rowsFor(g, 'desktop').length > 0, g.id); assert.ok(rowsFor(g, 'phone').length > 0 || g.id === 'workspace', g.id); }   // die Fenster dieses Geraets gibt es nur am Desktop
+  for (const g of GROUPS) { assert.ok(rowsFor(g, 'desktop').length > 0 || g.id === 'touch', g.id); assert.ok(rowsFor(g, 'phone').length > 0 || g.id === 'workspace', g.id); }   // die Fenster dieses Geraets gibt es nur am Desktop
 });
 
 test('Backup: ein kurzer Satz mit naechstem Schritt, der Rohtext nur in den Details', () => {

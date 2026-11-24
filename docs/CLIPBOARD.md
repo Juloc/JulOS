@@ -198,3 +198,7 @@ Since 0.10.2 the browser therefore sends the picture a second time through the a
 connection's host): the clipboard helper in the desktop session sets the image with GTK, which offers PNG and BMP, after the RDP path, so it stays the owner of the clipboard.
 Needs: the agent of the host is connected (host dialog) and `julos-clip.py` runs in the desktop session (autostart of the agent installer). Without an agent the server
 answers 502 and only the RDP path remains. To check: the diagnosis in the dialog "Text senden" and the debug event `image-agent` (status 200 means the helper took it).
+
+## Clipboard sheet on the phone
+
+The chip and sheet (`clip-panel.js`, see [TOUCH.md](TOUCH.md)) follow the rules above: no read without a gesture unless the permission is `granted` and the page has focus, hint before the browser asks, content never in logs. "Type as text" sends characters as key presses (limit 4000, cancellable), "Send as file" uses the existing file path.

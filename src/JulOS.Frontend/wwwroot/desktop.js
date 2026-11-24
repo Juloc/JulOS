@@ -1205,6 +1205,7 @@ function onMainClick(e) {
   else if (t.dataset.act === 'alerts') ctx.alerts();
   else if (t.dataset.act === 'account') ctx.account();
   else if (t.dataset.act === 'security') ctx.security();
+  else if (t.dataset.act === 'ai') import('./ai.js').then((m) => m.openAi({ api: ctx.api, esc: ctx.esc }));     // KI-Zugang (ai.js), erst beim Oeffnen geladen
   else if (t.dataset.act === 'signout') ctx.signOut();
   else if (t.dataset.act === 'settings') goto('einstellungen');
   else if (t.dataset.act === 'desktop' || t.dataset.act === 'terminal' || t.dataset.act === 'vnc') pickConnection(t.dataset.act, t);

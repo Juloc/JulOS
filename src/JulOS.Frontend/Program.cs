@@ -5,6 +5,7 @@ using JulOS.Backend.Logic;
 using JulOS.Backend.Services;
 using JulOS.Frontend;
 using JulOS.Frontend.About;
+using JulOS.Frontend.Ai;
 using JulOS.Frontend.Agent;
 using JulOS.Frontend.Auth;
 using JulOS.Frontend.Cli;
@@ -145,6 +146,8 @@ builder.Services.AddSingleton(sp => new FileConfirmations(sp.GetRequiredService<
 builder.Services.AddHostedService<SftpPoolSweeper>();
 // Module Caddy und DDNS (nur lesen, standardmaessig aus): JULOS_CADDY, JULOS_DDNS, siehe docs/MODULES.md
 builder.Services.AddModules(builder.Configuration);
+// KI-Zugang (aus per Vorgabe): Anbieter einrichten, Apps mit Schluessel, siehe docs/AI-GATEWAY.md
+builder.Services.AddAi(builder.Configuration);
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJson.Default));
 
 // Hinter einem Proxy im eigenen Netz (zum Beispiel Caddy) kommen Client-Adresse, Protokoll und Host aus den X-Forwarded-Kopfzeilen. Welche Adressen als Proxy gelten, steht in den
@@ -246,6 +249,7 @@ app.MapFiles();
 app.MapRemoteFiles();
 app.MapModules();
 app.MapNetTools();
+app.MapAi();
 
 app.Run();
 return 0;

@@ -1,0 +1,30 @@
+/* KI-Zugang (ai.js): nutzt die Bausteine des Sicherheits-Dialogs (sec-*), hier nur das, was dort fehlt. */
+#aiDlg { width: min(94vw, 640px); }
+#aiDlg input[type=text], #aiDlg input[type=password], #aiDlg input[type=number], #aiDlg select { width: 100%; box-sizing: border-box; background: var(--md-surface-container-high, var(--bg)); color: var(--text); border: 1px solid var(--md-outline); border-radius: 12px; padding: 10px 12px; font: inherit; }
+#aiDlg fieldset { border: 0; margin: 8px 0 4px; padding: 0; }
+#aiDlg legend { color: var(--muted); font-size: .85rem; padding: 0; margin-bottom: 2px; }
+.ai-card, .ai-app { border: 1px solid var(--md-outline-variant, var(--md-outline)); border-radius: 14px; padding: 10px 12px; margin: 8px 0; }
+.ai-app.off { opacity: .8; }
+.ai-card-head, .ai-app-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.ai-card-head b, .ai-app-head b { flex: 0 1 auto; }
+.ai-toggle { margin-left: auto; min-height: 36px; padding: 4px 14px; }
+.ai-chip { font-size: .75rem; font-weight: 600; padding: 2px 9px; border-radius: 99px; background: rgba(127,127,127,.18); }
+.ai-chip.ai-ok { background: rgba(46,125,50,.18); color: light-dark(#1b5e20, #a5d6a7); }
+.ai-chip.ai-warn { background: rgba(237,108,2,.18); color: light-dark(#a04a00, #ffcc80); }
+.ai-chip.ai-error { background: rgba(198,40,40,.16); color: light-dark(#c62828, #ffb4ab); }
+.ai-login { margin: 6px 0; }
+.ai-login p { margin: 4px 0; overflow-wrap: anywhere; }
+.ai-code { display: block; width: fit-content; max-width: 100%; margin: 6px 0; padding: 10px 16px; border-radius: 12px; background: var(--md-surface-container-high, var(--bg)); font: 600 1.5rem/1.2 ui-monospace, Menlo, Consolas, monospace; letter-spacing: .12em; user-select: all; }
+.ai-appkey { overflow-wrap: anywhere; }
+.ai-budget { display: grid; grid-template-columns: 64px 1fr auto; align-items: center; gap: 8px; font-size: .85rem; margin: 3px 0; }
+.ai-bar { height: 8px; border-radius: 99px; background: rgba(127,127,127,.22); overflow: hidden; }
+.ai-bar i { display: block; height: 100%; background: var(--md-primary, var(--accent)); border-radius: 99px; }
+.ai-warn .ai-bar i { background: #ed6c02; }
+.ai-full .ai-bar i { background: #c62828; }
+.ai-actions { flex-wrap: wrap; }
+.ai-actions button { flex: 1 1 120px; }
+.ai-danger { color: light-dark(#c62828, #ffb4ab) !important; }
+.ai-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ai-usage { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.ai-usage th, .ai-usage td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--md-outline-variant, rgba(127,127,127,.25)); }
+@media (max-width: 480px) { .ai-two { grid-template-columns: 1fr; } .ai-budget { grid-template-columns: 56px 1fr; } .ai-budget b { grid-column: 1 / -1; } }

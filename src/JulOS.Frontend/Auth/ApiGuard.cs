@@ -30,6 +30,9 @@ internal sealed class ApiGuard(RequestDelegate next, AuthService auth)
         // Der Agent auf der Ziel-Maschine ist kein Browser: er hat weder Cookie noch Origin. Seine Wege pruefen Code und Token selbst (Agent/AgentLinkEndpoints.cs).
         if (Agent.AgentLinkEndpoints.IsAgentPath(ctx.Request.Path)) { await next(ctx); return; }
 
+        // Die KI-API der Apps der Familie hat ebenfalls kein Cookie: sie braucht den Schluessel der App (Authorization: Bearer), den das Tor pruefen muss (Ai/AiGateway.cs). Alles andere unter /api/ai bleibt hinter der Sitzung.
+        if (Ai.AiEndpoints.IsAppPath(ctx.Request.Path)) { await next(ctx); return; }
+
         if (!HttpMethods.IsGet(ctx.Request.Method) && !HttpMethods.IsHead(ctx.Request.Method))
         {
             if (ctx.Request.Headers["X-JulOS"] != "1" || !SameOrigin(ctx.Request)) { await Reject(ctx, 403, "Anfrage abgelehnt."); return; }

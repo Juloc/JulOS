@@ -6,17 +6,16 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
-### Behoben
-- **Abmelden über die Zentrale** scheiterte in Chromium („Bei JulOS abmelden?“ endete in einem Fehler, die Sitzung blieb): Das Formular trägt jetzt ein Einmal-Zeichen der Sitzung, und nur für diese Route gilt `Origin: null` mit `Sec-Fetch-Site: same-origin` ([docs/SIGN-IN.md](docs/SIGN-IN.md#the-sign-out-form)).
+## [0.27.0] - 2026-11-24
 
-### Neu
-- Die Beschreibung der Zentrale nennt den Anzeigenamen (`julos_display_name`), den Apps ohne Sitzung für „Mit JulOS anmelden“ lesen. Nach dem Abmelden ohne Hinweis gibt es „Zurück zu <App>“, wenn für die App genau eine Adresse eingetragen ist. Doku: `*.localhost`, zwei Dienste auf einer Maschine, Einladungslink als Vorschlag.
 ### Neu
 - **Tablet-Modus für die Remote-Sitzung, am Handy der Standard** ([docs/TOUCH.md](docs/TOUCH.md)): ein Finger wischt = scrollt (senkrecht und waagerecht, Achsen-Sperre, Nachlauf, ein neuer Finger stoppt ihn), Tippen = Klick, doppelt tippen = Doppelklick an derselben Stelle, Halten = „Ziehen bereit“ (halber Ring, kurze Vibration) und dann Ziehen oder Markieren, voller Ring = Rechtsklick beim Loslassen; Pinch zoomt das Bild im Browser (bis 4-fach, die Auflösung der VM bleibt), zwei Finger verschieben es, zwei Finger doppelt tippen = zurück. Die bisherigen Modi heißen „Maus“ und „Touchpad“; der Umschalter im Sitzungsmenü und in den Touch-Einstellungen (mit Probierfläche) wechselt zwischen allen drei, „Anzeigegröße“ im Menü ändert wie früher der Pinch die Auflösung. Wer nie etwas gewählt hat, bekommt Tablet einmalig, ein Hinweis sagt es. Gesten werden sparsam ins Client-Protokoll geschrieben (`gest`).
 - Gemessen am xrdp-Testziel: jede Rad-Nachricht ist genau eine Raste, gleich wie groß der Wert ist.
+- Die Beschreibung der Zentrale nennt den Anzeigenamen (`julos_display_name`), den Apps ohne Sitzung für „Mit JulOS anmelden“ lesen. Nach dem Abmelden ohne Hinweis gibt es „Zurück zu <App>“, wenn für die App genau eine Adresse eingetragen ist. Doku: `*.localhost`, zwei Dienste auf einer Maschine, Einladungslink als Vorschlag.
 
 ### Behoben
 - Zwei-Finger-Scrollen und Wischen verloren Rasten, wenn mehrere in einer Nachricht standen (xrdp wertet je Nachricht eine); jede Raste geht jetzt einzeln.
+- **Abmelden über die Zentrale** scheiterte in Chromium („Bei JulOS abmelden?“ endete in einem Fehler, die Sitzung blieb): Das Formular trägt jetzt ein Einmal-Zeichen der Sitzung, und nur für diese Route gilt `Origin: null` mit `Sec-Fetch-Site: same-origin` ([docs/SIGN-IN.md](docs/SIGN-IN.md#the-sign-out-form)).
 
 ## [0.26.0] - 2026-11-24
 

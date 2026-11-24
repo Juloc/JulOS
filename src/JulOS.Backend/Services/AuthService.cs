@@ -126,7 +126,7 @@ public sealed class AuthService(UserStore users, SessionStore sessions, Password
     /// Eine Anmeldung mit Code aus der Authenticator-App ist selbst ein frischer zweiter Faktor: sie gibt die Sitzung fuer das Zeitfenster frei (bei "immer fragen" nicht).
     /// Ein gestohlenes Cookie, das erst spaeter benutzt wird, hat diese Freigabe nicht mehr.
     /// </summary>
-    private DateTimeOffset? LoginGrant() => security?.StepUp is { Enabled: true, Minutes: > 0 } s ? clock.GetUtcNow().AddMinutes(s.Minutes) : null;
+    internal DateTimeOffset? LoginGrant() => security?.StepUp is { Enabled: true, Minutes: > 0 } s ? clock.GetUtcNow().AddMinutes(s.Minutes) : null;
 
     /// <summary>Ob die Sitzung Aktionen ausfuehren darf: die Freigabe ist abgeschaltet oder gilt noch. Eine Freigabe "fuer eine Aktion" wird verbraucht.</summary>
     /// <param name="always">Der Weg verlangt die Freigabe auch bei ausgeschaltetem Schalter (Anmelde-Zentrale: wer sie verwaltet, kann sich in jeder App als admin anmelden).</param>
@@ -161,15 +161,21 @@ public sealed class AuthService(UserStore users, SessionStore sessions, Password
             return new(false, 401, "Der Code stimmt nicht. Prüfe den Eintrag in der App und die Uhrzeit des Handys, ein Code gilt nur einmal.");
         }
         foreach (var k in keys) limiter.Succeed(k);
+        return await GrantStepUpAsync(who, user.Name, null, ct);
+    }
+
+    /// <summary>Gibt die Sitzung nach einem bestandenen Nachweis (Code oder Passkey) fuer das Zeitfenster frei. <paramref name="via"/> steht nur im Verlauf.</summary>
+    internal async Task<StepUpResult> GrantStepUpAsync(SessionIdentity who, string userName, string? via, CancellationToken ct)
+    {
         var cfg = security?.StepUp ?? new StepUpConfig(true, StepUpConfig.DefaultMinutes);
         var once = cfg.Minutes == 0;
         var until = clock.GetUtcNow() + (once ? StepUpConfig.OnceLifetime : TimeSpan.FromMinutes(cfg.Minutes));
         await sessions.GrantStepUpAsync(who.Id, until, once, ct);
-        await AuditAsync(user.Name, "step_up.ok", once ? "once" : cfg.Minutes + " min");
+        await AuditAsync(userName, "step_up.ok", (via is null ? "" : via + ", ") + (once ? "once" : cfg.Minutes + " min"));
         return new(true, 200, Until: until, Minutes: cfg.Minutes);
     }
 
-    private async Task AuditAsync(string user, string evt, string? detail = null)
+    internal async Task AuditAsync(string user, string evt, string? detail = null)
     {
         if (audit is null) return;
         try { await audit.AddAsync(user, evt, detail, CancellationToken.None); }

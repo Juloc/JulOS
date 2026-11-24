@@ -5,6 +5,7 @@
  * ===================================================================== */
 
 import { showDialog } from './desktop-window.js';
+import { t } from './i18n.js';
 
 /** Ist der Fehler die Aufforderung des Servers, sich mit dem zweiten Faktor zu bestaetigen? */
 export const isStepUp = (e) => !!e && e.status === 403 && e.code === 'step_up_required';
@@ -25,7 +26,7 @@ export const cleanCode = (s) => String(s || '').replace(/\s+/g, '');
  * Das Sheet. api ist die Funktion OHNE Wiederholung (rawApi aus shell.js: die Freigabe selbst darf nicht wieder nach einer Freigabe fragen), setMsg schreibt eine Meldung.
  * Gibt ask() zurueck: eine Funktion, die das Sheet zeigt und true liefert, wenn der Code gestimmt hat, false bei Abbruch. Mehrere gleichzeitige Aufrufe teilen sich ein Sheet.
  */
-export function initStepUp({ api, setMsg }) {
+export function initStepUp({ api, setMsg, passkey = null }) {
   const $ = (s) => document.querySelector(s);
   const dlg = $('#stepUpDlg'), form = $('#suForm'), input = $('#suCode'), msg = $('#suMsg');
   let pending = null, settle = null;
@@ -33,6 +34,18 @@ export function initStepUp({ api, setMsg }) {
   const finish = (ok) => { const s = settle; settle = null; pending = null; input.value = ''; setMsg(msg, ''); if (dlg.open) dlg.close(); if (s) s(ok); };
   dlg.addEventListener('close', () => { if (settle) finish(false); });      // Escape oder Tippen daneben: abgebrochen
   $('#suCancel').addEventListener('click', () => finish(false));
+
+  // Statt des Codes ein Passkey mit Nutzerpruefung (gleiches Zeitfenster). Der Knopf ist nur da, wo der Browser Passkeys kann; ob die Person einen hat, sagt der Server.
+  const pk = $('#suPasskey');
+  if (pk && passkey && typeof window !== 'undefined' && window.PublicKeyCredential) {
+    pk.hidden = false;
+    pk.addEventListener('click', async () => {
+      pk.disabled = true; setMsg(msg, '');
+      try { await passkey(); finish(true); }
+      catch (err) { setMsg(msg, err && err.status ? err.message : t('pk.cancelled')); }
+      finally { pk.disabled = false; }
+    });
+  }
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();

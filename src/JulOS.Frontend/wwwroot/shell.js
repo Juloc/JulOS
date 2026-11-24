@@ -14,6 +14,7 @@ import { launchTarget, validWorkDir, validCustom, programOf } from './terminal-p
 import { initAccount } from './account.js';
 import { initSecurity } from './security.js';
 import { initStepUp, withStepUp } from './stepup.js';
+import { initLoginPasskeys, confirmWithPasskey } from './passkeys.js';
 import { initNetTools } from './nettools.js';
 import { initAlerts, parseHostLink } from './alerts.js';
 import { qrSvg } from './qr.js';
@@ -82,7 +83,7 @@ async function rawApi(path, { method = 'GET', body } = {}) {
 }
 
 const setMsg = (el, text, ok = false) => { el.textContent = text || ''; el.classList.toggle('ok', ok && !!text); };
-const askStepUp = initStepUp({ api: rawApi, setMsg });      // das Sheet fuer den zweiten Faktor (stepup.js)
+const askStepUp = initStepUp({ api: rawApi, setMsg, passkey: () => confirmWithPasskey(rawApi) });      // das Sheet fuer den zweiten Faktor (stepup.js)
 let securityUi = null;                                      // Einstellungen, Sicherheit (security.js), unten angelegt
 const busy = (form, on) => { for (const b of form.querySelectorAll('button[type=submit]')) b.disabled = on; };
 
@@ -150,19 +151,25 @@ function showLogin(message = '') {
   if (D) D.reset();
   if (M) M.reset();
   show('login'); setMsg($('#loginMsg'), message);
+  loginPasskeys.start();
   $('#loginPw').value = ''; $('#loginCode').value = '';
   setTimeout(() => ($('#loginUser').value ? $('#loginPw') : $('#loginUser')).focus(), 50);
 }
 
+const signedIn = (r) => showHome(r.user, r.recoveryLeft <= 3 ? tp('shell.recoveryLeft', r.recoveryLeft) : '');
+// Passkey: Knopf und Autofill auf der Anmeldeseite (passkeys.js); showLogin startet es, Absenden mit Passwort und jede Anmeldung beenden es
+const loginPasskeys = initLoginPasskeys({ api: rawApi, setMsg, onSignedIn: signedIn });
+
 $('#loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = e.currentTarget, msg = $('#loginMsg');
+  loginPasskeys.stop();
   busy(form, true); setMsg(msg, '');
   try {
     const r = await api('/api/auth/login', { method: 'POST', body: { user: $('#loginUser').value.trim(), password: $('#loginPw').value, code: $('#loginCode').value.trim() } });
     $('#loginPw').value = ''; $('#loginCode').value = '';
-    showHome(r.user, r.recoveryLeft <= 3 ? tp('shell.recoveryLeft', r.recoveryLeft) : '');
-  } catch (err) { setMsg(msg, err.message); $('#loginPw').value = ''; $('#loginCode').value = ''; }
+    signedIn(r);
+  } catch (err) { setMsg(msg, err.message); $('#loginPw').value = ''; $('#loginCode').value = ''; loginPasskeys.start(); }
   finally { busy(form, false); }
 });
 

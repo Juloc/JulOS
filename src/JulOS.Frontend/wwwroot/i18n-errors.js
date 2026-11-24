@@ -188,6 +188,17 @@ export const SERVER_TEXTS = {
   "Zu viele Einträge.": "err.ai.tooManyEntries",
   "Ein Budget muss größer als 0 sein (leer lassen für keine Grenze).": "err.ai.budgetPositive",
   "Das Tagesbudget darf nicht größer sein als das Monatsbudget.": "err.ai.budgetOrder",
+  // Passkeys
+  "Anmeldung mit Passkey fehlgeschlagen.": "err.pk.login",
+  "Der Passkey konnte nicht eingerichtet werden.": "err.pk.register",
+  "Der Passkey wurde nicht angenommen.": "err.pk.stepup",
+  "Passkeys brauchen die öffentliche Adresse von JulOS als Namen (Einstellungen, Sicherheit).": "err.pk.noaddress",
+  "Höchstens 20 Passkeys.": "err.pk.limit",
+  "Höchstens 20 Passkeys, und jeder nur einmal.": "err.pk.limitonce",
+  "Name: 1 bis 60 Zeichen.": "err.pk.name",
+  "Passkey nicht gefunden.": "err.pk.notfound",
+  "Der letzte Weg zur Anmeldung kann nicht entfernt werden.": "err.pk.last",
+  "Es ist noch kein Passkey eingerichtet.": "err.pk.none",
 };
 
 /** [RegExp mit Gruppen, Schluessel, [Parameternamen je Gruppe]] fuer Texte mit eingesetzten Werten */

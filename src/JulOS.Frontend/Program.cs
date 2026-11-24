@@ -78,6 +78,10 @@ builder.Services.AddSingleton<LoginLimiter>();
 builder.Services.AddSingleton(new SetupCode(builder.Configuration["JULOS_SETUP_CODE"]));
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<AuthService>();
+builder.Services.AddSingleton<IPasskeys, Fido2Passkeys>();
+builder.Services.AddSingleton<PasskeyStore>();
+builder.Services.AddSingleton<PasskeyThrottle>();
+builder.Services.AddSingleton<PasskeyService>();
 builder.Services.AddHostedService<SessionPurgeWorker>();
 // Taegliche Sicherung der Datenbank und des Schluessels in den Backup-Ordner, siehe docs/BACKUP.md
 builder.Services.AddSingleton(BackupOptions.FromSettings(k => builder.Configuration[k]));
@@ -233,6 +237,7 @@ app.MapGet("/api/health", async (NpgsqlDataSource data, CancellationToken ct) =>
     return new Health(dbOk, dbOk, info.Version);
 });
 app.MapAuth();
+app.MapPasskeys();
 app.MapAbout(info);
 app.MapRemote();
 app.MapHosts();

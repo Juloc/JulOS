@@ -19,6 +19,7 @@
   <link rel="stylesheet" href="files.css">
   <link rel="stylesheet" href="editor.css">
   <link rel="stylesheet" href="alerts.css">
+  <link rel="stylesheet" href="passkeys.css">
   <link rel="stylesheet" href="touch.css">
   <title>JulOS</title>
 </head>
@@ -37,7 +38,7 @@
           <input id="setupCode" type="text" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" required>
         </label>
         <label data-i18n="app.username">Benutzername
-          <input id="setupUser" name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required>
+          <input id="setupUser" name="username" type="text" autocomplete="username webauthn" autocapitalize="none" autocorrect="off" spellcheck="false" required>
         </label>
         <label data-i18n="app.setupPassword">Passwort (mindestens 12 Zeichen)
           <input id="setupPw" name="new-password" type="password" autocomplete="new-password" minlength="12" required>
@@ -84,6 +85,8 @@
           <input id="loginCode" type="text" autocomplete="one-time-code" autocapitalize="none" autocorrect="off" spellcheck="false" required>
         </label>
         <button id="loginBtn" type="submit" class="primary" data-i18n="app.signIn">Anmelden</button>
+        <div id="loginPasskeyOr" hidden><span data-i18n="pk.or">oder</span></div>
+        <button id="loginPasskey" type="button" class="ghost" hidden data-i18n="pk.signIn">Mit Passkey anmelden</button>
         <p id="loginMsg" class="msg" role="alert"></p>
       </form>
     </section>
@@ -351,6 +354,7 @@
         <label data-i18n="app.codeFromApp">Code aus der App <input id="suCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="24" required></label>
         <p class="hint" data-i18n="su.hint">Jeder Code gilt nur einmal. Wurde er eben schon benutzt, warte auf den nächsten.</p>
         <div class="dlg-btns"><button type="submit" class="primary" data-i18n="su.confirm">Bestätigen</button><button id="suCancel" type="button" class="ghost" data-i18n="common.cancel">Abbrechen</button></div>
+        <button id="suPasskey" type="button" class="ghost" hidden data-i18n="pk.stepUp">Stattdessen mit Passkey bestätigen</button>
         <p id="suMsg" class="msg" role="alert"></p>
       </form>
     </dialog>
@@ -382,6 +386,17 @@
           <div class="dlg-btns"><button type="submit" class="primary" data-i18n="app.requestNewKey">Neuen Schlüssel anfordern</button></div>
           <p id="totpMsg" class="msg" role="alert"></p>
         </form>
+        <div id="pkSection">
+          <h3 data-i18n="pk.title">Passkeys</h3>
+          <p class="hint" data-i18n="pk.hint">Mit einem Passkey meldest du dich ohne Passwort und Code an: Fingerabdruck, Gesicht oder Geräte-PIN genügen. Passwort mit Authenticator-App bleibt als zweiter Weg.</p>
+          <ul id="pkList"></ul>
+          <p id="pkNote" class="hint"></p>
+          <form id="pkForm" autocomplete="off" hidden>
+            <label data-i18n="pk.nameLabel">Name für den neuen Passkey <input id="pkName" type="text" maxlength="60" data-i18n-placeholder="pk.defaultName" placeholder="Dieses Gerät"></label>
+            <div class="dlg-btns"><button type="submit" class="primary" data-i18n="pk.add">Passkey hinzufügen</button></div>
+          </form>
+          <p id="pkMsg" class="msg" role="alert"></p>
+        </div>
       </div>
       <form id="totpFinishForm" hidden autocomplete="off">
         <h3 data-i18n="app.newAuth">Neuer Authenticator</h3>

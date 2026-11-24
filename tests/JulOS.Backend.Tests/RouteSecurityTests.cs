@@ -26,6 +26,8 @@ public sealed class RouteSecurityTests
         ["POST /api/setup/finish"] = "Ersteinrichtung (Setup-Code, nur solange es kein Konto gibt)",
         ["GET /api/auth/me"] = "Seite fragt, ob eine Sitzung besteht",
         ["POST /api/auth/login"] = "Anmeldung",
+        ["POST /api/auth/passkey/login/begin"] = "Anmeldung mit Passkey vor der Sitzung (docs/PASSKEYS.md): legt nur eine Herausforderung an, Ratenlimit und Sperre je Adresse, Obergrenze offener Herausforderungen",
+        ["POST /api/auth/passkey/login/finish"] = "Anmeldung mit Passkey vor der Sitzung: die Bibliothek prueft Signatur, Ursprung, RP-Id, Nutzerpruefung und Zaehler; einheitlicher Fehler, Sperre je Adresse",
         ["GET /agent-files/{name}"] = "Agent-Dateien und Pruefsummen (Quelltext, kein Geheimnis)",
         ["POST /api/agent-link/enroll"] = "Agent tauscht den Einmalcode gegen ein Token",
         ["ANY /api/agent-link"] = "WebSocket des Agenten (prueft sein Token selbst)",

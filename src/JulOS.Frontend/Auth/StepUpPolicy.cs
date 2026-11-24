@@ -24,6 +24,9 @@ internal static class StepUpPolicy
         ("DELETE", "api/hosts/*/login"),
         ("POST", "api/auth/password"),
         ("POST", "api/auth/totp/begin"),
+        // Passkeys: einen neuen anlegen (begin; finish ist an dessen Herausforderung gebunden) und einen entfernen. Umbenennen aendert nichts an der Sicherheit.
+        ("POST", "api/auth/passkeys/register/begin"),
+        ("DELETE", "api/auth/passkeys/*"),
         ("PUT", "api/security/**"),
         ("POST", "api/security/**"),
         ("DELETE", "api/security/**"),
@@ -39,10 +42,11 @@ internal static class StepUpPolicy
     /// <summary>
     /// Wege, die die Freigabe auch dann verlangen, wenn der Schalter "zweiter Faktor fuer Aktionen" aus ist: die Verwaltung der Anmelde-Zentrale (Apps, Geheimnisse, Rueckkehr-Adressen, Rollen).
     /// Der Eigentuemer ist in jeder App admin; mit einem gestohlenen Cookie ohne diese Sperre liesse sich eine App umbiegen und dort als admin anmelden.
+    /// Ebenso das Anlegen und Entfernen von Passkeys: ein neuer Passkey ist ein Zugang, der ein gestohlenes Cookie ueberlebt.
     /// </summary>
     public static bool Always(string method, PathString path) =>
         !HttpMethods.IsGet(method) && !HttpMethods.IsHead(method) && Requires(method, path)
-        && (path.Value ?? "").Trim('/').StartsWith("api/security/oidc", StringComparison.OrdinalIgnoreCase);
+        && (path.Value ?? "").Trim('/') is var p && (p.StartsWith("api/security/oidc", StringComparison.OrdinalIgnoreCase) || p.StartsWith("api/auth/passkeys/", StringComparison.OrdinalIgnoreCase));
 
     public static bool Requires(string method, PathString path)
     {

@@ -45,6 +45,8 @@ export function oidcMarkup(data, ui, esc) {
     ${field(id, 'redirectUris', t('oidc.redirects'), draft(id, 'redirectUris', app ? app.redirectUris.join('\n') : ''), 'area', t('oidc.redirectsHelp'))}
     ${field(id, 'postLogoutUris', t('oidc.postLogout'), draft(id, 'postLogoutUris', app ? app.postLogoutUris.join('\n') : ''), 'area', t('oidc.postLogoutHelp'))}
     ${field(id, 'backchannelUri', t('oidc.backchannel'), draft(id, 'backchannelUri', app && app.backchannelUri ? app.backchannelUri : ''), 'input', t('oidc.backchannelHelp'))}
+    <label class="sec-check"><span><input type="checkbox" data-draft="${esc(id)}" data-field="backchannelPrivate"${draft(id, 'backchannelPrivate', app ? app.backchannelPrivate : false) ? ' checked' : ''}> ${esc(t('oidc.backchannelPrivate'))}</span></label>
+    <p class="hint">${esc(t('oidc.backchannelPrivateHelp'))}</p>
     ${field(id, 'roles', t('oidc.roles'), draft(id, 'roles', app ? app.roles.join(', ') : DEFAULT_ROLES), 'input', t('oidc.rolesHelp'))}`;
 
   const secretBox = (name) => ui.secret && ui.secret.app === name
@@ -87,7 +89,7 @@ export function oidcMarkup(data, ui, esc) {
 
   const issuer = `<section class="sec-sec"><h3>${esc(t('oidc.address'))}</h3>
     <p class="hint">${esc(t('oidc.addressHelp'))}</p>
-    ${data.ready ? '' : `<p class="sec-warn" role="status">${esc(t(data.keyStore ? tk('oidc.notReadyAddress') : tk('oidc.notReadyKey')))}</p>`}
+    ${data.ready ? '' : `<p class="sec-warn" role="status">${esc(t(data.keyProblem ? tk('oidc.notReadyKeyUnusable') : data.keyStore ? tk('oidc.notReadyAddress') : tk('oidc.notReadyKey')))}</p>`}
     <label>${esc(t('oidc.addressLabel'))}<input type="text" id="oidcIssuer" data-draft="issuer" data-field="issuer" spellcheck="false" autocapitalize="none" autocomplete="off" value="${esc(draft('issuer', 'issuer', data.issuer || ''))}" placeholder="${esc(data.suggestedIssuer)}"></label>
     <p class="hint">${esc(t('oidc.addressSource', { source: t(data.issuerSource === 'app' ? tk('oidc.srcApp') : data.issuerSource === 'env' ? tk('oidc.srcEnv') : tk('oidc.srcNone')) }))}${data.ready ? ' ' + esc(t('oidc.discovery', { url: data.issuer + '/.well-known/openid-configuration' })) : ''}</p>
     <div class="dlg-btns">${btn('save-issuer', t('common.save'), '', 'primary')}${btn('use-suggested', t('oidc.useSuggested', { url: data.suggestedIssuer }))}${data.issuerSource === 'app' ? btn('reset-issuer', t('sec.reset')) : ''}</div>${msg('issuer')}</section>`;
@@ -137,12 +139,13 @@ export function openOidcApps({ api, esc }) {
       postLogoutUris: parseUris(pick('postLogoutUris', app ? app.postLogoutUris.join('\n') : '')),
       backchannelUri: pick('backchannelUri', app && app.backchannelUri ? app.backchannelUri : '').trim() || undefined,
       roles: parseRoles(pick('roles', app ? app.roles.join(', ') : DEFAULT_ROLES)),
+      backchannelPrivate: !!pick('backchannelPrivate', app ? app.backchannelPrivate : false),
     };
   };
 
   body.addEventListener('input', (e) => {
     const el = e.target;
-    if (el.dataset.draft) { drafts(el.dataset.draft)[el.dataset.field] = el.value; return; }
+    if (el.dataset.draft) { drafts(el.dataset.draft)[el.dataset.field] = el.type === 'checkbox' ? el.checked : el.value; return; }
     if (el.hasAttribute('data-oidc-check')) { ui.confirm.checked = el.checked; syncConfirm(); }
     else if (el.hasAttribute('data-oidc-type')) { ui.confirm.typed = el.value; syncConfirm(); }
   });

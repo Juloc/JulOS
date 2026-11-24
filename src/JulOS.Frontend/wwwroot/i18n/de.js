@@ -2723,4 +2723,7 @@ export default {
   "oidc.err.noKeyStore": "Ohne Server-Schlüssel gibt es keine Anmelde-Zentrale.",
   "oidc.err.owner": "Der Eigentümer hat in jeder App admin.",
   "oidc.err.invalidRole": "Diese Rolle kennt die App nicht.",
+  "oidc.backchannelPrivate": "App im lokalen Netz (10.x, 172.16–31.x, 192.168.x)",
+  "oidc.backchannelPrivateHelp": "Standard: aus. Die Adresse für das Abmelden darf dann im lokalen Netz liegen; JulOS schickt das Logout-Token dorthin. Nur ankreuzen, wenn die App wirklich bei dir im Haus läuft. Loopback und die Metadaten-Adresse (169.254.x) sind nie erlaubt, auch http nur bei einer Entwicklungsinstanz.",
+  "oidc.notReadyKeyUnusable": "Der Signaturschlüssel lässt sich mit dem Server-Schlüssel nicht öffnen (falscher JULOS_SECRET_KEY?). Die Anmelde-Zentrale steht, nichts wurde gelöscht. Mit dem richtigen Schlüssel geht es weiter; ein neuer Schlüssel (Erneuern) ist deine bewusste Entscheidung.",
 };

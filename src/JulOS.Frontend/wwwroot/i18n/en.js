@@ -2723,4 +2723,7 @@ export default {
   "oidc.err.noKeyStore": "Without the server key there is no sign-in centre.",
   "oidc.err.owner": "The owner has admin in every app.",
   "oidc.err.invalidRole": "The app does not know this role.",
+  "oidc.backchannelPrivate": "App on the local network (10.x, 172.16–31.x, 192.168.x)",
+  "oidc.backchannelPrivateHelp": "Default: off. The logout address may then be on your local network; JulOS sends the logout token there. Tick it only if the app really runs in your own home. Loopback and the metadata address (169.254.x) are never allowed, and http only on a development instance.",
+  "oidc.notReadyKeyUnusable": "The signing key cannot be opened with the server key (wrong JULOS_SECRET_KEY?). The sign-in centre is stopped, nothing was deleted. It continues with the right key; a new key (Renew) is your own deliberate decision.",
 };

@@ -1,0 +1,24 @@
+# Touch pass: Files, Hosts, Settings on the phone
+
+A walk through the phone layout with the finger in mind (2026-11-24). Looked at in the browser pane at 375x812 (light and dark partly, 412x915 only through the same CSS, no second look), against a local test instance with the shared folder (images, PDF, text, 125 files in one folder, long names) and one SSH target for the SFTP place. Every clickable element was measured with a script (smaller than 44 x 44 px is listed). **Not checkable here:** real fingers, the Android keyboard and its resize, the gesture bar and notch (`env(safe-area-inset-*)` is 0 in the pane), long-press timing on a real screen, pinch.
+
+Severity: **high** = misses or wrong taps are likely on a task done every day, **mid** = awkward but works, **low** = polish. State column: filled in at the end.
+
+| # | Where | What happens | How it should be | Severity | State |
+|---|---|---|---|---|---|
+| 1 | Files, toolbar (up, refresh, view, new, upload, history) | buttons are 44 x 32 px with 2 px between them; the address bar and the search field are 32 px high | at least 44 x 44 px, 6 px between the buttons, fields 44 px high | high | |
+| 2 | Files, address bar | the root crumb "/" is 20 x 44 px | at least 44 px wide | high | |
+| 3 | Files, selection bar (copy, cut, delete, more, clear) | five buttons 40 x 40 px, 2 px apart, delete next to "more" and "clear" | 44 x 44 px, 6 px apart | high | |
+| 4 | Files, long press on a row | no feedback while holding (the user cannot tell whether it works), the browser may start a text selection or a callout on the same press; the timer logic is inline in the event handler | the row is marked while the press is armed, no text selection or callout on rows; the hold/scroll decision is one small pure function with a test | high | |
+| 5 | Files, context sheet (bottom sheet) | no handle and no swipe down to close (the other sheets of the phone have one); entries that are not allowed (read-only place, nothing selected) are only greyed, a tap does nothing and says nothing | handle and swipe down; a tap on a greyed entry says why in a short message | mid | |
+| 6 | Viewer (image), top bar | buttons 40 x 44 px, 2 px apart; no swipe to the next or previous image, no double tap to fit or 100 %, no pinch (the page is locked to scale 1) | 44 px wide, swipe left/right when the image is fitted, double tap toggles fit and 100 % | mid | |
+| 7 | Editor, tool row (undo, redo, search, wrap) | buttons 36 px high with small text, 2 px apart | 44 px high | mid | |
+| 8 | Hosts, list and host page | "Details" and "more" 43 x 40..44 px, the status chip that opens a sheet is 39 px high, the back button 40 x 44, the tab strip 40 px high (12 tabs, scrolls sideways) | 44 px everywhere on the phone | mid | |
+| 9 | Global notice ("Trusted proxy addresses are not set", `.sec-hint`) | sits over the bottom navigation and hides all five tabs until it is dismissed; its two buttons are 26 px high | sits above the navigation, buttons 40 px or more | high | |
+| 10 | Settings sheets (security, account, folders, apps) | text fields 32 px high, check boxes and radio buttons 22 px with a 28 px label row, helper buttons 42 px | fields and rows at least 44 px, check boxes get the whole row as target | mid | |
+| 11 | Files, "Neu", "Hochladen", the place button | all actions are in the top 180 px of the screen, out of the thumb's reach on a tall phone; the action bar at the bottom only appears with a selection | the most common action (new, upload) reachable at the bottom | low | |
+| 12 | Files, read-only place, text file | tapping a text file downloads it without a preview (design: no viewer for the shared folder) | unchanged, noted only | low | |
+| 13 | Files, long names | names are cut with an ellipsis, the full name is only visible in Properties | acceptable; a long press shows the name in the sheet title | low | |
+| 14 | Hosts with a live agent (Docker, Services, Logs, Actions) | **not seen**: the test instance has no agent, so the lists were only measured from the CSS (the phone block of `hostui.css` already sets 44 px rows) | check on the real phone | low | |
+
+Fine already (measured): main pages of Settings (all buttons and switches 44 px), list rows of Files (53 px), the place sheet (44 px rows), menu sheets (48 px rows), no sideways scroll on any screen (`scrollWidth` = viewport), sheets are bottom anchored with the action buttons sticky, so the keyboard (`interactive-widget=resizes-content`) leaves field and button visible.

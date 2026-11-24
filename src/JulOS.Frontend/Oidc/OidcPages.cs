@@ -72,17 +72,19 @@ internal static class OidcPages
         return Html(200, title, $"<h1>{E(title)}</h1><p><a href=\"{E(url)}\">{E(T(r, "Weiter", "Continue"))}</a></p>", $"<meta http-equiv=\"refresh\" content=\"0;url={E(url)}\">");
     }
 
-    public static IResult SignedOut(HttpRequest r)
+    /// <summary>Nach dem Abmelden. back: die eine eingetragene Adresse der App aus der Anfrage (OidcService.BackLinkAsync), nur als Link, nie als Weiterleitung.</summary>
+    public static IResult SignedOut(HttpRequest r, (string Name, string Uri)? back = null)
     {
         var title = T(r, "Abgemeldet", "Signed out");
-        return Html(200, title, $"<h1>{E(title)}</h1><p>{E(T(r, "Du bist bei JulOS abgemeldet. Die Sitzungen der verbundenen Apps werden beendet.", "You are signed out of JulOS. The sessions of the connected apps are being ended."))}</p><p><a href=\"/\">{E(T(r, "Zu JulOS", "To JulOS"))}</a></p>");
+        var backLink = back is { } b ? $"<p><a href=\"{E(b.Uri)}\">{E(T(r, $"Zurück zu {b.Name}", $"Back to {b.Name}"))}</a></p>" : "";
+        return Html(200, title, $"<h1>{E(title)}</h1><p>{E(T(r, "Du bist bei JulOS abgemeldet. Die Sitzungen der verbundenen Apps werden beendet.", "You are signed out of JulOS. The sessions of the connected apps are being ended."))}</p>{backLink}<p><a href=\"/\">{E(T(r, "Zu JulOS", "To JulOS"))}</a></p>");
     }
 
-    /// <summary>Abmelden bestaetigen (kein gueltiger id_token_hint: jede Seite koennte sonst jemanden abmelden). Ein Formular mit POST, vom Server auf denselben Origin geprueft.</summary>
-    public static IResult ConfirmLogout(HttpRequest r, IEnumerable<KeyValuePair<string, string>> fields)
+    /// <summary>Abmelden bestaetigen (kein gueltiger id_token_hint: jede Seite koennte sonst jemanden abmelden). Ein Formular mit POST, vom Server auf denselben Origin und ein Einmal-Zeichen der Sitzung geprueft.</summary>
+    public static IResult ConfirmLogout(HttpRequest r, IEnumerable<KeyValuePair<string, string>> fields, string formToken)
     {
         var title = T(r, "Bei JulOS abmelden?", "Sign out of JulOS?");
-        var hidden = string.Concat(fields.Select(f => $"<input type=\"hidden\" name=\"{E(f.Key)}\" value=\"{E(f.Value)}\">"));
+        var hidden = $"<input type=\"hidden\" name=\"form_token\" value=\"{E(formToken)}\">" + string.Concat(fields.Select(f => $"<input type=\"hidden\" name=\"{E(f.Key)}\" value=\"{E(f.Value)}\">"));
         return Html(200, title, $"<h1>{E(title)}</h1><p>{E(T(r, "Auch die Sitzungen der verbundenen Apps werden beendet.", "The sessions of the connected apps are ended too."))}</p>"
             + $"<form method=\"post\" action=\"/oidc/end-session\">{hidden}<button type=\"submit\" class=\"primary\">{E(T(r, "Abmelden", "Sign out"))}</button> <a href=\"/\">{E(T(r, "Abbrechen", "Cancel"))}</a></form>");
     }

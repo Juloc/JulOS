@@ -51,8 +51,9 @@ internal static class OidcEndpoints
     public static void MapOidc(this IEndpointRouteBuilder app)
     {
         // ---- Beschreibung und Schluessel (oeffentlich, nur lesen) ----
-        app.MapGet("/.well-known/openid-configuration", (OidcService oidc, OidcIssuer issuer) =>
+        app.MapGet("/.well-known/openid-configuration", (HttpContext ctx, OidcService oidc, OidcIssuer issuer, HitCounter hits) =>
         {
+            if (!hits.Allow("oidc-discovery:" + Ip(ctx), 120, Minute)) return ProtocolError("temporarily_unavailable", "Zu viele Anfragen.", 429);
             if (!oidc.Ready) return ProtocolError("temporarily_unavailable", "Die Anmeldung ist nicht eingerichtet.", 503);
             var iss = issuer.Value!;
             return Json(w =>
@@ -63,6 +64,8 @@ internal static class OidcEndpoints
                 w.WriteString("userinfo_endpoint", iss + "/oidc/userinfo");
                 w.WriteString("jwks_uri", iss + "/oidc/jwks");
                 w.WriteString("end_session_endpoint", iss + "/oidc/end-session");
+                // Nur der Anzeigename, fuer den Knopf "Mit ... anmelden" der Apps (sie lesen ihn ohne Sitzung). Keine Version, kein Host: /api/about bleibt hinter der Sitzung.
+                w.WriteString("julos_display_name", "JulOS");
                 static void List(Utf8JsonWriter w, string name, params string[] values) { w.WriteStartArray(name); foreach (var v in values) w.WriteStringValue(v); w.WriteEndArray(); }
                 List(w, "response_types_supported", "code");
                 List(w, "response_modes_supported", "query");
@@ -196,14 +199,15 @@ internal static class OidcEndpoints
         app.MapPost("/oidc/userinfo", UserInfo);
 
         // ---- end-session (RP-initiated logout) ----
-        async Task<IResult> EndSession(HttpContext ctx, OidcService oidc, AuthService auth, OidcFlowStore flow, Files.SftpPool pool, HitCounter hits)
+        async Task<IResult> EndSession(HttpContext ctx, OidcService oidc, AuthService auth, OidcFlowStore flow, OidcFormTokens formTokens, Files.SftpPool pool, HitCounter hits)
         {
             ctx.Response.Headers.CacheControl = "no-store";
             var req = ctx.Request;
             if (!hits.Allow("oidc-end:" + Ip(ctx), 60, Minute)) return OidcPages.TooMany(req);
             var post = HttpMethods.IsPost(req.Method);
-            // wer abmeldet, kommt von einer eigenen Seite: ein POST von einer fremden Seite wird nicht angenommen (Origin muss dieser Server sein)
-            if (post && !ApiGuard.SameOrigin(req)) return OidcPages.BadRequest(req);
+            // wer abmeldet, kommt von einer eigenen Seite: ein POST von einer fremden Seite wird nicht angenommen. Origin muss dieser Server sein; "null" (Chromium bei einem Formular
+            // derselben Herkunft unter Referrer-Policy no-referrer) gilt NUR hier und nur mit Sec-Fetch-Site: same-origin. Dazu kommt unten das Einmal-Zeichen der Seite.
+            if (post && !ApiGuard.SameOrigin(req) && !(req.Headers.Origin == "null" && req.Headers["Sec-Fetch-Site"] == "same-origin")) return OidcPages.BadRequest(req);
             IEnumerable<KeyValuePair<string, StringValues>> source;
             if (post)
             {
@@ -223,9 +227,11 @@ internal static class OidcEndpoints
             var wanted = One(source, "post_logout_redirect_uri");
             // Zurueck zur App nur mit gueltigem Hinweis und einer EXAKT eingetragenen Adresse (sonst ein offener Redirect)
             var target = hint is not null && wanted is not null && hint.App.PostLogoutUris.Contains(wanted, StringComparer.Ordinal) ? wanted : null;
-            IResult Done() => target is not null ? Results.Redirect(OidcRules.WithQuery(target, ("state", OidcRules.OpaqueOk(state) ? state : null))) : OidcPages.SignedOut(req);
+            async Task<IResult> Done() => target is not null ? Results.Redirect(OidcRules.WithQuery(target, ("state", OidcRules.OpaqueOk(state) ? state : null)))
+                : OidcPages.SignedOut(req, await oidc.BackLinkAsync(One(source, "client_id"), ctx.RequestAborted));
 
-            if (who is null) return Done();                      // nichts zu beenden
+            if (who is null) return await Done();                      // nichts zu beenden
+            if (post && !formTokens.Take(One(source, "form_token"), who.Id)) return OidcPages.BadRequest(req);   // das Formular dieser Sitzung, einmal
 
             // Ohne Bestaetigung nur, wenn der Hinweis zur Sitzung passt, die jetzt abgemeldet wird: seine "sid" ist die, die DIESE Sitzung dieser App gegeben hat (und die Person stimmt). Ein
             // altes oder fremdes Token derselben Person reicht nicht; dann fragt eine Seite nach (eine fremde Seite soll niemanden still abmelden koennen).
@@ -234,16 +240,16 @@ internal static class OidcEndpoints
             if (!confirmed)
             {
                 var fields = new List<KeyValuePair<string, string>>();
-                foreach (var name in new[] { "id_token_hint", "post_logout_redirect_uri", "state" })
+                foreach (var name in new[] { "id_token_hint", "post_logout_redirect_uri", "state", "client_id" })
                     if (One(source, name) is { } v) fields.Add(new(name, v));
-                return OidcPages.ConfirmLogout(req, fields);
+                return OidcPages.ConfirmLogout(req, fields, formTokens.Issue(who.Id));
             }
 
             await auth.LogoutAsync(who.Hash, ctx.RequestAborted);
             await pool.InvalidateUserAsync(who.UserId);          // wie beim Abmelden in JulOS: keine SFTP-Sitzung bleibt offen
             SessionCookie.Clear(ctx);
             await oidc.AuditAsync(who.UserName, "oidc.signout", hint?.App.Name);
-            return Done();                                       // das Logout-Token an alle Apps stellt der Hintergrunddienst zu (OidcLogoutWorker)
+            return await Done();                                       // das Logout-Token an alle Apps stellt der Hintergrunddienst zu (OidcLogoutWorker)
         }
         app.MapGet("/oidc/end-session", EndSession);
         app.MapPost("/oidc/end-session", EndSession);

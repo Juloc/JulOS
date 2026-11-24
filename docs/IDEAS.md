@@ -121,3 +121,4 @@ admin API, a DNS token), so each gets the same shape. Apart from that, [SCOPE.md
 Today only `JulOS.dll user add NAME` in a terminal adds a person. Wanted: the owner makes an invitation (settings, step-up, one link, valid once and 24 hours, only a hash stored); the
 invited person opens it, chooses a password and enrols the authenticator, then the owner assigns app roles. Needs a public page, a token table (a migration), rate limits and tests;
 see "Adding more people" in [SIGN-IN.md](SIGN-IN.md). Not started.
+- **AI gateway counts per person as well** (asked for by `notes`, 2026-11-24): an app may name the person of a call so the hub can show and limit usage per person, not only per app. Today each app counts its own people; the app's budget in the hub stays the outer limit.

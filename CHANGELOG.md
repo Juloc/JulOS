@@ -6,6 +6,8 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+## [0.25.0] - 2026-11-24
+
 ### Hinzugefügt
 - Touch-Bedienung der Sitzung neu: Halten mit sichtbarem Ring = Rechtsklick (300 bis 1000 ms), Zwei-Finger-Scrollen waagerecht und senkrecht, Doppeltipp und halten = Ziehen, Zwei-Finger-Doppeltipp setzt den Zoom zurück, Einstellungen mit Probierfläche (docs/TOUCH.md).
 - Zwischenablage-Blatt mit Anzeige des Geräte-Inhalts, „Als Text tippen“, Bearbeiten, als Datei senden (PNG/JPG) und „Aufs Gerät kopieren“.

@@ -6,6 +6,8 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+## [0.29.0] - 2026-11-24
+
 ### Neu
 - **Einfügen im richtigen Augenblick (RDP)** ([docs/CLIPBOARD.md](docs/CLIPBOARD.md)): Strg+V schickt die Einfüge-Taste erst, wenn die VM die neue Format-Liste angenommen hat (Nachricht 15, Art 8, nur wenn keine ältere Liste mehr unbeantwortet ist); bleibt die Meldung 600 ms aus, geht die Taste trotzdem, eine Ablehnung schickt nichts und zeigt die bekannte Meldung. VNC, ein älterer Server und ein älterer Browser behalten die feste Pause von 180 ms. Vorher konnte die Taste vor der Liste ankommen („fügt den alten Text ein“).
 - **Kopieren aufs Gerät, mit Wiederholung**: scheitert das Schreiben eines Textes oder Bildes aus der VM in die Zwischenablage des Geräts (Safari, Handy), wartet er und wird beim nächsten Fokus, Zeigerdruck oder Tastendruck in der Sitzung noch einmal geschrieben. Verworfen wird er bei eigenem Kopieren oder Ausschneiden, bei Neuerem aus der VM, am Sitzungsende und nach einer Minute; Meldung und Dialog bleiben der Rückfall.

@@ -52,18 +52,36 @@ public sealed class OidcKeyTests
     }
 
     [Fact]
-    public async Task An_active_key_this_server_cannot_open_is_replaced_instead_of_blocking_every_sign_in()
+    public async Task An_active_key_this_server_cannot_open_stops_the_central_loudly_and_deletes_nothing_and_works_again_with_the_right_key()
     {
+        // F9: ein Tippfehler im Server-Schluessel darf nicht still einen neuen Schluessel anlegen und den alten privaten Teil loeschen
         var time = new ManualTime(DateTimeOffset.UtcNow);
         await using var rig = await OidcRig.CreateAsync(time: time);
         var app = await rig.AddAppAsync();
+        var ct = TestContext.Current.CancellationToken;
         var first = await rig.SignInAsync(app);
-        // zum Beispiel nach einer Wiederherstellung ohne den alten Server-Schluessel: der verschluesselte Teil ist nicht mehr lesbar
+        var original = await rig.Db.ScalarAsync<byte[]>("select private_sealed from oidc_keys");
         await rig.Db.ExecAsync("update oidc_keys set private_sealed = $1", new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30 });
         time.Advance(TimeSpan.FromMinutes(1));                                           // der Zwischenspeicher der Schluessel ist abgelaufen
-        var second = await rig.SignInAsync(app);
-        Assert.NotEqual(first.Jwt.Kid, second.Jwt.Kid);
-        Assert.Equal(2, await rig.Db.ScalarAsync<long>("select count(*) from oidc_keys"));
-        Assert.Equal(1, await rig.Db.ScalarAsync<long>("select count(*) from oidc_keys where retired_at is null"));
+
+        // kein Token mehr (503), keine Beschreibung/Schluessel-Liste, keine Anmeldung fuer Apps, aber auch kein neuer Schluessel und nichts geloescht
+        var v = OidcRig.NewVerifier();
+        var code = await rig.CodeAsync(app, v);                                           // authorize braucht keinen Schluessel; ab hier ist die Zentrale zu
+        Assert.Equal((HttpStatusCode)503, (await rig.TokenAsync(app, code, v)).StatusCode);
+        Assert.Equal((HttpStatusCode)503, (await rig.Http.GetAsync("/oidc/jwks", ct)).StatusCode);
+        Assert.Equal((HttpStatusCode)503, (await rig.Http.GetAsync("/.well-known/openid-configuration", ct)).StatusCode);
+        Assert.Equal(1, await rig.Db.ScalarAsync<long>("select count(*) from oidc_keys"));
+        Assert.Equal(1, await rig.Db.ScalarAsync<long>("select count(*) from oidc_keys where retired_at is null and private_sealed is not null"));
+        Assert.True(rig.Keys.Unusable);
+        var overview = await Json(await rig.Http.SendAsync(Req(HttpMethod.Get, "/api/security/oidc", rig.Cookie), ct));
+        Assert.True(overview.GetProperty("keyProblem").GetBoolean());
+
+        // mit dem richtigen Schluessel geht es mit demselben Signaturschluessel weiter; der Code wurde beim 503 nicht verbraucht
+        await rig.Db.ExecAsync("update oidc_keys set private_sealed = $1", original);
+        time.Advance(TimeSpan.FromSeconds(31));                                           // Zwischenspeicher abgelaufen, der Code (60 s) noch nicht
+        var again = await rig.TokenAsync(app, code, v);
+        Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+        Assert.Equal(first.Jwt.Kid, (await rig.ValidateAsync((await Json(again)).GetProperty("id_token").GetString()!, app.ClientId)).Kid);
+        Assert.False(rig.Keys.Unusable);
     }
 }

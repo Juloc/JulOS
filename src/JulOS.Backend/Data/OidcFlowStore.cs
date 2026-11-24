@@ -9,7 +9,31 @@ public sealed record OidcSessionInfo(Guid UserId, string UserName, Guid Sub, Dat
 
 public sealed record OidcAccessToken(Guid AppId, Guid UserId, Guid SessionId, string Scope);
 
-public sealed record OidcLogoutJob(long Id, Guid AppId, string AppName, string ClientId, string? Uri, Guid Sub, string UserName, string Sid, string Reason, int Attempts);
+public sealed record OidcLogoutJob(long Id, Guid AppId, string AppName, string ClientId, string? Uri, Guid Sub, string UserName, string Sid, string Reason, int Attempts, bool AllowPrivate = false);
+
+/// <summary>Ein eingeloester Code, noch in der Transaktion: hier entstehen Grant und Zugriffs-Token, dann <see cref="CommitAsync"/>.</summary>
+public sealed class OidcRedeem(NpgsqlConnection conn, NpgsqlTransaction tx, OidcCode code) : IAsyncDisposable
+{
+    public OidcCode Code { get; } = code;
+
+    /// <summary>Merkt, dass diese Sitzung der App ein Token gegeben hat. Gibt die "sid" (je Sitzung und App gleich, nicht der Cookie-Wert).</summary>
+    public async Task<string> UpsertGrantAsync(Guid sessionId, Guid appId, Guid userId, Guid sub, string userName, DateTimeOffset now, CancellationToken ct = default)
+    {
+        await using var cmd = conn.Cmd(tx, "insert into oidc_grants (session_id, app_id, user_id, sub, user_name, sid, issued_at) values ($1, $2, $3, $4, $5, $6, $7) on conflict (session_id, app_id) do update set issued_at = excluded.issued_at returning sid",
+            sessionId, appId, userId, sub, userName, OidcRules.NewSid(), now);
+        return (string)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
+    public async Task AddAccessTokenAsync(string tokenHash, Guid appId, Guid userId, Guid sessionId, string codeHash, string scope, DateTimeOffset expires, CancellationToken ct = default)
+    {
+        await using var cmd = conn.Cmd(tx, "insert into oidc_tokens (hash, app_id, user_id, session_id, code_hash, scope, expires_at) values ($1, $2, $3, $4, $5, $6, $7)", tokenHash, appId, userId, sessionId, codeHash, scope, expires);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public Task CommitAsync(CancellationToken ct = default) => tx.CommitAsync(ct);
+
+    public async ValueTask DisposeAsync() { await tx.DisposeAsync(); await conn.DisposeAsync(); }
+}
 
 /// <summary>
 /// Der Ablauf der Anmelde-Zentrale in der Datenbank: Codes (einmalig, nur als Hash), Zugriffs-Token, die Zuordnung "JulOS-Sitzung hat der App ein Token gegeben" (Grants) und die
@@ -34,15 +58,32 @@ public sealed class OidcFlowStore(NpgsqlDataSource db)
 
     /// <summary>
     /// Loest einen Code ein: genau einmal (atomar), nur fuer die App, der er gehoert, und nur vor Ablauf. Danach ist er verbraucht, auch wenn der Aufrufer die Adresse
-    /// oder PKCE noch ablehnt (ein geratener Code laesst sich so nicht mehrfach probieren).
+    /// oder PKCE noch ablehnt (ein geratener Code laesst sich so nicht mehrfach probieren): dafuer <see cref="OidcRedeem.CommitAsync"/> aufrufen.
+    /// Einloesen, Grant und Zugriffs-Token geschehen in EINER Transaktion: eine zweite, gleichzeitige Vorlage desselben Codes wartet, bis die erste fertig ist, und widerruft dann
+    /// wirklich alles, was daraus entstand. Wird die Transaktion ohne Commit freigegeben (zum Beispiel ein Fehler beim Signieren), gilt der Code weiter.
+    /// Gibt null, wenn es keinen frischen Code dieser App gibt.
     /// </summary>
-    public async Task<OidcCode?> RedeemCodeAsync(string codeHash, Guid appId, DateTimeOffset now, CancellationToken ct = default)
+    public async Task<OidcRedeem?> BeginRedeemAsync(string codeHash, Guid appId, DateTimeOffset now, CancellationToken ct = default)
     {
-        await using var cmd = db.Cmd("update oidc_codes set used_at = $3 where hash = $1 and app_id = $2 and used_at is null and expires_at > $3 returning user_id, session_id, redirect_uri, code_challenge, nonce, scope, auth_time",
-            codeHash, appId, now);
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        return await r.ReadAsync(ct)
-            ? new OidcCode(r.GetGuid(0), r.GetGuid(1), r.GetString(2), r.GetString(3), r.IsDBNull(4) ? null : r.GetString(4), r.GetString(5), r.GetFieldValue<DateTimeOffset>(6)) : null;
+        var conn = await db.OpenConnectionAsync(ct);
+        NpgsqlTransaction? tx = null;
+        try
+        {
+            tx = await conn.BeginTransactionAsync(ct);
+            await using var cmd = conn.Cmd(tx, "update oidc_codes set used_at = $3 where hash = $1 and app_id = $2 and used_at is null and expires_at > $3 returning user_id, session_id, redirect_uri, code_challenge, nonce, scope, auth_time",
+                codeHash, appId, now);
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            if (!await r.ReadAsync(ct)) { await r.DisposeAsync(); await tx.DisposeAsync(); await conn.DisposeAsync(); return null; }
+            var code = new OidcCode(r.GetGuid(0), r.GetGuid(1), r.GetString(2), r.GetString(3), r.IsDBNull(4) ? null : r.GetString(4), r.GetString(5), r.GetFieldValue<DateTimeOffset>(6));
+            await r.DisposeAsync();
+            return new OidcRedeem(conn, tx, code);
+        }
+        catch
+        {
+            if (tx is not null) await tx.DisposeAsync();
+            await conn.DisposeAsync();
+            throw;
+        }
     }
 
     /// <summary>
@@ -86,20 +127,6 @@ public sealed class OidcFlowStore(NpgsqlDataSource db)
     }
 
     // ---- Grants und Zugriffs-Token ----
-
-    /// <summary>Merkt, dass diese Sitzung der App ein Token gegeben hat. Gibt die "sid" (je Sitzung und App gleich, nicht der Cookie-Wert).</summary>
-    public async Task<string> UpsertGrantAsync(Guid sessionId, Guid appId, Guid userId, Guid sub, string userName, DateTimeOffset now, CancellationToken ct = default)
-    {
-        await using var cmd = db.Cmd("insert into oidc_grants (session_id, app_id, user_id, sub, user_name, sid, issued_at) values ($1, $2, $3, $4, $5, $6, $7) on conflict (session_id, app_id) do update set issued_at = excluded.issued_at returning sid",
-            sessionId, appId, userId, sub, userName, OidcRules.NewSid(), now);
-        return (string)(await cmd.ExecuteScalarAsync(ct))!;
-    }
-
-    public async Task AddAccessTokenAsync(string tokenHash, Guid appId, Guid userId, Guid sessionId, string codeHash, string scope, DateTimeOffset expires, CancellationToken ct = default)
-    {
-        await using var cmd = db.Cmd("insert into oidc_tokens (hash, app_id, user_id, session_id, code_hash, scope, expires_at) values ($1, $2, $3, $4, $5, $6, $7)", tokenHash, appId, userId, sessionId, codeHash, scope, expires);
-        await cmd.ExecuteNonQueryAsync(ct);
-    }
 
     public async Task<OidcAccessToken?> FindAccessTokenAsync(string tokenHash, DateTimeOffset now, CancellationToken ct = default)
     {
@@ -147,12 +174,12 @@ public sealed class OidcFlowStore(NpgsqlDataSource db)
 
     public async Task<IReadOnlyList<OidcLogoutJob>> DueLogoutsAsync(DateTimeOffset now, int limit, CancellationToken ct = default)
     {
-        await using var cmd = db.Cmd(@"select l.id, l.app_id, a.name, a.client_id, a.backchannel_uri, l.sub, l.user_name, l.sid, l.reason, l.attempts
+        await using var cmd = db.Cmd(@"select l.id, l.app_id, a.name, a.client_id, a.backchannel_uri, l.sub, l.user_name, l.sid, l.reason, l.attempts, a.backchannel_private
             from oidc_logouts l join oidc_apps a on a.id = l.app_id where l.done_at is null and l.next_at <= $1 order by l.id limit $2", now, limit);
         await using var r = await cmd.ExecuteReaderAsync(ct);
         var list = new List<OidcLogoutJob>();
         while (await r.ReadAsync(ct))
-            list.Add(new OidcLogoutJob(r.GetInt64(0), r.GetGuid(1), r.GetString(2), r.GetString(3), r.IsDBNull(4) ? null : r.GetString(4), r.GetGuid(5), r.GetString(6), r.GetString(7), r.GetString(8), r.GetInt32(9)));
+            list.Add(new OidcLogoutJob(r.GetInt64(0), r.GetGuid(1), r.GetString(2), r.GetString(3), r.IsDBNull(4) ? null : r.GetString(4), r.GetGuid(5), r.GetString(6), r.GetString(7), r.GetString(8), r.GetInt32(9), r.GetBoolean(10)));
         return list;
     }
 
@@ -165,6 +192,13 @@ public sealed class OidcFlowStore(NpgsqlDataSource db)
     public async Task RetryLogoutAsync(long id, DateTimeOffset next, string result, CancellationToken ct = default)
     {
         await using var cmd = db.Cmd("update oidc_logouts set next_at = $2, result = $3, attempts = attempts + 1 where id = $1", id, next, result);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>Verschiebt einen Eintrag, ohne einen Versuch zu zaehlen (die Zustellung war gar nicht moeglich: es fehlt Aussteller oder Schluessel).</summary>
+    public async Task DeferLogoutAsync(long id, DateTimeOffset next, string result, CancellationToken ct = default)
+    {
+        await using var cmd = db.Cmd("update oidc_logouts set next_at = $2, result = $3 where id = $1", id, next, result);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 

@@ -4,7 +4,7 @@ using Npgsql;
 namespace JulOS.Backend.Data;
 
 public sealed record OidcApp(Guid Id, string Name, string ClientId, string SecretHash, string[] RedirectUris, string[] PostLogoutUris, string? BackchannelUri, string[] Roles, bool Enabled,
-    DateTimeOffset CreatedAt, DateTimeOffset SecretChangedAt);
+    DateTimeOffset CreatedAt, DateTimeOffset SecretChangedAt, bool BackchannelPrivate = false);
 
 public sealed record OidcPerson(Guid Id, string Name, Guid Sub, bool Owner);
 
@@ -17,10 +17,10 @@ public sealed record OidcAssignment(Guid AppId, Guid UserId, string Role);
 public sealed class OidcAppStore(NpgsqlDataSource db, TimeProvider clock)
 {
     public const string OwnerRole = "admin";
-    private const string Columns = "id, name, client_id, secret_hash, redirect_uris, post_logout_uris, backchannel_uri, roles, enabled, created_at, secret_changed_at";
+    private const string Columns = "id, name, client_id, secret_hash, redirect_uris, post_logout_uris, backchannel_uri, roles, enabled, created_at, secret_changed_at, backchannel_private";
 
     private static OidcApp Read(NpgsqlDataReader r) => new(r.GetGuid(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetFieldValue<string[]>(4), r.GetFieldValue<string[]>(5),
-        r.IsDBNull(6) ? null : r.GetString(6), r.GetFieldValue<string[]>(7), r.GetBoolean(8), r.GetFieldValue<DateTimeOffset>(9), r.GetFieldValue<DateTimeOffset>(10));
+        r.IsDBNull(6) ? null : r.GetString(6), r.GetFieldValue<string[]>(7), r.GetBoolean(8), r.GetFieldValue<DateTimeOffset>(9), r.GetFieldValue<DateTimeOffset>(10), r.GetBoolean(11));
 
     public async Task<IReadOnlyList<OidcApp>> ListAsync(CancellationToken ct = default)
     {
@@ -47,14 +47,14 @@ public sealed class OidcAppStore(NpgsqlDataSource db, TimeProvider clock)
     }
 
     /// <summary>Legt eine App an. Gibt sie und das Geheimnis im Klartext (nur jetzt); null, wenn der Name schon vergeben ist.</summary>
-    public async Task<(OidcApp App, string Secret)?> CreateAsync(string name, string[] redirectUris, string[] postLogoutUris, string? backchannelUri, string[] roles, CancellationToken ct = default)
+    public async Task<(OidcApp App, string Secret)?> CreateAsync(string name, string[] redirectUris, string[] postLogoutUris, string? backchannelUri, string[] roles, bool backchannelPrivate = false, CancellationToken ct = default)
     {
         var secret = OidcRules.NewSecret();
         var clientId = OidcRules.NewClientId();
         try
         {
-            await using var cmd = db.Cmd($"insert into oidc_apps (name, client_id, secret_hash, redirect_uris, post_logout_uris, backchannel_uri, roles, created_at, secret_changed_at) values ($1, $2, $3, $4, $5, $6, $7, $8, $8) returning {Columns}",
-                name.Trim(), clientId, OidcRules.Hash(secret), redirectUris, postLogoutUris, backchannelUri, roles, clock.GetUtcNow());
+            await using var cmd = db.Cmd($"insert into oidc_apps (name, client_id, secret_hash, redirect_uris, post_logout_uris, backchannel_uri, roles, created_at, secret_changed_at, backchannel_private) values ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9) returning {Columns}",
+                name.Trim(), clientId, OidcRules.Hash(secret), redirectUris, postLogoutUris, backchannelUri, roles, clock.GetUtcNow(), backchannelPrivate);
             await using var r = await cmd.ExecuteReaderAsync(ct);
             await r.ReadAsync(ct);
             return (Read(r), secret);
@@ -63,15 +63,15 @@ public sealed class OidcAppStore(NpgsqlDataSource db, TimeProvider clock)
     }
 
     /// <summary>Aendert Name, Adressen und Rollen. Eine Rolle, die es nicht mehr gibt, verliert ihre Zuweisungen (Rueckgabe: wie viele). null: App fehlt oder Name vergeben.</summary>
-    public async Task<(OidcApp App, IReadOnlyList<Guid> Dropped)?> UpdateAsync(Guid id, string name, string[] redirectUris, string[] postLogoutUris, string? backchannelUri, string[] roles, CancellationToken ct = default)
+    public async Task<(OidcApp App, IReadOnlyList<Guid> Dropped)?> UpdateAsync(Guid id, string name, string[] redirectUris, string[] postLogoutUris, string? backchannelUri, string[] roles, bool backchannelPrivate = false, CancellationToken ct = default)
     {
         try
         {
             await using var conn = await db.OpenConnectionAsync(ct);
             await using var tx = await conn.BeginTransactionAsync(ct);
             OidcApp app;
-            await using (var cmd = conn.Cmd(tx, $"update oidc_apps set name = $2, redirect_uris = $3, post_logout_uris = $4, backchannel_uri = $5, roles = $6 where id = $1 returning {Columns}",
-                id, name.Trim(), redirectUris, postLogoutUris, backchannelUri, roles))
+            await using (var cmd = conn.Cmd(tx, $"update oidc_apps set name = $2, redirect_uris = $3, post_logout_uris = $4, backchannel_uri = $5, roles = $6, backchannel_private = $7 where id = $1 returning {Columns}",
+                id, name.Trim(), redirectUris, postLogoutUris, backchannelUri, roles, backchannelPrivate))
             await using (var r = await cmd.ExecuteReaderAsync(ct))
             {
                 if (!await r.ReadAsync(ct)) return null;
@@ -109,20 +109,43 @@ public sealed class OidcAppStore(NpgsqlDataSource db, TimeProvider clock)
 
     // ---- Personen und Rollen ----
 
-    /// <summary>Alle bestaetigten Konten; der Eigentuemer (das aelteste) ist markiert.</summary>
+    /// <summary>Alle bestaetigten Konten; der Eigentuemer ist markiert.</summary>
     public async Task<IReadOnlyList<OidcPerson>> PeopleAsync(CancellationToken ct = default)
     {
+        var owner = await OwnerIdAsync(ct);
         await using var cmd = db.Cmd("select id, name, oidc_sub from users where totp_confirmed order by created_at, id");
         await using var r = await cmd.ExecuteReaderAsync(ct);
         var list = new List<OidcPerson>();
-        while (await r.ReadAsync(ct)) list.Add(new OidcPerson(r.GetGuid(0), r.GetString(1), r.GetGuid(2), list.Count == 0));
+        while (await r.ReadAsync(ct)) list.Add(new OidcPerson(r.GetGuid(0), r.GetString(1), r.GetGuid(2), r.GetGuid(0) == owner));
         return list;
     }
 
+    public const string OwnerKey = "oidc.owner";
+
+    /// <summary>
+    /// Der Eigentuemer: das Konto, das dafuer festgehalten ist. Beim ersten Mal wird das aelteste bestaetigte Konto festgehalten; danach wechselt der Eigentuemer nur noch ausdruecklich
+    /// (<see cref="SetOwnerAsync"/>). Faellt das Konto weg, gibt es keinen Eigentuemer (null): kein Konto rueckt still nach und wird admin in allen Apps. Wiederherstellung steht in docs/SIGN-IN.md.
+    /// </summary>
     public async Task<Guid?> OwnerIdAsync(CancellationToken ct = default)
     {
-        await using var cmd = db.Cmd("select id from users where totp_confirmed order by created_at, id limit 1");
-        return await cmd.ExecuteScalarAsync(ct) as Guid?;
+        for (var pinned = false; ; pinned = true)
+        {
+            await using var cmd = db.Cmd("select u.id from instance_settings s left join users u on u.id::text = (s.value #>> '{}') and u.totp_confirmed where s.key = $1", OwnerKey);
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            if (await r.ReadAsync(ct)) return r.IsDBNull(0) ? null : r.GetGuid(0);          // festgehalten (vielleicht ist das Konto weg: dann null)
+            await r.DisposeAsync();
+            if (pinned) return null;
+            // noch nie festgehalten: das aelteste bestaetigte Konto; gibt es keines, bleibt es offen
+            await using var pin = db.Cmd("insert into instance_settings (key, value) select $1, to_jsonb(id::text) from users where totp_confirmed order by created_at, id limit 1 on conflict (key) do nothing", OwnerKey);
+            if (await pin.ExecuteNonQueryAsync(ct) == 0) return null;
+        }
+    }
+
+    /// <summary>Macht eine Person (ein bestaetigtes Konto) zum Eigentuemer. Gibt false, wenn es sie nicht gibt.</summary>
+    public async Task<bool> SetOwnerAsync(Guid userId, CancellationToken ct = default)
+    {
+        await using var cmd = db.Cmd("insert into instance_settings (key, value) select $1, to_jsonb(id::text) from users where id = $2 and totp_confirmed on conflict (key) do update set value = excluded.value, updated_at = now()", OwnerKey, userId);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
 
     public async Task<IReadOnlyList<OidcAssignment>> AssignmentsAsync(CancellationToken ct = default)

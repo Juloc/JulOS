@@ -2,9 +2,13 @@ using System.Security.Cryptography;
 using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 
 namespace JulOS.Backend.Services;
+
+/// <summary>Der aktive Signaturschluessel laesst sich nicht entschluesseln (zum Beispiel ein falscher JULOS_SECRET_KEY). Es wird nichts signiert und nichts geloescht.</summary>
+public sealed class OidcKeysUnusableException() : InvalidOperationException("Der aktive Signaturschlüssel lässt sich mit dem Server-Schlüssel nicht öffnen (falscher JULOS_SECRET_KEY?).");
 
 /// <summary>Ein oeffentlicher Schluessel fuer die JWKS-Ausgabe (Kurve P-256, Koordinaten als Base64Url).</summary>
 public sealed record OidcPublicKey(string Kid, string X, string Y, DateTimeOffset CreatedAt, DateTimeOffset? RetiredAt);
@@ -15,7 +19,7 @@ public sealed record OidcPublicKey(string Kid, string X, string Y, DateTimeOffse
 /// wird geloescht, der oeffentliche bleibt im JWKS, bis seine Token abgelaufen sind (<see cref="Grace"/>), und in der Datenbank noch <see cref="Keep"/> (fuer id_token_hint).
 /// Ohne Server-Schluessel (SecretBox aus) gibt es keine Schluessel und keine Anmelde-Zentrale.
 /// </summary>
-public sealed class OidcKeys(NpgsqlDataSource db, SecretBox box, TimeProvider clock)
+public sealed class OidcKeys(NpgsqlDataSource db, SecretBox box, TimeProvider clock, ILogger<OidcKeys>? log = null)
 {
     /// <summary>So lange steht ein ausgemusterter Schluessel noch im JWKS: Lebensdauer der Token plus Uhrenabweichung.</summary>
     public static readonly TimeSpan Grace = OidcRules.TokenLifetime + TimeSpan.FromMinutes(5);
@@ -29,28 +33,35 @@ public sealed class OidcKeys(NpgsqlDataSource db, SecretBox box, TimeProvider cl
     private volatile Loaded? _cache;
     private static readonly TimeSpan CacheFor = TimeSpan.FromSeconds(30);
 
-    public bool Available => box.Enabled;
+    /// <summary>Es gibt einen Server-Schluessel und der aktive Signaturschluessel liess sich (beim letzten Laden) oeffnen.</summary>
+    public bool Available => box.Enabled && !Unusable;
 
-    /// <summary>Der Schluessel, mit dem jetzt signiert wird (wird beim ersten Mal erzeugt).</summary>
+    /// <summary>Der aktive Schluessel ist da, laesst sich aber nicht oeffnen: die Anmelde-Zentrale steht, bis der richtige Server-Schluessel zurueck ist oder der Eigentuemer ausdruecklich rotiert.</summary>
+    public bool Unusable => _cache is { ActiveUnusable: true } c && clock.GetUtcNow() - c.At < CacheFor;      // nach dem Zwischenspeicher wird neu geladen: ein behobener Fehler wird bemerkt
+
+    /// <summary>
+    /// Der Schluessel, mit dem jetzt signiert wird (wird beim ersten Mal erzeugt). Ist der aktive Schluessel nicht zu oeffnen, geschieht NICHTS Stilles: kein Ersatz, kein Loeschen
+    /// (<see cref="OidcKeysUnusableException"/>). Mit dem richtigen Server-Schluessel geht es ohne weiteres wieder; sonst entscheidet der Eigentuemer ueber "Schluessel erneuern".
+    /// </summary>
     public async Task<SecurityKey> ActiveAsync(CancellationToken ct = default)
     {
         var l = await LoadAsync(ct);
         if (l.Active is not null) return l.Active;
+        if (l.ActiveUnusable) throw new OidcKeysUnusableException();
         await _gate.WaitAsync(ct);
         try
         {
             _cache = null;
-            if (await LoadCoreAsync(ct) is { Active: null } now)
+            if (await LoadCoreAsync(ct) is { Active: null, ActiveUnusable: false })
             {
-                // Gibt es einen aktiven Schluessel, den dieser Server nicht oeffnen kann (anderer Server-Schluessel, zum Beispiel nach einer Wiederherstellung ohne ihn), wird er ausgemustert
-                // und ein neuer erzeugt: die Apps sehen eine neue kid, alte Token verlieren ihre Gueltigkeit ohnehin nach Minuten.
-                try { await InsertAsync(retireOld: now.ActiveUnusable, ct); }
+                try { await InsertAsync(retireOld: false, ct); }
                 catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.UniqueViolation) { /* ein anderer Start war schneller */ }
             }
             _cache = null;
         }
         finally { _gate.Release(); }
-        return (await LoadAsync(ct)).Active ?? throw new InvalidOperationException("Kein Signaturschlüssel.");
+        var after = await LoadAsync(ct);
+        return after.Active ?? throw (after.ActiveUnusable ? new OidcKeysUnusableException() : new InvalidOperationException("Kein Signaturschlüssel."));
     }
 
     /// <summary>Die Schluessel fuer die JWKS-Ausgabe: der aktive und die ausgemusterten, solange ihre Token noch gelten koennten.</summary>
@@ -121,7 +132,14 @@ public sealed class OidcKeys(NpgsqlDataSource db, SecretBox box, TimeProvider cl
             if (row.RetiredAt is null && row.Sealed is not null)
             {
                 // der aktive Schluessel: mit dem privaten Teil (laesst er sich nicht entschluesseln, ist der Server-Schluessel ein anderer: dann gibt es hier keinen aktiven)
-                if (box.Decrypt(row.Sealed, row.Id) is not { } pkcs8) { ec.Dispose(); unusable = true; continue; }
+                if (box.Decrypt(row.Sealed, row.Id) is not { } pkcs8)
+                {
+                    unusable = true;
+                    ec.ImportSubjectPublicKeyInfo(row.Public, out _);                       // der oeffentliche Teil bleibt sichtbar (Anzeige), signiert wird damit nie
+                    all.Add((row, new ECDsaSecurityKey(ec) { KeyId = row.Kid }));
+                    log?.LogError("OIDC: Der aktive Signaturschluessel {Kid} laesst sich nicht oeffnen (falscher JULOS_SECRET_KEY?). Die Anmelde-Zentrale ist aus; nichts wird geloescht. Mit dem richtigen Schluessel geht es weiter.", row.Kid);
+                    continue;
+                }
                 ec.ImportPkcs8PrivateKey(Convert.FromBase64String(pkcs8), out _);
                 var key = new ECDsaSecurityKey(ec) { KeyId = row.Kid };
                 active = key; all.Add((row, key));

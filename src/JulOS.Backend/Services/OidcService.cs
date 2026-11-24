@@ -1,6 +1,7 @@
 using JulOS.Backend.Data;
 using JulOS.Backend.Logic;
 using Microsoft.Extensions.Logging;
+using Microsoft.IdentityModel.Tokens;
 
 namespace JulOS.Backend.Services;
 
@@ -120,10 +121,10 @@ public sealed class OidcService(OidcAppStore apps, OidcFlowStore flow, OidcKeys 
         var now = clock.GetUtcNow();
         var codeHash = OidcRules.Hash(code);
 
-        var row = await flow.RedeemCodeAsync(codeHash, app.Id, now, ct);
-        if (row is null)
+        await using var redeem = await flow.BeginRedeemAsync(codeHash, app.Id, now, ct);
+        if (redeem is null)
         {
-            // schon benutzt? Dann hat ihn jemand zweimal vorgelegt: was daraus entstand, wird widerrufen
+            // schon benutzt? Dann hat ihn jemand zweimal vorgelegt: was daraus entstand, wird widerrufen. (Eine gleichzeitige zweite Vorlage hat hier gewartet, bis die erste fertig war.)
             if (await flow.RevokeReusedCodeAsync(codeHash, app.Id, now, ct))
             {
                 log.LogWarning("OIDC: Code von {App} ein zweites Mal vorgelegt, die daraus entstandene Sitzung wird beendet.", app.Name);
@@ -131,21 +132,28 @@ public sealed class OidcService(OidcAppStore apps, OidcFlowStore flow, OidcKeys 
             }
             return Err(400, "invalid_grant", "Der Code gilt nicht (mehr).");
         }
+        var row = redeem.Code;
+        // Ab hier ist der Code verbraucht: wird er abgelehnt, bleibt er es (Commit), bei einem Fehler des Servers (keine Freigabe) gilt er weiter.
+        async Task<OidcTokenResult> Burn(string text) { await redeem.CommitAsync(ct); return Err(400, "invalid_grant", text); }
         if (redirectUri is null || !string.Equals(redirectUri, row.RedirectUri, StringComparison.Ordinal) || !OidcRules.VerifierMatches(verifier, row.CodeChallenge))
-            return Err(400, "invalid_grant", "redirect_uri oder code_verifier stimmen nicht.");
+            return await Burn("redirect_uri oder code_verifier stimmen nicht.");
 
         // die Sitzung muss noch gelten und die Person noch eine Rolle haben (der Code ist nur Sekunden alt, aber beides kann sich geaendert haben)
         var session = await flow.SessionAsync(row.SessionId, ct);
-        if (session is null || session.UserId != row.UserId) return Err(400, "invalid_grant", "Die Sitzung bei JulOS gilt nicht mehr.");
-        if (await apps.RoleOfAsync(app, session.UserId, ct) is not { } role) return Err(400, "invalid_grant", "Kein Zugang zu dieser App.");
+        if (session is null || session.UserId != row.UserId) return await Burn("Die Sitzung bei JulOS gilt nicht mehr.");
+        if (await apps.RoleOfAsync(app, session.UserId, ct) is not { } role) return await Burn("Kein Zugang zu dieser App.");
 
-        var sid = await flow.UpsertGrantAsync(row.SessionId, app.Id, session.UserId, session.Sub, session.UserName, now, ct);
+        SecurityKey signing;
+        try { signing = await keys.ActiveAsync(ct); }
+        catch (OidcKeysUnusableException) { return Err(503, "temporarily_unavailable", "Die Anmeldung ist nicht eingerichtet."); }
+        var sid = await redeem.UpsertGrantAsync(row.SessionId, app.Id, session.UserId, session.Sub, session.UserName, now, ct);
         var withProfile = row.Scope.Split(' ').Contains(OidcRules.Profile);
         var idToken = OidcTokens.CreateIdToken(new IdTokenClaims(issuer.Value!, app.ClientId, session.Sub.ToString(), sid, now, row.AuthTime, row.Nonce, withProfile ? session.UserName : null, role),
-            await keys.ActiveAsync(ct), OidcRules.TokenLifetime);
+            signing, OidcRules.TokenLifetime);
 
         var access = OidcRules.NewCode();
-        await flow.AddAccessTokenAsync(OidcRules.Hash(access), app.Id, session.UserId, row.SessionId, codeHash, row.Scope, now + OidcRules.TokenLifetime, ct);
+        await redeem.AddAccessTokenAsync(OidcRules.Hash(access), app.Id, session.UserId, row.SessionId, codeHash, row.Scope, now + OidcRules.TokenLifetime, ct);
+        await redeem.CommitAsync(ct);
         return new OidcTokenResult(200, Body: new OidcTokenBody(access, idToken, (int)OidcRules.TokenLifetime.TotalSeconds, row.Scope));
     }
 

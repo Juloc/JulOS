@@ -42,7 +42,7 @@ public sealed class OidcLogoutTests
     {
         await using var rig = await OidcRig.CreateAsync();
         var rec = new Recorder();
-        rig.Outbound.Create = () => new HttpClient(rec, disposeHandler: false);
+        rig.Outbound.Create = _ => new HttpClient(rec, disposeHandler: false);
         var a = await rig.AddAppAsync("Notes");
         var noUri = await rig.AddAppAsync("Quiet", backchannel: null, redirects: ["https://quiet.example/cb"]);
         var ct = TestContext.Current.CancellationToken;
@@ -120,7 +120,7 @@ public sealed class OidcLogoutTests
         var app = await rig.AddAppAsync();
         var ct = TestContext.Current.CancellationToken;
         var flaky = new Recorder(HttpStatusCode.InternalServerError, HttpStatusCode.Redirect, HttpStatusCode.OK);
-        rig.Outbound.Create = () => new HttpClient(flaky, disposeHandler: false);
+        rig.Outbound.Create = _ => new HttpClient(flaky, disposeHandler: false);
         await rig.SignInAsync(app);
         await rig.Http.SendAsync(Req(HttpMethod.Post, "/api/auth/logout", rig.Cookie, new { }));
 
@@ -139,14 +139,14 @@ public sealed class OidcLogoutTests
         rig.Cookie = "julos_sid=" + await new SessionStore(rig.Db.Data).CreateAsync(rig.OwnerId, "127.0.0.1", "test", ct, DateTimeOffset.UtcNow.AddMinutes(10));     // die erste Sitzung des Eigentuemers ist eben beendet worden
         var app2 = await rig.AddAppAsync("Dead", backchannel: "https://dead.example/logout", redirects: ["https://dead.example/cb"]);
         var dead = new Recorder(HttpStatusCode.BadGateway);
-        rig.Outbound.Create = () => new HttpClient(dead, disposeHandler: false);
+        rig.Outbound.Create = _ => new HttpClient(dead, disposeHandler: false);
         var anna = await rig.SecondPersonAsync();
         await rig.AssignAsync(app2, anna.UserId, "member");
         await rig.SignInAsync(app2, anna.Cookie);
         await rig.Db.ExecAsync("delete from sessions where user_id = $1", anna.UserId);
         for (var i = 0; i < 8; i++) { await rig.Logout.RunOnceAsync(ct); Retry(rig); }
         Assert.Equal(5, dead.Posts.Count);
-        Assert.Equal("failed: http 502", await rig.Db.ScalarAsync<string>("select result from oidc_logouts where app_id = $1", app2.Id));
+        Assert.Equal("failed", await rig.Db.ScalarAsync<string>("select result from oidc_logouts where app_id = $1", app2.Id));
         var audit = await new SecurityAuditStore(rig.Db.Data, TimeProvider.System).ListAsync(50, ct);
         Assert.Contains(audit, e => e.Event == "oidc.logout.failed" && e.Detail!.Contains("Dead"));
     }
@@ -157,7 +157,7 @@ public sealed class OidcLogoutTests
         await using var rig = await OidcRig.CreateAsync();
         var app = await rig.AddAppAsync();
         var rec = new Recorder();
-        rig.Outbound.Create = () => new HttpClient(rec, disposeHandler: false);
+        rig.Outbound.Create = _ => new HttpClient(rec, disposeHandler: false);
         var anna = await rig.SecondPersonAsync();
         await rig.AssignAsync(app, anna.UserId, "viewer");
         var t = await rig.SignInAsync(app, anna.Cookie);
@@ -188,7 +188,7 @@ public sealed class OidcLogoutTests
     {
         await using var rig = await OidcRig.CreateAsync();
         var rec = new Recorder();
-        rig.Outbound.Create = () => new HttpClient(rec, disposeHandler: false);
+        rig.Outbound.Create = _ => new HttpClient(rec, disposeHandler: false);
         var app = await rig.AddAppAsync();
         var ct = TestContext.Current.CancellationToken;
         var alive = async () => await rig.Db.ScalarAsync<long>("select count(*) from sessions where user_id = $1", rig.OwnerId) > 0;

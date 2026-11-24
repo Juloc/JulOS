@@ -199,13 +199,13 @@ public sealed class OidcAdminTests
     }
 
     [Fact]
-    public async Task Too_many_wrong_app_logins_lock_the_address_for_a_while_and_authorize_is_rate_limited()
+    public async Task Too_many_wrong_app_logins_lock_wrong_ones_for_a_while_and_authorize_is_rate_limited()
     {
         await using var rig = await OidcRig.CreateAsync();
         var app = await rig.AddAppAsync();
         var v = OidcRig.NewVerifier();
         for (var i = 0; i < 10; i++) Assert.Equal(HttpStatusCode.Unauthorized, (await rig.TokenAsync(app, "x", v, secret: "falsch")).StatusCode);
-        var locked = await rig.TokenAsync(app, await rig.CodeAsync(app, v), v);                           // auch mit dem richtigen Geheimnis: die Adresse wartet
+        var locked = await rig.TokenAsync(app, "x", v, secret: "falsch");                                  // falsche Anmeldungen warten (die richtige nicht: OidcHardeningTests)
         Assert.Equal((HttpStatusCode)429, locked.StatusCode);
         Assert.True(locked.Headers.RetryAfter is not null);
         Assert.Equal("temporarily_unavailable", (await Json(locked)).GetProperty("error").GetString());

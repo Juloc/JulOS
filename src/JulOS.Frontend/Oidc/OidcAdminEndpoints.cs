@@ -19,7 +19,7 @@ internal static class OidcAdminEndpoints
     private static IResult Refuse(int status, string code, string text) => Results.Json(new OidcError(text, code), OidcJson.Default.OidcError, statusCode: status);
 
     private static OidcAppDto ToDto(OidcApp a, IReadOnlyDictionary<Guid, int> sessions) =>
-        new(a.Id, a.Name, a.ClientId, a.RedirectUris, a.PostLogoutUris, a.BackchannelUri, a.Roles, a.Enabled, a.CreatedAt, a.SecretChangedAt, sessions.GetValueOrDefault(a.Id));
+        new(a.Id, a.Name, a.ClientId, a.RedirectUris, a.PostLogoutUris, a.BackchannelUri, a.Roles, a.Enabled, a.CreatedAt, a.SecretChangedAt, sessions.GetValueOrDefault(a.Id), a.BackchannelPrivate);
 
     public static void MapOidcAdmin(this IEndpointRouteBuilder app)
     {
@@ -47,11 +47,12 @@ internal static class OidcAdminEndpoints
             var ct = ctx.RequestAborted;
             var sessions = await flow.GrantCountsAsync(ct);
             var req = ctx.Request;
-            return Results.Json(new OidcOverview(oidc.Ready, keys.Available, issuer.Value, issuer.Source, $"{req.Scheme}://{req.Host}", ConfirmPolicy.Name(cfg.ConfirmMode),
+            var keyList = await keys.ListAsync(ct);            // laedt auch den Stand der Schluessel (KeyProblem)
+            return Results.Json(new OidcOverview(oidc.Ready, keys.Available || keys.Unusable, keys.Unusable, issuer.Value, issuer.Source, $"{req.Scheme}://{req.Host}", ConfirmPolicy.Name(cfg.ConfirmMode),
                 [.. (await apps.ListAsync(ct)).Select(a => ToDto(a, sessions))],
                 [.. (await apps.PeopleAsync(ct)).Select(p => new OidcPersonDto(p.Id, p.Name, p.Owner))],
                 [.. (await apps.AssignmentsAsync(ct)).Select(a => new OidcAssignmentDto(a.AppId, a.UserId, a.Role))],
-                [.. (await keys.ListAsync(ct)).Select(k => new OidcKeyDto(k.Kid, k.CreatedAt, k.RetiredAt))]), OidcJson.Default.OidcOverview);
+                [.. keyList.Select(k => new OidcKeyDto(k.Kid, k.CreatedAt, k.RetiredAt))]), OidcJson.Default.OidcOverview);
         });
 
         // ---- oeffentliche Adresse (der Aussteller) ----
@@ -74,7 +75,7 @@ internal static class OidcAdminEndpoints
         });
 
         // ---- Apps ----
-        IResult? Validate(OidcAppRequest b, out string name, out string[] redirects, out string[] postLogout, out string? back, out string[] roles)
+        IResult? Validate(OidcAppRequest b, string? issuer, out string name, out string[] redirects, out string[] postLogout, out string? back, out string[] roles)
         {
             name = (b.Name ?? "").Trim(); redirects = []; postLogout = []; back = null; roles = [];
             if (OidcRules.NameProblem(b.Name) is { } np) return Refuse(400, "invalid_name", np);
@@ -85,7 +86,7 @@ internal static class OidcAdminEndpoints
             if (!string.IsNullOrWhiteSpace(b.BackchannelUri))
             {
                 back = b.BackchannelUri.Trim();
-                if (OidcRules.UriProblem(back) is { } bp) return Refuse(400, "invalid_backchannel", "Adresse für das Abmelden: " + bp);
+                if (OidcRules.BackchannelProblem(back, issuer, b.BackchannelPrivate == true) is { } bp) return Refuse(400, "invalid_backchannel", "Adresse für das Abmelden: " + bp);
             }
             var rolesList = (b.Roles ?? []).Select(x => x?.Trim() ?? "").ToArray();
             if (OidcRules.RolesProblem(rolesList) is { } rp) return Refuse(400, "invalid_roles", rp);
@@ -93,20 +94,20 @@ internal static class OidcAdminEndpoints
             return null;
         }
 
-        app.MapPost("/api/security/oidc/apps", async (OidcAppRequest body, HttpContext ctx, OidcAppStore apps, OidcService oidc, HitCounter hits) =>
+        app.MapPost("/api/security/oidc/apps", async (OidcAppRequest body, HttpContext ctx, OidcAppStore apps, OidcIssuer issuer, OidcService oidc, HitCounter hits) =>
         {
             if (await Gate(ctx, apps, hits, write: true) is { } deny) return deny;
-            if (Validate(body, out var name, out var redirects, out var postLogout, out var back, out var roles) is { } bad) return bad;
-            if (await apps.CreateAsync(name, redirects, postLogout, back, roles, ctx.RequestAborted) is not { } made) return Refuse(409, "name_taken", "Eine App mit diesem Namen gibt es schon.");
+            if (Validate(body, issuer.Value, out var name, out var redirects, out var postLogout, out var back, out var roles) is { } bad) return bad;
+            if (await apps.CreateAsync(name, redirects, postLogout, back, roles, body.BackchannelPrivate == true, ctx.RequestAborted) is not { } made) return Refuse(409, "name_taken", "Eine App mit diesem Namen gibt es schon.");
             await Audit(oidc, ctx, "oidc.app.create", name);
             return Results.Json(new OidcCreated(ToDto(made.App, new Dictionary<Guid, int>()), made.Secret), OidcJson.Default.OidcCreated);
         });
 
-        app.MapPut("/api/security/oidc/apps/{id:guid}", async (Guid id, OidcAppRequest body, HttpContext ctx, OidcAppStore apps, OidcFlowStore flow, OidcService oidc, TimeProvider clock, HitCounter hits) =>
+        app.MapPut("/api/security/oidc/apps/{id:guid}", async (Guid id, OidcAppRequest body, HttpContext ctx, OidcAppStore apps, OidcFlowStore flow, OidcIssuer issuer, OidcService oidc, TimeProvider clock, HitCounter hits) =>
         {
             if (await Gate(ctx, apps, hits, write: true) is { } deny) return deny;
-            if (Validate(body, out var name, out var redirects, out var postLogout, out var back, out var roles) is { } bad) return bad;
-            if (await apps.UpdateAsync(id, name, redirects, postLogout, back, roles, ctx.RequestAborted) is not { } done)
+            if (Validate(body, issuer.Value, out var name, out var redirects, out var postLogout, out var back, out var roles) is { } bad) return bad;
+            if (await apps.UpdateAsync(id, name, redirects, postLogout, back, roles, body.BackchannelPrivate == true, ctx.RequestAborted) is not { } done)
                 return await apps.FindAsync(id, ctx.RequestAborted) is null ? Refuse(404, "not_found", "App nicht gefunden.") : Refuse(409, "name_taken", "Eine App mit diesem Namen gibt es schon.");
             // wer seine Rolle verloren hat, ist in dieser App abgemeldet
             foreach (var user in done.Dropped) await flow.EnqueueLogoutsAsync(id, user, "role_removed", clock.GetUtcNow(), ctx.RequestAborted);
@@ -174,11 +175,22 @@ internal static class OidcAdminEndpoints
             return Results.NoContent();
         });
 
+        // ---- Eigentuemer: wechselt nur ausdruecklich, nie von selbst ----
+        app.MapPut("/api/security/oidc/owner", async (OidcOwnerRequest body, HttpContext ctx, OidcAppStore apps, OidcFlowStore flow, OidcService oidc, TimeProvider clock, HitCounter hits) =>
+        {
+            if (await Gate(ctx, apps, hits, write: true) is { } deny) return deny;
+            if (body.UserId is not { } userId || (await apps.PeopleAsync(ctx.RequestAborted)).FirstOrDefault(p => p.Id == userId) is not { } person) return Refuse(404, "not_found", "Person nicht gefunden.");
+            if (person.Owner) return Results.NoContent();
+            await apps.SetOwnerAsync(userId, ctx.RequestAborted);
+            await Audit(oidc, ctx, "oidc.owner.set", person.Name);
+            return Results.NoContent();
+        });
+
         // ---- Schluessel ----
         app.MapPost("/api/security/oidc/keys/rotate", async (HttpContext ctx, OidcAppStore apps, OidcKeys keys, OidcService oidc, HitCounter hits) =>
         {
             if (await Gate(ctx, apps, hits, write: true) is { } deny) return deny;
-            if (!keys.Available) return Refuse(409, "no_key_store", "Ohne Server-Schlüssel gibt es keine Anmelde-Zentrale.");
+            if (!keys.Available && !keys.Unusable) return Refuse(409, "no_key_store", "Ohne Server-Schlüssel gibt es keine Anmelde-Zentrale.");
             var kid = await keys.RotateAsync(ctx.RequestAborted);
             await Audit(oidc, ctx, "oidc.key.rotate", kid);
             return Results.Json(new OidcKeyRotated(kid), OidcJson.Default.OidcKeyRotated);

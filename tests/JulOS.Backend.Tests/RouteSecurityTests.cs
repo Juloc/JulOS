@@ -123,7 +123,8 @@ public sealed class RouteSecurityTests
         {
             if (method is "GET" or "HEAD") continue;
             if (pattern.StartsWith("/api/agent-link")) continue;                 // der Agent ist kein Browser: Token statt Cookie und Origin
-            if (pattern.StartsWith("/oidc/")) continue;                          // Anmelde-Zentrale: token/userinfo haben kein Cookie (kein CSRF), end-session prueft den Origin selbst: OidcTests
+            // Anmelde-Zentrale: nur diese drei, namentlich: token/userinfo haben kein Cookie (kein CSRF), end-session prueft den Origin selbst (OidcLogoutTests). Ein kuenftiger POST unter /oidc/ faellt hier auf.
+            if (pattern is "/oidc/token" or "/oidc/userinfo" or "/oidc/end-session") continue;
             foreach (var (name, tweak) in new (string, Action<HttpRequestMessage>)[]
             {
                 ("ohne Kopfzeile", r => r.Headers.Remove("X-JulOS")),

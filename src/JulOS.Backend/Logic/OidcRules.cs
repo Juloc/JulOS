@@ -113,6 +113,18 @@ public static partial class OidcRules
         return null;
     }
 
+    /// <summary>
+    /// Die Adresse fuer das Abmelden (Logout-Token): wie jede Adresse, aber http nur, wenn der Aussteller selbst http-localhost ist (Entwicklung); eine IP-Adresse, die nie erlaubt ist
+    /// (Loopback, Link-Local, Metadaten), oder eine im lokalen Netz ohne den Haken der App, wird schon beim Eintragen abgelehnt. Beim Verbinden prueft <see cref="OidcNet"/> noch einmal.
+    /// </summary>
+    public static string? BackchannelProblem(string? value, string? issuer, bool allowPrivate)
+    {
+        if (UriProblem(value) is { } p) return p;
+        var policy = OidcNetPolicy.For(allowPrivate, issuer);
+        if (value!.StartsWith("http:", StringComparison.OrdinalIgnoreCase) && !policy.Dev) return $"{Short(value)}: nur https.";
+        return OidcNet.LiteralProblem(value, policy) is { } lp ? $"{Short(value)}: {lp}" : null;
+    }
+
     private static string Short(string s) => s.Length <= 60 ? s : s[..60] + "…";
 
     public static bool IsLoopbackName(string host) =>

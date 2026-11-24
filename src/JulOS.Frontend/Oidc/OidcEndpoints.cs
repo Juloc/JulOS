@@ -82,7 +82,9 @@ internal static class OidcEndpoints
         app.MapGet("/oidc/jwks", async (OidcService oidc, OidcKeys keys, CancellationToken ct) =>
         {
             if (!oidc.Ready) return ProtocolError("temporarily_unavailable", "Die Anmeldung ist nicht eingerichtet.", 503);
-            var list = await keys.PublicKeysAsync(ct);
+            IReadOnlyList<OidcPublicKey> list;
+            try { list = await keys.PublicKeysAsync(ct); }
+            catch (OidcKeysUnusableException) { return ProtocolError("temporarily_unavailable", "Die Anmeldung ist nicht eingerichtet.", 503); }
             // nur oeffentliche Teile: kty, crv, x, y. Kurze Zwischenspeicherung: nach einer Rotation sollen Apps den neuen Schluessel bald sehen.
             return Json(w =>
             {
@@ -127,11 +129,9 @@ internal static class OidcEndpoints
         {
             var ip = Ip(ctx);
             var limitKey = "ip:oidc:" + ip;
-            if (limiter.Wait(limitKey) is var wait && wait > TimeSpan.Zero || !hits.Allow("oidc-token:" + ip, 60, Minute))
-            {
-                ctx.Response.Headers.RetryAfter = Math.Max(1, (int)Math.Ceiling(wait.TotalSeconds)).ToString();
-                return ProtocolError("temporarily_unavailable", "Zu viele Anfragen.", 429);
-            }
+            // Die Sperre nach falschen Anmeldungen trifft nur falsche: wer das richtige Geheimnis hat, kommt auch dann durch (sonst koennte, wer die Adresse einer App teilt, deren Austausch blockieren)
+            var wait = limiter.Wait(limitKey);
+            if (!hits.Allow("oidc-token:" + ip, 60, Minute)) return ProtocolError("temporarily_unavailable", "Zu viele Anfragen.", 429);
             if (!ctx.Request.HasFormContentType) return ProtocolError("invalid_request", "Erwartet application/x-www-form-urlencoded.", 400);
             if (ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit) limit.MaxRequestBodySize = 8 * 1024;
             IFormCollection form;
@@ -165,7 +165,15 @@ internal static class OidcEndpoints
                 return Json(w => { w.WriteString("access_token", b.AccessToken); w.WriteString("token_type", "Bearer"); w.WriteNumber("expires_in", b.ExpiresIn); w.WriteString("id_token", b.IdToken); w.WriteString("scope", b.Scope); });
             }
             // nur falsche Anmeldungen der App zaehlen (ein abgelaufener Code ist kein Angriff: einen 256-Bit-Code kann niemand raten)
-            if (r.Error == "invalid_client") limiter.Fail(limitKey);
+            if (r.Error == "invalid_client")
+            {
+                limiter.Fail(limitKey);
+                if (wait > TimeSpan.Zero)
+                {
+                    ctx.Response.Headers.RetryAfter = Math.Max(1, (int)Math.Ceiling(wait.TotalSeconds)).ToString();
+                    return ProtocolError("temporarily_unavailable", "Zu viele Anfragen.", 429);
+                }
+            }
             if (r.Error == "invalid_client" && basic) ctx.Response.Headers.WWWAuthenticate = "Basic realm=\"julos\", charset=\"UTF-8\"";
             return ProtocolError(r.Error!, r.Description!, r.Status);
         });

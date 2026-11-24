@@ -25,6 +25,8 @@ public sealed class OidcFlowTests
         Assert.Equal("S256", disc.GetProperty("code_challenge_methods_supported").EnumerateArray().Single().GetString());
         Assert.Equal("ES256", disc.GetProperty("id_token_signing_alg_values_supported").EnumerateArray().Single().GetString());
         Assert.Equal(OidcServer.Issuer + "/oidc/token", disc.GetProperty("token_endpoint").GetString());
+        Assert.Equal("JulOS", disc.GetProperty("julos_display_name").GetString());                 // der Name fuer den Knopf der Apps, ohne Sitzung lesbar
+        Assert.DoesNotContain(disc.EnumerateObject(), p => p.Name.Contains("version", StringComparison.OrdinalIgnoreCase));
         var jwks = await Json(await rig.Http.GetAsync("/oidc/jwks"));
         var jwk = jwks.GetProperty("keys").EnumerateArray().Single();
         Assert.Equal("EC", jwk.GetProperty("kty").GetString());

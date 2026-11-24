@@ -43,6 +43,19 @@ export class TouchUi {
     this.fullTimer = setTimeout(() => { if (this.ringEl === el) this.ringClear(); }, 420);
   }
 
+  /** Tablet, "Ziehen bereit": der Ring ist halb voll, kurze Vibration, die Farbe wechselt. */
+  ringReady(x, y) {
+    if (!this.ringEl) this.ringStart(x, y, 60);
+    this.ringEl.classList.add('ready');
+    buzz(12, this.vibrate());
+  }
+  /** Tablet, "Rechtsklick bereit": der Ring ist voll und bleibt stehen, bis der Finger hebt oder zieht. */
+  ringArmed(x, y) {
+    if (!this.ringEl) this.ringStart(x, y, 60);
+    this.ringEl.classList.add('armed');
+    buzz(22, this.vibrate());
+  }
+
   /** Markierung beim Ziehen (die linke Taste ist gedrueckt): folgt dem Finger. */
   markOn(x, y) {
     const p = this.local(x, y);
@@ -59,6 +72,8 @@ export class TouchUi {
     if (a.type === 'ring') {
       if (a.phase === 'start') this.ringStart(a.x, a.y, a.ms);
       else if (a.phase === 'full') this.ringFull(a.x, a.y);
+      else if (a.phase === 'ready') this.ringReady(a.x, a.y);
+      else if (a.phase === 'armed') this.ringArmed(a.x, a.y);
       else this.ringClear();
     } else if (a.type === 'mark') { if (a.on) this.markOn(a.x, a.y); else this.markOff(); }
   }

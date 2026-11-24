@@ -9,6 +9,11 @@
 .tt-ring.full { animation: tt-pulse .42s ease-out forwards; }
 .tt-ring.full .tt-fill { animation: none; stroke-dashoffset: 0; stroke: var(--md-primary, #9a67ea); }
 .tt-ring.full .tt-track { stroke: var(--md-primary, #9a67ea); }
+/* Tablet: Ziehen bereit (halber Ring, andere Farbe), Rechtsklick bereit (voller Ring bleibt stehen) */
+.tt-ring.ready .tt-fill { stroke: var(--md-tertiary, #c4488a); }
+.tt-ring.ready .tt-track { stroke: color-mix(in srgb, var(--md-tertiary, #c4488a) 55%, transparent); }
+.tt-ring.armed .tt-fill { animation: none; stroke-dashoffset: 0; stroke: var(--md-primary, #9a67ea); }
+.tt-ring.armed .tt-track { stroke: var(--md-primary, #9a67ea); }
 @keyframes tt-in { to { opacity: 1; transform: scale(1); } }
 @keyframes tt-fill { to { stroke-dashoffset: 0; } }
 @keyframes tt-pulse { 0% { opacity: 1; transform: scale(1); } 60% { opacity: 1; transform: scale(1.35); } 100% { opacity: 0; transform: scale(1.5); } }
@@ -55,3 +60,6 @@ dialog.tt-sheet { width: min(96vw, 520px); }
 .row .k.mod-once, .row .k.mod-lock { position: relative; }
 .k.ic.has-label { gap: 4px; }
 .k .klab { margin-left: 4px; }
+
+/* Die Touch-Ebene der Sitzung: kein Textauswahl-Menue, keine Hervorhebung, kein Seiten-Scrollen oder Zurueck-Wischen des Browsers (touch-action steht in style.css) */
+.sv-touch { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; overscroll-behavior: none; }

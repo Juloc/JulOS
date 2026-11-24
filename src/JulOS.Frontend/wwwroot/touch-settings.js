@@ -17,19 +17,21 @@ const seg = (name, options, value) => `<div class="tt-seg" role="radiogroup" dat
 const check = (name, label, on) => `<label class="tt-check"><input type="checkbox" data-name="${name}"${on ? ' checked' : ''}><span>${label}</span></label>`;
 
 function render() {
-  const c = provider.get();
+  const c = provider.get(), tablet = c.mode === 'tablet', pad = c.mode === 'pad';
   dlg.innerHTML = `
     <h2>${t('touch.title')}</h2>
     <p class="tt-hint">${t('touch.intro')}</p>
-    <div class="tt-try" id="ttTry"><span id="ttTryText">${t('touch.tryHint')}</span></div>
-    <div class="tt-field"><span>${t('touch.mode')}</span>${seg('mode', [['direct', t('touch.modeDirect')], ['pad', t('touch.modePad')]], c.mode)}</div>
+    <div class="tt-try" id="ttTry"><span id="ttTryText">${c.mode === 'tablet' ? t('tab.tryHint') : t('touch.tryHint')}</span></div>
+    <div class="tt-field"><span>${t('touch.mode')}</span>${seg('mode', [['tablet', t('tab.modeTablet')], ['direct', t('tab.modeMouse')], ['pad', t('touch.modePad')]], c.mode)}</div>
+    ${tablet ? `<p class="tt-hint">${t('tab.rules')}</p>
+    <div class="tt-field"><span>${t('tab.pinch')}</span>${seg('pinch', [['view', t('tab.pinchView')], ['size', t('tab.pinchSize')]], c.pinch)}</div>` : ''}
     <div class="tt-field"><span>${t('touch.right')}</span>${seg('rightClick', [['hold', t('touch.rightHold')], ['two', t('touch.rightTwo')], ['both', t('touch.rightBoth')]], c.rightClick)}</div>
     <div class="tt-field"><span>${t('touch.hold')}</span><div class="tt-range"><input type="range" data-name="holdMs" min="${HOLD_MIN}" max="${HOLD_MAX}" step="50" value="${c.holdMs}"><output>${t('touch.ms', { n: c.holdMs })}</output></div></div>
     <div class="tt-field"><span>${t('touch.scrollDir')}</span>${seg('scrollDir', [['natural', t('touch.dirNatural')], ['classic', t('touch.dirClassic')]], c.scrollDir)}</div>
     <div class="tt-field"><span>${t('touch.scrollSpeed')}</span>${seg('scrollSpeed', [['slow', t('touch.speedSlow')], ['normal', t('touch.speedNormal')], ['fast', t('touch.speedFast')]], c.scrollSpeed)}</div>
-    <div class="tt-field"><span>${t('touch.padSpeed')}</span><div class="tt-range"><input type="range" data-name="padSpeed" min="0.6" max="3" step="0.1" value="${c.padSpeed}"><output>${t('touch.times', { n: c.padSpeed.toFixed(1) })}</output></div></div>
-    ${check('tapDrag', t('touch.tapDrag'), c.tapDrag)}
-    ${check('fingerDrag', t('touch.fingerDrag'), c.fingerDrag)}
+    ${pad ? `<div class="tt-field"><span>${t('touch.padSpeed')}</span><div class="tt-range"><input type="range" data-name="padSpeed" min="0.6" max="3" step="0.1" value="${c.padSpeed}"><output>${t('touch.times', { n: c.padSpeed.toFixed(1) })}</output></div></div>
+    ${check('tapDrag', t('touch.tapDrag'), c.tapDrag)}` : ''}
+    ${c.mode === 'direct' ? check('fingerDrag', t('touch.fingerDrag'), c.fingerDrag) : ''}
     ${check('vibrate', t('touch.vibrate'), c.vibrate)}
     ${check('clipChip', t('touch.clipChip'), c.clipChip)}
     <div class="row">
@@ -46,6 +48,7 @@ function wire() {
       const b = e.target.closest('[data-v]'); if (!b) return;
       for (const x of group.querySelectorAll('[data-v]')) x.setAttribute('aria-checked', String(x === b));
       change({ [group.dataset.name]: b.dataset.v });
+      if (group.dataset.name === 'mode') { render(); applyDom(dlg); }       // je Modus andere Felder
     });
   }
   for (const input of dlg.querySelectorAll('input[type="checkbox"]')) input.addEventListener('change', () => change({ [input.dataset.name]: input.checked }));
@@ -75,7 +78,11 @@ function startTry() {
   tryBind = bindSurface(box, tryGestures, (acts) => {
     for (const a of acts) {
       tryUi.show(a);
-      if (a.type === 'click') say(a.button === 'right' ? `<b>${t('touch.tryRight')}</b>` : `<b>${t('touch.tryLeft')}</b>`);
+      if (a.type === 'ring' && a.phase === 'ready') say(`<b>${t('tab.tryReady')}</b>`);
+      else if (a.type === 'ring' && a.phase === 'armed') say(`<b>${t('tab.tryArmed')}</b>`);
+      else if (a.type === 'click') say(a.button === 'right' ? `<b>${t('touch.tryRight')}</b>` : a.how === 'double' ? `<b>${t('tab.tryDouble')}</b>` : a.how === 'long' ? `<b>${t('tab.tryLong')}</b>` : `<b>${t('touch.tryLeft')}</b>`);
+      else if (a.type === 'zoom') say(`<b>${t('tab.tryZoom', { p: Math.round(a.ratio * 100) })}</b>`);
+      else if (a.type === 'pan') say(`<b>${t('tab.tryPan')}</b>`);
       else if (a.type === 'press') say(`<b>${t('touch.tryDrag')}</b>`);
       else if (a.type === 'release') say(t('touch.tryReleased'));
       else if (a.type === 'scroll') say(`<b>${t('touch.tryScroll')}</b>`);

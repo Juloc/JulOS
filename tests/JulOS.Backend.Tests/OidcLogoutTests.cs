@@ -175,12 +175,25 @@ public sealed class OidcLogoutTests
 
     private static HttpRequestMessage Get(string url, string? cookie) { var r = new HttpRequestMessage(HttpMethod.Get, url); if (cookie is not null) r.Headers.Add("Cookie", cookie); return r; }
 
-    private static HttpRequestMessage Form(string url, string? cookie, string? origin, params (string K, string V)[] fields)
+    private static HttpRequestMessage Form(string url, string? cookie, string? origin, params (string K, string V)[] fields) => FormSite(url, cookie, origin, null, fields);
+
+    private static HttpRequestMessage FormSite(string url, string? cookie, string? origin, string? fetchSite, params (string K, string V)[] fields)
     {
         var r = new HttpRequestMessage(HttpMethod.Post, url) { Content = new FormUrlEncodedContent(fields.Select(f => KeyValuePair.Create(f.K, f.V))) };
         if (cookie is not null) r.Headers.Add("Cookie", cookie);
         if (origin is not null) r.Headers.Add("Origin", origin);
+        if (fetchSite is not null) r.Headers.Add("Sec-Fetch-Site", fetchSite);
         return r;
+    }
+
+    /// <summary>Holt die Rueckfrage "Bei JulOS abmelden?" (kein Hinweis) und gibt ihr Einmal-Zeichen und die Seite zurueck.</summary>
+    private static async Task<(string Token, string Html)> ConfirmPageAsync(OidcRig rig, string cookie, string? clientId = null)
+    {
+        var url = "/oidc/end-session?jb=1" + (clientId is null ? "" : "&client_id=" + Uri.EscapeDataString(clientId));
+        var html = await (await rig.Http.SendAsync(Get(url, cookie))).Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        var m = System.Text.RegularExpressions.Regex.Match(html, "name=\"form_token\" value=\"([^\"]+)\"");
+        Assert.True(m.Success, html);
+        return (m.Groups[1].Value, html);
     }
 
     [Fact]
@@ -214,10 +227,11 @@ public sealed class OidcLogoutTests
             Assert.Contains("method=\"post\"", await res.Content.ReadAsStringAsync(ct));        // die Rueckfrage
             Assert.True(await alive());
         }
-        // die Rueckfrage: ein POST von einer fremden Seite zaehlt nicht, ohne Origin auch nicht
+        // die Rueckfrage: ein POST von einer fremden Seite zaehlt nicht, ohne Origin auch nicht, auch nicht mit gueltigem Einmal-Zeichen
         foreach (var origin in new string?[] { "https://evil.example", "http://localhost.evil.example", null })
         {
-            Assert.Equal(HttpStatusCode.BadRequest, (await rig.Http.SendAsync(Form("/oidc/end-session", rig.Cookie, origin))).StatusCode);
+            var (tok, _) = await ConfirmPageAsync(rig, rig.Cookie);
+            Assert.Equal(HttpStatusCode.BadRequest, (await rig.Http.SendAsync(Form("/oidc/end-session", rig.Cookie, origin, ("form_token", tok)))).StatusCode);
             Assert.True(await alive());
         }
 
@@ -240,7 +254,8 @@ public sealed class OidcLogoutTests
         Assert.Equal(0, await rig.Db.ScalarAsync<long>("select count(*) from sessions where hash = $1", SessionTokens.Hash(cookie2["julos_sid=".Length..])));
         // ohne Hinweis aber mit Bestaetigung (POST vom eigenen Origin)
         var (cookie3, _) = await NewOwnerSessionAsync(rig);
-        var confirmed = await rig.Http.SendAsync(Form("/oidc/end-session", cookie3, "http://localhost"));
+        var (tok3, _) = await ConfirmPageAsync(rig, cookie3);
+        var confirmed = await rig.Http.SendAsync(Form("/oidc/end-session", cookie3, "http://localhost", ("form_token", tok3)));
         Assert.Equal(HttpStatusCode.OK, confirmed.StatusCode);
         Assert.Equal(0, await rig.Db.ScalarAsync<long>("select count(*) from sessions where hash = $1", SessionTokens.Hash(cookie3["julos_sid=".Length..])));
 
@@ -248,6 +263,79 @@ public sealed class OidcLogoutTests
         await rig.Logout.RunOnceAsync(ct);
         Assert.Equal(2, rec.Posts.Count);                                                  // die beiden Sitzungen, die der App ein Token gaben (die dritte nie)
         Assert.All(rec.Posts, p => Assert.Equal(OidcRig.BackchannelUri, p.Uri.ToString()));
+    }
+
+    [Fact]
+    public async Task The_sign_out_form_works_with_Origin_null_of_Chromium_only_with_Sec_Fetch_Site_same_origin_and_its_own_one_time_token()
+    {
+        var time = new TestTime(DateTimeOffset.UtcNow);
+        await using var rig = await OidcRig.CreateAsync(time: time);
+        var ct = TestContext.Current.CancellationToken;
+        var gone = async (string cookie) => await rig.Db.ScalarAsync<long>("select count(*) from sessions where hash = $1", SessionTokens.Hash(cookie["julos_sid=".Length..])) == 0;
+        async Task<string> Fresh() => (await NewOwnerSessionAsync(rig)).Item1;
+
+        // Origin null ohne Sec-Fetch-Site, mit fremder Herkunft, ohne Zeichen, mit falschem Zeichen: abgelehnt, nichts beendet
+        var c = await Fresh();
+        var (tok, _) = await ConfirmPageAsync(rig, c);
+        foreach (var site in new string?[] { null, "cross-site", "same-site", "none" })
+            Assert.Equal(HttpStatusCode.BadRequest, (await rig.Http.SendAsync(FormSite("/oidc/end-session", c, "null", site, ("form_token", tok)))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await rig.Http.SendAsync(FormSite("/oidc/end-session", c, "null", "same-origin"))).StatusCode);                       // kein Zeichen
+        Assert.Equal(HttpStatusCode.BadRequest, (await rig.Http.SendAsync(FormSite("/oidc/end-session", c, "null", "same-origin", ("form_token", "erfunden")))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await rig.Http.SendAsync(FormSite("/oidc/end-session", c, "https://evil.example", "same-origin", ("form_token", tok)))).StatusCode);
+        Assert.False(await gone(c));
+
+        // das Zeichen einer anderen Sitzung gilt nicht (und ist danach verbraucht)
+        var other = await Fresh();
+        var (otherTok, _) = await ConfirmPageAsync(rig, other);
+        Assert.Equal(HttpStatusCode.BadRequest, (await rig.Http.SendAsync(FormSite("/oidc/end-session", c, "null", "same-origin", ("form_token", otherTok)))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await rig.Http.SendAsync(FormSite("/oidc/end-session", other, "null", "same-origin", ("form_token", otherTok)))).StatusCode);
+        Assert.False(await gone(c)); Assert.False(await gone(other));
+
+        // Chromium: Origin null + same-origin + eigenes Zeichen: geht, und das Zeichen gilt genau einmal
+        var (tok2, _) = await ConfirmPageAsync(rig, c);
+        Assert.Equal(HttpStatusCode.OK, (await rig.Http.SendAsync(FormSite("/oidc/end-session", c, "null", "same-origin", ("form_token", tok2)))).StatusCode);
+        Assert.True(await gone(c));
+        var d = await Fresh();
+        Assert.Equal(HttpStatusCode.BadRequest, (await rig.Http.SendAsync(FormSite("/oidc/end-session", d, "null", "same-origin", ("form_token", tok2)))).StatusCode);   // zweites Mal
+        Assert.False(await gone(d));
+
+        // richtiger Ursprung mit Zeichen geht auch; abgelaufen (11 Minuten) geht nicht
+        var (tok3, _) = await ConfirmPageAsync(rig, d);
+        Assert.Equal(HttpStatusCode.OK, (await rig.Http.SendAsync(FormSite("/oidc/end-session", d, "http://localhost", "same-origin", ("form_token", tok3)))).StatusCode);
+        Assert.True(await gone(d));
+        var e = await Fresh();
+        var (tok4, _) = await ConfirmPageAsync(rig, e);
+        time.Advance(TimeSpan.FromMinutes(11));
+        Assert.Equal(HttpStatusCode.BadRequest, (await rig.Http.SendAsync(FormSite("/oidc/end-session", e, "null", "same-origin", ("form_token", tok4)))).StatusCode);
+        Assert.False(await gone(e));
+    }
+
+    [Fact]
+    public async Task The_signed_out_page_links_back_to_the_app_only_for_exactly_one_registered_address_of_an_active_app_and_never_redirects_by_itself()
+    {
+        await using var rig = await OidcRig.CreateAsync();
+        var ct = TestContext.Current.CancellationToken;
+        var one = await rig.AddAppAsync("Notes");                                   // genau eine Adresse nach dem Abmelden (OidcRig.PostLogout)
+        async Task<string> SignedOutPage(string? clientId)
+        {
+            var (c, _) = await NewOwnerSessionAsync(rig);
+            var (tok, html) = await ConfirmPageAsync(rig, c, clientId);
+            var res = await rig.Http.SendAsync(FormSite("/oidc/end-session", c, "null", "same-origin", ("form_token", tok), ("client_id", clientId ?? "")));
+            Assert.Equal(HttpStatusCode.OK, res.StatusCode);                          // nie eine Weiterleitung
+            Assert.Null(res.Headers.Location);
+            return await res.Content.ReadAsStringAsync(ct);
+        }
+        Assert.Contains($"href=\"{OidcRig.PostLogout}\"", await SignedOutPage(one.ClientId));
+        Assert.Contains("Notes</a>", await SignedOutPage(one.ClientId));          // "Zurück zu Notes" (Umlaut ist als Entity kodiert)
+        Assert.DoesNotContain(OidcRig.PostLogout, await SignedOutPage(null));
+        Assert.DoesNotContain(OidcRig.PostLogout, await SignedOutPage("unbekannt"));
+        // zwei Adressen: keine ist "die" Adresse; keine Adresse: keine; ausgeschaltet: keine
+        var two = await rig.AddAppAsync("Two", postLogout: [OidcRig.PostLogout, "https://two.example/other"]);
+        Assert.DoesNotContain(OidcRig.PostLogout, await SignedOutPage(two.ClientId));
+        var none = await rig.AddAppAsync("None", postLogout: []);
+        Assert.DoesNotContain(OidcRig.PostLogout, await SignedOutPage(none.ClientId));
+        await rig.Db.ExecAsync("update oidc_apps set enabled = false where id = $1", one.Id);
+        Assert.DoesNotContain(OidcRig.PostLogout, await SignedOutPage(one.ClientId));
     }
 
     [Fact]

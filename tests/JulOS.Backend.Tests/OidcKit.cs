@@ -82,10 +82,10 @@ internal sealed class OidcRig : IAsyncDisposable
 
     // ---- Verwaltung ----
 
-    public async Task<App> AddAppAsync(string name = "Notes", string? backchannel = BackchannelUri, string[]? redirects = null, string[]? roles = null)
+    public async Task<App> AddAppAsync(string name = "Notes", string? backchannel = BackchannelUri, string[]? redirects = null, string[]? roles = null, string[]? postLogout = null)
     {
         var res = await Http.SendAsync(Req(HttpMethod.Post, "/api/security/oidc/apps", Cookie,
-            new { name, redirectUris = redirects ?? [Redirect], postLogoutUris = new[] { PostLogout }, backchannelUri = backchannel, roles = roles ?? ["admin", "member", "viewer"] }));
+            new { name, redirectUris = redirects ?? [Redirect], postLogoutUris = postLogout ?? [PostLogout], backchannelUri = backchannel, roles = roles ?? ["admin", "member", "viewer"] }));
         Assert.Equal(HttpStatusCode.OK, res.StatusCode);
         var j = await Json(res);
         return new App(j.GetProperty("app").GetProperty("id").GetGuid(), j.GetProperty("app").GetProperty("clientId").GetString()!, j.GetProperty("clientSecret").GetString()!, name, (redirects ?? [Redirect])[0]);

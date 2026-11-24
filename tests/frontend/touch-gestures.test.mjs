@@ -23,11 +23,12 @@ const clicks = (acts) => acts.filter((a) => a.type === 'click');
 
 test('Einstellungen: Standard, Grenzen der Haltedauer, Unbekanntes faellt weg, nur Abweichungen gehen zum Server', () => {
   assert.deepEqual(normalizeTouch(undefined), TOUCH_DEFAULTS);
+  assert.equal(TOUCH_DEFAULTS.mode, 'tablet', 'am Handy ist der Tablet-Modus die Vorgabe');
   assert.equal(normalizeTouch({ holdMs: 10 }).holdMs, HOLD_MIN);
   assert.equal(normalizeTouch({ holdMs: 99999 }).holdMs, HOLD_MAX);
   assert.equal(normalizeTouch({ holdMs: 612 }).holdMs, 600);
   assert.equal(normalizeTouch({ holdMs: 'x' }).holdMs, 500);
-  assert.equal(normalizeTouch({ mode: 'quatsch', rightClick: 'two' }).mode, 'direct');
+  assert.equal(normalizeTouch({ mode: 'quatsch', rightClick: 'two' }).mode, 'tablet');
   assert.equal(normalizeTouch({ rightClick: 'two' }).rightClick, 'two');
   assert.equal(normalizeTouch({ padSpeed: 99 }).padSpeed, 3);
   assert.equal(normalizeTouch({ evil: 1 }).evil, undefined);
@@ -36,7 +37,7 @@ test('Einstellungen: Standard, Grenzen der Haltedauer, Unbekanntes faellt weg, n
 });
 
 test('Tippen: Linksklick an der Stelle (direkt), erst beim Heben; vorher der Zeiger an die Stelle', () => {
-  const g = new TouchGestures();
+  const g = new TouchGestures({ mode: 'direct' });
   const acts = run(g, [[0, 'down', 1, 50, 60], [90, 'up', 1, 51, 61]]);
   assert.deepEqual(types(acts), ['hover', 'click:left']);
   assert.deepEqual([acts[1].x, acts[1].y, acts[1].where, acts[1].how], [50, 60, 'finger', 'tap']);
@@ -51,7 +52,7 @@ test('Tippen im Touchpad-Modus: Klick am Zeiger', () => {
 });
 
 test('Halten: Ring erscheint nach kurzer Zeit, fuellt sich ueber die Haltedauer, dann Rechtsklick und Rueckmeldung; Heben danach klickt nicht mehr', () => {
-  const g = new TouchGestures();
+  const g = new TouchGestures({ mode: 'direct' });
   const acts = run(g, [[0, 'down', 1, 40, 40], [700, 'up', 1, 40, 40]]);
   assert.deepEqual(types(acts), ['hover', 'ring:start', 'ring:full', 'click:right']);
   const ring = acts.find((a) => a.type === 'ring' && a.phase === 'start');
@@ -63,22 +64,22 @@ test('Halten: Ring erscheint nach kurzer Zeit, fuellt sich ueber die Haltedauer,
 
 test('Halten: einstellbare Dauer 300 bis 1000 ms', () => {
   for (const holdMs of [300, 750, 1000]) {
-    const g = new TouchGestures({ holdMs });
+    const g = new TouchGestures({ mode: 'direct', holdMs });
     const acts = run(g, [[0, 'down'], [holdMs + 100, 'up']]);
     assert.equal(acts.find((a) => a.type === 'click').t, holdMs, 'bei ' + holdMs);
   }
-  const g = new TouchGestures({ holdMs: 800 });
+  const g = new TouchGestures({ mode: 'direct', holdMs: 800 });
   const acts = run(g, [[0, 'down'], [600, 'up']]);                      // kuerzer als die Haltedauer: Tippen
   assert.deepEqual(clicks(acts).map((a) => a.button + a.how), ['lefttap']);
 });
 
 test('Halten mit kleiner Bewegung (unter der Schwelle) gilt noch; ueber der Schwelle bricht der Ring ab und es wird gezogen (direkt)', () => {
-  let g = new TouchGestures();
+  let g = new TouchGestures({ mode: 'direct' });
   let acts = run(g, [[0, 'down', 1, 100, 100], [200, 'move', 1, 106, 104], [700, 'up', 1, 106, 104]]);
   assert.equal(clicks(acts)[0].button, 'right');
   assert.equal(clicks(acts)[0].x, 100, 'der Rechtsklick sitzt an der Stelle, an der der Finger aufsetzte');
 
-  g = new TouchGestures();
+  g = new TouchGestures({ mode: 'direct' });
   acts = run(g, [[0, 'down', 1, 100, 100], [300, 'move', 1, 130, 100], [320, 'move', 1, 160, 100], [400, 'up', 1, 160, 100]]);
   assert.deepEqual(types(acts), ['hover', 'ring:start', 'ring:cancel', 'press:left', 'mark', 'move', 'mark', 'move', 'mark', 'release:left', 'mark']);
   assert.equal(clicks(acts).length, 0, 'kein Rechtsklick, kein Linksklick');
@@ -86,24 +87,24 @@ test('Halten mit kleiner Bewegung (unter der Schwelle) gilt noch; ueber der Schw
 });
 
 test('Bewegung vor dem Ring: kein Ring, keine Klicks, direkt wird gezogen; mit ausgeschaltetem Fingerziehen passiert nichts', () => {
-  let g = new TouchGestures();
+  let g = new TouchGestures({ mode: 'direct' });
   let acts = run(g, [[0, 'down', 1, 10, 10], [50, 'move', 1, 60, 10], [120, 'up', 1, 60, 10]]);
   assert.ok(!acts.some((a) => a.type === 'ring') && !clicks(acts).length);
   assert.ok(acts.some((a) => a.type === 'press'));
-  g = new TouchGestures({ fingerDrag: false });
+  g = new TouchGestures({ mode: 'direct', fingerDrag: false });
   acts = run(g, [[0, 'down', 1, 10, 10], [50, 'move', 1, 60, 10], [120, 'up', 1, 60, 10]]);
   assert.deepEqual(types(acts), ['hover']);
 });
 
 test('Rechtsklick-Methode: nur Halten, nur Zwei-Finger-Tipp, beides', () => {
   // nur Zwei-Finger-Tipp: Halten gibt keinen Ring und keinen Rechtsklick, das Heben ist ein Linksklick
-  let g = new TouchGestures({ rightClick: 'two' });
+  let g = new TouchGestures({ mode: 'direct', rightClick: 'two' });
   let acts = run(g, [[0, 'down'], [900, 'up']]);
   assert.deepEqual(types(acts), ['hover', 'click:left']);
   acts = run(g, [[1000, 'down', 1, 50, 50], [1000, 'down', 2, 90, 50], [1100, 'up', 1, 50, 50], [1110, 'up', 2, 90, 50]]);
   assert.deepEqual(clicks(acts).map((a) => a.button), ['right']);
   // nur Halten: der Zwei-Finger-Tipp macht nichts
-  g = new TouchGestures({ rightClick: 'hold' });
+  g = new TouchGestures({ mode: 'direct', rightClick: 'hold' });
   acts = run(g, [[0, 'down', 1, 50, 50], [0, 'down', 2, 90, 50], [100, 'up', 1, 50, 50], [110, 'up', 2, 90, 50]]);
   assert.equal(clicks(acts).length, 0);
   acts = run(g, [[1000, 'down'], [1700, 'up']]);
@@ -111,7 +112,7 @@ test('Rechtsklick-Methode: nur Halten, nur Zwei-Finger-Tipp, beides', () => {
 });
 
 test('Zwei-Finger-Tipp: Rechtsklick in der Mitte der Finger (direkt) bzw. am Zeiger (pad)', () => {
-  let g = new TouchGestures();
+  let g = new TouchGestures({ mode: 'direct' });
   let acts = run(g, [[0, 'down', 1, 40, 100], [10, 'down', 2, 80, 100], [120, 'up', 1, 40, 100], [130, 'up', 2, 80, 100]]);
   assert.deepEqual(clicks(acts).map((a) => [a.button, a.x, a.y, a.where]), [['right', 60, 100, 'finger']]);
   assert.equal(clicks(acts).length, 1, 'ein Klick, nicht zwei');
@@ -121,20 +122,20 @@ test('Zwei-Finger-Tipp: Rechtsklick in der Mitte der Finger (direkt) bzw. am Zei
 });
 
 test('Zwei Finger zu lange aufgelegt ohne Bewegung: kein Rechtsklick', () => {
-  const g = new TouchGestures();
+  const g = new TouchGestures({ mode: 'direct' });
   const acts = run(g, [[0, 'down', 1, 40, 100], [10, 'down', 2, 80, 100], [900, 'up', 1], [910, 'up', 2]]);
   assert.equal(clicks(acts).length, 0);
 });
 
 test('Zwei Finger mit Hand-Zittern (kleine Bewegung): weder Scrollen noch Zoom, aber der Tipp zaehlt', () => {
-  const g = new TouchGestures();
+  const g = new TouchGestures({ mode: 'direct' });
   const acts = run(g, [[0, 'down', 1, 40, 100], [5, 'down', 2, 80, 100], [50, 'move', 1, 43, 103], [60, 'move', 2, 84, 104], [150, 'up', 1], [160, 'up', 2]]);
   assert.ok(!acts.some((a) => a.type === 'scroll' || a.type === 'pinch'));
   assert.equal(clicks(acts).length, 1);
 });
 
 test('Scrollen: beide Finger gleichzeitig nach oben (natuerlich: Inhalt folgt dem Finger, das Rad dreht nach unten), kein Zoom', () => {
-  const g = new TouchGestures();
+  const g = new TouchGestures({ mode: 'direct' });
   const steps = [[0, 'down', 1, 100, 400], [5, 'down', 2, 160, 400]];
   for (let i = 1; i <= 10; i++) steps.push([5 + i * 16, 'move', 1, 100 + i * 0.5, 400 - i * 12], [5 + i * 16, 'move', 2, 160 + i * 0.5, 400 - i * 12]);
   steps.push([300, 'up', 1], [310, 'up', 2]);
@@ -162,7 +163,7 @@ test('Scrollrichtung "klassisch" dreht das Vorzeichen um; waagerechtes Scrollen 
 });
 
 test('Pinch erst bei klarer Abstandsaenderung; aus dem Pinch wird kein Scrollen, und am Ende kommt das Verhaeltnis', () => {
-  const g = new TouchGestures();
+  const g = new TouchGestures({ mode: 'direct' });
   const steps = [[0, 'down', 1, 100, 300], [5, 'down', 2, 200, 300]];        // Abstand 100
   for (let i = 1; i <= 8; i++) steps.push([5 + i * 16, 'move', 1, 100 - i * 8, 300], [5 + i * 16, 'move', 2, 200 + i * 8, 300]);   // Abstand waechst auf 228
   steps.push([200, 'up', 1, 36, 300], [210, 'up', 2, 264, 300]);
@@ -177,10 +178,10 @@ test('Pinch erst bei klarer Abstandsaenderung; aus dem Pinch wird kein Scrollen,
 });
 
 test('Pinch mit nur einem bewegten Finger zaehlt als Pinch, Scrollen mit leicht wechselndem Abstand als Scrollen', () => {
-  let g = new TouchGestures();
+  let g = new TouchGestures({ mode: 'direct' });
   let acts = run(g, [[0, 'down', 1, 100, 300], [5, 'down', 2, 200, 300], [30, 'move', 1, 90, 300], [50, 'move', 1, 70, 300], [70, 'move', 1, 50, 300]]);
   assert.ok(acts.some((a) => a.type === 'pinch') && !acts.some((a) => a.type === 'scroll'));
-  g = new TouchGestures();
+  g = new TouchGestures({ mode: 'direct' });
   const steps = [[0, 'down', 1, 100, 300], [5, 'down', 2, 200, 300]];
   for (let i = 1; i <= 8; i++) steps.push([5 + i * 16, 'move', 1, 100, 300 - i * 14], [5 + i * 16, 'move', 2, 200 + i * 2.5, 300 - i * 14]);   // Abstand waechst nur um 20
   acts = run(g, steps);
@@ -188,7 +189,7 @@ test('Pinch mit nur einem bewegten Finger zaehlt als Pinch, Scrollen mit leicht 
 });
 
 test('einmal als Scrollen entschieden, bleibt es dabei (kein Umschlagen in Zoom)', () => {
-  const g = new TouchGestures();
+  const g = new TouchGestures({ mode: 'direct' });
   const steps = [[0, 'down', 1, 100, 300], [5, 'down', 2, 160, 300]];
   for (let i = 1; i <= 4; i++) steps.push([5 + i * 16, 'move', 1, 100, 300 - i * 20], [5 + i * 16, 'move', 2, 160, 300 - i * 20]);
   for (let i = 1; i <= 8; i++) steps.push([100 + i * 16, 'move', 1, 100 - i * 20, 220], [100 + i * 16, 'move', 2, 160 + i * 20, 220]);   // jetzt spreizen
@@ -199,27 +200,27 @@ test('einmal als Scrollen entschieden, bleibt es dabei (kein Umschlagen in Zoom)
 
 test('Doppeltipp mit zwei Fingern setzt den Zoom zurueck, nur wenn gezoomt ist; der erste Rechtsklick wartet dann und entfaellt', () => {
   const tap = (t0) => [[t0, 'down', 1, 40, 100], [t0 + 5, 'down', 2, 80, 100], [t0 + 100, 'up', 1], [t0 + 110, 'up', 2]];
-  let g = new TouchGestures();
+  let g = new TouchGestures({ mode: 'direct' });
   g.setOptions({ zoomed: true });
   let acts = run(g, [...tap(0), ...tap(250)]);
   assert.deepEqual(types(acts).filter((x) => x !== 'hover'), ['zoomReset']);
   assert.equal(g.deadline(), null);
   // nicht gezoomt: zwei Rechtsklicks, nichts wird aufgeschoben
-  g = new TouchGestures();
+  g = new TouchGestures({ mode: 'direct' });
   acts = run(g, [...tap(0), ...tap(250)]);
   assert.deepEqual(clicks(acts).map((a) => a.t), [100, 350]);
   // gezoomt, aber nur ein Tipp: der Rechtsklick kommt nach dem Warten
-  g = new TouchGestures(); g.setOptions({ zoomed: true });
+  g = new TouchGestures({ mode: 'direct' }); g.setOptions({ zoomed: true });
   acts = run(g, [...tap(0), [1000, 'tick']]);
   assert.deepEqual(clicks(acts).map((a) => a.t), [480]);
   // zwei Tipps, zu weit auseinander: beide ergeben Rechtsklicks
-  g = new TouchGestures(); g.setOptions({ zoomed: true });
+  g = new TouchGestures({ mode: 'direct' }); g.setOptions({ zoomed: true });
   acts = run(g, [...tap(0), ...tap(900), [2000, 'tick']]);
   assert.equal(clicks(acts).length, 2);
 });
 
 test('Doppeltipp und halten: die linke Taste bleibt gedrueckt, bis der Finger hebt; sichtbare Markierung', () => {
-  const g = new TouchGestures();
+  const g = new TouchGestures({ mode: 'direct' });
   const acts = run(g, [[0, 'down', 1, 100, 100], [60, 'up', 1, 100, 100], [200, 'down', 1, 104, 98], [300, 'move', 1, 150, 120], [350, 'move', 1, 220, 160], [900, 'move', 1, 230, 170], [1000, 'up', 1, 230, 170]]);
   assert.deepEqual(types(acts).filter((x) => !x.startsWith('mark')), ['hover', 'click:left', 'hover', 'press:left', 'move', 'move', 'move', 'release:left']);
   const press = acts.find((a) => a.type === 'press'), release = acts.find((a) => a.type === 'release');
@@ -230,18 +231,18 @@ test('Doppeltipp und halten: die linke Taste bleibt gedrueckt, bis der Finger he
 });
 
 test('Doppeltipp zu langsam oder zu weit weg: zwei einzelne Klicks', () => {
-  let g = new TouchGestures();
+  let g = new TouchGestures({ mode: 'direct' });
   let acts = run(g, [[0, 'down'], [50, 'up'], [600, 'down'], [650, 'up']]);
   assert.equal(clicks(acts).length, 2);
   assert.ok(!acts.some((a) => a.type === 'press'));
-  g = new TouchGestures();
+  g = new TouchGestures({ mode: 'direct' });
   acts = run(g, [[0, 'down', 1, 100, 100], [50, 'up', 1, 100, 100], [200, 'down', 1, 300, 100], [250, 'up', 1, 300, 100]]);
   assert.equal(clicks(acts).length, 2);
   assert.ok(!acts.some((a) => a.type === 'press'));
 });
 
 test('Doppeltipp ohne Bewegung: Taste gedrueckt und losgelassen am selben Ort (der zweite Klick eines Doppelklicks)', () => {
-  const g = new TouchGestures();
+  const g = new TouchGestures({ mode: 'direct' });
   const acts = run(g, [[0, 'down', 1, 100, 100], [50, 'up', 1, 100, 100], [150, 'down', 1, 100, 100], [200, 'up', 1, 100, 100]]);
   const press = acts.find((a) => a.type === 'press'), release = acts.find((a) => a.type === 'release');
   assert.ok(press && release && press.x === release.x && press.y === release.y);
@@ -275,7 +276,7 @@ test('Touchpad: Halten gibt Rechtsklick am Zeiger', () => {
 });
 
 test('zweiter Finger waehrend des Ziehens: Taste wird losgelassen, danach Scrollen; dritter Finger bricht alles ab', () => {
-  const g = new TouchGestures();
+  const g = new TouchGestures({ mode: 'direct' });
   const acts = run(g, [[0, 'down', 1, 100, 100], [30, 'move', 1, 140, 100], [60, 'down', 2, 200, 100]]);
   assert.deepEqual(types(acts).slice(-4), ['move', 'mark', 'release:left', 'mark']);
   assert.equal(g.pressed, false);
@@ -286,7 +287,7 @@ test('zweiter Finger waehrend des Ziehens: Taste wird losgelassen, danach Scroll
 });
 
 test('touchcancel: gehaltene Taste und Ring werden aufgeraeumt', () => {
-  const g = new TouchGestures();
+  const g = new TouchGestures({ mode: 'direct' });
   let acts = run(g, [[0, 'down'], [200, 'tick'], [300, 'cancel']]);
   assert.deepEqual(types(acts).slice(-1), ['ring:cancel']);
   acts = run(g, [[1000, 'down', 1, 10, 10], [1020, 'move', 1, 80, 10], [1040, 'cancel']]);
@@ -295,7 +296,7 @@ test('touchcancel: gehaltene Taste und Ring werden aufgeraeumt', () => {
 });
 
 test('nach dem Rechtsklick durch Halten: weitere Bewegung tut nichts, danach geht alles wieder', () => {
-  const g = new TouchGestures();
+  const g = new TouchGestures({ mode: 'direct' });
   const acts = run(g, [[0, 'down', 1, 100, 100], [600, 'move', 1, 180, 100], [650, 'up', 1, 180, 100], [1000, 'down', 1, 50, 50], [1050, 'up', 1, 50, 50]]);
   assert.deepEqual(clicks(acts).map((a) => a.button + a.how), ['righthold', 'lefttap']);
   assert.ok(!acts.some((a) => a.type === 'press'));

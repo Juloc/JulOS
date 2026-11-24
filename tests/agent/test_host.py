@@ -383,6 +383,10 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(agent.parse_smart_health("garbage"), "unknown")
 
     def test_smart_is_not_available_without_the_program_or_without_access(self):
+        # the path without the word `disks`: a machine whose real agent has that word would ask the root helper instead
+        p = mock.patch.object(agent, "read_permissions", lambda *a, **k: set())
+        p.start()
+        self.addCleanup(p.stop)
         with mock.patch.object(agent.shutil, "which", lambda t: None):
             self.assertEqual(agent.collect_smart(), {"available": False, "reason": "no_smartctl"})
         scan = "/dev/sda -d scsi # /dev/sda, SCSI device\n/dev/nvme0 -d nvme # /dev/nvme0, NVMe device\n"

@@ -23,7 +23,7 @@ public sealed class AgentLink
     public const int MaxTextBytes = 1_000_000;               // eine Textnachricht des Agenten (die Antwort selbst hoechstens 600 kB)
     public const int MaxPending = 32;
     public static readonly TimeSpan HelloTimeout = TimeSpan.FromSeconds(10);
-    public static readonly TimeSpan IdleTimeout = TimeSpan.FromSeconds(75);   // der Agent meldet sich alle 20 s
+    public static readonly TimeSpan IdleTimeout = TimeSpan.FromSeconds(75);   // ein alter Agent meldet sich alle 20 s; ein neuer nennt im hello seinen Takt (hb), dann gelten drei Takte
     public static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(15);
     public static readonly TimeSpan TransferWait = TimeSpan.FromSeconds(10);
     public static readonly TimeSpan PutTotal = TimeSpan.FromMinutes(3);
@@ -31,6 +31,7 @@ public sealed class AgentLink
     public static readonly TimeSpan PullTotal = TimeSpan.FromSeconds(30);
     public static readonly TimeSpan UpdateTotal = TimeSpan.FromSeconds(60);    // Datei holen, pruefen, ersetzen
 
+    private TimeSpan _idle = IdleTimeout;
     private readonly WebSocket _ws;
     private readonly ILogger _log;
     private readonly SemaphoreSlim _sendLock = new(1, 1);
@@ -88,6 +89,9 @@ public sealed class AgentLink
             os = root.TryGetProperty("os", out var o) && o.ValueKind == JsonValueKind.String ? AgentLabels.CleanText(o.GetString()) : null;
             caps = AgentLabels.NormalizeCaps(platform, AgentLabels.Words(root, "caps", AgentLabels.Caps));
             allow = AgentLabels.Words(root, "allow", AgentLabels.Rights);
+            // Takt der Meldungen des Agenten (hb, Sekunden): drei verpasste Takte, mindestens 12 s, und die Leitung gilt als tot (statt erst nach 75 s)
+            if (root.TryGetProperty("hb", out var hb) && hb.ValueKind == JsonValueKind.Number && hb.TryGetInt32(out var hbSeconds) && hbSeconds is >= 1 and <= 20)
+                _idle = TimeSpan.FromSeconds(Math.Max(12, 3 * hbSeconds));
         }
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
         {
@@ -112,7 +116,7 @@ public sealed class AgentLink
             while (!ct.IsCancellationRequested)
             {
                 using var idle = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                idle.CancelAfter(IdleTimeout);
+                idle.CancelAfter(_idle);
                 var msg = await ReceiveAsync(idle.Token).ConfigureAwait(false);
                 if (msg is null) break;
                 if (msg.Text is { } text) HandleText(text);

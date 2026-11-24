@@ -165,7 +165,7 @@ public sealed partial class AgentLinkTests
         Assert.False(AgentLinks.CanUpdate("0.3.0"));
         Assert.Equal(new Version(0, 7, 0), AgentLabels.MinDesktopHostVersion);
         // die mitgelieferte Datei ist genau diese Version
-        Assert.Equal("0.9.0", new JulOS.Frontend.Agent.AgentRelease().Latest()?.Version);
+        Assert.Equal("0.9.1", new JulOS.Frontend.Agent.AgentRelease().Latest()?.Version);
         Assert.Equal(new Version(0, 6, 0), HostActions.MinAgentVersion);                    // Aktionen gibt es weiterhin ab 0.6.0, wenn der Agent die Woerter meldet
     }
 

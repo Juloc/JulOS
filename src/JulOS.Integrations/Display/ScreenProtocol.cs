@@ -29,6 +29,8 @@ namespace JulOS.Integrations.Display;
 ///  30 Kodierer      codec(1: 1 H.264, 2 H.265) flags(1: Bit0 = GPU) Name (UTF-8) ...   (nach jedem Neuaufbau des Kodierers; nur zum Anzeigen)
 ///  40 Nachbesserung x(2) y(2) breite(2) hoehe(2) PNG ...   (dieses Rechteck verlustfrei, steht still; der Browser legt es ueber das Video)
 ///  41 Nachbesserung weg anzahl(2) dann je Rechteck x(2) y(2) breite(2) hoehe(2)   (dort hat sich der Bildschirm wieder geaendert: Ueberlagerung entfernen)
+///  50 Lebenszeichen moeglich  version(1)   (einmal gleich nach dem Verbinden: der Server beantwortet 50 des Browsers; erst danach schickt ein neuer Browser Pings, ein alter ignoriert die Nachricht)
+///  51 Pong          nummer(4)   (die Nummer des Pings des Browsers, siehe <see cref="LinkWatch"/>)
 /// Browser an Server:
 ///   1 Bestaetigung   folge(4)   (alle Bilder bis zu dieser Folgenummer sind dekodiert oder verworfen; ohne Nummer: ein Bild)
 ///   2 Maus bewegt    x(2) y(2)
@@ -53,6 +55,7 @@ namespace JulOS.Integrations.Display;
 ///  30 Codecs         menge(1: Bit0 H.264, Bit1 H.265)   (was der Dekodierer kann; beim Verbinden steht dasselbe in der Adresse als codecs=, und noch einmal
 ///                                                        mit nur H.264, wenn der H.265-Dekodierer nicht geht: der Server wechselt dann mit einem Schluesselbild)
 ///  18 Keysym        keysym(4) unten(1)   (nur VNC: eine Taste als X11-Keysym, das getippte Zeichen statt eines Scancodes; bei RDP ohne Wirkung)
+///  50 Ping          nummer(4)   (nur nach Nachricht 50 des Servers, wenn 5 s nichts floss: der Server antwortet mit 51; kommt von einem Browser mehr als 12 s nichts, gilt die Leitung als tot und wird geschlossen, die Sitzung bleibt erhalten)
 ///  31 Bildrate       stufe(1: 0 automatisch, 1 hoechstens 60 Bilder/s, 2 hoechstens 30, 3 sparsam: 15 Bilder/s und weniger Bitrate; siehe StreamQuality)
 ///                                                        (je Sitzung, gilt bis zur naechsten Nachricht und bleibt beim Wiederaufnehmen; unbekannte Stufen werden ignoriert;
 ///                                                        ohne Wirkung, solange die Bilder des Servers durchgereicht werden, RDPGFX)
@@ -61,11 +64,11 @@ public static class ScreenProtocol
 {
     public const byte ToBrowserPicture = 1, ToBrowserCursor = 2, ToBrowserSize = 3, ToBrowserError = 4, ToBrowserTaken = 5, ToBrowserClipboard = 6,
         ToBrowserImage = 7, ToBrowserFiles = 8, ToBrowserClipNote = 15, ToBrowserFileState = 9, ToBrowserResult = 10, ToBrowserLimits = 14, ToBrowserSession = 11, ToBrowserResumeFailed = 12, ToBrowserEncoder = 30,
-        ToBrowserRefine = 40, ToBrowserRefineClear = 41;
+        ToBrowserRefine = 40, ToBrowserRefineClear = 41, ToBrowserLink = 50, ToBrowserPong = 51;
     public const byte FromBrowserAck = 1, FromBrowserMove = 2, FromBrowserButton = 3, FromBrowserWheel = 4, FromBrowserKey = 5,
         FromBrowserUnicode = 6, FromBrowserResize = 7, FromBrowserKeyFrame = 8, FromBrowserClipboard = 9,
         FromBrowserSendBegin = 10, FromBrowserSendChunk = 11, FromBrowserSendEnd = 12, FromBrowserSendCancel = 13,
-        FromBrowserFileRequest = 14, FromBrowserFileCancel = 15, FromBrowserPause = 16, FromBrowserEnd = 17, FromBrowserKeysym = 18, FromBrowserCodecs = 30, FromBrowserQuality = 31;
+        FromBrowserFileRequest = 14, FromBrowserFileCancel = 15, FromBrowserPause = 16, FromBrowserEnd = 17, FromBrowserKeysym = 18, FromBrowserCodecs = 30, FromBrowserQuality = 31, FromBrowserPing = 50;
 
     /// <summary>Nachrichten, die laenger als eine Eingabe sein duerfen (Text, Dateiname, Stueck einer Datei).</summary>
     public static bool MayBeLong(byte type) => type is FromBrowserClipboard or FromBrowserSendBegin or FromBrowserSendChunk or FromBrowserMicrophone or FromBrowserFileRequest;
@@ -277,6 +280,16 @@ public static class ScreenProtocol
     public static byte[] Taken() => [ToBrowserTaken];
 
     public static byte[] ResumeFailed() => [ToBrowserResumeFailed];
+
+    public static byte[] LinkCapable() => [ToBrowserLink, 1];
+
+    public static byte[] Pong(uint id)
+    {
+        var m = new byte[5];
+        m[0] = ToBrowserPong;
+        BinaryPrimitives.WriteUInt32BigEndian(m.AsSpan(1), id);
+        return m;
+    }
 
     /// <summary>Das Token der Sitzung und wie lange sie ohne Browser wartet.</summary>
     public static byte[] Session(string token, int keepSeconds)

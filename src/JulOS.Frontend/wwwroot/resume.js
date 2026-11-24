@@ -39,6 +39,6 @@ export class Resume {
     return !this.lostAt || this.now() - this.lostAt < Math.max(0, this.keepMs - MARGIN_MS);
   }
 
-  /** Wie lange bis zum naechsten Versuch (ms): 1 s, 1,5 s, 2 s ... bis 3 s. */
-  nextDelay() { return Math.min(1000 + 500 * this.tries++, 3000); }
+  /** Wie lange bis zum naechsten Versuch (ms): der erste fast sofort (0,3 s: ein stilles Wiederaufnehmen soll unter 2 bis 3 s fertig sein), dann 1 s, 1,5 s, 2 s ... bis 3 s. */
+  nextDelay() { const n = this.tries++; return n === 0 ? 300 : Math.min(500 + 500 * n, 3000); }
 }

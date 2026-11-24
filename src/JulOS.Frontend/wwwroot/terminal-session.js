@@ -10,6 +10,7 @@ import { TerminalView } from './terminal.js';
 import { TerminalBar, prefillState } from './terminal-input.js';
 import { programOf } from './terminal-programs.js';
 import { t } from './i18n.js';
+import { LinkStats } from './link-health.js';
 
 // Maus und echte Tastatur: xterm nimmt die Tasten selbst an. ?softkb in der Adresse erzwingt zum Testen die Handy-Tastatur (Eingabefeld der Seite).
 const HW_KB = matchMedia('(pointer: fine) and (hover: hover)').matches && !location.search.includes('softkb');
@@ -34,7 +35,7 @@ export class TerminalSession extends RemoteSession {
     this.teardown();
     const reconnecting = this.everConnected;
     this.setState(reconnecting ? 'reconnecting' : 'connecting', reconnecting ? t('term.reconnecting') : t('term.connecting'));
-    this.showBusy(reconnecting ? t('term.reconnecting') : t('term.connecting'));
+    if (reconnecting && this.keep) { this.stats.lost('restart'); this.busyOrQuiet(t('term.reconnecting'), true); } else this.showBusy(reconnecting ? t('term.reconnecting') : t('term.connecting'));
     const view = new TerminalView({
       conn: this.conn, sid: this.id, password: this.password, container: this.el.stage,
       externalKeyboard: !HW_KB,
@@ -61,6 +62,7 @@ export class TerminalSession extends RemoteSession {
       this.keep = info.keep === 'tmux';
       if (this.keep) { this.resume.offered('tmux', KEEP_SECONDS); this.resume.confirm(); } else this.resume.reset();
       this.resume.connected();
+      clearTimeout(this.loudTimer); if (this.stats.restored()) this.statusBar.setLink(this.stats, false);
       this.el.overlay.hidden = true; this.el.spinner.hidden = true;
       this.setState('connected', t('term.connected'));
       if (this.wantBarFocus) { this.wantBarFocus = false; if (Sessions.active === this) this.bar?.focusInput(); }
@@ -68,6 +70,7 @@ export class TerminalSession extends RemoteSession {
       return;
     }
     this.connected = false;
+    if (this.everConnected && !this.intentional) { const lc = this.view?.lastClose; this.stats.lost(document.hidden && lc?.reason !== 'silence' ? 'hidden' : lc?.reason || 'dropped'); this.statusBar.setLink(this.stats, true); }
     if (info.dialog) { this.el.overlay.hidden = true; this.setState('error', t('term.keyChangedState')); return; }   // die Warnung steht in der Ansicht selbst
     if (info.code === 777) { this.fatal = true; this.setState('taken', t('term.taken')); return this.showOverlay(info.message); }
     if (info.code === 797) { this.fatal = true; return this.requestClose(info.message); }                      // Obergrenze: Meldung des Servers
@@ -85,7 +88,7 @@ export class TerminalSession extends RemoteSession {
     this.resume.lost();
     if (!this.resume.usable() || this.intentional || this.disposed) return false;
     this.setState('reconnecting', t('term.reconnecting'));
-    this.showBusy(t('term.reconnecting'));
+    this.busyOrQuiet(t('term.reconnecting'), true);        // kurze Unterbrechung: nur das kleine Zeichen, keine Ueberlagerung (die Ansicht wird neu aufgebaut, tmux zeichnet sie sofort wieder)
     clearTimeout(this.retryTimer);
     this.retryTimer = setTimeout(() => { if (!this.intentional && !this.disposed) this.start(); }, this.resume.nextDelay());
     return true;
@@ -106,7 +109,11 @@ export class TerminalSession extends RemoteSession {
   onPageVisible(away) {
     if (!this.keep || this.intentional || this.fatal || this.disposed || !this.everConnected) return;
     if (this.view && !this.connected && Date.now() - this.connectStarted < 10000) return;      // es wird gerade verbunden
-    if (!this.connected || away > 15000) { clearTimeout(this.retryTimer); this.start(); }
+    if (!this.connected) { this.stats.lost('hidden'); clearTimeout(this.retryTimer); this.start(); return; }
+    // Lebt die Leitung noch? Probe-Ping; bei Stille schliesst die Ansicht die Leitung und onViewState haengt die tmux-Sitzung still wieder an.
+    // Ein Server ohne Lebenszeichen: wie bisher nach mehr als 15 s neu anhaengen.
+    const verdict = this.view ? this.view.probe(away) : 'reconnect';
+    if (verdict === 'reconnect' && away > 15000) { this.stats.lost('hidden'); clearTimeout(this.retryTimer); this.start(); }
   }
 
   /* ---------- Groesse, Zoom, Sichtbarkeit: Zeichen statt Pixel, die Ansicht misst selbst ---------- */

@@ -12,6 +12,8 @@
  *                      30 Kodierer (codec, GPU ja/nein, Name: nur zum Anzeigen); ein Bild hat in flags Bit 1 gesetzt, wenn es H.265 ist
  *                      40 Nachbesserung (x, y, breite, hoehe u16, PNG: ein ruhendes Rechteck verlustfrei, kommt ueber das Video),
  *                      41 Nachbesserung weg (anzahl u16, je x, y, breite, hoehe: dort hat sich der Bildschirm geaendert)
+ *                      50 Lebenszeichen moeglich (version u8: der Server beantwortet 50 des Browsers; erst danach schickt der Browser Pings, siehe link-health.js),
+ *                      51 Pong (die Nummer des Pings u32)
  *   Browser -> Server: 1 Bestaetigung (Folgenummer u32: alle Bilder bis dahin), 2 Maus bewegt, 3 Maustaste (0 links, 1 Mitte, 2 rechts, 3 zurueck, 4 vor), 4 Mausrad (Betrag i16 in Windows-Einheiten, 120 je Raste; Byte: waagerecht), 5 Taste (Scancode), 6 Zeichen, 7 Fenstergroesse, 8 Schluesselbild,
  *                      9 Zwischenablage (UTF-8-Text, bis 1 MiB; der ferne Rechner holt ihn, wenn er einfuegt),
  *                      10 Senden Anfang (Bild als BMP, Datei oder leerer Ordner; bei Dateien ein relativer Pfad), 11 Stueck, 12 Ende, 13 Abbruch, 14 Datei oder Ordner der VM holen (Pfad), 15 Holen Abbruch,
@@ -19,7 +21,8 @@
  *                      16 Pause (1 = die Ansicht ist nicht zu sehen: der Server kodiert nicht, 0 = weiter),
  *                      17 Beenden (die Sitzung wird geschlossen: der Server erhaelt sie nicht fuer ein Wiederverbinden),
  *                      18 Keysym (u32 X11-Keysym, Byte unten; nur bei VNC-Sitzungen, sonst gehen Tasten als 5 Scancode und 6 Zeichen),
- *                      30 Codecs (Menge: 1 H.264, 2 H.265; beim Verbinden steht sie in der Adresse als codecs=, danach nur noch bei einem Wechsel zurueck auf H.264)
+ *                      30 Codecs (Menge: 1 H.264, 2 H.265; beim Verbinden steht sie in der Adresse als codecs=, danach nur noch bei einem Wechsel zurueck auf H.264),
+ *                      50 Ping (Nummer u32; nur nach Nachricht 50 des Servers, ein alter Server ignoriert sie ohnehin)
  *
  * Ton (20 und 21 in beide Richtungen: Ton vom fernen Rechner, Zustand, "Ton an", Mikrofon): siehe stream-audio.js, erreichbar als client.audio.
  *
@@ -33,10 +36,11 @@ import { StreamPerf, normalizeQuality, qualityOf } from './perf.js';
 import { codecMask, probeCodecs, codecStringOf, decoderConfig, CODEC_H264, CODEC_HEVC } from './codecs.js';
 import { t } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
+import { LinkHealth, PROBE_MS } from './link-health.js';
 
-const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, image: 7, files: 8, fileState: 9, result: 10, session: 11, resumeFailed: 12, limits: 14, clipNote: 15, audio: 20, audioStatus: 21, encoder: 30, refine: 40, refineClear: 41 };
+const IN = { picture: 1, cursor: 2, size: 3, error: 4, taken: 5, clipboard: 6, image: 7, files: 8, fileState: 9, result: 10, session: 11, resumeFailed: 12, limits: 14, clipNote: 15, audio: 20, audioStatus: 21, encoder: 30, refine: 40, refineClear: 41, link: 50, pong: 51 };
 const OUT = { ack: 1, move: 2, button: 3, wheel: 4, key: 5, unicode: 6, resize: 7, keyframe: 8, clipboard: 9,
-  sendBegin: 10, sendChunk: 11, sendEnd: 12, sendCancel: 13, fileRequest: 14, fileCancel: 15, pause: 16, end: 17, keysym: 18, codecs: 30, quality: 31 };
+  sendBegin: 10, sendChunk: 11, sendEnd: 12, sendCancel: 13, fileRequest: 14, fileCancel: 15, pause: 16, end: 17, keysym: 18, codecs: 30, quality: 31, ping: 50 };
 export const CLIP_TEXT_MAX = 1024 * 1024;   // so lang darf Text auf dem Weg zwischen Browser und Server sein (ClipboardBridge.MaxTextBytes)
 const CHUNK = 128 * 1024;                 // so gross sind die Stuecke beim Senden (der Server nimmt bis 256 kB)
 const BUFFER_HIGH = 1024 * 1024;          // darueber wartet das Senden, bis der Socket leer laeuft (sonst steht die Maus hinter einer Datei)
@@ -188,7 +192,9 @@ export class StreamClient {
     this.url = url;
     this.keysyms = !!opts.keysyms;
     this.heldKeysyms = new Set();   // gedrueckte Keysyms (VNC), damit sie beim Fokusverlust losgelassen werden koennen
-    this.display = new StreamDisplay();
+    this.display = opts.display || new StreamDisplay();   // opts.display: beim stillen Wiederaufnehmen bleibt die Ansicht mit dem letzten Bild stehen
+    this.resumed = !!opts.resumed;
+    this.link = new LinkHealth(); this.linkTimer = 0; this.pingId = 0;   // Lebenszeichen der Leitung (link-health.js)
     this.onstatechange = null; this.onerror = null; this.onclipboard = null;
     this.onsession = null; this.onresumefailed = null;                            // Sitzungserhalt: Token des Servers, Token abgelehnt (siehe resume.js)
     this.onclipimage = null; this.onclipfiles = null; this.onclipresult = null; this.onclipnote = null;   // Bilder, Dateien und Meldungen der VM (siehe docs/CLIPBOARD.md)
@@ -252,15 +258,16 @@ export class StreamClient {
     socket.binaryType = 'arraybuffer';
     this.socket = socket;
     this.watch = setInterval(() => this.watchDecoder(), 500);
+    this.link.reset(); clearInterval(this.linkTimer); this.linkTimer = setInterval(() => this.linkTick(), 1000);
     window.addEventListener('blur', this.focusLost); document.addEventListener('visibilitychange', this.focusLost);
     socket.onmessage = (e) => { if (this.socket === socket) this.receive(e.data); };
-    socket.onclose = (e) => { if (this.socket === socket) { this.lastClose = { code: e.code, clean: e.wasClean, at: Date.now() }; this.finish(); } };   // lastClose: nur fuer die Diagnose (app.js, ws-close)
+    socket.onclose = (e) => { if (this.socket === socket) { this.lastClose = { code: e.code, clean: e.wasClean, at: Date.now(), reason: e.wasClean ? 'closed' : 'dropped' }; this.finish(); } };   // lastClose: nur fuer die Diagnose (app.js, ws-close)
     socket.onerror = () => { if (this.socket === socket && !this.connected && this.onerror) this.onerror({ code: 520, message: t('stream.noServer') }); };
   }
 
   // keep: nur die Leitung kappen (der Server haelt die Sitzung, ein neuer Client nimmt sie mit dem Token wieder auf); sonst "Beenden" melden
   disconnect(keep = false) {
-    clearInterval(this.watch); this.unwatchFocus();
+    clearInterval(this.watch); clearInterval(this.linkTimer); this.unwatchFocus();
     this.closing = true;
     if (!keep) this.send1(OUT.end);
     const s = this.socket; this.socket = null;
@@ -271,7 +278,7 @@ export class StreamClient {
   }
 
   finish() {
-    clearInterval(this.watch); this.unwatchFocus();
+    clearInterval(this.watch); clearInterval(this.linkTimer); this.unwatchFocus();
     this.socket = null; this.closeDecoder(); this.audio.close();
     for (const tr of this.transfers.values()) tr.result({ code: 4, text: t('stream.connectionEnded') });
     if (!this.closing) this.setState(5);
@@ -283,8 +290,31 @@ export class StreamClient {
     if (d && d.state !== 'closed') { try { d.close(); } catch { /* egal */ } }
   }
 
+  /* ---- Lebenszeichen ---- */
+  linkTick() {
+    const a = this.link.tick();
+    if (a === 'ping') this.sendPing(); else if (a === 'dead') this.dropLine('silence');
+  }
+  sendPing() { const b = new DataView(new ArrayBuffer(5)); b.setUint8(0, OUT.ping); b.setUint32(1, ++this.pingId >>> 0); this.send(b.buffer); }
+
+  /** Die Leitung gibt kein Lebenszeichen mehr: aktiv schliessen und wie bei einem Abriss melden (ein halbtoter Socket meldet sein Ende sonst erst nach Minuten). */
+  dropLine(reason) {
+    this.lastClose = { code: 0, clean: false, at: Date.now(), reason };
+    const s = this.socket; this.socket = null;
+    if (s) { s.onmessage = s.onclose = s.onerror = null; try { s.close(); } catch { /* egal */ } }
+    this.finish();
+  }
+
+  /** Seite wieder sichtbar nach awayMs: 'ping' (Probe laeuft, bei Stille meldet sich linkTick mit dropLine), 'reconnect' (Server ohne Lebenszeichen: wie bisher neu verbinden) oder null. */
+  probe(awayMs) {
+    const a = this.link.visible(awayMs);
+    if (a === 'ping') { this.sendPing(); setTimeout(() => this.linkTick(), PROBE_MS + 60); }       // die Frist des Probe-Pings nicht erst beim naechsten Sekundentakt pruefen
+    return a;
+  }
+
   /* ---- vom Server ---- */
   receive(buffer) {
+    this.link.touchRx();
     this.perf.received(buffer.byteLength);
     const v = new DataView(buffer);
     switch (v.getUint8(0)) {
@@ -301,7 +331,7 @@ export class StreamClient {
       }
       case IN.size:
         this.display.resize(v.getUint16(1), v.getUint16(3));
-        if (!this.connected) { this.connected = true; this.setState(3); if (this.paused) this.send(Uint8Array.of(OUT.pause, 1)); if (this.quality !== 'auto') this.setQuality(this.quality); }
+        if (!this.connected) { this.connected = true; this.setState(3); if (this.resumed) this.send1(OUT.keyframe); if (this.paused) this.send(Uint8Array.of(OUT.pause, 1)); if (this.quality !== 'auto') this.setQuality(this.quality); }
         break;
       case IN.error: {
         const code = v.getUint16(1), message = new TextDecoder().decode(new Uint8Array(buffer, 3));
@@ -311,6 +341,8 @@ export class StreamClient {
         if (this.onerror) this.onerror(code === 800 ? { code, message: t('stream.certChanged'), fingerprint, previous } : { code, message: serverMsg(message) });
         break;
       }
+      case IN.link: this.link.enable(); break;
+      case IN.pong: break;
       case IN.session: if (this.onsession && buffer.byteLength > 3) this.onsession({ keep: v.getUint16(1), token: new TextDecoder().decode(new Uint8Array(buffer, 3)) }); break;
       case IN.resumeFailed:
         this.closing = true;
@@ -512,7 +544,7 @@ export class StreamClient {
   }
 
   /* ---- zum Server ---- */
-  send(bytes) { const s = this.socket; if (s && s.readyState === WebSocket.OPEN) s.send(bytes); }
+  send(bytes) { const s = this.socket; if (s && s.readyState === WebSocket.OPEN) { this.link.touchTx(); s.send(bytes); } }
   send1(tag) { this.send(Uint8Array.of(tag)); }
 
   sendSize(w, h) { const b = new DataView(new ArrayBuffer(5)); b.setUint8(0, OUT.resize); b.setUint16(1, w); b.setUint16(3, h); this.send(b.buffer); }

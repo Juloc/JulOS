@@ -9,6 +9,7 @@
 import { t } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
 import { noticeTexts } from './terminal-programs.js';
+import { LinkHealth, PROBE_MS } from './link-health.js';
 
 const LIB = '/lib/xterm/';
 let libPromise = null;
@@ -25,7 +26,7 @@ function loadLib() {
 
 // Protokoll (siehe SshProtocol.cs)
 const TO = { data: 1, resize: 2, ping: 3, pause: 4, resume: 5 };
-const FROM = { data: 1, ready: 2, end: 3 };
+const FROM = { data: 1, ready: 2, end: 3, pong: 4 };   // "Bereit" mit link = 1: der Server beantwortet Pings (TO.ping mit 4 Byte Nummer) mit pong; ohne link sendet der Browser nichts davon (alter Server)
 const END_HOSTKEY = 800, END_SESSION_EXPIRED = 802;
 const MAX_FRAME = 16 * 1024;                          // Eingaben werden in Stuecken dieser Groesse gesendet (der Server nimmt bis 64 kB)
 const HIGH_WATER = 256 * 1024, LOW_WATER = 64 * 1024; // so viel unverarbeitete Ausgabe, dann bittet der Browser den Server um Pause
@@ -152,6 +153,8 @@ export class TerminalView {
     this.held = { ctrl: false, alt: false, shift: false };       // Umschalter der Sondertasten-Leiste
     this.state = 'idle'; this.connected = false; this.destroyed = false; this.active = true;
     this.pending = 0; this.paused = false; this.generation = 0;
+    this.link = new LinkHealth(); this.linkTimer = 0; this.pingId = 0;        // Lebenszeichen der Leitung (link-health.js)
+    this.lastClose = null;
     this.fontSize = clamp(store.get('termFont', matchMedia('(pointer: coarse)').matches ? 13 : 14), 8, 30);
     this.lastCols = 0; this.lastRows = 0; this.resizeTimer = 0; this.fitFrame = 0;
   }
@@ -188,18 +191,46 @@ export class TerminalView {
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
     let ended = false;
+    this.link.reset(); clearInterval(this.linkTimer);
+    this.linkTimer = setInterval(() => this._linkTick(), 1000);
     ws.onmessage = (ev) => { if (gen === this.generation) this._onMessage(new Uint8Array(ev.data), (e) => { ended = e; }); };
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       if (gen !== this.generation || this.destroyed) return;
-      this.connected = false;
+      this.connected = false; clearInterval(this.linkTimer);
+      this.lastClose = { code: ev.code, clean: ev.wasClean, at: Date.now(), reason: ev.wasClean ? 'closed' : 'dropped' };
       if (ended) return;                                               // der Server hat schon gesagt, warum
       this._setState(this.everConnected ? 'closed' : 'error', { message: this.everConnected ? t('term.closedShellEnded') : t('term.noServer'), fatal: false });
     };
     ws.onerror = () => { /* onclose folgt */ };
   }
 
+  _linkTick() {
+    const a = this.link.tick();
+    if (a === 'ping') this._ping(); else if (a === 'dead') this._lineDead('silence');
+  }
+
+  _ping() { const id = ++this.pingId >>> 0; this._sendRaw(TO.ping, new Uint8Array([id >>> 24, (id >>> 16) & 255, (id >>> 8) & 255, id & 255])); }
+
+  /** Kein Lebenszeichen mehr: die Leitung aktiv schliessen und wie einen Abriss melden (ohne Code: bei tmux haengt sich die Sitzung wieder an). */
+  _lineDead(reason) {
+    this.lastClose = { code: 0, clean: false, at: Date.now(), reason };
+    const gen = this.generation;
+    this._closeSocket();
+    if (this.destroyed || gen !== this.generation) return;
+    this._setState(this.everConnected ? 'closed' : 'error', { message: this.everConnected ? t('term.closedShellEnded') : t('term.noServer'), fatal: false });
+  }
+
+  /** Seite wieder sichtbar nach awayMs: 'ping' (Probe laeuft), 'reconnect' (Server ohne Lebenszeichen) oder null. */
+  probe(awayMs) {
+    const a = this.link.visible(awayMs);
+    if (a === 'ping') { this._ping(); setTimeout(() => { if (this.ws) this._linkTick(); }, PROBE_MS + 60); }
+    return a;
+  }
+
   _onMessage(m, markEnded) {
+    this.link.touchRx();
     switch (m[0]) {
+      case FROM.pong: break;
       case FROM.data: {
         const chunk = m.subarray(1);
         this.pending += chunk.length;
@@ -213,6 +244,7 @@ export class TerminalView {
       case FROM.ready: {
         const info = JSON.parse(new TextDecoder().decode(m.subarray(1)));
         this.connected = true; this.everConnected = true; this.fingerprint = info.fingerprint;
+        if (info.link) this.link.enable();
         if (info.hostKey === 'new') this._banner(t('term.hostKeyNew', { fingerprint: info.fingerprint }));
         else if (info.hostKey === 'changed-accepted') this._banner(t('term.hostKeyAccepted', { fingerprint: info.fingerprint }));
         // Programm-Sitzung: was der Server gefunden hat (fehlendes Programm, Verzeichnis oder tmux) nie still lassen: als Hinweis und als Zeile im Terminal
@@ -241,7 +273,7 @@ export class TerminalView {
   }
 
   _closeSocket() {
-    const ws = this.ws; this.ws = null;
+    const ws = this.ws; this.ws = null; clearInterval(this.linkTimer);
     if (ws) { ws.onmessage = ws.onclose = ws.onerror = null; try { ws.close(); } catch { /* egal */ } }
     this.connected = false; this.pending = 0; this.paused = false;
   }
@@ -270,6 +302,7 @@ export class TerminalView {
     const m = new Uint8Array(1 + (payload ? payload.length : 0));
     m[0] = kind;
     if (payload) m.set(payload, 1);
+    this.link.touchTx();
     ws.send(m);
     return true;
   }

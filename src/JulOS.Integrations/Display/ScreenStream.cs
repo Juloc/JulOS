@@ -30,6 +30,9 @@ public sealed record ScreenClipboardNote(byte Flags, ClipNote Note, int Count) :
 /// <summary>Es liegt Ton bereit: <see cref="ScreenStream.Audio"/> hat ihn (nur ein Zeichen, der Ton selbst wartet dort in einer begrenzten Warteschlange).</summary>
 public sealed record ScreenAudioReady : ScreenEvent;
 
+/// <summary>Antwort auf ein Ping des Browsers (laeuft ueber die Ereignisse, damit nur die Pumpe auf den WebSocket schreibt).</summary>
+public sealed record ScreenLinkPong(uint Id) : ScreenEvent;
+
 /// <summary>Der Ton der Sitzung hat sich geaendert (Ausgabe verfuegbar, Mikrofon angeboten oder verlangt).</summary>
 public sealed record ScreenAudioStatus(AudioStatus Status) : ScreenEvent;
 
@@ -240,6 +243,9 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
     /// <summary>Was der Browser hoeren soll, in der Reihenfolge, in der es geschah. Endet, wenn die Sitzung endet.</summary>
     public ChannelReader<ScreenEvent> Events => _events.Reader;
+
+    /// <summary>Ein Ping des Browsers beantworten.</summary>
+    public void Echo(uint id) => _events.Writer.TryWrite(new ScreenLinkPong(id));
 
     /// <summary>Warum der ferne Rechner die Sitzung beendet hat, falls er es gesagt hat.</summary>
     public string? EndReason => _source?.EndReason;

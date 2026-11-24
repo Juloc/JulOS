@@ -2962,4 +2962,13 @@ export default {
   "keys.tplRunLinux": "Befehl ausführen",
   "keys.tplTermCopy": "Terminal: Kopieren",
   "keys.tplTermPaste": "Terminal: Einfügen",
+  "link.label": "Neuverbindungen",
+  "link.none": "keine",
+  "link.title": "Wie oft die Leitung zum Server in dieser Sitzung neu aufgebaut wurde, und warum zuletzt",
+  "link.reconnecting": "verbinde neu",
+  "link.reason.silence": "Leitung still",
+  "link.reason.closed": "vom Server geschlossen",
+  "link.reason.dropped": "Leitung abgerissen",
+  "link.reason.hidden": "Seite im Hintergrund",
+  "link.reason.restart": "neu gestartet",
 };

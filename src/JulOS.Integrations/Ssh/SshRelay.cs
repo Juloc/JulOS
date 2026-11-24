@@ -11,7 +11,7 @@ namespace JulOS.Integrations.Ssh;
 /// steckt in der <see cref="SessionRegistry"/>, dazu eine globale. Wie bei den anderen Verbindungen endet die Sitzung mit der Anmeldung der App
 /// (Pruefung alle 60 s).
 /// </summary>
-public sealed class SshRelay(ILogger<SshRelay> log, Func<ISshSession>? factory = null, int maxSessions = 32, SessionRegistry? registry = null)
+public sealed class SshRelay(ILogger<SshRelay> log, Func<ISshSession>? factory = null, int maxSessions = 32, SessionRegistry? registry = null, TimeSpan? linkDeadAfter = null)
 {
     public static readonly TimeSpan SessionCheck = TimeSpan.FromSeconds(15);
     public static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(5);
@@ -90,18 +90,26 @@ public sealed class SshRelay(ILogger<SshRelay> log, Func<ISshSession>? factory =
                 WebSocketMessageType.Binary, true, ct).ConfigureAwait(false);
             log.LogInformation("SSH-Verbindung offen");
             var flow = new Flow();
+            // Lebenszeichen (siehe LinkWatch): ein neuer Browser pingt; kommt von ihm nichts mehr, ist die Leitung halbtot und wird geschlossen
+            var link = new LinkWatch(null, linkDeadAfter);
             var send = PumpToBrowserAsync(ws, session, flow, stop.Token);
-            var receive = ReceiveFromBrowserAsync(ws, session, flow, stop.Token);
+            var receive = ReceiveFromBrowserAsync(ws, session, flow, link, stop.Token);
             var watch = WatchAsync(sessionAlive, sessionCheck, stop.Token);
-            var first = await Task.WhenAny(send, receive, watch).ConfigureAwait(false);
-            if (lease.Replaced) last = SshProtocol.End(SshProtocol.EndTaken, "Die Sitzung wurde in einem anderen Fenster oder auf einem anderen Gerät übernommen.");
+            var silent = link.WaitDeadAsync(stop.Token);
+            var first = await Task.WhenAny(send, receive, watch, silent).ConfigureAwait(false);
+            if (first == silent && silent.IsCompletedSuccessfully)
+            {
+                log.LogInformation("SSH-Verbindung: Leitung still, seit {Seconds} s kein Lebenszeichen vom Browser", link.SilentMs / 1000);
+                ws.Abort();
+            }
+            else if (lease.Replaced) last = SshProtocol.End(SshProtocol.EndTaken, "Die Sitzung wurde in einem anderen Fenster oder auf einem anderen Gerät übernommen.");
             else if (first == send && !ct.IsCancellationRequested) last = SshProtocol.End(SshProtocol.EndShellClosed, "Die Sitzung wurde beendet.");
             else if (first == watch) last = SshProtocol.End(SshProtocol.EndSessionExpired, "Die Sitzung der App ist abgelaufen.");
 
             // Zuerst sagen, warum es endet (ein abgebrochenes Senden reisst den WebSocket ein), dann die Schleifen beenden
             if (last is not null) await FinishAsync(ws, last, ct).ConfigureAwait(false);
             await stop.CancelAsync().ConfigureAwait(false);
-            foreach (var task in new[] { send, receive, watch })
+            foreach (var task in new[] { send, receive, watch, silent })
             {
                 try { await task.ConfigureAwait(false); }
                 catch (Exception e) when (e is OperationCanceledException or WebSocketException or IOException or ObjectDisposedException or Renci.SshNet.Common.SshException)
@@ -158,12 +166,12 @@ public sealed class SshRelay(ILogger<SshRelay> log, Func<ISshSession>? factory =
             await flow.WaitAsync(ct).ConfigureAwait(false);          // Pause des Browsers: nicht weiterlesen
             var n = await session.ReadAsync(buffer.AsMemory(1), ct).ConfigureAwait(false);
             if (n == 0) return;
-            await ws.SendAsync(buffer.AsMemory(0, 1 + n), WebSocketMessageType.Binary, true, ct).ConfigureAwait(false);
+            await flow.SendAsync(ws, buffer.AsMemory(0, 1 + n), ct).ConfigureAwait(false);
         }
     }
 
     /// <summary>Browser -> Shell. Ungueltige Nachrichten beenden die Verbindung (so etwas schickt unsere Seite nicht).</summary>
-    private static async Task ReceiveFromBrowserAsync(WebSocket ws, ISshSession session, Flow flow, CancellationToken ct)
+    private static async Task ReceiveFromBrowserAsync(WebSocket ws, ISshSession session, Flow flow, LinkWatch link, CancellationToken ct)
     {
         var buffer = new byte[SshProtocol.MaxClientMessage + 1];
         while (!ct.IsCancellationRequested)
@@ -178,6 +186,7 @@ public sealed class SshRelay(ILogger<SshRelay> log, Func<ISshSession>? factory =
                     return;
                 }
                 r = await ws.ReceiveAsync(buffer.AsMemory(used), ct).ConfigureAwait(false);
+                link.Heard();
                 if (r.MessageType == WebSocketMessageType.Close) return;
                 used += r.Count;
             }
@@ -198,6 +207,14 @@ public sealed class SshRelay(ILogger<SshRelay> log, Func<ISshSession>? factory =
                     session.Resize(cols, rows);
                     break;
                 case SshProtocol.ToShellPing:
+                    // Ein neuer Browser haengt die Nummer an und erwartet sie zurueck; ein Ping ohne Nummer (alt) wird nur gezaehlt
+                    if (used >= 5)
+                    {
+                        link.MarkCapable();
+                        try { await flow.SendAsync(ws, SshProtocol.Pong(buffer.AsSpan(1, 4)), ct).ConfigureAwait(false); }
+                        catch (Exception e) when (e is WebSocketException or ObjectDisposedException or InvalidOperationException) { /* die Leitung endet ohnehin */ }
+                    }
+
                     break;
                 case SshProtocol.ToShellPause:
                     flow.Pause();
@@ -215,7 +232,16 @@ public sealed class SshRelay(ILogger<SshRelay> log, Func<ISshSession>? factory =
     /// <summary>Haelt das Lesen der Shell an, solange der Browser "Pause" gemeldet hat.</summary>
     private sealed class Flow
     {
+        private readonly SemaphoreSlim _send = new(1, 1);          // nur ein Senden auf einmal: die Pumpe und die Antworten auf Pings teilen den WebSocket
         private TaskCompletionSource? _gate;
+
+        public async Task SendAsync(WebSocket ws, ReadOnlyMemory<byte> message, CancellationToken ct)
+        {
+            await _send.WaitAsync(ct).ConfigureAwait(false);
+            try { await ws.SendAsync(message, WebSocketMessageType.Binary, true, ct).ConfigureAwait(false); }
+            finally { _send.Release(); }
+        }
+
         private readonly object _lock = new();
 
         public void Pause() { lock (_lock) _gate ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously); }

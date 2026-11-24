@@ -2,6 +2,7 @@ import { StreamClient } from './stream.js';
 import { MouseInput, mouseState } from './mouse.js';
 import { normalizeTb, vmSize, workRect, displayOffset } from './desktop-taskbar-geom.js';
 import { Resume } from './resume.js';
+import { LinkStats } from './link-health.js';
 import { isLoginError, loginStep, userOfTarget, readLogin } from './login.js';
 import { StatusBar } from './statusbar.js';
 import { openPopout } from './popout-main.js';
@@ -578,6 +579,7 @@ export class RemoteSession extends Session {
     this.connected = false; this.everConnected = false; this.intentional = false; this.fatal = false; this.disposed = false;
     this.firstLogin = true; this.streamWorked = false;   // streamWorked: auf dieser Verbindung kam schon einmal ein Bild
     this.popped = null;                            // laeuft die Sitzung in einem eigenen Fenster (popout-main.js)? Dann steht hier dessen Griff
+    this.stats = new LinkStats();                  // Neuverbindungen dieser Sitzung: Zaehler, letzter Grund, still oder laut (link-health.js)
     this.resume = new Resume();                    // Sitzungserhalt des Streams: Token, Zeitfenster, Versuche (siehe resume.js)
     this.gen = 0;                                  // zaehlt jeden Verbindungsversuch: spaete Antworten eines alten Versuchs werden verworfen
     this.k = clamp(store.get('k.' + conn.id, store.get('k', pcDefaultK())), 0.35, 1.8);   // Remote-Pixel pro Handy-Pixel (kleiner = Inhalt groesser), je Verbindung gemerkt
@@ -809,7 +811,7 @@ export class RemoteSession extends Session {
     if (this.popped) { const p = this.popped; this.popped = null; p.end(); }      // die Sitzung endet: das Fenster beendet sie am Server und geht zu
     this.teardown();
     this.ro.disconnect(); this.lay.dispose(); document.removeEventListener('fullscreenchange', this.onFullscreen);
-    clearTimeout(this.toastTimer); clearTimeout(this.zoomTimer); this.statusBar.dispose();
+    clearTimeout(this.toastTimer); clearTimeout(this.zoomTimer); clearTimeout(this.loudTimer); this.statusBar.dispose();
     this.gestSurface.dispose(); this.touchUi.dispose(); this.clipPanel.dispose();
     window.removeEventListener('blur', this.onAway); document.removeEventListener('visibilitychange', this.onAway);
     this.password = null;
@@ -821,7 +823,19 @@ export class RemoteSession extends Session {
     this.applyPause();
     if (!this.hasCredentials() || this.intentional || !this.everConnected || this.fatal) return;
     if (this.client && !this.connected && Date.now() - this.connectStarted < 10000) return;   // es wird gerade verbunden: nicht noch einmal von vorn
-    if (!this.connected || away > 4000) { this.retry = 0; this.start(); }
+    if (!this.connected) { this.retry = 0; this.stats.lost('hidden'); this.start(); return; }
+    // Lebt die Leitung noch? Ein Probe-Ping beantwortet der Server binnen Sekundenbruchteilen; kommt nichts, schliesst der Client die Leitung (Zustand "getrennt"),
+    // und scheduleReconnect nimmt die Sitzung still wieder auf. Ein Server ohne Lebenszeichen: wie bisher nach mehr als 4 s neu verbinden.
+    const verdict = this.client && this.client.probe ? this.client.probe(away) : (away > 4000 ? 'reconnect' : null);
+    if (verdict === 'reconnect') { this.retry = 0; this.stats.lost('hidden'); this.start(); }
+  }
+
+  /** Verbinden ohne Ueberlagerung, wenn es still gehen darf und noch nicht lange dauert; sonst die Ladeanzeige (nach der stillen Frist auch dann). */
+  busyOrQuiet(text, quietOk) {
+    clearTimeout(this.loudTimer);
+    this.statusBar.setLink(this.stats, true);
+    if (!quietOk || this.stats.loud()) return this.showBusy(text);
+    this.loudTimer = setTimeout(() => { if (!this.connected && !this.intentional && !this.disposed && !this.fatal && this.stats.busy) this.showBusy(text); }, this.stats.untilLoud() + 20);
   }
 
   /* ---------- Ueberlagerung (Verbinden, Fehler) ---------- */
@@ -907,7 +921,7 @@ export class RemoteSession extends Session {
   }
 
   /** keep: der Server soll die Sitzung behalten (nur die Leitung kappen), weil gleich eine neue Verbindung sie wieder aufnimmt (siehe start). */
-  teardown(keep = false) {
+  teardown(keep = false, keepPicture = false) {
     // Erst den alten Client abkoppeln, dann trennen: sein "getrennt"-Ereignis kommt sofort und wuerde sonst (this.client waere noch er selbst)
     // einen neuen Wiederholungs-Timer setzen, der die frische Verbindung nach 1,5/3/4,5 s wieder abschiesst.
     this.gen++;
@@ -918,7 +932,7 @@ export class RemoteSession extends Session {
     try { old && old.disconnect(keep); } catch { /* egal */ }
     clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); clearTimeout(this.resizeTimer);
     this.stopWindowBar(); this.el.topbar.hidden = true;
-    this.el.display.replaceChildren();
+    if (!keepPicture) this.el.display.replaceChildren();      // stilles Wiederaufnehmen: das letzte Bild bleibt stehen, bis das neue kommt (keepPicture, siehe start)
     this.updateAudioMenu();
   }
 
@@ -935,13 +949,18 @@ export class RemoteSession extends Session {
     this.intentional = false; this.fatal = false; this.connectStarted = Date.now();
     if (this.loginBox) { this.loginBox.remove(); this.loginBox = null; }
     if (this.client && this.client.drawn) this.resume.confirm();      // ein Bild kam schon (zum Beispiel Seite wieder sichtbar, bevor der tote Socket gemeldet wurde): das Token darf die Sitzung aufnehmen
-    this.teardown(true);                   // der Server haelt eine Stream-Sitzung weiter, die nehmen wir gleich wieder auf (sonst endet sie dort nach Ablauf)
+    const resuming = this.everConnected && this.resume.usable();
+    // Still wiederaufnehmen: es gibt ein Bild und der Server haelt die Sitzung. Dann bleibt die Ansicht (Bild, Zoom, Lage) stehen, es gibt keine Ueberlagerung,
+    // solange es kuerzer als die stille Frist dauert; nur ein kleines Zeichen in der Statusleiste sagt "verbinde neu".
+    const keepPicture = resuming && !!(this.display && this.display.drawnOnce);
+    const prevDisplay = keepPicture ? this.display : null;
+    if (this.everConnected) this.stats.lost('restart');
+    this.teardown(true, keepPicture);      // der Server haelt eine Stream-Sitzung weiter, die nehmen wir gleich wieder auf (sonst endet sie dort nach Ablauf)
     const gen = this.gen;
     const stale = () => gen !== this.gen || this.disposed;
-    const resuming = this.everConnected && this.resume.usable();
     const busyText = resuming ? t('app.busyResuming') : this.everConnected ? t('app.busyReconnecting') : t('app.connecting');
     this.setState(this.everConnected ? 'reconnecting' : 'connecting', busyText);
-    this.showBusy(busyText);
+    this.busyOrQuiet(busyText, keepPicture);
     // Hatte der letzte Desktop dieser Verbindung eine Fensterleiste, den Platz dafuer schon jetzt freihalten: sonst schrumpft die Stage kurz nach dem Verbinden
     // und die VM bekommt gleich nach dem Start eine zweite Groesse.
     this.el.topbar.hidden = !(this.conn.kind === 'desktop' && store.get('winbar.' + this.conn.id, store.get('winbar', false)));
@@ -980,7 +999,7 @@ export class RemoteSession extends Session {
     }
 
     const wsBase = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
-    const client = new StreamClient(wsBase + '/api/remote/screen', keyLayout, { keysyms: this.conn.kind === 'vnc' });
+    const client = new StreamClient(wsBase + '/api/remote/screen', keyLayout, { keysyms: this.conn.kind === 'vnc', display: prevDisplay || undefined, resumed: !!resumeToken });
     this.clipDiag.connected();
     this.wireAudio(client);
     client.onsession = (o) => { if (this.client === client) this.resume.offered(o.token, o.keep); };
@@ -997,7 +1016,7 @@ export class RemoteSession extends Session {
     client.quality = this.quality; this.statusBar.attach(client);
     this.client = client; this.display = display; this.lastSent = { w, h }; this.gate = new SizeGate({ settleMs: KB_SETTLE_MS });
     this.lay.note('conn', { engine: 'stream' });
-    this.el.display.appendChild(display.getElement());
+    if (display.getElement().parentNode !== this.el.display) this.el.display.appendChild(display.getElement());
     display.onresize = () => { this.fitDisplay(); const dw = display.getWidth(), dh = display.getHeight(); this.lay.note('remote', { w: dw, h: dh }); this.dbg('remote-size', { w: dw, h: dh }); };
     // Textfeld-Erkennung: Der Mauszeiger der VM wird zum "I-Balken" (schmal, hoch, Hotspot mittig)
     display.oncursor = (canvas, hx, hy) => {
@@ -1011,11 +1030,13 @@ export class RemoteSession extends Session {
       if (st === 3) { // verbunden
         clearTimeout(this.connectTimer);
         this.connected = true; this.everConnected = true; this.connectedAt = Date.now(); this.frameSeen = false; this.resume.connected();
+        clearTimeout(this.loudTimer); if (this.stats.restored()) this.statusBar.setLink(this.stats, false);
         this.setState('connected', t('app.stateConnected'));
         this.releaseMods(true);                    // nach einem Abriss koennte das Ziel noch eine Taste halten (die Sitzung bleibt dort erhalten): alle loslassen
         if (driveMode && !this.driveNoted) { this.driveNoted = true; this.toast(driveMode === 'rw' ? t('app.driveSharedRw') : t('app.driveSharedRo'), 4000); }
         if (this.hasSibling()) this.toast(t('app.siblingNote'), 6000);
-        this.startWindowBar(); this.fitDisplay(); this.pushSize(); this.waitForFrame(client); this.applyPause();
+        this.startWindowBar(); this.fitDisplay(); this.pushSize(); this.applyPause();
+        if (keepPicture) { this.frameSeen = true; this.el.overlay.hidden = true; this.el.spinner.hidden = true; } else this.waitForFrame(client);      // das alte Bild steht noch: kein Warten auf das erste
         if (cur() === this) focusKbForHardware();
         this.startAudio(client);
         setTimeout(() => { if (this.client === client && !client.drawn && !this.streamWorked) this.streamFailed(t('app.errNoPicture')); }, 10000);   // Groesse gemeldet, aber nie ein Bild: der Dekodierer geht nicht
@@ -1024,7 +1045,11 @@ export class RemoteSession extends Session {
       } else if (st === 5) { // getrennt
         this.connected = false; this.releaseMods(); this.gestSurface.cancel();
         // Diagnose (?debug): wie lange die Leitung hielt, wie sie endete (Code, sauber geschlossen oder abgerissen) und was die Seite gerade tat; so sieht man, ob das Neuverbinden vom Netz oder von der Seite selbst kommt
-        if (client.lastClose) this.dbg('ws-close', { code: client.lastClose.code, clean: client.lastClose.clean, up: Math.round((client.lastClose.at - this.connectStarted) / 1000), hidden: document.hidden, online: navigator.onLine, resume: this.resume.usable() });
+        if (client.lastClose) this.dbg('ws-close', { code: client.lastClose.code, clean: client.lastClose.clean, reason: client.lastClose.reason, up: Math.round((client.lastClose.at - this.connectStarted) / 1000), hidden: document.hidden, online: navigator.onLine, resume: this.resume.usable() });
+        if (!this.intentional && !this.fatal && this.everConnected) {
+          const why = client.lastClose ? client.lastClose.reason : 'dropped';
+          this.stats.lost(document.hidden && why !== 'silence' ? 'hidden' : why); this.statusBar.setLink(this.stats, true);
+        }
         if (client.drawn) { this.streamWorked = true; this.resume.confirm(); }      // die Sitzung am Ziel gibt es wirklich: ein Token darf sie wieder aufnehmen
         if (!client.closing && !this.streamWorked && !this.intentional && !this.fatal) return this.streamFailed(t('app.errLostBeforePicture'));   // ohne Fehlermeldung getrennt
         if (this.intentional || this.fatal) return;
@@ -1122,7 +1147,7 @@ export class RemoteSession extends Session {
     if (this.resume.usable()) {
       const wait = this.resume.nextDelay();
       this.setState('reconnecting', t('app.busyResuming'));
-      this.showBusy(t('app.busyResuming'));
+      this.busyOrQuiet(t('app.busyResuming'), !!(this.display && this.display.drawnOnce));
       clearTimeout(this.retryTimer);
       this.retryTimer = setTimeout(() => { if (!this.intentional && !this.disposed) this.start(); }, wait);
       return;

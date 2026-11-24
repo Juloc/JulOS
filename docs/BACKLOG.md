@@ -47,7 +47,7 @@ The owner moved the order: first the shared base of the app family ([BASE.md](BA
 - **Update overview of all hosts** and a **maintenance window** with a report (opt-in, never silent).
 - **One SSH key per host** instead of stored passwords (JulOS makes the key, the agent installs it).
 - **Backup:** encryption with a passphrase, a second target outside the Docker VM.
-- **Sign-in:** passkeys (WebAuthn) and a client certificate at the proxy ([SECURITY-REVIEW.md](SECURITY-REVIEW.md), recommendations).
+- **Sign-in:** a client certificate at the proxy (passkeys came with 0.28.0, [PASSKEYS.md](PASSKEYS.md)) ([SECURITY-REVIEW.md](SECURITY-REVIEW.md), recommendations).
 - **Windows agent and Windows management**, reminders.
 - **A Home Assistant add-on** instead of an agent (the appliance cannot run an agent).
 - **A mascot in the progress panel** of the Claude mod (parked on request).

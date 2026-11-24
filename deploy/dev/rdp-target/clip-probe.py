@@ -7,6 +7,7 @@ setzen und lesen (xclip), ohne dass der Test-Container Docker braucht. Hoert auf
   POST /set?...&stall=1                         wie /set, aber der Besitzer wird angehalten (SIGSTOP): er antwortet nie auf Anfragen, wie ein haengender Zwischenablage-Verwalter
   POST /clear                                   alle Besitzer beenden (die Auswahl ist leer)
   POST /entry                                   ein kleines Fenster "clip-entry" mit einem Eingabefeld (Koerper = Inhalt), zum Markieren und Kopieren mit der Tastatur
+  GET  /entry-text                              was gerade im Eingabefeld steht (leer, wenn es nicht offen ist)
   POST /entry-close                             schliesst es wieder
 Ton (fuer die Browser-Tests, wie deploy/dev/play-tone.sh und record-mic.sh, nur dass kein Docker noetig ist):
   POST /tone?s=3                                spielt s Sekunden einen 440-Hz-Ton ueber das Tongeraet der Sitzung (paplay, im Hintergrund)
@@ -58,6 +59,8 @@ class H(http.server.BaseHTTPRequestHandler):
         if u.path == "/get":
             r = subprocess.run(["xclip", "-selection", sel_of(q), "-o", "-t", type_of(q, "UTF8_STRING")], capture_output=True, timeout=10)
             return self.reply(200, r.stdout) if r.returncode == 0 else self.reply(404, r.stderr)
+        if u.path == "/entry-text":
+            return self.reply(200, open("/tmp/clip-entry.txt", "rb").read() if os.path.exists("/tmp/clip-entry.txt") else b"")
         if u.path == "/targets":
             r = subprocess.run(["xclip", "-selection", sel_of(q), "-o", "-t", "TARGETS"], capture_output=True, timeout=10)
             return self.reply(200, r.stdout) if r.returncode == 0 else self.reply(404, r.stderr)
@@ -84,9 +87,13 @@ class H(http.server.BaseHTTPRequestHandler):
                 subprocess.run(["pkill", "-STOP", "-u", str(os.getuid()), "-x", "xclip"])
             return self.reply(200, b"ok")
         if u.path == "/entry":
+            if os.path.exists("/tmp/clip-entry.txt"):
+                os.remove("/tmp/clip-entry.txt")
             subprocess.Popen(["python3", "/opt/julos/clip-entry.py", body.decode("utf-8", "replace")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return self.reply(200, b"ok")
         if u.path == "/entry-close":
+            if os.path.exists("/tmp/clip-entry.txt"):
+                os.remove("/tmp/clip-entry.txt")
             subprocess.run(["pkill", "-u", str(os.getuid()), "-f", "clip-entry.py"])
             return self.reply(200, b"ok")
         if u.path == "/tone":

@@ -1007,7 +1007,7 @@ export function mountFiles(box, deps) {
 }
 
 /* ---------- Abfragen: Passwort und Host-Schluessel ---------- */
-function passwordDialog(kit, place, wrong, host) {
+export function passwordDialog(kit, place, wrong, host) {
   const field = h('input', { type: 'password', class: 'f-input', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': t('files.password.label'), maxlength: 256 });
   // Hat der Host einen Login nur mit Benutzer: der Benutzer steht da, gefragt wird nur das Passwort, und es laesst sich "fuer diesen Host speichern" (Standard aus)
   const save = host && host.canSave ? h('input', { type: 'checkbox', id: 'fSaveHost' }) : null;
@@ -1023,7 +1023,7 @@ function passwordDialog(kit, place, wrong, host) {
   field.focus();
   return dlg.promise.then((r) => { const v = r === 'yes' ? field.value : null; const keep = !!(save && save.checked); field.value = ''; return v !== null && save ? { password: v, save: keep } : v; });
 }
-function hostKeyDialog(kit, place, data, changed) {
+export function hostKeyDialog(kit, place, data, changed) {
   const dlg = modal({ title: t(changed ? tk('files.hostKey.changedTitle') : tk('files.hostKey.newTitle'), { host: place.label }), kit, id: 'hk', content: [
     h('p', { class: 'f-sentence', text: t(changed ? tk('files.hostKey.changedText') : tk('files.hostKey.newText'), { host: place.label }) }),
     rowsEl([[t('files.hostKey.algorithm'), data.algorithm], [t('files.hostKey.fingerprint'), data.fingerprint], ...(changed && data.known ? [[t('files.hostKey.known'), data.known]] : [])]),

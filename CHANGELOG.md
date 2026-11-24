@@ -6,6 +6,11 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+### Neu
+- **Einfügen im richtigen Augenblick (RDP)** ([docs/CLIPBOARD.md](docs/CLIPBOARD.md)): Strg+V schickt die Einfüge-Taste erst, wenn die VM die neue Format-Liste angenommen hat (Nachricht 15, Art 8, nur wenn keine ältere Liste mehr unbeantwortet ist); bleibt die Meldung 600 ms aus, geht die Taste trotzdem, eine Ablehnung schickt nichts und zeigt die bekannte Meldung. VNC, ein älterer Server und ein älterer Browser behalten die feste Pause von 180 ms. Vorher konnte die Taste vor der Liste ankommen („fügt den alten Text ein“).
+- **Kopieren aufs Gerät, mit Wiederholung**: scheitert das Schreiben eines Textes oder Bildes aus der VM in die Zwischenablage des Geräts (Safari, Handy), wartet er und wird beim nächsten Fokus, Zeigerdruck oder Tastendruck in der Sitzung noch einmal geschrieben. Verworfen wird er bei eigenem Kopieren oder Ausschneiden, bei Neuerem aus der VM, am Sitzungsende und nach einer Minute; Meldung und Dialog bleiben der Rückfall.
+- **Bild oder Datei in ein SSH-Terminal einfügen oder ablegen**: wird eine Datei auf dem Host im Ordner der Shell (OSC 7, sonst Home), über den bestehenden SFTP-Weg der Dateien-App (Pool, strenge Prüfung des Host-Schlüssels, Schalter „Dateien schreiben“, Bestätigung, Grenzen, Fortschritt, Abbrechen). Danach steht der gequotete Pfad auf der Kommandozeile, ohne Enter. Bilder heißen `paste-JJJJMMTT-HHMMSS.png`. Auf dem Handy: „Datei einfügen“ im Menü des Terminals. Text einfügen bleibt unverändert.
+
 ## [0.28.0] - 2026-11-24
 
 ### Neu

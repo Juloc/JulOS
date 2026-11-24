@@ -91,6 +91,7 @@ export const tool = (kit, name, label, onclick, cls = '') => h('button', { type:
  * Nur Desktop: key (oeffnet nur einmal, ein zweiter Aufruf holt das Fenster nach vorn), win { width, height, resizable } (Groesse), focus (id der Taste mit dem Fokus), root (rote Titelleiste).
  */
 export function modal({ title, content = [], actions = [], kit = false, id = '', key = '', win = {}, focus = '', root = false }) {
+  content = content.filter(Boolean);      // ein leerer Platz (null) ist kein Text "null"
   if (!kit && dialogWindowsAvailable()) {
     const w = openDialogWindow({ title, content, actions, key, focus, root, width: win.width, height: win.height, resizable: win.resizable, cls: id ? 'dw-' + id : '' });
     if (w) return w;

@@ -10,6 +10,8 @@ win = Gtk.Window(title="clip-entry")
 win.set_default_size(420, 60)
 entry = Gtk.Entry()
 entry.set_text(sys.argv[1] if len(sys.argv) > 1 else "")
+# der Inhalt steht fuer die Browser-Tests in einer Datei (clip-probe: GET /entry-text), damit sie pruefen koennen, WAS beim Einfuegen angekommen ist
+entry.connect("changed", lambda e: open("/tmp/clip-entry.txt", "w", encoding="utf-8").write(e.get_text()))
 win.add(entry)
 win.connect("destroy", Gtk.main_quit)
 win.show_all()

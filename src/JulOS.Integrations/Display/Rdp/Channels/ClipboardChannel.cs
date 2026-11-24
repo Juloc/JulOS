@@ -149,6 +149,18 @@ public sealed class ClipboardChannel : StaticChannel
 
     public event Action<uint>? Unlocked;
 
+    /// <summary>Format lists sent to the server that it has not answered yet.</summary>
+    public int ListsUnanswered
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _listsUnanswered;
+            }
+        }
+    }
+
     public bool IsReady
     {
         get

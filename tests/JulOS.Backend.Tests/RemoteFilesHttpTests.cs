@@ -563,6 +563,10 @@ public sealed class RemoteFilesHttpTests
         Assert.Equal(HttpStatusCode.NotFound, (await Upload(api, c, "/home/tester/gibtsnicht", "x", [1])).StatusCode);
         Assert.Equal("not_a_directory", Code(ApiKit.J(await (await Upload(api, c, "/home/tester/neu.txt", "x", [1])).Content.ReadAsStringAsync())));
         Assert.Equal(HttpStatusCode.BadRequest, (await Upload(api, c, "relativ", "x", [1])).StatusCode);
+        // Der Ordner kommt auch vom Terminal (OSC 7): ein Weg hinaus ueber ".." oder ein Pfad ohne Wurzel wird von prepare und vom Upload abgelehnt, nichts wird geschrieben
+        foreach (var escape in new[] { "/home/tester/ordner/../..", "/home/tester/../etc", "../etc", "ordner", "/home/tester/a\nb" })
+            Assert.Equal(HttpStatusCode.BadRequest, (await Upload(api, c, escape, "x", [1])).StatusCode);
+        Assert.DoesNotContain(host.Log, l => l.Contains("/etc") || l.Contains("/x"));
 
         var rows = (await api.Get("/api/files/audit")).Body.GetProperty("entries").EnumerateArray().Select(e => (e.GetProperty("action").GetString(), e.GetProperty("result").GetString(), e.TryGetProperty("detail", out var d) ? d.GetString() : null)).ToArray();
         Assert.Contains(("upload", "ok", null), rows);

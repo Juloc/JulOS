@@ -10,6 +10,7 @@ import { t } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
 import { noticeTexts } from './terminal-programs.js';
 import { LinkHealth, PROBE_MS } from './link-health.js';
+import { parseOsc7, sameHost, quotePaths, chooseClipboard } from './term-paste.js';
 
 const LIB = '/lib/xterm/';
 let libPromise = null;
@@ -157,6 +158,7 @@ export class TerminalView {
     this.lastClose = null;
     this.fontSize = clamp(store.get('termFont', matchMedia('(pointer: coarse)').matches ? 13 : 14), 8, 30);
     this.lastCols = 0; this.lastRows = 0; this.resizeTimer = 0; this.fitFrame = 0;
+    this.cwd = null; this.oscHost = '';                          // Ordner der Shell laut OSC 7 (null: unbekannt) und der Rechnername, den sie dabei nennt
   }
 
   get ready() { return this.connected; }
@@ -381,6 +383,15 @@ export class TerminalView {
     // Hat das Programm die SGR-Mauskodierung (1006) eingeschaltet? Davon haengt ab, wie das Wischen als Mausrad gemeldet wird
     term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (p) => { if (p.includes(1006)) this.sgrMouse = true; return false; });
     term.parser.registerCsiHandler({ prefix: '?', final: 'l' }, (p) => { if (p.includes(1006)) this.sgrMouse = false; return false; });
+    // OSC 7: die Shell meldet ihren Ordner (fuer Dateien und Bilder, die ins Terminal kommen). Nur ein absoluter Pfad auf diesem Rechner zaehlt; ein anderer Rechnername
+    // (ein ssh im Terminal) heisst: dessen Ordner gibt es hier nicht, also unbekannt.
+    term.parser.registerOscHandler(7, (data) => {
+      const r = parseOsc7(data);
+      if (!r) return true;
+      if (!this.oscHost && r.host) this.oscHost = r.host;
+      this.cwd = sameHost(r.host, this.oscHost, this.conn.host) ? r.path : null;
+      return true;
+    });
     this.resizeObserver = new ResizeObserver(() => this._scheduleFit());
     this.resizeObserver.observe(this.host);
     // Design: folgt App-Farben (Stil der Wurzel aendert sich) und dem System (hell/dunkel)
@@ -390,6 +401,7 @@ export class TerminalView {
     this.themeObserver = new MutationObserver(() => this._applyTheme());
     this.themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'class', 'data-theme'] });
     this._setupSelection();
+    this._wireFiles();
   }
 
   _applyTheme() {
@@ -487,6 +499,50 @@ export class TerminalView {
     return true;
   }
   paste(text) { if (text) this.term?.paste(text); }
+
+  /* ---------- Dateien und Bilder: einfuegen, ablegen, "Datei einfuegen" im Menue (der Upload steht in term-upload.js, die Sitzung ruft ihn) ---------- */
+  /** Dateien aus der Zwischenablage oder vom Ablegen: die Sitzung laedt sie hoch und gibt die Pfade zurueck; hier werden sie getippt (ohne Enter). */
+  async _files(files) {
+    if (!files.length || !this.opts.onFiles || this.filesBusy) return;
+    if (!this.cwd && !store.get('osc7Hint', false)) { store.set('osc7Hint', true); this._banner(t('clip2.osc7Hint'), 15000); }
+    this.filesBusy = true;
+    try {
+      const paths = await this.opts.onFiles(files, { dir: this.cwd || '' });
+      const line = paths && quotePaths(paths);
+      if (line) this.paste(line);
+    } finally { this.filesBusy = false; this.focus(); }
+  }
+  _wireFiles() {
+    const host = this.host;
+    // Capture: vor xterm, das den Text selbst einfuegt. Text bleibt Text (chooseClipboard).
+    host.addEventListener('paste', (e) => {
+      const cd = e.clipboardData;
+      if (!cd) return;
+      const files = [...(cd.files || [])].map((f) => Object.assign(f, { fromClipboard: true }));
+      if (chooseClipboard({ files, text: cd.getData('text/plain') }) !== 'files') return;
+      e.preventDefault(); e.stopPropagation();
+      this._files(files);
+    }, true);
+    const hasFiles = (e) => e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
+    host.addEventListener('dragover', (e) => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+    host.addEventListener('drop', (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault(); e.stopPropagation();
+      const items = [...(e.dataTransfer.items || [])];
+      // Ordner werden nicht hochgeladen (der Upload kennt nur Dateien)
+      const files = [...e.dataTransfer.files].filter((f, i) => !(items[i] && items[i].webkitGetAsEntry && items[i].webkitGetAsEntry()?.isDirectory));
+      if (files.length < e.dataTransfer.files.length) this._banner(t('clip2.noFolders'), 4000);
+      this._files(files);
+    });
+  }
+  pickFiles() {
+    const input = Object.assign(document.createElement('input'), { type: 'file', multiple: true });
+    input.style.cssText = 'position:fixed;left:-1000px;opacity:0';
+    document.body.appendChild(input);
+    input.addEventListener('change', () => { const files = [...input.files]; input.remove(); this._files(files); });
+    input.addEventListener('cancel', () => input.remove());
+    input.click();
+  }
   async pasteFromClipboard() {
     try { this.paste(await navigator.clipboard.readText()); }
     catch { this._banner(t('term.pasteDenied'), 6000); }
@@ -587,6 +643,7 @@ export class TerminalView {
     };
     if (this.term.hasSelection()) add(t('common.copy'), () => { this.copy(); this.focus(); });
     add(t('term.paste'), () => this.pasteFromClipboard());
+    if (this.opts.onFiles) add(t('clip2.pasteFile'), () => this.pickFiles());
     if (all) add(t('term.selectAll'), () => { this.term.selectAll(); this._menu(x, y, { all: false }); });
     this.host.appendChild(menu);
     const hr = this.host.getBoundingClientRect(), mw = menu.offsetWidth, mh = menu.offsetHeight;

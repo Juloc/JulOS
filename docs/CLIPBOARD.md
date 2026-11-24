@@ -8,12 +8,54 @@ not. The rest of the page is about images, files and folders.
 | | |
 | --- | --- |
 | Remote to browser | the remote copies; xrdp announces `CF_UNICODETEXT`, the server fetches it at once and sends it as message 6; the browser puts it into its own clipboard (`navigator.clipboard.writeText`) |
-| Browser to remote | Ctrl+V (or Ctrl+Shift+V, Shift+Insert) in the picture: the browser's `paste` event carries the text, the page sends it (message 9), waits 180 ms and then sends the key combination to the remote; the "Text senden" dialog does the same with a button |
+| Browser to remote | Ctrl+V (or Ctrl+Shift+V, Shift+Insert) in the picture: the browser's `paste` event carries the text, the page sends it (message 9) and sends the key combination to the remote **when the remote has accepted the new format list** (see "Paste at the right moment"); the "Text senden" dialog does the same with a button |
 | Limit | 1 MiB of UTF-8 in both directions; more is refused **with a message** (toast and diagnosis), not silently |
 | Line ends | **LF to the remote**, unless the remote has shown that it wants CR LF. xrdp passes text on unchanged in both directions, so a CR from the browser ended up in every line (terminal, editors). The server switches to CR LF when the remote itself has sent text with CR LF and no lone LF (a Windows host) and back when it sends lone LF. `JULOS_CLIP_EOL=lf` or `crlf` fixes it, `auto` (default) is this behaviour. Text from the remote always arrives with LF. |
 | Echo | some servers report text we just gave them as a new copy; it is not forwarded to the browser for 1.5 s after the paste and only while the remote has not copied anything else (before, the same text copied in the remote later never reached the browser) |
 | No answer | a data request the remote never answers counts as refused after 15 s, the next one goes out (before, one lost answer blocked every later copy of that session) |
 | Selection | xrdp only knows the `CLIPBOARD` selection (Ctrl+C, Ctrl+X), not `PRIMARY` (marking with the mouse, middle click). Marking text in the VM does nothing for the browser; copy it. Pasting from the browser with the middle mouse button does not work either, use Ctrl+V (Ctrl+Shift+V in terminals). |
+
+### Paste at the right moment (RDP)
+
+A paste is two steps: the text goes to the server (message 9, the server announces `CF_UNICODETEXT` to the remote), and the browser presses the paste chord
+(it chooses the chord: Ctrl+V, Ctrl+Shift+V in terminals; the server presses no keys). If the chord arrives before the remote has taken the new list, the remote
+pastes the old text. So the browser waits for the remote:
+
+- The RDP channel reports the remote's answer to a format list (`FormatsAcknowledged`). `ClipboardBridge` turns it into message 15 kind 8 (`ListAccepted`) when
+  **no list is left unanswered** (an answer to an older list does not count), and an answer "refused" into kind 7 (`ListRefused`) as before.
+- Message 15's flags have bit 2 set by an RDP server: "I report acceptance". Only then the browser waits (`PasteGate` in `clip-sync.js`); the chord follows on the
+  acceptance. After **600 ms** without an answer it is sent anyway. A refusal sends nothing and shows "Die VM hat die Zwischenablage des Browsers abgelehnt." (toast, opens the dialog).
+- Without bit 2 (VNC, an older server, before the first message 15) the old fixed pause of 180 ms stays. A new server with an old browser: the browser ignores kind 8 and
+  keeps its pause. Tests: `tests/frontend/clip-sync.test.mjs`, `ClipboardBridgeTests`, e2e test 19 (twenty pastes in a row, each time the new text in a real window of the test desktop).
+- Not covered: an answer to the previous paste that arrives between two pastes within one round trip can release the next one early (then it behaves like the old pause).
+
+### Copy to the device, retried
+
+A text or picture from the remote is written to the device clipboard at once (`storeVmText`, `showRemoteImage`). Browsers only allow that inside a user gesture
+(Safari, phones) and with focus. If it fails, the item **waits** (`devPending`; the toast and the dialog stay as before) and is written again on the next focus,
+pointer-down or key-down in the session (not on Ctrl+V: the person is pasting). The decision is `pendingStep` in `clip-sync.js`: the item is dropped when the person
+copies or cuts something in the page, when the remote copies something newer, when the session ends and after one minute. A write that works clears it.
+Not verified: Safari and a real phone (the logic is tested with faked time, the browser behaviour is known from the documentation).
+
+### Pictures and files into an SSH terminal
+
+A picture or file that is pasted (Ctrl+V with a file or picture on the clipboard) or dropped on an SSH terminal, or chosen with "Datei einfügen" in the terminal's menu
+(right click, long press: the entry for the phone), becomes a file on the host. Text paste is unchanged (text wins unless a file that is not a picture is on the clipboard).
+
+- **Folder:** the shell's current folder from **OSC 7** (`ESC ] 7 ; file://host/path BEL`, parsed by `parseOsc7` in `term-paste.js`: only absolute paths without `..` or
+  control characters; a host name other than the first one the shell named, that is a `ssh` inside the terminal, makes the folder unknown). Unknown: the home folder, with
+  a hint (once per browser) how to switch OSC 7 on (bash: `PROMPT_COMMAND='printf "\e]7;file://%s%s\a" "$HOSTNAME" "$PWD"'`). tmux hides OSC 7 from the outer terminal
+  unless passthrough is set up; then the home folder is used.
+- **Upload:** the existing path of the Files app, nothing new: `prepare` (confirmation, as for an upload there), dialog, `POST /api/files/remote/upload` per file with the
+  pool of SFTP sessions, the strict host-key check (with the same dialogs), password questions as in the Files app, the switch "Dateien schreiben" (`JULOS_FILES_WRITE`
+  and the setting; off: the dialog says so and nothing happens), the same limits, name and size checks, progress and cancel, history entries. The server validates the folder
+  itself (`RemotePath.Normalize`: absolute, no `..`, must be an existing folder); the path from the browser is input, not truth. Only a saved SSH connection works
+  (a quick connection has no stored login to use). Pictures are named `paste-YYYYMMDD-HHMMSS.png`, other names are cleaned (control characters and `/` become `_`) and made unique.
+- **Command line:** after a **complete** upload the paths the server reported are written (as a paste, bracketed where the shell knows it) quoted for a POSIX shell
+  (`shellQuote`: safe characters stay, otherwise single quotes with `'\''`, a leading `-` gets `./`), separated by spaces, with one space at the end; **no Enter**. A path with a control character
+  is never written. A failed or cancelled upload writes nothing; the dialog says what is up.
+- Tests: `tests/frontend/term-paste.test.mjs` (OSC 7, quoting, names, clipboard choice), `RemoteFilesHttpTests` (session and header, write switch off, `..` and relative folders, confirmation), e2e test 20.
+- Not verified: a real phone (the file picker), Safari, tmux and OSC 7, zsh and fish, Windows targets (the SFTP server there).
 
 ### Browser permissions (`clipperm.js`)
 
@@ -165,7 +207,7 @@ First look at the **diagnosis**: menu row "Funktionen" or the key "Zwischenablag
 | --- | --- | --- |
 | Nothing ever arrives in either direction, "Kanal der VM: fehlt" | `xrdp-chansrv` not running in the session, or restarted after the connection was made | `pgrep -u "$USER" -a xrdp-chansrv`, `journalctl -t julos-chansrv-watch`; reconnect |
 | VM to browser works only sometimes | the browser refuses to write (no focus, Firefox/Safari without a recent click), diagnosis says "verweigert" or "keinen Fokus" | tap the toast, "Auf dem Handy kopieren"; use Chrome or Edge on HTTPS |
-| Browser to VM pastes the old text | the key arrived before xrdp had taken the new list (a slow link between server and VM) | paste again; the diagnosis shows whether the VM fetched the new text |
+| Browser to VM pastes the old text | before 0.29: the key arrived before xrdp had taken the new list. Now the key waits for the remote's acknowledgement (at most 600 ms); an old server or VNC keeps the fixed 180 ms pause | paste again; the diagnosis shows whether the VM fetched the new text |
 | Pasted text has `^M` or one line too many | an old JulOS (before this fix) sent CR LF to xrdp | update; `JULOS_CLIP_EOL=lf` |
 | Copied text in the VM does not arrive although the diagnosis is green | the same text was given to the VM within the last 1.5 s (echo filter), or the VM only has it in `PRIMARY` (marked, not copied) | copy with Ctrl+C |
 | `xrdp-chansrv` log: `clipboard_event_selection_request: unknown target ...` | a program in the VM asks xrdp for a target it does not offer (`TEXT`, `text/plain`, a numeric atom); xrdp refuses it and the program tries the next. Harmless, unless that program asks for nothing else | `~/.local/share/xrdp/xrdp-chansrv.<display>.log` in the VM |

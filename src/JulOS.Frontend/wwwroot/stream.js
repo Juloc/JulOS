@@ -373,7 +373,7 @@ export class StreamClient {
       case IN.image: if (this.onclipimage && buffer.byteLength > 2) this.onclipimage(v.getUint8(1), new Uint8Array(buffer, 2)); break;
       case IN.files: this.incomingFiles(v, buffer); break;
       case IN.fileState: this.incomingFileState(v, buffer); break;
-      case IN.clipNote: if (this.onclipnote && buffer.byteLength >= 7) this.onclipnote({ ready: (v.getUint8(1) & 1) !== 0, files: (v.getUint8(1) & 2) !== 0, note: v.getUint8(2), count: v.getInt32(3) }); break;
+      case IN.clipNote: if (this.onclipnote && buffer.byteLength >= 7) this.onclipnote({ ready: (v.getUint8(1) & 1) !== 0, files: (v.getUint8(1) & 2) !== 0, acks: (v.getUint8(1) & 4) !== 0, note: v.getUint8(2), count: v.getInt32(3) }); break;
       case IN.limits: if (buffer.byteLength >= 13) this.limits = { fileBytes: Number(v.getBigInt64(1)), files: v.getUint16(9), entries: v.getUint16(11) }; break;
       case IN.result: {
         const id = v.getUint32(1), code = v.getUint8(5), text = serverMsg(new TextDecoder().decode(new Uint8Array(buffer, 6)));

@@ -19,6 +19,7 @@ import { t, tp, tk, applyDom, getPref, setPref, isPref } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
 import { showDialog, focusField, askWindow } from './desktop-window.js';
 import { ClipDiag } from './clipdiag.js';
+import { PasteGate, pendingStep } from './clip-sync.js';
 import { queryState, browserKind, readDeviceText, copyToDevice } from './clipperm.js';
 import { KS, MODSYM, MODNAME, charKeysym, parseChord, parseSequence, sequenceOps, heldAfter, textOps, chunk, TEMPLATES, LIMITS as KEY_LIMITS, validateKeyDef, keyApplies, looksLikeSecret } from './keys-shortcuts.js';
 import { StickyMods } from './keys-sticky.js';
@@ -482,11 +483,18 @@ function renderAudioDiag() {
 }
 function openAudioDlg() { micPermAt = 0; showDialog(el.audioDlg); renderAudioDiag(); }
 setInterval(renderAudioDiag, 500);
-// Hatte die Seite beim Eintreffen von Text aus der VM keinen Fokus, versucht der Browser es beim naechsten Fokus noch einmal (nur fuer kurz zuvor kopierten Text)
-window.addEventListener('focus', () => {
-  const s = cur(), p = s && s.clipPending;
-  if (p && Date.now() - p.at < 30000 && p.data === s.clipText) s.storeVmText(p.data);
-});
+// Durfte der Browser Text oder ein Bild aus der VM nicht gleich ablegen (Safari, Handy, kein Fokus), wird es beim naechsten Fokus, Zeigerdruck oder Tastendruck in der
+// Sitzung noch einmal versucht: nur dort erlaubt der Browser das Schreiben. Verworfen wird es bei eigenem Kopieren, Neuerem aus der VM, Sitzungsende und nach einer Minute.
+window.addEventListener('focus', () => { const s = cur(); if (s) s.retryDevice(); });
+for (const ev of ['pointerdown', 'keydown']) {
+  document.addEventListener(ev, (e) => {
+    const s = cur();
+    if (!s || !s.devPending || !(s.element.contains(e.target) || e.target === el.kb || e.target === document.body)) return;
+    if (ev === 'keydown' && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') return;   // der Mensch fuegt gerade ein: nichts ueberschreiben
+    s.retryDevice();
+  }, true);
+}
+for (const ev of ['copy', 'cut']) document.addEventListener(ev, () => { for (const s of Sessions.list()) s.dropPending && s.dropPending('copy'); }, true);
 /* Aktionen, die eine Taste in der Leiste ausloesen kann (frei zuordenbar im Tasten-Editor); sie bekommen die Sitzung, in deren Leiste getippt wurde */
 const ACTIONS = {
   keyboard: () => { if (kbOpen) el.kb.blur(); else { el.kb.blur(); el.kb.focus(); } },
@@ -602,7 +610,7 @@ export class RemoteSession extends Session {
     this.sticky = new StickyMods({ down: (sym) => this.kdown(sym), up: (sym) => this.kup(sym), changed: () => this.refreshModButtons() });   // Haltetasten (keys-sticky.js)
     this.keyChain = Promise.resolve();
     this.actOn = {};
-    this.clipText = ''; this.clipDiag = new ClipDiag(); this.clipPending = null;
+    this.clipText = ''; this.clipDiag = new ClipDiag(); this.devPending = null; this.devBusy = false; this.pasteGate = new PasteGate();
     this.xferAbort = null; this.xferCancelExtra = null; this.remoteItem = { image: null, imageUrl: null, files: null };
     this.stageW = 0; this.stageH = 0; this.lastStage = null;
     this.stageBase = new StageBase();              // Bildflaeche ohne Tastatur (Modus 'pan')
@@ -821,7 +829,7 @@ export class RemoteSession extends Session {
   applyPause() { if (this.client instanceof StreamClient) this.client.setPaused(!this.visible || document.hidden); }
   refreshAll() { this.updateMenuLabels(); this.renderRows(); }
   dispose() {
-    this.disposed = true; this.intentional = true;
+    this.disposed = true; this.intentional = true; this.dropPending('end');
     if (this.popped) { const p = this.popped; this.popped = null; p.end(); }      // die Sitzung endet: das Fenster beendet sie am Server und geht zu
     this.teardown();
     this.ro.disconnect(); this.lay.dispose(); document.removeEventListener('fullscreenchange', this.onFullscreen);
@@ -1014,7 +1022,7 @@ export class RemoteSession extends Session {
 
     const wsBase = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
     const client = new StreamClient(wsBase + '/api/remote/screen', keyLayout, { keysyms: this.conn.kind === 'vnc', display: prevDisplay || undefined, resumed: !!resumeToken });
-    this.clipDiag.connected();
+    this.clipDiag.connected(); this.pasteGate.connected();
     this.wireAudio(client);
     client.onsession = (o) => { if (this.client === client) this.resume.offered(o.token, o.keep); };
     // Der Server kennt das Token nicht mehr (abgelaufen, Neustart, Sitzung dort beendet): ganz normal neu aufbauen, mit Ticket und neuem Login
@@ -1091,14 +1099,14 @@ export class RemoteSession extends Session {
       else { this.setState('error', t('app.stateError')); this.showOverlay(msg); }
     };
     client.onclipboard = (data) => {
-      this.clipText = data;
+      this.clipText = data; this.dropPending('newer');
       if (cur() === this) el.remoteClip.value = data;
       // Strg+C / Strg+X in der VM: Text gleich in die Zwischenablage dieses Browsers legen (braucht HTTPS oder localhost, den Fokus der Seite und je nach Browser eine
       // eben erfolgte Eingabe). Nur fuer die aktive Sitzung: eine im Hintergrund darf die Zwischenablage nicht ueberschreiben.
       if (cur() !== this) { this.clipDiag.vmText(data.length, 'background'); return; }
       this.storeVmText(data);
     };
-    client.onclipnote = (n) => { if (this.client === client) { this.clipDiag.serverNote(n); if (cur() === this) renderClipDiag(); } };
+    client.onclipnote = (n) => { if (this.client === client) { this.pasteGate.note(n); this.clipDiag.serverNote(n); if (cur() === this) renderClipDiag(); } };
 
     // Bilder und Dateien der VM meldet der Stream selbst
     client.onclipimage = (format, bytes) => this.onRemoteImage(format, bytes);
@@ -1471,15 +1479,35 @@ export class RemoteSession extends Session {
   // Text aus der VM in die Zwischenablage dieses Browsers; scheitert das, steht der Text im Dialog (die Meldung fuehrt dorthin) und die Diagnose nennt den Grund
   async storeVmText(data) {
     const diag = this.clipDiag, n = data.length, fallback = (why, detail) => {
-      this.clipPending = { data, at: Date.now() };
+      this.devPending = { kind: 'text', data, at: Date.now() };
       diag.vmText(n, why, detail);
       this.toast(t('app.textCopiedFromVm'), 3200, () => openClipDlg());
       if (cur() === this) renderClipDiag();
     };
     // ohne Fokus oder HTTPS wird nichts versucht oder der Rueckfall ueber ein verstecktes Textfeld genommen (clipperm.js); der Rest steht in der Diagnose
     const r = await copyToDevice(data);
-    if (r.ok) { this.clipPending = null; diag.vmText(n, 'stored'); this.toast(t('app.copied'), 1200); if (cur() === this) renderClipDiag(); }
+    if (r.ok) { if (this.devPending && this.devPending.kind === 'text') this.devPending = null; diag.vmText(n, 'stored'); this.toast(t('app.copied'), 1200); if (cur() === this) renderClipDiag(); }
     else fallback(r.reason === 'error' ? 'denied' : r.reason, r.detail || '');
+  }
+  dropPending(event) { this.devPending = pendingStep(this.devPending, event, Date.now()).pending; }
+  // Wartenden Inhalt aus der VM noch einmal in die Zwischenablage dieses Geraets schreiben (Aufruf aus einer Eingabe der Person, siehe oben); Meldung und Dialog bleiben der Rueckfall
+  async retryDevice() {
+    const step = pendingStep(this.devPending, 'gesture', Date.now());
+    this.devPending = step.pending;
+    const item = step.write;
+    if (!item || this.devBusy || cur() !== this) return;
+    this.devBusy = true;
+    try {
+      let ok = false;
+      if (item.kind === 'text') ok = (await copyToDevice(item.data)).ok;
+      else { try { await copyImageToLocal(item.data); ok = true; } catch { /* bleibt wartend */ } }
+      // inzwischen verworfen oder ersetzt: nichts mehr anfassen
+      if (ok && this.devPending === item) {
+        this.devPending = null;
+        this.toast(t(item.kind === 'text' ? 'app.copied' : 'app.imageCopiedFromVm'), 1600);
+        if (item.kind === 'text') { this.clipDiag.vmText(item.data.length, 'stored'); if (cur() === this) renderClipDiag(); }
+      }
+    } finally { this.devBusy = false; }
   }
   // Text in die Zwischenablage der VM legen; die Rueckgabe sagt, ob er hinausging, und jedes Scheitern wird gemeldet statt verschluckt
   sendClipboard(txt) {
@@ -1493,8 +1521,16 @@ export class RemoteSession extends Session {
   // Text in die Zwischenablage der VM legen und danach die Einfuege-Taste druecken (die Pause laesst die Zwischenablage-Meldung ankommen)
   pasteToRemote(txt, keys) {
     if (this.sendClipboard(txt) !== 'sent') return;
-    this.enqueue(async () => { await sleep(180); });
-    this.sendChord(keys, 8);
+    // Die Taste erst, wenn die VM die neue Format-Liste angenommen hat (sonst fuegt sie den alten Text ein); der Server meldet es (Nachricht 15, Art 8),
+    // sonst (VNC, alter Server, ausbleibende Meldung) gilt eine Frist. Abgelehnt: nichts senden, die Meldung kommt aus der Diagnose.
+    const answer = this.pasteGate.wait();
+    this.enqueue(async () => {
+      if ((await answer) === 'refused') { this.toast(t('clipdiag.errListRefused'), 3600, () => openClipDlg()); return; }
+      // wie sendChord, aber ohne neuen Eintrag in der Kette (er wuerde auf diesen warten)
+      for (const k of keys) { this.kdown(k); await sleep(8); }
+      for (const k of [...keys].reverse()) { this.kup(k); await sleep(8); }
+      this.consumeOnce();
+    });
   }
   refreshModButtons() {
     this.element.querySelectorAll('.sv-rowsTop .k[data-mod], .sv-rowsBottom .k[data-mod]').forEach((b) => {
@@ -1771,13 +1807,16 @@ export class RemoteSession extends Session {
     if (cur() === this && document.hasFocus()) {
       try { await copyImageToLocal(png); this.toast(t('app.imageCopiedFromVm'), 2200); this.dbg('remote-image', { kb: Math.round(png.size / 1024), how, copied: true }); return; } catch { /* Dialog */ }
     }
+    this.devPending = { kind: 'image', data: png, at: Date.now() };   // beim naechsten Fokus oder bei der naechsten Eingabe noch einmal (retryDevice)
     this.dbg('remote-image', { kb: Math.round(png.size / 1024), how, copied: false });
     this.toast(t('app.imageFromVmTap'), 6000, () => { Sessions.activate(this.id); openClipDlg(); });
   }
   async onRemoteImage(format, bytes) {
+    this.dropPending('newer');
     try { await this.showRemoteImage(await pngFromBytes(bytes, format), 'push'); } catch (e) { this.toast(t('app.errImageUnreadable', { msg: e.message }), 3600); }
   }
   onRemoteFiles(batch, list) {
+    this.dropPending('newer');
     if (!list.length) { this.remoteItem.files = null; if (cur() === this) renderRemoteItem(); return; }
     this.remoteItem.files = { batch, list }; this.remoteItem.image = null; if (cur() === this) renderRemoteItem();
     const rows = topLevel(list), n = list.filter((f) => !f.dir).length;

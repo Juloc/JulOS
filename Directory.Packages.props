@@ -5,7 +5,7 @@
     <CentralPackageTransitivePinning>true</CentralPackageTransitivePinning>
   </PropertyGroup>
   <ItemGroup>
-    <PackageVersion Include="Npgsql" Version="10.0.3" />
+    <PackageVersion Include="Npgsql" Version="11.0.0" />
     <PackageVersion Include="SSH.NET" Version="2026.0.1" />
     <PackageVersion Include="Konscious.Security.Cryptography.Argon2" Version="1.3.1" />
     <PackageVersion Include="xunit.v3" Version="4.0.3" />

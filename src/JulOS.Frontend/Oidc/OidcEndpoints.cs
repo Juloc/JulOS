@@ -219,8 +219,10 @@ internal static class OidcEndpoints
 
             if (who is null) return Done();                      // nichts zu beenden
 
-            // Ohne Bestaetigung nur, wenn die App einen gueltigen Hinweis auf DIESE Person mitbringt; sonst fragt eine Seite nach (eine fremde Seite soll niemanden still abmelden koennen)
-            var confirmed = post || (hint is not null && Guid.TryParse(hint.Sub, out var sub) && await flow.SubOfAsync(who.UserId, ctx.RequestAborted) == sub);
+            // Ohne Bestaetigung nur, wenn der Hinweis zur Sitzung passt, die jetzt abgemeldet wird: seine "sid" ist die, die DIESE Sitzung dieser App gegeben hat (und die Person stimmt). Ein
+            // altes oder fremdes Token derselben Person reicht nicht; dann fragt eine Seite nach (eine fremde Seite soll niemanden still abmelden koennen).
+            var confirmed = post || (hint is { Sid: { Length: > 0 } hintSid } && Guid.TryParse(hint.Sub, out var sub) && await flow.SubOfAsync(who.UserId, ctx.RequestAborted) == sub
+                && string.Equals(await flow.GrantSidAsync(who.Id, hint.App.Id, ctx.RequestAborted), hintSid, StringComparison.Ordinal));
             if (!confirmed)
             {
                 var fields = new List<KeyValuePair<string, string>>();

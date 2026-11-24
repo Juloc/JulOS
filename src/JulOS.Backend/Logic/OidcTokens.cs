@@ -78,7 +78,10 @@ public static class OidcTokens
             IssuerSigningKeys = keys, ValidateIssuerSigningKey = true, RequireSignedTokens = true, ValidAlgorithms = [Alg],
         };
         var result = await Handler.ValidateTokenAsync(token, parameters);
-        return result.IsValid ? result.SecurityToken as JsonWebToken : null;
+        if (!result.IsValid || result.SecurityToken is not JsonWebToken jwt) return null;
+        // ein Logout-Token (von uns signiert, aber an die App geschickt und dort in Protokollen) ist kein ID-Token und kein Hinweis
+        if (string.Equals(jwt.Typ, LogoutType, StringComparison.OrdinalIgnoreCase) || jwt.TryGetPayloadValue<object>("events", out _)) return null;
+        return jwt;
     }
 
     /// <summary>Ein Anspruch als Text (oder null).</summary>

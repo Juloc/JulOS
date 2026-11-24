@@ -250,6 +250,54 @@ public sealed class OidcLogoutTests
         Assert.All(rec.Posts, p => Assert.Equal(OidcRig.BackchannelUri, p.Uri.ToString()));
     }
 
+    [Fact]
+    public async Task A_hint_signs_out_silently_only_the_session_it_was_issued_for_never_an_old_or_foreign_one_a_logout_token_or_an_unsigned_or_confused_token()
+    {
+        // F1: wer irgendein altes Token einer Person hat, soll ihren Browser nicht still abmelden koennen
+        await using var rig = await OidcRig.CreateAsync();
+        var app = await rig.AddAppAsync();
+        var ct = TestContext.Current.CancellationToken;
+        var (cookieA, _) = await NewOwnerSessionAsync(rig);
+        var (cookieB, _) = await NewOwnerSessionAsync(rig);
+        var (cookieC, _) = await NewOwnerSessionAsync(rig);                       // nie bei der App angemeldet
+        var a = await rig.SignInAsync(app, cookieA);
+        var b = await rig.SignInAsync(app, cookieB);
+        Assert.NotEqual(OidcRig.Claim(a.Jwt, "sid"), OidcRig.Claim(b.Jwt, "sid"));
+        var hash = (string c) => SessionTokens.Hash(c["julos_sid=".Length..]);
+        var alive = async (string c) => await rig.Db.ScalarAsync<long>("select count(*) from sessions where hash = $1", hash(c)) > 0;
+        async Task AssertAsks(string? hint, string cookie)
+        {
+            var res = await rig.Http.SendAsync(Get(EndUrl(hint), cookie));
+            Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+            Assert.Null(res.Headers.Location);
+            Assert.Contains("method=\"post\"", await res.Content.ReadAsStringAsync(ct));
+            Assert.True(await alive(cookie));
+        }
+
+        // ein Token einer anderen Sitzung derselben Person, und eines, fuer das diese Sitzung nie ein Token bekam
+        await AssertAsks(b.IdToken, cookieA);
+        await AssertAsks(a.IdToken, cookieC);
+        // ein Logout-Token (von uns signiert, mit der richtigen sid) ist kein Hinweis
+        var logoutToken = OidcTokens.CreateLogoutToken(new LogoutTokenClaims(OidcServer.Issuer, app.ClientId, OidcRig.Claim(a.Jwt, "sub")!, OidcRig.Claim(a.Jwt, "sid")!, DateTimeOffset.UtcNow, "j1"), await rig.Keys.ActiveAsync(ct));
+        Assert.Null(await rig.Server.Services.GetRequiredService<OidcService>().ReadHintAsync(logoutToken, ct));
+        await AssertAsks(logoutToken, cookieA);
+        // ohne Signatur (alg=none) und mit HS256 (der oeffentliche Schluessel als gemeinsames Geheimnis)
+        static string B64(string s) => OidcRules.Base64Url(System.Text.Encoding.UTF8.GetBytes(s));
+        var payload = a.IdToken.Split('.')[1];
+        var none = B64("{\"alg\":\"none\",\"typ\":\"JWT\"}") + "." + payload + ".";
+        var spki = ((ECDsaSecurityKey)await rig.Keys.ActiveAsync(ct)).ECDsa.ExportSubjectPublicKeyInfo();
+        var hs = new JsonWebTokenHandler().CreateToken($"{{\"iss\":\"{OidcServer.Issuer}\",\"aud\":\"{app.ClientId}\",\"sub\":\"{OidcRig.Claim(a.Jwt, "sub")}\",\"sid\":\"{OidcRig.Claim(a.Jwt, "sid")}\"}}",
+            new SigningCredentials(new SymmetricSecurityKey(spki) { KeyId = a.Jwt.Kid }, SecurityAlgorithms.HmacSha256));
+        foreach (var bad in new[] { none, hs }) { Assert.Null(await rig.Server.Services.GetRequiredService<OidcService>().ReadHintAsync(bad, ct)); await AssertAsks(bad, cookieA); }
+
+        // das Token der eigenen Sitzung meldet still ab, nur diese Sitzung
+        var ok = await rig.Http.SendAsync(Get(EndUrl(a.IdToken), cookieA));
+        Assert.Equal(HttpStatusCode.Found, ok.StatusCode);
+        Assert.False(await alive(cookieA));
+        Assert.True(await alive(cookieB));
+        Assert.True(await alive(cookieC));
+    }
+
     private static async Task<(string Cookie, string Token)> NewOwnerSessionAsync(OidcRig rig)
     {
         var token = await new SessionStore(rig.Db.Data).CreateAsync(rig.OwnerId, "127.0.0.1", "test");

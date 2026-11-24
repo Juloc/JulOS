@@ -72,6 +72,13 @@ public sealed class OidcFlowStore(NpgsqlDataSource db)
         return await r.ReadAsync(ct) ? new OidcSessionInfo(r.GetGuid(0), r.GetString(1), r.GetGuid(2), r.GetFieldValue<DateTimeOffset>(3)) : null;
     }
 
+    /// <summary>Die "sid", die diese JulOS-Sitzung der App gegeben hat (null: noch kein Token dorthin ausgestellt oder der Grant ist beendet).</summary>
+    public async Task<string?> GrantSidAsync(Guid sessionId, Guid appId, CancellationToken ct = default)
+    {
+        await using var cmd = db.Cmd("select sid from oidc_grants where session_id = $1 and app_id = $2", sessionId, appId);
+        return await cmd.ExecuteScalarAsync(ct) as string;
+    }
+
     public async Task<Guid?> SubOfAsync(Guid userId, CancellationToken ct = default)
     {
         await using var cmd = db.Cmd("select oidc_sub from users where id = $1", userId);

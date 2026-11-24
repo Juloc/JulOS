@@ -6,6 +6,8 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+## [0.26.0] - 2026-11-24
+
 ### Neu
 - **Verbindungen robust gegen stille Abrisse und kurze Pausen** ([docs/SESSIONS.md](docs/SESSIONS.md#lebenszeichen-und-stilles-wiederaufnehmen)): Stream und Terminal haben ein Lebenszeichen auf Anwendungsebene (Ping nach 5 s ohne Verkehr, Frist 10 s; der Server beendet eine Leitung, von der 12 s nichts kam, und hält die Sitzung); alter Browser und alter Server laufen unverändert weiter (der Server kündigt es an). Wird eine Sitzung binnen 2,5 s wieder aufgenommen, bleiben Bild, Zoom und Lage stehen, es gibt keine Überlagerung, nur ein kleines Zeichen „verbinde neu“, und sofort ein Schlüsselbild. Beim Zurückkommen aus dem Hintergrund prüft ein Probe-Ping (1,2 s) die Leitung, statt nach 4 s pauschal neu zu verbinden. Die Statusleiste zeigt „Neuverbindungen“ mit dem letzten Grund.
 - **Agent 0.9.1**: erkennt eine tote Verbindung in rund 10 s (Ping alle 5 s statt Meldung alle 20 s, Lesefrist 10 s), schaltet TCP-Keepalive ein und verbindet nach einem Abriss mit zufällig gestreutem Abstand neu; der Server beendet eine halbtote Agent-Verbindung nach drei verpassten Takten und lässt die ersetzende Verbindung ihren Zustand behalten. Ohne höhere Version erreicht diese Änderung die Rechner nicht, darum die neue Agent-Version (der Root-Helfer bleibt unverändert).

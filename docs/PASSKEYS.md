@@ -1,6 +1,6 @@
 # Passkeys
 
-Status: **released with 0.28.0** (checked with a software and a virtual authenticator; no real device yet). Decision of the owner: a passkey becomes the normal way to sign in; password with authenticator code stays a full way. Plan: the base repository, `docs/plans/ACCOUNTS.md`, sections 3 and 5.
+Status: **released with 0.28.0** (checked with a software and a virtual authenticator; no real device yet). Decision of the owner: a passkey becomes the normal way to sign in; password with authenticator code stays a full way. Plan: the accounts draft of the base (sections 3 and 5), which the owner keeps outside the repositories since the base became public.
 
 A passkey is a key pair on the person's device. The private half never leaves it (or the person's credential manager); JulOS keeps the public half. Signing in is a signature over a fresh challenge, after the device has checked the person (fingerprint, face or device PIN). There is nothing to type, nothing to phish, and nothing in the database that signs in as the person.
 

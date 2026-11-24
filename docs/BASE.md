@@ -98,4 +98,4 @@ Today three apps each carry a copy of the bridge and each is signed in separatel
 - **The base becomes a public repository** (MIT, like JulOS) once its foundation is checked: its code is copied into public apps anyway.
 - **An app of the family opens inside a JulOS window** on the desktop (a full page on the phone, always with "open in a new tab").
 - **The public website may present every app** of the family. It never links to the owner's own installations; those appear only for the owner coming from JulOS.
-- The four plans in the base repository (`docs/plans/`: accounts, app contract, notes web, website) stand with their proposals unless the owner says otherwise.
+- The four plans (accounts, app contract, notes web, website) stand with their proposals unless the owner says otherwise. The app contract is `docs/CONTRACT.md` in the base repository; the other three are kept by the owner outside the repositories since the base became public (2026-11-24).

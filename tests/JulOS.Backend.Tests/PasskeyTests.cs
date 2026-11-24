@@ -494,6 +494,13 @@ public sealed class PasskeyTests
     }
 
     [Fact]
+    public async Task The_page_is_told_before_the_session_that_passkeys_work_here()
+    {
+        await using var r = await Rig.CreateAsync();
+        Assert.True((await Json(await r.Http.SendAsync(Req(HttpMethod.Get, "/api/auth/me", null)))).GetProperty("passkeys").GetBoolean());
+    }
+
+    [Fact]
     public async Task The_relying_party_comes_from_the_issuer_and_not_from_the_host_headers()
     {
         await using var r = await Rig.CreateAsync();
@@ -591,6 +598,8 @@ public sealed class PasskeyTests
         var (cookie, _) = await SignedInAsync(http, db);
         Assert.Equal(HttpStatusCode.ServiceUnavailable, (await http.SendAsync(Req(HttpMethod.Post, "/api/auth/passkey/login/begin", null, new { }))).StatusCode);
         Assert.False((await Json(await http.SendAsync(Req(HttpMethod.Get, "/api/auth/passkeys", cookie)))).GetProperty("available").GetBoolean());
+        // die Anmeldeseite erfaehrt es vor der Sitzung aus /api/auth/me und fragt dann gar nicht erst nach einer Herausforderung
+        Assert.False((await Json(await http.SendAsync(Req(HttpMethod.Get, "/api/auth/me", null)))).GetProperty("passkeys").GetBoolean());
     }
 
     [Fact]

@@ -38,10 +38,10 @@ internal static class AuthEndpoints
             return Results.Json(new LoginResponse(r.User!, r.RecoveryLeft), AppJson.Default.LoginResponse);
         });
 
-        app.MapGet("/api/auth/me", async (HttpContext ctx, AuthService auth) =>
+        app.MapGet("/api/auth/me", async (HttpContext ctx, AuthService auth, PasskeyService passkeys) =>
         {
             var identity = await ApiGuard.ResolveAsync(ctx, auth, rotate: true);
-            return new MeResponse(identity?.UserName, identity is null && await auth.SetupNeededAsync(ctx.RequestAborted));
+            return new MeResponse(identity?.UserName, identity is null && await auth.SetupNeededAsync(ctx.RequestAborted), passkeys.Site() is not null);
         });
 
         app.MapPost("/api/auth/login", async (LoginRequest body, HttpContext ctx, AuthService auth) =>

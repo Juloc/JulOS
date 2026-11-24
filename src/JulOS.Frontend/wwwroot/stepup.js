@@ -26,7 +26,7 @@ export const cleanCode = (s) => String(s || '').replace(/\s+/g, '');
  * Das Sheet. api ist die Funktion OHNE Wiederholung (rawApi aus shell.js: die Freigabe selbst darf nicht wieder nach einer Freigabe fragen), setMsg schreibt eine Meldung.
  * Gibt ask() zurueck: eine Funktion, die das Sheet zeigt und true liefert, wenn der Code gestimmt hat, false bei Abbruch. Mehrere gleichzeitige Aufrufe teilen sich ein Sheet.
  */
-export function initStepUp({ api, setMsg, passkey = null }) {
+export function initStepUp({ api, setMsg, passkey = null, available = () => true }) {
   const $ = (s) => document.querySelector(s);
   const dlg = $('#stepUpDlg'), form = $('#suForm'), input = $('#suCode'), msg = $('#suMsg');
   let pending = null, settle = null;
@@ -38,7 +38,6 @@ export function initStepUp({ api, setMsg, passkey = null }) {
   // Statt des Codes ein Passkey mit Nutzerpruefung (gleiches Zeitfenster). Der Knopf ist nur da, wo der Browser Passkeys kann; ob die Person einen hat, sagt der Server.
   const pk = $('#suPasskey');
   if (pk && passkey && typeof window !== 'undefined' && window.PublicKeyCredential) {
-    pk.hidden = false;
     pk.addEventListener('click', async () => {
       pk.disabled = true; setMsg(msg, '');
       try { await passkey(); finish(true); }
@@ -58,7 +57,7 @@ export function initStepUp({ api, setMsg, passkey = null }) {
     finally { for (const b of form.querySelectorAll('button[type=submit]')) b.disabled = false; }
   });
 
-  const show = () => showDialog(dlg, { system: true, top: true, width: 420 });
+  const show = () => { if (pk && passkey) pk.hidden = !(available() && typeof window !== 'undefined' && !!window.PublicKeyCredential); showDialog(dlg, { system: true, top: true, width: 420 }); };
   return () => {
     if (pending) { show(); return pending; }               // ein zweiter Aufruf holt das offene Fenster nach vorn
     pending = new Promise((resolve) => { settle = resolve; });

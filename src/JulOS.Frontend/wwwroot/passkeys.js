@@ -4,7 +4,7 @@
  * navigator.credentials verlangt, und die Antwort zurueck in Text. Die reine Umwandlung ist ohne DOM getestet (tests/frontend/passkeys.test.mjs).
  * ===================================================================== */
 
-import { t } from './i18n.js';
+import { t, tp, locale } from './i18n.js';
 
 // ---- reine Umwandlung ----
 
@@ -122,12 +122,13 @@ export async function confirmWithPasskey(api) {
  */
 export function initLoginPasskeys({ api, setMsg, onSignedIn }) {
   const button = document.querySelector('#loginPasskey'), or = document.querySelector('#loginPasskeyOr'), msg = document.querySelector('#loginMsg');
-  let ctrl = null, timer = 0, running = false;
+  let ctrl = null, timer = 0, running = false, available = false, gen = 0, setShow = () => {};
 
-  const stop = () => { running = false; clearTimeout(timer); if (ctrl) { ctrl.abort(); ctrl = null; } };
+  const stop = () => { running = false; gen++; clearTimeout(timer); if (ctrl) { ctrl.abort(); ctrl = null; } };
 
   async function autofill() {
-    if (!running || !(await conditionalSupported()) || !running) return;
+    const mine0 = gen;                                           // ein zweites start() waehrend des Wartens darf keine zweite Anfrage (und Herausforderung) ausloesen
+    if (!running || !(await conditionalSupported()) || !running || gen !== mine0) return;
     ctrl = new AbortController();
     const mine = ctrl;
     timer = setTimeout(() => { if (ctrl === mine) { mine.abort(); autofill(); } }, 4 * 60 * 1000);
@@ -140,8 +141,8 @@ export function initLoginPasskeys({ api, setMsg, onSignedIn }) {
   }
 
   if (button) {
-    const ok = supported();
-    button.hidden = !ok; if (or) or.hidden = !ok;
+    const show = () => { const ok = supported() && available; button.hidden = !ok; if (or) or.hidden = !ok; };
+    show(); setShow = show;
     button.addEventListener('click', async () => {
       if (ctrl) { ctrl.abort(); ctrl = null; }
       clearTimeout(timer);
@@ -151,7 +152,12 @@ export function initLoginPasskeys({ api, setMsg, onSignedIn }) {
       finally { button.disabled = false; }
     });
   }
-  return { start() { stop(); running = true; if (supported()) autofill(); }, stop };
+  return {
+    /** Ob Passkeys hier gehen (Antwort von /api/auth/me): sonst kein Knopf und keine Anfrage. */
+    setAvailable(on) { available = !!on; setShow(); if (!available) stop(); },
+    start() { stop(); if (!available) return; running = true; if (supported()) autofill(); },
+    stop,
+  };
 }
 
 // ---- Hinweis nach Aenderungen an der Anmeldung ----
@@ -167,8 +173,10 @@ export async function showPasskeyHint(el, api, { open, removeAll = false, done }
   try { r = await api('/api/auth/passkeys'); } catch { return 0; }
   const n = r.passkeys.length;
   if (!n) return 0;
-  const button = (text, fn) => { const b = el.appendChild(el.ownerDocument.createElement('button')); b.type = 'button'; b.className = 'ghost pk-act'; b.textContent = text; b.addEventListener('click', fn); return b; };
-  el.append(el.ownerDocument.createTextNode((removeAll ? t('pk.checkAllRecovery', { n }) : t('pk.checkAll', { n })) + ' '));
+  const doc = el.ownerDocument, text = el.appendChild(doc.createElement('p')), acts = el.appendChild(doc.createElement('div'));
+  text.className = 'pk-hint-text'; acts.className = 'pk-hint-acts';
+  const button = (label, fn) => { const b = acts.appendChild(doc.createElement('button')); b.type = 'button'; b.className = 'ghost pk-act'; b.textContent = label; b.addEventListener('click', fn); return b; };
+  text.textContent = removeAll ? tp('pk.checkAllRecovery', n) : tp('pk.checkAll', n);
   if (open) button(t('pk.openList'), open);
   if (removeAll) {
     let armed = 0;
@@ -185,7 +193,7 @@ export async function showPasskeyHint(el, api, { open, removeAll = false, done }
 
 // ---- Konto: Liste ----
 
-const fmt = (iso) => new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' });
+const fmt = (iso) => new Date(iso).toLocaleDateString(locale(), { year: 'numeric', month: '2-digit', day: '2-digit' });
 const el = (tag, attrs = {}, ...kids) => { const n = Object.assign(document.createElement(tag), attrs); n.append(...kids); return n; };
 
 /**

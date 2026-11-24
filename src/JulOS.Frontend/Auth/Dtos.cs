@@ -15,7 +15,8 @@ internal sealed record TotpBeginRequest(string? Current);
 internal sealed record TotpBeginResponse(string Secret, string Uri);
 internal sealed record TotpFinishRequest(string? Code);
 internal sealed record TotpFinishResponse(string[] Recovery);
-internal sealed record MeResponse(string? User, bool SetupNeeded);
+/// <summary>Passkeys: ob Passkeys hier gehen (eine oeffentliche Adresse mit Rechnernamen ist eingestellt). Die Anmeldeseite fragt sonst gar nicht erst nach einer Herausforderung. Verraet nur das.</summary>
+internal sealed record MeResponse(string? User, bool SetupNeeded, bool Passkeys = false);
 internal sealed record SessionDto(bool Current, DateTimeOffset CreatedAt, DateTimeOffset LastSeen, string? UserAgent, string? Ip);
 internal sealed record SessionsResponse(SessionDto[] Sessions);
 internal sealed record EndedResponse(int Ended);

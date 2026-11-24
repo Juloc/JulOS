@@ -13,8 +13,11 @@ public static class PasskeyRules
     public const int MaxPerUser = 20, NameMax = 60, ChallengeBytes = 32;
     public static readonly TimeSpan ChallengeLifetime = TimeSpan.FromMinutes(5);
 
-    /// <summary>So viele offene Herausforderungen der Anmeldung gibt es hoechstens zugleich (sie sind oeffentlich anforderbar; ohne Grenze fuellte ein Schwall die Tabelle).</summary>
-    public const int MaxOpenLoginChallenges = 2000;
+    /// <summary>
+    /// So viele offene Herausforderungen der Anmeldung gibt es hoechstens, je Adresse und insgesamt (sie sind oeffentlich anforderbar). Ist die Grenze erreicht, verdraengt die neue die
+    /// aeltesten (je Adresse die dieser Adresse, insgesamt die aeltesten ueberhaupt) statt abzulehnen: so kann ein Schwall die Anmeldung der anderen nicht sperren.
+    /// </summary>
+    public const int MaxOpenLoginChallenges = 2000, MaxOpenLoginChallengesPerAddress = 10;
 
     /// <summary>Die Passkey-Strecke je Adresse: so viele Optionen- und Pruefanfragen je Minute.</summary>
     public const int RequestsPerMinute = 20;

@@ -53,7 +53,7 @@ internal static class AuthEndpoints
                 return Error(r.Status, r.Error!, r.RetryAfter);
             }
             SessionCookie.Write(ctx, r.Token!);
-            return Results.Json(new LoginResponse(r.User!, r.RecoveryLeft), AppJson.Default.LoginResponse);
+            return Results.Json(new LoginResponse(r.User!, r.RecoveryLeft, r.RecoveryUsed), AppJson.Default.LoginResponse);
         });
 
         app.MapPost("/api/auth/logout", async (HttpContext ctx, AuthService auth, Files.SftpPool pool) =>

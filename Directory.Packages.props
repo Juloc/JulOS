@@ -2,6 +2,7 @@
   <!-- Alle Paketversionen stehen hier, Projekte nennen nur den Namen. Laufzeit: Npgsql, Argon2 und SSH.NET (SSH-Terminal). -->
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinning>true</CentralPackageTransitivePinning>
   </PropertyGroup>
   <ItemGroup>
     <PackageVersion Include="Npgsql" Version="10.0.3" />
@@ -10,8 +11,13 @@
     <PackageVersion Include="xunit.v3" Version="4.0.3" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.15" />
     <!-- Anmelde-Zentrale (docs/SIGN-IN.md): Microsofts Token-Bibliothek; der OpenID-Connect-Handler nur in den Tests, als Standard-Client gegen JulOS -->
-    <!-- Passkeys (docs/PASSKEYS.md): Fido2 prueft WebAuthn (MIT); es bringt NSec (libsodium, nativ), CBOR und Fido2.Models mit. Auf 4.x gepinnt, 5.x ist noch Vorschau. -->
-    <PackageVersion Include="Fido2" Version="[4.3.3,5.0)" />
+    <!-- Passkeys (docs/PASSKEYS.md): Fido2 prueft WebAuthn (MIT); es bringt NSec (libsodium, nativ), CBOR und Fido2.Models mit. Genau 4.3.3, 5.x ist noch Vorschau. -->
+    <PackageVersion Include="Fido2" Version="4.3.3" />
+    <!-- die nativen und kryptografischen Teile von Fido2 ebenfalls fest (CentralPackageTransitivePinning): eine neue Version kommt nur durch eine Aenderung hier -->
+    <PackageVersion Include="Fido2.Models" Version="4.3.3" />
+    <PackageVersion Include="NSec.Cryptography" Version="25.4.0" />
+    <PackageVersion Include="libsodium" Version="1.0.20.1" />
+    <PackageVersion Include="System.Formats.Cbor" Version="9.0.24" />
     <PackageVersion Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.19.2" />
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.11" />
   </ItemGroup>

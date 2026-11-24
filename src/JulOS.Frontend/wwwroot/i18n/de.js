@@ -2440,7 +2440,7 @@ export default {
   "err.secBadEntry": "„{entry}“ ist keine gültige Adresse und kein gültiges Netz.",
   "err.secMaxEntries": "Höchstens {n} Einträge.",
   "err.secMinutes": "Die Dauer muss zwischen 0 (immer fragen) und {n} Minuten liegen.",
-  "err.stepUpRequired": "Bitte mit dem Code aus der Authenticator-App bestätigen.",
+  "err.stepUpRequired": "Bitte mit dem Code aus der Authenticator-App oder mit einem Passkey bestätigen.",
   "err.stepUpWrong": "Der Code stimmt nicht. Prüfe den Eintrag in der App und die Uhrzeit des Handys, ein Code gilt nur einmal.",
   "err.secNeedEntry": "Mindestens ein Eintrag. Um die Liste zu leeren, „Auf Vorgabe zurücksetzen“ wählen.",
   "err.secDetailsMissing": "Angaben fehlen.",
@@ -3027,4 +3027,9 @@ export default {
   "err.pk.notfound": "Passkey nicht gefunden.",
   "err.pk.last": "Der letzte Weg zur Anmeldung kann nicht entfernt werden.",
   "err.pk.none": "Es ist noch kein Passkey eingerichtet.",
+  "pk.checkAll": "Du hast {n} Passkeys. Prüfe, ob alle deine sind: ein fremder Passkey bleibt auch nach einer Änderung von Passwort oder Authenticator gültig.",
+  "pk.checkAllRecovery": "Du hast dich mit einem Wiederherstellungscode angemeldet, vielleicht weil ein Gerät weg ist. Du hast {n} Passkeys. Prüfe, ob alle deine sind.",
+  "pk.openList": "Passkey-Liste ansehen",
+  "pk.removeAll": "Alle Passkeys entfernen",
+  "pk.removeAllSure": "Wirklich alle entfernen?",
 };

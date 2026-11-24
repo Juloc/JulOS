@@ -154,6 +154,35 @@ export function initLoginPasskeys({ api, setMsg, onSignedIn }) {
   return { start() { stop(); running = true; if (supported()) autofill(); }, stop };
 }
 
+// ---- Hinweis nach Aenderungen an der Anmeldung ----
+
+/**
+ * Nach Passwortwechsel, neuem Authenticator, benutztem Wiederherstellungscode und "andere Sitzungen beenden": ein Passkey, den jemand mit gestohlenem Cookie angelegt hat,
+ * ueberlebt all das. Gibt es Passkeys, zeigt el (ein Absatz mit Platz fuer einen Knopf) "Du hast N Passkeys. Pruefe, ob alle deine sind." mit einem Knopf zur Liste (open);
+ * sonst bleibt es leer. Nichts wird automatisch geloescht. removeAll: zusaetzlich "Alle Passkeys entfernen" (mit zweitem Tipp zur Bestaetigung), fuer den Fall eines benutzten Wiederherstellungscodes.
+ */
+export async function showPasskeyHint(el, api, { open, removeAll = false, done } = {}) {
+  el.replaceChildren(); el.hidden = true;
+  let r;
+  try { r = await api('/api/auth/passkeys'); } catch { return 0; }
+  const n = r.passkeys.length;
+  if (!n) return 0;
+  const button = (text, fn) => { const b = el.appendChild(el.ownerDocument.createElement('button')); b.type = 'button'; b.className = 'ghost pk-act'; b.textContent = text; b.addEventListener('click', fn); return b; };
+  el.append(el.ownerDocument.createTextNode((removeAll ? t('pk.checkAllRecovery', { n }) : t('pk.checkAll', { n })) + ' '));
+  if (open) button(t('pk.openList'), open);
+  if (removeAll) {
+    let armed = 0;
+    const b = button(t('pk.removeAll'), async () => {
+      if (!armed) { b.textContent = t('pk.removeAllSure'); b.classList.add('danger'); armed = setTimeout(() => { armed = 0; b.textContent = t('pk.removeAll'); b.classList.remove('danger'); }, 4000); return; }
+      clearTimeout(armed); armed = 0; b.disabled = true;
+      try { for (const p of r.passkeys) await api('/api/auth/passkeys/' + p.id, { method: 'DELETE' }); } catch { /* der Rest bleibt in der Liste */ }
+      b.disabled = false; if (done) done();
+    });
+  }
+  el.hidden = false;
+  return n;
+}
+
 // ---- Konto: Liste ----
 
 const fmt = (iso) => new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' });

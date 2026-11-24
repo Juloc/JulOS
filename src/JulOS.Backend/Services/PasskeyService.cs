@@ -16,7 +16,7 @@ public sealed record PasskeyResult(bool Ok, int Status, string? Error = null, in
 /// Fehler der Anmeldung verraten nie, ob es die Person oder den Passkey gibt.
 /// </summary>
 public sealed class PasskeyService(IPasskeys keys, PasskeyStore store, UserStore users, SessionStore sessions, AuthService auth, LoginLimiter limiter, PasskeyThrottle throttle,
-    OidcIssuer issuer, TimeProvider clock, ILogger<PasskeyService> log)
+    OidcIssuer issuer, PushService push, TimeProvider clock, ILogger<PasskeyService> log)
 {
     private const string LoginFailed = "Anmeldung mit Passkey fehlgeschlagen.";
     private const string RegisterFailed = "Der Passkey konnte nicht eingerichtet werden.";
@@ -40,6 +40,16 @@ public sealed class PasskeyService(IPasskeys keys, PasskeyStore store, UserStore
     {
         var wait = lockKeys.Max(limiter.Wait);
         return wait > TimeSpan.Zero ? Refused(429, TooMany, (int)Math.Ceiling(wait.TotalSeconds)) : null;
+    }
+
+    /// <summary>
+    /// Sagt der Person per Push (falls eingeschaltet), dass ein Passkey dazukam oder wegfiel: ein Passkey, den jemand mit gestohlenem Cookie im offenen Freigabefenster anlegt, ueberlebt
+    /// Passwortwechsel und "alle Sitzungen beenden", und soll nicht unbemerkt bleiben. Nur der Name steht in der Nachricht; ein Fehler hier blockiert nichts (der Verlauf hat den Eintrag schon).
+    /// </summary>
+    private async Task NotifyAsync(Guid userId, string name, string rule)
+    {
+        try { await push.SendAsync(userId, PushPayload.Build([new PushItem(name, rule, "alert", null)]), CancellationToken.None); }
+        catch (Exception e) { log.LogWarning(e, "Meldung zum Passkey konnte nicht gesendet werden"); }
     }
 
     // ---- Liste, Umbenennen, Loeschen ----
@@ -68,6 +78,7 @@ public sealed class PasskeyService(IPasskeys keys, PasskeyStore store, UserStore
         var ended = await sessions.DeleteByStrengthAsync(who.UserId, PasskeyRules.Passkey, who.Id, ct);
         await auth.AuditAsync(who.UserName, "passkey.deleted", $"{name}; {ended} Sitzung(en) beendet");
         log.LogWarning("Passkey entfernt: {User}, {Name}", who.UserName, name);
+        await NotifyAsync(who.UserId, name, "passkey_removed");
         return new(true, 204);
     }
 
@@ -79,7 +90,7 @@ public sealed class PasskeyService(IPasskeys keys, PasskeyStore store, UserStore
         var existing = await store.CredentialIdsAsync(who.UserId, ct);
         if (existing.Count >= PasskeyRules.MaxPerUser) return Refused(409, $"Höchstens {PasskeyRules.MaxPerUser} Passkeys.");
         var (challenge, options) = keys.RegistrationOptions(site!, PasskeyRules.UserHandle(who.UserId), who.UserName, existing);
-        if (!await store.IssueChallengeAsync(PasskeyRules.ChallengeHash(challenge), "register", who.UserId, who.Id, clock.GetUtcNow(), ct)) return Refused(429, TooMany, 30);
+        await store.IssueChallengeAsync(PasskeyRules.ChallengeHash(challenge), "register", who.UserId, who.Id, null, clock.GetUtcNow(), ct);
         return new(true, 200, Json: options);
     }
 
@@ -111,6 +122,7 @@ public sealed class PasskeyService(IPasskeys keys, PasskeyStore store, UserStore
         limiter.Succeed("acct:" + who.UserId);
         await auth.AuditAsync(who.UserName, "passkey.added", clean);
         log.LogWarning("Passkey eingerichtet: {User}, {Name}", who.UserName, clean);
+        await NotifyAsync(who.UserId, clean, "passkey_added");
         return new(true, 200, Item: item);
     }
 
@@ -121,7 +133,7 @@ public sealed class PasskeyService(IPasskeys keys, PasskeyStore store, UserStore
         if (Gate(ip, out var site) is { } refused) return refused;
         if (Locked("ip:" + ip) is { } locked) return locked;
         var (challenge, options) = keys.AssertionOptions(site!, []);     // leere Liste: jeder Passkey dieser Adresse darf antworten (kein Benutzername)
-        if (!await store.IssueChallengeAsync(PasskeyRules.ChallengeHash(challenge), "login", null, null, clock.GetUtcNow(), ct)) return Refused(429, TooMany, 30);
+        await store.IssueChallengeAsync(PasskeyRules.ChallengeHash(challenge), "login", null, null, ip, clock.GetUtcNow(), ct);
         return new(true, 200, Json: options);
     }
 
@@ -180,7 +192,7 @@ public sealed class PasskeyService(IPasskeys keys, PasskeyStore store, UserStore
         var own = await store.CredentialIdsAsync(who.UserId, ct);
         if (own.Count == 0) return Refused(400, "Es ist noch kein Passkey eingerichtet.");
         var (challenge, options) = keys.AssertionOptions(site!, own);
-        if (!await store.IssueChallengeAsync(PasskeyRules.ChallengeHash(challenge), "step_up", who.UserId, who.Id, clock.GetUtcNow(), ct)) return Refused(429, TooMany, 30);
+        await store.IssueChallengeAsync(PasskeyRules.ChallengeHash(challenge), "step_up", who.UserId, who.Id, null, clock.GetUtcNow(), ct);
         return new(true, 200, Json: options);
     }
 

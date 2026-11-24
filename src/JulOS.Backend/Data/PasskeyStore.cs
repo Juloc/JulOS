@@ -90,19 +90,24 @@ public sealed class PasskeyStore(NpgsqlDataSource db)
 
     // ---- Herausforderungen ----
 
-    /// <summary>Legt eine Herausforderung ab (nur ihr Hash). Abgelaufene werden dabei entfernt. false: zu viele offene Anmeldungen.</summary>
-    public async Task<bool> IssueChallengeAsync(byte[] hash, string purpose, Guid? userId, Guid? sessionId, DateTimeOffset now, CancellationToken ct = default)
+    /// <summary>
+    /// Legt eine Herausforderung ab (nur ihr Hash). Abgelaufene werden dabei entfernt. Bei "login" verdraengt eine neue die aeltesten, wenn die Grenze je Adresse
+    /// (<paramref name="ip"/>) oder insgesamt erreicht ist, sie wird nie abgelehnt.
+    /// </summary>
+    public async Task IssueChallengeAsync(byte[] hash, string purpose, Guid? userId, Guid? sessionId, string? ip, DateTimeOffset now, CancellationToken ct = default)
     {
         await using var conn = await db.OpenConnectionAsync(ct);
         await using (var purge = conn.Cmd(null, "delete from passkey_challenges where expires_at < $1", now)) await purge.ExecuteNonQueryAsync(ct);
         if (purpose == "login")
         {
-            await using var open = conn.Cmd(null, "select count(*) from passkey_challenges where purpose = 'login'");
-            if ((long)(await open.ExecuteScalarAsync(ct))! >= PasskeyRules.MaxOpenLoginChallenges) return false;
+            // die neueste behalten: Platz fuer die neue schaffen (Grenze minus eins bleibt stehen)
+            await using (var own = conn.Cmd(null, "delete from passkey_challenges where hash in (select hash from passkey_challenges where purpose = 'login' and ip is not distinct from $1 order by expires_at desc, hash offset $2)", ip, PasskeyRules.MaxOpenLoginChallengesPerAddress - 1))
+                await own.ExecuteNonQueryAsync(ct);
+            await using (var all = conn.Cmd(null, "delete from passkey_challenges where hash in (select hash from passkey_challenges where purpose = 'login' order by expires_at desc, hash offset $1)", PasskeyRules.MaxOpenLoginChallenges - 1))
+                await all.ExecuteNonQueryAsync(ct);
         }
-        await using var ins = conn.Cmd(null, "insert into passkey_challenges (hash, purpose, user_id, session_id, expires_at) values ($1, $2, $3, $4, $5)", hash, purpose, userId, sessionId, now + PasskeyRules.ChallengeLifetime);
+        await using var ins = conn.Cmd(null, "insert into passkey_challenges (hash, purpose, user_id, session_id, ip, expires_at) values ($1, $2, $3, $4, $5, $6)", hash, purpose, userId, sessionId, ip, now + PasskeyRules.ChallengeLifetime);
         await ins.ExecuteNonQueryAsync(ct);
-        return true;
     }
 
     /// <summary>Verbraucht eine Herausforderung. null, wenn es sie nicht (mehr) gibt, sie schon benutzt oder abgelaufen ist; benutzt oder abgelaufen ist sie danach in jedem Fall weg.</summary>

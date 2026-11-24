@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 
 namespace JulOS.Backend.Services;
 
-public sealed record AuthResult(bool Ok, int Status, string? Error = null, int RetryAfter = 0, string? User = null, string? Token = null, int RecoveryLeft = 0);
+public sealed record AuthResult(bool Ok, int Status, string? Error = null, int RetryAfter = 0, string? User = null, string? Token = null, int RecoveryLeft = 0, bool RecoveryUsed = false);
 
 public sealed record SetupBegin(string Secret, string Uri, string[] Recovery);
 
@@ -117,7 +117,7 @@ public sealed class AuthService(UserStore users, SessionStore sessions, Password
         limiter.Succeed("user:" + user.Name.ToLowerInvariant());
         var token = await sessions.CreateAsync(user.Id, ip, userAgent, ct, LoginGrant());
         log.LogInformation("Angemeldet: {User} von {Ip}{Recovery}", user.Name, ip, recoveryHash is not null ? " (Wiederherstellungscode)" : "");
-        return new(true, 200, User: user.Name, Token: token, RecoveryLeft: await users.RecoveryLeftAsync(user.Id, ct));
+        return new(true, 200, User: user.Name, Token: token, RecoveryLeft: await users.RecoveryLeftAsync(user.Id, ct), RecoveryUsed: recoveryHash is not null);
     }
 
     // ---- Zweiter Faktor fuer Aktionen (Step-up, docs/SECURITY-REVIEW.md F-04) ----

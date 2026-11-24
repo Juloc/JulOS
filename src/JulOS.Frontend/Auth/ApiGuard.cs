@@ -55,7 +55,7 @@ internal sealed class ApiGuard(RequestDelegate next, AuthService auth)
         // Aktionen, die Hosts, Dateien oder die Sicherheit aendern, brauchen eine frische Freigabe mit dem zweiten Faktor (Tabelle in StepUpPolicy, F-04)
         if (StepUpPolicy.Requires(ctx.Request.Method, ctx.Request.Path) && !await auth.StepUpFreshAsync(identity, ctx.RequestAborted, StepUpPolicy.Always(ctx.Request.Method, ctx.Request.Path)))
         {
-            await Reject(ctx, 403, "Bitte mit dem Code aus der Authenticator-App bestätigen.", StepUpPolicy.Code);
+            await Reject(ctx, 403, "Bitte mit dem Code aus der Authenticator-App oder mit einem Passkey bestätigen.", StepUpPolicy.Code);
             return;
         }
         await next(ctx);

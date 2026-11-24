@@ -14,7 +14,7 @@ import { launchTarget, validWorkDir, validCustom, programOf } from './terminal-p
 import { initAccount } from './account.js';
 import { initSecurity } from './security.js';
 import { initStepUp, withStepUp } from './stepup.js';
-import { initLoginPasskeys, confirmWithPasskey } from './passkeys.js';
+import { initLoginPasskeys, confirmWithPasskey, showPasskeyHint } from './passkeys.js';
 import { initNetTools } from './nettools.js';
 import { initAlerts, parseHostLink } from './alerts.js';
 import { qrSvg } from './qr.js';
@@ -156,7 +156,7 @@ function showLogin(message = '') {
   setTimeout(() => ($('#loginUser').value ? $('#loginPw') : $('#loginUser')).focus(), 50);
 }
 
-const signedIn = (r) => showHome(r.user, r.recoveryLeft <= 3 ? tp('shell.recoveryLeft', r.recoveryLeft) : '');
+const signedIn = (r) => { showHome(r.user, r.recoveryLeft <= 3 ? tp('shell.recoveryLeft', r.recoveryLeft) : ''); if (r.recoveryUsed) openAccount({ after: 'recovery' }); };
 // Passkey: Knopf und Autofill auf der Anmeldeseite (passkeys.js); showLogin startet es, Absenden mit Passwort und jede Anmeldung beenden es
 const loginPasskeys = initLoginPasskeys({ api: rawApi, setMsg, onSignedIn: signedIn });
 
@@ -673,7 +673,7 @@ async function renderDevices() {
 }
 
 $('#logoutOthers').addEventListener('click', async () => {
-  try { const r = await api('/api/auth/logout-others', { method: 'POST' }); setMsg($('#devicesMsg'), t('shell.sessionsEnded', { n: r.ended }), true); await renderDevices(); }
+  try { const r = await api('/api/auth/logout-others', { method: 'POST' }); setMsg($('#devicesMsg'), t('shell.sessionsEnded', { n: r.ended }), true); await renderDevices(); showPasskeyHint($('#devicesPkHint'), api, { open: () => { $('#devicesDlg').close(); openAccount(); } }); }
   catch (e) { setMsg($('#devicesMsg'), e.message); }
 });
 

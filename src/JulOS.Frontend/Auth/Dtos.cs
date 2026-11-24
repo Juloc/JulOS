@@ -9,7 +9,7 @@ internal sealed record SetupBeginRequest(string? Code, string? User, string? Pas
 internal sealed record SetupBeginResponse(string Secret, string Uri, string[] Recovery);
 internal sealed record SetupFinishRequest(string? Code, string? User, string? Totp);
 internal sealed record LoginRequest(string? User, string? Password, string? Code);
-internal sealed record LoginResponse(string User, int RecoveryLeft);
+internal sealed record LoginResponse(string User, int RecoveryLeft, bool RecoveryUsed = false);
 internal sealed record PasswordChangeRequest(string? Current, string? Next);
 internal sealed record TotpBeginRequest(string? Current);
 internal sealed record TotpBeginResponse(string Secret, string Uri);

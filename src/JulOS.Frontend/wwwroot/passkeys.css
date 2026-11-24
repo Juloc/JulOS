@@ -17,3 +17,5 @@
 #pkNote:empty { display: none; }
 #suPasskey { margin-top: 6px; }
 @media (max-width: 480px) { #pkList .pk-row { flex-direction: column; align-items: stretch; } #pkList .pk-acts { justify-content: flex-end; } }
+.pk-hint { display: block; margin: 8px 0; padding: 8px 12px; border-radius: 12px; background: var(--md-surface-high, rgba(128,128,128,.15)); }
+.pk-hint .pk-act { margin: 4px 6px 0 0; min-height: 36px; padding: 0 12px; }

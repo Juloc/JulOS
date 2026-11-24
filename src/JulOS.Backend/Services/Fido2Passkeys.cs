@@ -23,9 +23,11 @@ public sealed class Fido2Passkeys : IPasskeys
         TimestampDriftTolerance = 300_000,
     });
 
-    /// <summary>Die Verfahren, die wir beim Registrieren anbieten und beim Pruefen zulassen: die Vorgabe der Bibliothek (ES256, RS256 fuer Windows Hello, EdDSA ...), an einer Stelle gelesen.</summary>
-    private static List<PubKeyCredParam> AcceptedAlgorithms(PasskeySite site) =>
-        [.. Lib(site).RequestNewCredential(new RequestNewCredentialParams { User = new Fido2User { Id = [0], Name = "-", DisplayName = "-" }, ExcludeCredentials = [] }).PubKeyCredParams];
+    /// <summary>
+    /// Die Verfahren, die wir beim Registrieren anbieten und beim Pruefen zulassen, ausdruecklich und nicht die Vorgabe der Bibliothek (die auch ES384/512, PS* und RS384/512 kennt):
+    /// ES256 (die meisten Geraete), EdDSA und RS256 (Windows Hello mit TPM). Kein RS1, keine schwachen Hashes. Die Reihenfolge ist die Vorliebe.
+    /// </summary>
+    private static readonly PubKeyCredParam[] Algorithms = [PubKeyCredParam.ES256, PubKeyCredParam.Ed25519, PubKeyCredParam.RS256];
 
     public (byte[] Challenge, string OptionsJson) RegistrationOptions(PasskeySite site, byte[] userHandle, string userName, IReadOnlyList<byte[]> exclude)
     {
@@ -33,6 +35,7 @@ public sealed class Fido2Passkeys : IPasskeys
         {
             User = new Fido2User { Id = userHandle, Name = userName, DisplayName = userName },
             ExcludeCredentials = [.. exclude.Select(id => new PublicKeyCredentialDescriptor(id))],
+            PubKeyCredParams = [.. Algorithms],
             AuthenticatorSelection = new AuthenticatorSelection { ResidentKey = ResidentKeyRequirement.Required, UserVerification = UserVerificationRequirement.Required },
             AttestationPreference = AttestationConveyancePreference.None,
         });
@@ -60,7 +63,7 @@ public sealed class Fido2Passkeys : IPasskeys
                 Challenge = challenge,
                 Rp = new PublicKeyCredentialRpEntity(site.RpId, "JulOS", null),
                 User = new Fido2User { Id = userHandle, Name = userName, DisplayName = userName },
-                PubKeyCredParams = AcceptedAlgorithms(site),
+                PubKeyCredParams = [.. Algorithms],
                 AuthenticatorSelection = new AuthenticatorSelection { ResidentKey = ResidentKeyRequirement.Required, UserVerification = UserVerificationRequirement.Required },
                 Attestation = AttestationConveyancePreference.None,
                 ExcludeCredentials = [],

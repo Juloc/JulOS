@@ -38,6 +38,13 @@ A passkey is bound to the **RP id**, the host name of JulOS. Both RP id and orig
 
 Table `passkeys` (migration `027_passkeys.sql`): credential id, **public key**, signature counter, name, AAGUID (the kind of authenticator, to recognise it), the backup flags (*may be synced*, *is synced now*), created, last used. **Nothing else**: no attestation statement, no biometric data (it never leaves the device), no user handle (it is derived: the 16 bytes of the account id; it carries no name). `sessions.strength` (`password` or `passkey`) says how a session began. Deleting a person deletes their passkeys.
 
+## A passkey you did not add
+
+A passkey created with a stolen cookie inside an open step-up window would survive a password change, a recovery and "end all sessions". So it must not stay unnoticed:
+
+- Adding and removing a passkey writes the history (`passkey.added`, `passkey.deleted`) **and sends a push** (if the person switched push on): the name of the passkey as title, "Neuer Passkey eingerichtet" / "Passkey entfernt" as text (`PasskeyService.NotifyAsync`, texts in `sw-push.js`). A failed push never blocks anything.
+- After **changing the password**, **setting up a new authenticator**, **ending the other sessions** and after **signing in with a recovery code**, the page shows, when passkeys exist: "Du hast N Passkeys. Prüfe, ob alle deine sind." with a button to the list. After a recovery code it also offers **Alle Passkeys entfernen** (second tap to confirm). **Nothing is deleted automatically.**
+
 ## Losing a device
 
 1. **Another passkey** on another device or in the same credential manager.
@@ -62,11 +69,19 @@ A passkey that is synced by a platform account (iCloud Keychain, Google Password
 | Stolen device | Remove the passkey: its sessions end |
 | Library bug | One library (Fido2 4.x, MIT) behind our interface `IPasskeys`; JulOS adds the checks above and writes no crypto itself |
 
+## Known limits (accepted)
+
+- Failed passkey sign-ins count into the same `ip:` lockout as wrong passwords (one budget per address, by design).
+- The step-up with a passkey also counts failures on the account key `acct:`, like the code route does.
+- An unknown credential id is answered a little faster than a known one with a bad signature (no password hash is computed either way); the answer text is the same.
+- Open sign-in challenges: at most 10 per address and 2000 in total; a new one **pushes out the oldest** of its address (or of the table) instead of being refused, so a flood cannot lock others out of the passkey sign-in.
+- `register/finish` has no fresh-proof check of its own: its challenge only exists because `register/begin` passed the check, and it belongs to that session. (A "once" window, minutes 0, is used up by `begin`.)
+
 ## Not built, on purpose
 
 - **No attestation.** JulOS accepts any authenticator that does user verification; it does not ask which make it is (privacy, and a home server has no reason to pick). The AAGUID is kept for the list only.
 - **No passkey-only mode and no duty to use passkeys.** Password with authenticator code stays a full way and cannot be removed; so removing the last passkey is always allowed, and the rule "the last way to sign in cannot be removed" (`PasskeyRules.CanRemove`) only guards a future change. A switch to refuse passwords is an idea, not built.
-- **No notice by push yet.** The push system (`docs/PUSH.md`) only knows host rules (updates, disk, service, offline, restart); a notice about a new passkey or a sign-in from a new device would need a new kind of message. Until then each one is an **entry in the security history** (`passkey.added`, `passkey.deleted`, `passkey.login` with the detail *neues Gerät* when no session of that person has the same browser string, `passkey.clone_suspected`, `passkey.register_failed`, `step_up.failed`).
+- **No push for a sign-in from a new device.** It is an entry in the security history only (`passkey.login` with the detail *neues Gerät* when no session of that person has the same browser string). Adding and removing a passkey **are** announced, see below.
 - **No remember-which-passkey per session** (besides the strength). Removing any passkey ends all other passkey sessions, not only the ones made with that key.
 - No per-person switch to turn passkeys off, no hardware-key-only mode, no `largeBlob`/PRF extensions.
 
@@ -89,13 +104,19 @@ A session that began with a passkey says `"amr": ["hwk", "user"]` in the ID toke
 
 Both open routes are named in `RouteSecurityTests` with their reasons. Bodies are capped at 16 KiB.
 
+## Algorithms
+
+Offered and accepted: **ES256, EdDSA (Ed25519) and RS256** (Windows Hello with a TPM), in that order. Not the library default (which also has ES384/512, PS* and RS384/512) and never RS1.
+
 ## Library and native part
 
-**Fido2 4.3.x** (MIT, pinned `[4.3.3,5.0)`; 5.x is still a preview) with `Fido2.Models`, `Microsoft.IdentityModel.JsonWebTokens` (already used), `Microsoft.Extensions.Http`, `System.Formats.Cbor` and **NSec.Cryptography** (MIT), which loads **libsodium** (ISC, from the NuGet package `libsodium`, which carries it for linux x64/arm64, glibc and musl). `Fido2Passkeys.cs` is the only file that knows the library; `IPasskeys` is the interface. .NET itself has passkeys only inside ASP.NET Core Identity, which JulOS does not use.
+**Fido2 4.3.3** (MIT, exactly this version in `Directory.Packages.props`, with its parts `Fido2.Models`, `NSec.Cryptography`, `libsodium` and `System.Formats.Cbor` pinned too through `CentralPackageTransitivePinning`; 5.x is still a preview) with `Fido2.Models`, `Microsoft.IdentityModel.JsonWebTokens` (already used), `Microsoft.Extensions.Http`, `System.Formats.Cbor` and **NSec.Cryptography** (MIT), which loads **libsodium** (ISC, from the NuGet package `libsodium`, which carries it for linux x64/arm64, glibc and musl). `Fido2Passkeys.cs` is the only file that knows the library; `IPasskeys` is the interface. .NET itself has passkeys only inside ASP.NET Core Identity, which JulOS does not use.
 
 ## Tests
 
 `tests/JulOS.Backend.Tests/PasskeyTests.cs` runs the whole flow against the real server and database with a **software authenticator** (`PasskeyKit.cs`, ES256: it builds `clientDataJSON` and `authenticatorData` itself and signs, without the library under test): register and sign in; wrong origin, wrong RP hash, missing user verification, missing presence, wrong signature, unknown credential, foreign user handle, missing user handle, foreign challenge (all the same answer, no session); replayed and expired challenge; challenge stored only as hash; counter 0 allowed, counter backwards rejected and audited; credential of another person; duplicate registration; registration without fresh proof; challenge of another session; 20 limit; rename and delete (fresh proof, other passkey sessions end); step-up with a passkey (wrong ones leave no window); rate limit; address lockout without account lockout; garbage bodies; site derivation; `amr`. `tests/frontend/passkeys.test.mjs` covers the browser logic (Base64url, converting the options, shaping the answers).
+
+**Native library in the image:** the image built from the `Dockerfile` (Ubuntu 24.04, glibc) was started against the dev PostgreSQL; an Ed25519 passkey registered and signed in there with status 200, which verifies with NSec/libsodium (`/app/runtimes/linux-x64/native/libsodium.so`), so the library loads without extra packages. The restore in the Docker build works with the pinning. The published folder carries the natives of every platform (about 20 MB, unused); pruning is possible later.
 
 **Seen running:** in the dev stack (the image built from the working folder, `JULOS_PUBLIC_URL=http://localhost:<port>`) a passkey with the EdDSA algorithm registered and signed in over HTTP, which loads libsodium through NSec in the runtime image (the Ubuntu-based `aspnet:10.0`: nothing has to be installed, the NuGet package carries `libsodium.so` for linux x64 and arm64). In the browser pane a virtual authenticator written in page JavaScript (WebCrypto ES256, replacing `navigator.credentials`; the pane has no real one) went through the real page: adding a passkey in Konto, the step-up sheet with *Stattdessen mit Passkey bestätigen* before removing one, and *Mit Passkey anmelden* on the login page; phone and desktop sizes, light and dark.
 

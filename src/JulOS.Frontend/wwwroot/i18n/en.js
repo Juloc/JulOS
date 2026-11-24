@@ -2440,7 +2440,7 @@ export default {
   "err.secBadEntry": "“{entry}” is not a valid address or network.",
   "err.secMaxEntries": "At most {n} entries.",
   "err.secMinutes": "The duration must be between 0 (always ask) and {n} minutes.",
-  "err.stepUpRequired": "Please confirm with the code from the authenticator app.",
+  "err.stepUpRequired": "Please confirm with the code from the authenticator app or with a passkey.",
   "err.stepUpWrong": "The code is wrong. Check the entry in the app and the phone's clock; a code works only once.",
   "err.secNeedEntry": "At least one entry. To empty the list, choose “Reset to default”.",
   "err.secDetailsMissing": "Details are missing.",
@@ -3027,4 +3027,9 @@ export default {
   "err.pk.notfound": "Passkey not found.",
   "err.pk.last": "The last way to sign in cannot be removed.",
   "err.pk.none": "No passkey has been set up yet.",
+  "pk.checkAll": "You have {n} passkeys. Check that all of them are yours: a foreign passkey stays valid even after you change the password or authenticator.",
+  "pk.checkAllRecovery": "You signed in with a recovery code, maybe because a device is gone. You have {n} passkeys. Check that all of them are yours.",
+  "pk.openList": "Show passkey list",
+  "pk.removeAll": "Remove all passkeys",
+  "pk.removeAllSure": "Really remove all?",
 };

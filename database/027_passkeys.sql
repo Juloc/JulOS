@@ -3,7 +3,8 @@
 --                       (der private bleibt im Geraet), Zaehler, Name, AAGUID (Art des Authenticators), Backup-Merker (synchronisierbar, gesichert) und Zeiten.
 --                       Keine Attestation, kein User-Handle (er wird aus users.id abgeleitet), nichts Biometrisches.
 --   passkey_challenges  offene Herausforderungen. Gespeichert wird nur der SHA-256 der 32 Byte, nie die Herausforderung selbst; sie gilt 5 Minuten und wird beim
---                       Pruefen geloescht (delete ... returning), gilt also hoechstens einmal. user_id und session_id binden Registrieren und Freigabe an die Sitzung, die sie angefordert hat.
+--                       Pruefen geloescht (delete ... returning), gilt also hoechstens einmal. user_id und session_id binden Registrieren und Freigabe an die Sitzung, die sie angefordert hat;
+--                       ip (nur bei 'login', vor der Sitzung): je Adresse gibt es nur wenige offene, neue verdraengen die aeltesten dieser Adresse.
 --   sessions.strength   womit sich die Sitzung angemeldet hat: 'password' (Passwort mit Code oder Wiederherstellungscode) oder 'passkey'. Daraus entsteht amr im ID-Token der Anmelde-Zentrale.
 -- Nichts Vorhandenes wird umgeschrieben: alle bisherigen Sitzungen sind 'password'.
 create table passkeys (
@@ -26,6 +27,7 @@ create table passkey_challenges (
   purpose     text not null check (purpose in ('register', 'login', 'step_up')),
   user_id     uuid references users (id) on delete cascade,
   session_id  uuid,
+  ip          text,
   expires_at  timestamptz not null
 );
 create index passkey_challenges_expires_idx on passkey_challenges (expires_at);

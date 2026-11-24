@@ -334,6 +334,7 @@
       <h2 data-i18n="app.devices">Geräte und Sitzungen</h2>
       <div id="devicesList" class="devlist"></div>
       <p id="devicesMsg" class="msg" role="alert"></p>
+      <p id="devicesPkHint" class="msg warn pk-hint" role="alert" hidden></p>
       <div class="row">
         <button id="logoutOthers" type="button" class="danger" data-i18n="app.signOutOthers">Alle anderen abmelden</button>
         <button class="ghost close" data-act="close" type="button" data-i18n="common.close">Schließen</button>
@@ -371,6 +372,7 @@
     <dialog id="accountDlg">
       <h2 data-i18n="app.account">Konto</h2>
       <div id="acctMain">
+        <p id="pkHint" class="msg warn pk-hint" role="alert" hidden></p>
         <div id="pkSection">
           <h3 data-i18n="pk.title">Passkeys</h3>
           <p class="hint" data-i18n="pk.hint">Mit einem Passkey meldest du dich ohne Passwort und Code an: Fingerabdruck, Gesicht oder Geräte-PIN genügen. Passwort mit Authenticator-App bleibt als zweiter Weg.</p>

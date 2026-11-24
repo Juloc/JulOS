@@ -7,7 +7,7 @@ import { t, tk, getLang } from './i18n.js';
 
 /** Fester Text des Servers -> Schluessel (Quellen: Error(...)-Antworten in src/JulOS.Frontend, Regelpruefungen in src/JulOS.Backend/Logic, Anmeldung, SSH- und Bildstrom-Meldungen). */
 export const SERVER_TEXTS = {
-  "Bitte mit dem Code aus der Authenticator-App bestätigen.": "err.stepUpRequired",
+  "Bitte mit dem Code aus der Authenticator-App oder mit einem Passkey bestätigen.": "err.stepUpRequired",
   "Der Code stimmt nicht. Prüfe den Eintrag in der App und die Uhrzeit des Handys, ein Code gilt nur einmal.": "err.stepUpWrong",
   "Mindestens ein Eintrag. Um die Liste zu leeren, „Auf Vorgabe zurücksetzen“ wählen.": "err.secNeedEntry",
   "Angaben fehlen.": "err.secDetailsMissing",

@@ -196,7 +196,7 @@ class SelfUpdateTests(unittest.TestCase):
             self.assertNotIn("permissions", inspect.getsource(fn))
 
     def test_the_shipped_version_is_the_one_the_server_expects(self):
-        self.assertEqual(agent.version_tuple(agent.AGENT_VERSION), (0, 9, 0))
+        self.assertEqual(agent.version_tuple(agent.AGENT_VERSION), (0, 9, 1))
         self.assertTrue(agent.version_tuple(agent.AGENT_VERSION) > agent.version_tuple("0.6.0"))
 
 

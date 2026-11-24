@@ -307,7 +307,7 @@ class AgentFilesRootTests(unittest.TestCase):
         self.assertEqual(agent.host_api("POST", "/v1/host/files/stat", {"path": "/x"}), (503, {"error": "helper_unavailable"}))
 
     def test_the_version_and_the_word_are_known(self):
-        self.assertEqual(agent.AGENT_VERSION, "0.9.0")
+        self.assertEqual(agent.AGENT_VERSION, "0.9.1")
         self.assertEqual(agent.parse_permissions("updates\nfiles-root  # Root\nfiles\nFILES-ROOT\n"), {"updates", "files-root"})
 
 

@@ -16,7 +16,8 @@ export function initAccount({ api, setMsg }) {
   const dlg = $('#accountDlg');
   const refreshPasskeys = initPasskeyList({ api, setMsg });
   const hintEl = $('#pkHint'), toList = () => $('#pkSection').scrollIntoView({ block: 'start' });
-  const hint = (opts = {}) => showPasskeyHint(hintEl, api, { open: toList, ...opts, done: () => { hint(); refreshPasskeys(); } });
+  const hint = (opts = {}) => showPasskeyHint(hintEl, api, { open: toList, ...opts, done: () => { hint(); refreshPasskeys(); } })
+    .then((n) => { if (n) hintEl.scrollIntoView({ block: 'start' }); });      // der Hinweis steht oben, die Person steht nach dem Absenden unten
   const steps = { main: $('#acctMain'), code: $('#totpFinishForm'), done: $('#totpDone') };
   const show = (name) => { for (const [k, el] of Object.entries(steps)) el.hidden = k !== name; };
   const busy = (form, on) => { for (const b of form.querySelectorAll('button[type=submit]')) b.disabled = on; };

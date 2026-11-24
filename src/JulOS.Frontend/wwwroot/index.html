@@ -334,7 +334,7 @@
       <h2 data-i18n="app.devices">Geräte und Sitzungen</h2>
       <div id="devicesList" class="devlist"></div>
       <p id="devicesMsg" class="msg" role="alert"></p>
-      <p id="devicesPkHint" class="msg warn pk-hint" role="alert" hidden></p>
+      <div id="devicesPkHint" class="pk-hint" role="status" hidden></div>
       <div class="row">
         <button id="logoutOthers" type="button" class="danger" data-i18n="app.signOutOthers">Alle anderen abmelden</button>
         <button class="ghost close" data-act="close" type="button" data-i18n="common.close">Schließen</button>
@@ -352,7 +352,7 @@
     <dialog id="stepUpDlg">
       <h2 data-i18n="su.title">Mit dem zweiten Faktor bestätigen</h2>
       <form id="suForm" autocomplete="off">
-        <p class="hint" data-i18n="su.text">Diese Aktion ändert etwas auf einem Host, an Dateien oder an der Sicherheit. Gib den aktuellen Code aus deiner Authenticator-App ein. Danach gilt die Freigabe für die eingestellte Zeit.</p>
+        <p class="hint" data-i18n="su.text">Diese Aktion ändert etwas auf einem Host, an Dateien oder an der Sicherheit. Gib den aktuellen Code aus deiner Authenticator-App ein oder bestätige mit einem Passkey. Danach gilt die Freigabe für die eingestellte Zeit.</p>
         <label data-i18n="app.codeFromApp">Code aus der App <input id="suCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="24" required></label>
         <p class="hint" data-i18n="su.hint">Jeder Code gilt nur einmal. Wurde er eben schon benutzt, warte auf den nächsten.</p>
         <div class="dlg-btns"><button type="submit" class="primary" data-i18n="su.confirm">Bestätigen</button><button id="suCancel" type="button" class="ghost" data-i18n="common.cancel">Abbrechen</button></div>
@@ -372,7 +372,7 @@
     <dialog id="accountDlg">
       <h2 data-i18n="app.account">Konto</h2>
       <div id="acctMain">
-        <p id="pkHint" class="msg warn pk-hint" role="alert" hidden></p>
+        <div id="pkHint" class="pk-hint" role="status" hidden></div>
         <div id="pkSection">
           <h3 data-i18n="pk.title">Passkeys</h3>
           <p class="hint" data-i18n="pk.hint">Mit einem Passkey meldest du dich ohne Passwort und Code an: Fingerabdruck, Gesicht oder Geräte-PIN genügen. Passwort mit Authenticator-App bleibt als zweiter Weg.</p>

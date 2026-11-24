@@ -35,6 +35,7 @@ import { StreamAudio } from './stream-audio.js';
 import { StreamPerf, normalizeQuality, qualityOf } from './perf.js';
 import { codecMask, probeCodecs, codecStringOf, decoderConfig, CODEC_H264, CODEC_HEVC } from './codecs.js';
 import { t } from './i18n.js';
+import { flushesMove, MoveCoalescer } from './touch-pointer.js';
 import { serverMsg } from './i18n-errors.js';
 import { LinkHealth, PROBE_MS } from './link-health.js';
 
@@ -204,6 +205,7 @@ export class StreamClient {
     this.state = 0;
     this.socket = null; this.decoder = null; this.codec = '';
     this.connected = false; this.closing = false;
+    this.moves = new MoveCoalescer(); this.moveTimer = 0;
     this.last = { x: -1, y: -1, left: false, middle: false, right: false, back: false, forward: false, up: false, down: false };
     this.focusLost = (e) => { if (e.type === 'blur' || document.hidden) this.releaseAll(); };
     this.held = new Set();      // gedrueckte Tasten (Scancode und Erweiterung), damit sie beim Fokusverlust losgelassen werden koennen
@@ -550,13 +552,18 @@ export class StreamClient {
   sendSize(w, h) { const b = new DataView(new ArrayBuffer(5)); b.setUint8(0, OUT.resize); b.setUint16(1, w); b.setUint16(3, h); this.send(b.buffer); }
 
   // Maus: Zustandsobjekte { x, y, left, middle, right, up, down } (siehe mouse.js); es gehen nur die Aenderungen hinaus
+  // Bewegungen gehen hoechstens einmal je Bild hinaus (die letzte Stelle); Tasten, Rad und Tasten der Tastatur schicken eine wartende Bewegung vorher (touch-pointer.js)
   sendMouseState(s) {
     const l = this.last;
     const x = Math.max(0, Math.min(65535, Math.round(s.x))), y = Math.max(0, Math.min(65535, Math.round(s.y)));
-    if (x !== l.x || y !== l.y) {
-      const b = new DataView(new ArrayBuffer(5)); b.setUint8(0, OUT.move); b.setUint16(1, x); b.setUint16(3, y); this.send(b.buffer);
-      this.display.setPointer(x, y); l.x = x; l.y = y;
+    if (!flushesMove(s, l)) {
+      this.display.setPointer(x, y);                                     // der eigene Zeiger folgt sofort
+      if (x !== l.x || y !== l.y) { this.moves.push(x, y); this.scheduleMove(); }
+      else this.moves.take();
+      return;
     }
+    this.flushMove();
+    if (x !== l.x || y !== l.y) this.sendMove(x, y);
     for (const [name, button] of [['left', 0], ['middle', 1], ['right', 2], ['back', 3], ['forward', 4]]) {
       if (!!s[name] !== l[name]) { this.send(Uint8Array.of(OUT.button, button, s[name] ? 1 : 0)); l[name] = !!s[name]; if (s[name]) this.noteInput(); }
     }
@@ -567,6 +574,23 @@ export class StreamClient {
     // Raddrehung in Windows-Einheiten (120 je Raste, auch feinere Schritte), senkrecht und waagerecht
     if (s.wheel) this.sendWheel(s.wheel, false);
     if (s.hwheel) this.sendWheel(s.hwheel, true);
+  }
+
+  sendMove(x, y) {
+    const b = new DataView(new ArrayBuffer(5)); b.setUint8(0, OUT.move); b.setUint16(1, x); b.setUint16(3, y); this.send(b.buffer);
+    this.display.setPointer(x, y); this.last.x = x; this.last.y = y;
+  }
+  /** Eine wartende Bewegung jetzt senden (vor Taste, Rad, Taste der Tastatur). */
+  flushMove() {
+    const p = this.moves.take();
+    if (p && (p.x !== this.last.x || p.y !== this.last.y)) this.sendMove(p.x, p.y);
+  }
+  // zum naechsten Bild; steht der Tab im Hintergrund (kein Bild), nach 50 ms
+  scheduleMove() {
+    if (this.moveTimer) return;
+    const go = () => { clearTimeout(this.moveTimer); this.moveTimer = 0; this.flushMove(); };
+    this.moveTimer = setTimeout(go, 50);
+    requestAnimationFrame(go);
   }
 
   unwatchFocus() { window.removeEventListener('blur', this.focusLost); document.removeEventListener('visibilitychange', this.focusLost); }
@@ -592,6 +616,7 @@ export class StreamClient {
   // Tasten: Sondertasten ueber ihren Scancode, Zeichen als Unicode (unabhaengig von der Belegung des fernen Rechners); mit Strg, Alt oder
   // Windows-Taste gehen Buchstaben und Ziffern ueber ihre Taste, damit Kombinationen wie Strg+C ankommen
   sendKeyEvent(pressed, keysym) {
+    this.flushMove();
     const mod = MODIFIERS[keysym]; if (mod) this.mods[mod] = !!pressed;
     if (this.keysyms) return this.sendKeysym(pressed, keysym);
     const special = SPECIAL.get(keysym);
@@ -614,6 +639,7 @@ export class StreamClient {
 
   // VNC kennt keine Scancodes: der Server bekommt das Keysym, das app.js aus der getippten Taste gemacht hat (also das Zeichen, nicht die Taste)
   sendKeysym(pressed, keysym) {
+    this.flushMove();
     if (pressed) { this.heldKeysyms.add(keysym); this.noteInput(); } else this.heldKeysyms.delete(keysym);
     const b = new DataView(new ArrayBuffer(6)); b.setUint8(0, OUT.keysym); b.setUint32(1, keysym >>> 0); b.setUint8(5, pressed ? 1 : 0);
     this.send(b.buffer);
@@ -631,6 +657,7 @@ export class StreamClient {
   noteInput() { this.perf.input(performance.now(), this.received); }
 
   key(scancode, extended, pressed) {
+    this.flushMove();
     const id = (scancode << 1) | (extended ? 1 : 0);
     if (pressed) { this.held.add(id); this.noteInput(); } else this.held.delete(id);
     this.send(Uint8Array.of(OUT.key, scancode, (extended ? 1 : 0) | (pressed ? 2 : 0)));

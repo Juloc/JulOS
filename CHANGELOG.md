@@ -6,6 +6,12 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+### Behoben
+- **Touchpad-Modus: der Zeiger sprang in die Mitte**, sobald er die obere linke Ecke erreichte. Die Stelle 0/0 galt als „noch nicht gesetzt“ und wurde neu zentriert (`padPoint` in `app.js`). Die Zeigerrechnung steht jetzt in `touch-pointer.js` (`padStep`, mit Test für Ränder, Ecken und Zoom).
+
+### Geändert
+- **Mausbewegungen** gehen höchstens einmal je Bild an den Server (die letzte Stelle, `stream.js`, `MoveCoalescer`); Taste, Rad und Tastatur senden eine wartende Bewegung vorher, ohne Verzögerung. Weniger Nachrichten bei schnellen Bewegungen am PC und im Touchpad-Modus.
+
 ## [0.28.0] - 2026-11-24
 
 ### Neu

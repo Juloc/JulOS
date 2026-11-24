@@ -285,3 +285,24 @@
 
 .f-writeoff { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
 .f-writeoff .f-msg { margin: 0; }
+
+/* Touch (Handy, .fkit): alles Tippbare mindestens 44 px, 6 px Luft zwischen den Zielen, keine Textauswahl und kein Menue des Browsers beim langen Druecken einer Zeile, Markierung waehrend des Haltens */
+.fkit .f-nav, .fkit .f-acts { gap: 6px; }
+.fkit .f-tool, .fkit .f-tbtn { height: 44px; min-width: 44px; border-radius: 12px; }
+.fkit .f-addr { height: 44px; }
+.fkit .f-crumb { height: 36px; min-width: 44px; justify-content: center; padding: 0 9px; }
+.fkit .f-addr-x { width: 44px; height: 44px; border-radius: 12px; }
+.fkit .f-search { height: 44px; }
+.fkit .f-search input { font-size: 16px; }
+.fkit .f-act-btn { width: 44px; height: 44px; }
+.fkit .f-selbar { gap: 4px; left: 8px; right: 8px; padding: 6px; }
+.fkit .f-count { margin: 0 4px 0 6px; font-size: 14px; }
+.fkit .f-count { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.fkit .f-list { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.fkit .f-row.pressing { background: var(--f-sel); transition: background .36s .12s; }
+.f-menu.sheet::before { content: ""; position: absolute; top: 6px; left: 50%; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: currentColor; opacity: .3; }
+.f-menu.sheet.dragging { transition: none; }
+.f-menu.sheet { transition: transform .2s; }
+.f-mi-why { display: block; margin-top: 2px; font-size: 12px; font-weight: 400; color: var(--f-muted); white-space: normal; }
+.f-menu.sheet .f-mi[aria-disabled="true"] { opacity: .6; }
+.fkit .f-selbar { z-index: 31; }                 /* ueber dem Sicherheitshinweis (30): die Aktionen der Auswahl duerfen nie verdeckt sein */

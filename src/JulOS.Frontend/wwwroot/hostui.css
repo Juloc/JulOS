@@ -227,10 +227,11 @@ html:not(.desktop) .hu-db { grid-template-columns: minmax(0, 1fr); gap: 0; }
 html:not(.desktop) .hu-nav { top: 0; z-index: 4; flex-direction: row; overflow-x: auto; overflow-y: hidden; margin: 0 calc(-1 * var(--m3-pad, 16px)) 12px; padding: 6px var(--m3-pad, 16px) 8px; border-radius: 0; border: 0; border-bottom: 1px solid var(--hu-line-soft);
   background: var(--m3-glass-strong, var(--hu-card)); backdrop-filter: blur(18px); scrollbar-width: none; }
 html:not(.desktop) .hu-nav::-webkit-scrollbar { display: none; }
-html:not(.desktop) .hu-tab { min-height: 40px; padding: 0 14px; gap: 8px; }
+html:not(.desktop) .hu-tab { min-height: 44px; padding: 0 14px; gap: 8px; }
 html:not(.desktop) .hu-tab .hu-i { width: 18px; height: 18px; }
 html:not(.desktop) .hu-tl { flex: none; }
 @media (pointer: coarse), (max-width: 999px) {
-  .hu-btn { height: 44px; } .hu-btn.sm { height: 40px; } .hu-chip.btn { min-height: 40px; }
+  .hu-btn { height: 44px; min-height: 44px; } .hu-btn.sm { height: 44px; min-height: 44px; } .hu-btn.icon { width: 44px; } .hu-chip.btn { min-height: 44px; }
+  .hu-acts, .hu-ph .hu-btn + .hu-btn { gap: 8px; }
 }
 @media (prefers-reduced-motion: reduce) { .hu-bar i, .hu-sw, .hu-sw::after, .hu-fold .chev { transition: none; } }

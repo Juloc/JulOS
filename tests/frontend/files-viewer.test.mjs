@@ -72,3 +72,12 @@ test('pageAt: die Seite am oberen Rand', () => {
   assert.equal(pageAt(tops, 2500), 3);
   assert.equal(pageAt([], 10), 0);
 });
+
+test('Bildwisch: nur weit, deutlich waagerecht und zuegig blaettert (links naechstes, rechts vorheriges)', async () => {
+  const { swipeDir } = await import('../../src/JulOS.Frontend/wwwroot/files-viewer.js');
+  assert.equal(swipeDir(-120, 10, 200), -1);
+  assert.equal(swipeDir(120, -20, 200), 1);
+  assert.equal(swipeDir(-40, 0, 100), 0);        // zu kurz
+  assert.equal(swipeDir(-100, 80, 200), 0);      // eher senkrecht: Scrollen
+  assert.equal(swipeDir(-200, 0, 900), 0);       // langsames Ziehen
+});

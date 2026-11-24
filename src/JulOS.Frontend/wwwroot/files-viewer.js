@@ -50,6 +50,12 @@ export function previewUrl(place, path, token) {
   return C.isLocal(place) ? `/api/files/preview?path=${q(path)}` : `/api/files/remote/preview?c=${place.id}&path=${q(path)}` + (token ? '&token=' + q(token) : '');
 }
 
+/** Wisch nach links (-1: naechstes Bild) oder rechts (1: vorheriges): weit genug, deutlich waagerecht, nicht ein langsames Ziehen; sonst 0 */
+export function swipeDir(dx, dy, ms, { min = 60, maxMs = 600 } = {}) {
+  if (Math.abs(dx) < min || Math.abs(dx) < 2 * Math.abs(dy) || ms > maxMs) return 0;
+  return dx < 0 ? -1 : 1;
+}
+
 /** Die Bilder der Liste in ihrer Reihenfolge (nur Dateien) und die Stelle der aktuellen: { list, index, prev, next } (prev/next null am Rand, kein Umlauf) */
 export function neighbours(entries, path) {
   const list = (entries || []).filter((e) => C.isFileLike(e) && viewKind(e.name) === 'image');
@@ -306,6 +312,11 @@ function createViewer(first) {
     stage.addEventListener('pointermove', (e) => { if (drag) { stage.scrollLeft = drag.l - (e.clientX - drag.x); stage.scrollTop = drag.t - (e.clientY - drag.y); } });
     const end = () => { drag = null; };
     stage.addEventListener('pointerup', end); stage.addEventListener('pointercancel', end);
+    // Handy: ein waagerechter Wisch auf dem eingepassten Bild blaettert (nur mit dem Finger, nur wenn nichts zu verschieben ist)
+    let sw = null;
+    stage.addEventListener('pointerdown', (e) => { sw = e.pointerType === 'touch' && e.isPrimary && !stage.classList.contains('fv-pan') ? { x: e.clientX, y: e.clientY, t: e.timeStamp } : null; });
+    stage.addEventListener('pointerup', (e) => { const s0 = sw; sw = null; if (!s0) return; const d = swipeDir(e.clientX - s0.x, e.clientY - s0.y, e.timeStamp - s0.t); if (d) go(d < 0 ? nb.next : nb.prev); });
+    stage.addEventListener('pointercancel', () => { sw = null; });
     const prevClean = cleanup;
     cleanup = () => { ro.disconnect(); stage.removeEventListener('keydown', keys); prevClean(); };
     return true;

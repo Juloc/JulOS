@@ -127,6 +127,27 @@ export function entryMeta(e) {
 /** Was sich ansehen, herunterladen, kopieren laesst: Dateien und Links auf Dateien (Sonderdateien und kaputte Links nicht) */
 export const isFileLike = (e) => e.kind === 'file' || (e.kind === 'link' && e.resolved === 'file');
 
+/**
+ * Langes Druecken gegen Scrollen (Handy): down() schaerft den Zeitgeber, move() ueber die Toleranz hinaus, up(), cancel() oder ein zweiter Finger entschaerfen ihn (dann war es Scrollen, Tippen oder Zoomen).
+ * Feuert er, ruft er onFire und merkt sich das: das Klick-Ereignis nach dem Loslassen gehoert dazu und wird mit consumeClick() verschluckt.
+ * Zeitgeber und Zeit sind einsetzbar, damit die Zustandsmaschine ohne Browser pruefbar ist.
+ */
+export function createLongPress({ delay = 480, slop = 10, set = setTimeout, clear = clearTimeout, onArm = () => {}, onFire = () => {}, onCancel = () => {} } = {}) {
+  let timer = null, fired = false, x0 = 0, y0 = 0;
+  const disarm = () => { if (timer === null) return; clear(timer); timer = null; onCancel(); };
+  return {
+    down(x, y, target) {
+      disarm(); fired = false; x0 = x; y0 = y;
+      timer = set(() => { timer = null; fired = true; onFire(target, x0, y0); }, delay);
+      onArm(target);
+    },
+    move(x, y) { if (timer !== null && Math.hypot(x - x0, y - y0) > slop) disarm(); },
+    up: disarm,
+    cancel: disarm,
+    consumeClick() { const f = fired; fired = false; return f; },
+  };
+}
+
 /** Auswahl: eine Menge von Pfaden */
 export class Selection {
   constructor() { this.set = new Set(); }

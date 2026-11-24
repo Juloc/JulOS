@@ -13,7 +13,7 @@ export function openMenu({ items, x = 0, y = 0, anchor = null, kit = false, labe
   const back = document.activeElement;
   const menu = h('div', { class: 'f-menu' + (kit ? ' sheet' : ''), role: 'menu', tabindex: '-1', 'aria-label': label || undefined });
   const shield = kit ? h('div', { class: 'f-menu-shield' }) : null;
-  const rows = [];
+  const rows = [], told = new Set();                                          // Handy: der Grund eines grauen Eintrags steht einmal im Blatt (ein Tippen zeigt keinen Tooltip)
   let last = 'sep';
   for (const it of items) {
     if (it.sep) { if (last !== 'sep') menu.append(h('div', { class: 'f-mi-sep', role: 'separator' })); last = 'sep'; continue; }
@@ -22,7 +22,7 @@ export function openMenu({ items, x = 0, y = 0, anchor = null, kit = false, labe
     const row = h('button', {
       type: 'button', class: 'f-mi' + (it.danger ? ' f-mi-danger' : ''), role: check ? (it.radio ? 'menuitemradio' : 'menuitemcheckbox') : 'menuitem', tabindex: '-1',
       'aria-checked': check ? String(!!it.checked) : undefined, 'aria-disabled': it.disabled ? 'true' : undefined, title: it.title || undefined, 'data-id': it.id || undefined,
-    }, h('span', { class: 'f-mi-ic' }, check ? (it.checked ? icon('check') : null) : it.icon ? icon(it.icon) : null), h('span', { class: 'f-mi-t', text: it.label }), it.shortcut ? h('span', { class: 'f-mi-k', text: it.shortcut }) : null);
+    }, h('span', { class: 'f-mi-ic' }, check ? (it.checked ? icon('check') : null) : it.icon ? icon(it.icon) : null), h('span', { class: 'f-mi-t' }, it.label, kit && it.disabled && it.title && !told.has(it.title) && told.add(it.title) ? h('span', { class: 'f-mi-why', text: it.title }) : null), it.shortcut ? h('span', { class: 'f-mi-k', text: it.shortcut }) : null);
     row.addEventListener('click', () => { if (it.disabled) return; close(); if (it.run) it.run(); });
     row.addEventListener('mousemove', () => { if (!it.disabled && document.activeElement !== row) row.focus({ preventScroll: true }); });
     menu.append(row); rows.push({ row, it }); last = 'item';
@@ -54,9 +54,17 @@ export function openMenu({ items, x = 0, y = 0, anchor = null, kit = false, labe
     else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (i >= 0) l[i].click(); }
   });
   const outside = (e) => { if (!menu.contains(e.target)) close(); };
-  const away = () => close();
+  const away = (e) => { if (e && e.target instanceof Node && menu.contains(e.target)) return; close(); };
   setTimeout(() => { document.addEventListener('pointerdown', outside, true); }, 0);
   window.addEventListener('blur', away); window.addEventListener('resize', away); document.addEventListener('scroll', away, true);
+  if (shield) {
+    // Handy: das Blatt am Griff (oberer Rand) nach unten ziehen schliesst es, wie die anderen Blaetter; eigenes Scrollen des Blatts schliesst nichts
+    let y0 = null, dy = 0;
+    menu.addEventListener('pointerdown', (e) => { if (e.clientY - menu.getBoundingClientRect().top < 36 && menu.scrollTop === 0) { y0 = e.clientY; dy = 0; menu.setPointerCapture(e.pointerId); menu.classList.add('dragging'); } });
+    menu.addEventListener('pointermove', (e) => { if (y0 === null) return; dy = Math.max(0, e.clientY - y0); menu.style.transform = `translateY(${dy}px)`; });
+    const drop = () => { if (y0 === null) return; y0 = null; menu.classList.remove('dragging'); menu.style.transform = ''; if (dy > 80) close(); };
+    menu.addEventListener('pointerup', drop); menu.addEventListener('pointercancel', drop);
+  }
   if (shield) shield.addEventListener('click', close);
 
   let closed = false;

@@ -54,7 +54,6 @@ dialog.m3sheet.f-viewer .fv-btn { min-width: 44px; height: 44px; }
 @media (max-width: 480px) {
   .fv-bar { flex-wrap: nowrap; }
   .fv-zoom { display: none; }
-  dialog.m3sheet.f-viewer .fv-btn { min-width: 40px; }
   .fv-count { padding: 0 4px; }
 }
 
@@ -79,3 +78,7 @@ dialog.m3sheet.f-viewer .fv-btn { min-width: 44px; height: 44px; }
 .fv-table thead th { position: sticky; top: 0; z-index: 2; font-weight: 600; color: var(--fv-muted); background: var(--fv-stage); text-align: center; }
 .fv-table .fv-rowno { position: sticky; left: 0; z-index: 1; min-width: 2.6em; font-weight: 500; color: var(--fv-muted); background: var(--fv-stage); text-align: right; }
 .fv-table thead .fv-corner { left: 0; z-index: 3; }
+
+/* Touch: Tasten der Leiste 44 px breit und mit Luft dazwischen; ein waagerechter Wisch auf dem eingepassten Bild blaettert (files-viewer.js), deshalb gehoert er dem Skript */
+dialog.m3sheet.f-viewer .fv-bar { gap: 4px; }
+.fv-image:not(.fv-pan) { touch-action: pan-y; }

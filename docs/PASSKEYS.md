@@ -26,7 +26,7 @@ All three use the same pieces: the server makes the options with a random **32-b
 
 ## Where the address comes from (RP id and origin)
 
-A passkey is bound to the **RP id**, the host name of JulOS. Both RP id and origin come from the same trusted source as the public address of the sign-in centre (`OidcIssuer`: the setting in the app, else `JULOS_PUBLIC_URL`), **never from the `Host` header** of a request. Without that address there are no passkeys (the page says so). Rules:
+A passkey is bound to the **RP id**, the host name of JulOS. Both RP id and origin come from the same trusted source as the public address of the sign-in centre (`OidcIssuer`: the setting in the app, else `JULOS_PUBLIC_URL`), **never from the `Host` header** of a request. Without that address there are no passkeys: the page is told before the session by a field `passkeys: true|false` in the answer of `GET /api/auth/me` (it reveals only whether an address with a host name is set), shows neither the button *Mit Passkey anmelden* nor the autofill request, so it makes no call that could answer 503; Konto says so in a sentence (`GET /api/auth/passkeys` has `available`) and the step-up sheet hides its passkey button. `login/begin` itself still answers 503 for anyone who calls it anyway. Rules:
 
 - RP id = the host name, origin = scheme, host and port (a path in the address does not count).
 - An **IP address** cannot be an RP id (browsers refuse): then passkeys are off.

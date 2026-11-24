@@ -83,7 +83,7 @@ async function rawApi(path, { method = 'GET', body } = {}) {
 }
 
 const setMsg = (el, text, ok = false) => { el.textContent = text || ''; el.classList.toggle('ok', ok && !!text); };
-const askStepUp = initStepUp({ api: rawApi, setMsg, passkey: () => confirmWithPasskey(rawApi) });      // das Sheet fuer den zweiten Faktor (stepup.js)
+const askStepUp = initStepUp({ api: rawApi, setMsg, passkey: () => confirmWithPasskey(rawApi), available: () => passkeysOn });      // das Sheet fuer den zweiten Faktor (stepup.js)
 let securityUi = null;                                      // Einstellungen, Sicherheit (security.js), unten angelegt
 const busy = (form, on) => { for (const b of form.querySelectorAll('button[type=submit]')) b.disabled = on; };
 
@@ -95,6 +95,7 @@ async function boot() {
   let me;
   try { me = await api('/api/auth/me'); }
   catch (e) { showLogin(e.message); return; }
+  passkeysHere(me.passkeys);
   if (me.user) return showHome(me.user);
   if (me.setupNeeded) return showSetup();
   showLogin();
@@ -159,6 +160,8 @@ function showLogin(message = '') {
 const signedIn = (r) => { showHome(r.user, r.recoveryLeft <= 3 ? tp('shell.recoveryLeft', r.recoveryLeft) : ''); if (r.recoveryUsed) openAccount({ after: 'recovery' }); };
 // Passkey: Knopf und Autofill auf der Anmeldeseite (passkeys.js); showLogin startet es, Absenden mit Passwort und jede Anmeldung beenden es
 const loginPasskeys = initLoginPasskeys({ api: rawApi, setMsg, onSignedIn: signedIn });
+let passkeysOn = false;                                       // ob Passkeys hier gehen, aus /api/auth/me (ohne oeffentliche Adresse nein: dann keine Anfrage, kein Knopf)
+const passkeysHere = (on) => { passkeysOn = !!on; loginPasskeys.setAvailable(passkeysOn); };
 
 $('#loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();

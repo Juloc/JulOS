@@ -122,12 +122,13 @@ export async function confirmWithPasskey(api) {
  */
 export function initLoginPasskeys({ api, setMsg, onSignedIn }) {
   const button = document.querySelector('#loginPasskey'), or = document.querySelector('#loginPasskeyOr'), msg = document.querySelector('#loginMsg');
-  let ctrl = null, timer = 0, running = false;
+  let ctrl = null, timer = 0, running = false, available = false, gen = 0, setShow = () => {};
 
-  const stop = () => { running = false; clearTimeout(timer); if (ctrl) { ctrl.abort(); ctrl = null; } };
+  const stop = () => { running = false; gen++; clearTimeout(timer); if (ctrl) { ctrl.abort(); ctrl = null; } };
 
   async function autofill() {
-    if (!running || !(await conditionalSupported()) || !running) return;
+    const mine0 = gen;                                           // ein zweites start() waehrend des Wartens darf keine zweite Anfrage (und Herausforderung) ausloesen
+    if (!running || !(await conditionalSupported()) || !running || gen !== mine0) return;
     ctrl = new AbortController();
     const mine = ctrl;
     timer = setTimeout(() => { if (ctrl === mine) { mine.abort(); autofill(); } }, 4 * 60 * 1000);
@@ -140,8 +141,8 @@ export function initLoginPasskeys({ api, setMsg, onSignedIn }) {
   }
 
   if (button) {
-    const ok = supported();
-    button.hidden = !ok; if (or) or.hidden = !ok;
+    const show = () => { const ok = supported() && available; button.hidden = !ok; if (or) or.hidden = !ok; };
+    show(); setShow = show;
     button.addEventListener('click', async () => {
       if (ctrl) { ctrl.abort(); ctrl = null; }
       clearTimeout(timer);
@@ -151,7 +152,12 @@ export function initLoginPasskeys({ api, setMsg, onSignedIn }) {
       finally { button.disabled = false; }
     });
   }
-  return { start() { stop(); running = true; if (supported()) autofill(); }, stop };
+  return {
+    /** Ob Passkeys hier gehen (Antwort von /api/auth/me): sonst kein Knopf und keine Anfrage. */
+    setAvailable(on) { available = !!on; setShow(); if (!available) stop(); },
+    start() { stop(); if (!available) return; running = true; if (supported()) autofill(); },
+    stop,
+  };
 }
 
 // ---- Hinweis nach Aenderungen an der Anmeldung ----

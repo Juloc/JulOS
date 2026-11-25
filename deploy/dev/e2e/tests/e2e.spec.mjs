@@ -831,3 +831,46 @@ test('20 Terminal: ein Bild und eine Datei mit Leerzeichen und Anführungszeiche
   expect(errors.filter((e) => !/409/.test(e))).toEqual([]);        // 409: die erwartete Passwortfrage des Pools (password_required), die Seite fragt danach
   await context.close();
 });
+
+test('21 Übergabe: ein zweites Gerät fragt, holt den Desktop hierher, das erste hält an und holt ihn zurück; keins verbindet sich von selbst neu', async ({ browser }) => {
+  // Gerät 1: die Anmeldung aus Test 1 (wartet dort noch ein Desktop dieses Geräts, kommt er still zurück)
+  const one = await signedIn(browser);
+  const sockets1 = watchSockets(one.page);
+  await one.page.goto('/');
+  await connect(one.page, DESKTOP_CONN.name, RDP.password);
+  await waitForPicture(one.page, sockets1);
+
+  // Gerät 2: eigene Anmeldung, also eine andere App-Sitzung
+  const { user, password, secret } = loadState();
+  const context2 = await browser.newContext({ ...DESKTOP, baseURL: 'http://127.0.0.1:8080' });
+  await context2.addInitScript(() => localStorage.setItem('pd.dk.ws.remember', 'false'));
+  expect((await context2.request.post('/api/auth/login', { headers: API, data: { user, password, code: await nextCode(secret) } })).status()).toBe(200);
+  const page2 = await context2.newPage();
+  const errors2 = watchErrors(page2), sockets2 = watchSockets(page2);
+  await page2.goto('/');
+  await connect(page2, DESKTOP_CONN.name, RDP.password);
+  await expect(page2.locator('.term-dialog').filter({ hasText: 'woanders offen' })).toBeVisible();
+  await page2.getByRole('button', { name: 'Hierher holen' }).click();
+  await waitForPicture(page2, sockets2);
+
+  const overlay1 = one.page.locator('.dk-win .sv-overlay').first();
+  await expect(overlay1).toBeVisible();
+  await expect(overlay1).toContainText('anderen Gerät');
+  await expect(overlay1.locator('.sv-reconnect')).toHaveText('Zurückholen');
+  await one.page.waitForTimeout(4000);
+  await expect(overlay1, 'Gerät 1 holt nicht von selbst zurück').toBeVisible();
+  await expect(page2.locator('.dk-win .sv-overlay').first(), 'Gerät 2 behält den Desktop').toBeHidden();
+
+  // Zurückholen auf Gerät 1: Gerät 2 hält an und bietet seinerseits "Zurückholen"
+  await overlay1.locator('.sv-reconnect').click();
+  await expect(overlay1).toBeHidden({ timeout: 20_000 });
+  const overlay2 = page2.locator('.dk-win .sv-overlay').first();
+  await expect(overlay2).toContainText('anderen Gerät');
+  await page2.waitForTimeout(4000);
+  await expect(overlay1, 'Gerät 1 behält den Desktop').toBeHidden();
+  await expect(overlay2).toBeVisible();
+
+  expect([...one.errors, ...errors2].filter((e) => e.startsWith('pageerror'))).toEqual([]);
+  await context2.close();
+  await one.context.close();
+});

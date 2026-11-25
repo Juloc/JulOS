@@ -183,7 +183,7 @@ internal static class RemoteEndpoints
             // Ratenbegrenzung, damit Raten nach Kennungen (128 Bit, aussichtslos) nicht den Verlauf der Sicherheit fuellt
             if (!hits.Allow("kept-take:" + id.UserId, 30, TimeSpan.FromMinutes(1))) return Error(429, "Zu viele Anfragen, bitte kurz warten.");
             var kept = body.Id is { Length: > 0 and <= 64 } handle ? relay.FindKept(id.UserId, handle) : null;
-            if (kept is null || !KeptTakeRule.Allows(id, kept))
+            if (kept is null || !KeptTakeRule.Allows(id, kept, body.Confirm))
             {
                 // Hoechstens 3 Eintraege je Person und Minute (der Verlauf behaelt 500); der Rest steht nur im Server-Log, ohne Kennung
                 if (hits.Allow("kept-denied-audit:" + id.UserId, 3, TimeSpan.FromMinutes(1))) await AuditKeptAsync(audit, id.UserName, "kept.take_denied", kept is null ? "unknown" : "watched");

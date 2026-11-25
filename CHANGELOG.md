@@ -6,7 +6,11 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+### Neu
+- **Übergabe an ein anderes Gerät** ([docs/SESSION-KEEP.md](docs/SESSION-KEEP.md), Schritt 3; [docs/SESSIONS.md](docs/SESSIONS.md)): ist der Desktop am PC offen und man öffnet ihn am Handy, fragt das Handy „Diese Sitzung ist woanders offen … Hierher holen / Neue Sitzung / Abbrechen“. Hierher holen übernimmt die laufende Sitzung (kein neuer Login, `POST /api/remote/kept/take` mit `confirm`); der PC zeigt „Die Sitzung ist jetzt auf einem anderen Gerät … geöffnet“ mit **Zurückholen** und verbindet sich nicht von selbst neu. Eine wartende Sitzung, die dasselbe Gerät zuletzt hatte, kommt weiter still zurück.
+
 ### Behoben
+- **Zwei Geräte stritten sich um den Desktop:** öffnete man eine Sitzung am Handy, während sie am PC lief, warf das Ziel den PC hinaus, der PC verband sich sofort neu und warf das Handy hinaus, immer wieder. Drei Ursachen: das Handy fragte nicht und baute eine neue Sitzung auf; beim Übernehmen riss der Server die alte Leitung ab, bevor die Meldung „übernommen“ ankam, so dass sich das alte Gerät die Sitzung mit seinem Token zurückholte; und ein Hinauswurf durch das Ziel (ohne Grund) sah für den Browser aus wie ein Funkloch. Jetzt hält der Server beim Übernehmen nur das Senden an, meldet „übernommen“ und schließt sauber; ein Ende durch das Ziel meldet er als neuen Code 778, und der Browser verbindet sich dann nicht von selbst neu. Neue Tests: Display `A_second_device_with_its_own_connection_ends_the_first_with_778_and_not_silently`, Backend (Nehmen mit Bestätigung, nie durch Fremde), `kept.test.mjs`, e2e „21 Übergabe“.
 - **Doppelte, versetzte Zeilen und alte Bildreste in der Fernsitzung** (seit der Übernahme der Engine am 18.11.): Meldete der Desktop eine Änderung, während der Server gerade einen Bildbereich umwandelte, wurde diese Änderung danach als erledigt gelöscht, und ihr Teil des Bildschirms behielt das ältere Bild, bis die Stelle neu gezeichnet wurde (sichtbar vor allem beim Scrollen). Der Bereich wird jetzt in einem Schritt übernommen und geleert, bevor umgewandelt wird. Neuer Test `LostUpdateTests` (scheitert mit dem alten Code).
 
 ## [0.31.0] - 2026-11-25

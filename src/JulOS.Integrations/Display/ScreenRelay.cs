@@ -37,6 +37,10 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
     // Statuscodes der Fehlermeldungen (die Seite uebersetzt sie in Texte, siehe statusText in app.js)
     public const int ErrorBusy = 513, ErrorTimeout = 514, ErrorConnectFailed = 515, ErrorUnreachable = 520, ErrorLogonFailed = 769, ErrorCredentialsMissing = 770;
 
+    // Das Ziel hat die Sitzung selbst beendet (ohne Grund, oder weil eine andere Verbindung sie genommen hat, etwa ein zweites Geraet direkt an xrdp):
+    // der Browser holt sie nicht von selbst zurueck, sonst nehmen sich zwei Geraete die Sitzung immer wieder gegenseitig weg.
+    public const int ErrorEndedAtTarget = 778;
+
     private const int ReceiveBuffer = 256;
     private readonly SemaphoreSlim _slots = new(maxSessions);
     private readonly SessionRegistry _sessions = registry ?? new SessionRegistry(int.MaxValue);   // ohne Angabe (Tests): keine Obergrenze, aber Ablosen je Slot
@@ -261,7 +265,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
 
         // Ein Browser zur Zeit: wer sich anhaengt, nimmt der Vorgaengerin den Platz (Cancel), wartet bis sie fertig ist und haelt dann die Sperre.
         public readonly SemaphoreSlim AttachLock = new(1, 1);
-        public CancellationTokenSource? Attached;          // unter Gate: bricht den laufenden Anschluss ab
+        public CancellationTokenSource? Attached;          // unter Gate: haelt den laufenden Anschluss an, damit der naechste Browser ihn nimmt (siehe ServeAsync)
         public volatile bool Detached;                      // kein Browser dran (Ereignisse werden verworfen)
         public volatile bool Ended;
         public volatile bool TakenOver;                     // ein anderer Browser hat sich angehaengt, waehrend dieser dran war: dem alten wird "uebernommen" gesagt
@@ -426,9 +430,14 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         }
 
         using var attach = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+        // Nimmt ein anderer Browser die Sitzung, haelt das zuerst nur das Lesen der Ereignisse an (nie ein laufendes Senden oder Empfangen: das risse den WebSocket
+        // ein, der alte Browser saehe einen Abriss, nicht "uebernommen", und holte sich die Sitzung mit seinem Token zurueck: Ping-Pong zwischen zwei Geraeten).
+        // Dann sagt der Server dem alten Browser "uebernommen" und schliesst sauber.
+        using var takenAway = new CancellationTokenSource();
         lock (live.Gate)
         {
-            live.Attached = attach;
+            live.Attached = takenAway;
         }
 
         live.TakenOver = false;
@@ -452,7 +461,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                 // statt bis zum naechsten Schreiben stehenzubleiben. Ein alter Browser pingt nie und wird nie so beendet.
                 await SendOnceAsync(ws, ScreenProtocol.LinkCapable(), ct).ConfigureAwait(false);
                 var link = new LinkWatch(null, linkDeadAfter);
-                var send = PumpToBrowserAsync(ws, live.Stream, live.Owner, Downloads, attach.Token);
+                var send = PumpToBrowserAsync(ws, live.Stream, live.Owner, Downloads, attach.Token, takenAway.Token);
                 var receive = ReceiveFromBrowserAsync(ws, live.Stream, link, attach.Token);
                 var watch = WatchAsync(sessionAlive, sessionCheck, attach.Token);
                 var silent = link.WaitDeadAsync(attach.Token);
@@ -470,7 +479,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                     outcome = Outcome.Replaced;
                     last = ScreenProtocol.Taken();
                 }
-                else if (live.TakenOver && attach.IsCancellationRequested && !ct.IsCancellationRequested)
+                else if (live.TakenOver && takenAway.IsCancellationRequested && !ct.IsCancellationRequested)
                 {
                     // Ein anderer Browser hat die Sitzung genommen: der alte erfaehrt es (Status 777, "uebernommen") und holt sie nicht zurueck; die Sitzung selbst bleibt
                     last = ScreenProtocol.Taken();
@@ -545,7 +554,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         {
             lock (live.Gate)
             {
-                if (ReferenceEquals(live.Attached, attach))
+                if (ReferenceEquals(live.Attached, takenAway))
                 {
                     live.Attached = null;
                 }
@@ -574,7 +583,15 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                 e is TimeoutException ? "Zeitüberschreitung beim Verbinden." : "Das Ziel ist nicht erreichbar.");
         }
 
-        return last ?? (live.Stream.EndReason is { } reason ? ScreenProtocol.Error(ErrorConnectFailed, reason) : null);
+        if (last is not null || live.Ended)
+        {
+            return last;            // ein Fehler beim Verbinden, oder wir selbst haben die Sitzung beendet
+        }
+
+        var reason = live.Stream.EndReason;
+        return reason is null || reason == RdpErrorInfo.TakenOver
+            ? ScreenProtocol.Error(ErrorEndedAtTarget, reason ?? "Die Sitzung wurde am Ziel beendet.")
+            : ScreenProtocol.Error(ErrorConnectFailed, reason);
     }
 
     // Kein Browser mehr: die Sitzung pausiert, Ereignisse werden verworfen, nach "keepFor" (oder wenn die App-Sitzung weg ist) endet sie.
@@ -785,10 +802,12 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
     }
 
     /// <summary>Stream -> Browser. Der einzige, der sendet; Puffer kommen aus dem Pool.</summary>
-    private static async Task PumpToBrowserAsync(WebSocket ws, ScreenStream stream, Guid owner, ClipDownloads downloads, CancellationToken ct)
+    // stopReading haelt nur das Warten auf das naechste Ereignis an (Uebernahme durch einen anderen Browser); ct bricht auch ein laufendes Senden ab.
+    private static async Task PumpToBrowserAsync(WebSocket ws, ScreenStream stream, Guid owner, ClipDownloads downloads, CancellationToken ct, CancellationToken stopReading = default)
     {
         var pool = ArrayPool<byte>.Shared;
-        await foreach (var evt in stream.Events.ReadAllAsync(ct).ConfigureAwait(false))
+        using var reading = CancellationTokenSource.CreateLinkedTokenSource(ct, stopReading);
+        await foreach (var evt in stream.Events.ReadAllAsync(reading.Token).ConfigureAwait(false))
         {
             byte[]? buffer = null;
             try

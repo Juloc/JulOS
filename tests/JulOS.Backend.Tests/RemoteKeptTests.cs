@@ -234,7 +234,7 @@ public sealed class RemoteKeptTests
     }
 
     [Fact]
-    public async Task A_session_that_is_watched_cannot_be_taken_from_another_app_session_but_can_from_the_same_one()
+    public async Task A_session_that_is_watched_is_taken_from_another_app_session_only_with_confirmation_and_never_by_a_stranger()
     {
         await using var db = await TestDb.CreateAsync();
         await using var app = new Server(db);
@@ -254,6 +254,13 @@ public sealed class RemoteKeptTests
 
         // dieselbe App-Sitzung (ein Neuladen, dessen alter Socket noch nicht als weg erkannt ist) darf
         Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Req(HttpMethod.Post, "/api/remote/kept/take", laptop.Cookie, new { id = watched }))).StatusCode);
+
+        // Uebergabe (Schritt 3): das andere Geraet darf, wenn die Person die Rueckfrage bestaetigt hat; aufgeschrieben als Nehmen einer angesehenen Sitzung
+        Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Req(HttpMethod.Post, "/api/remote/kept/take", thief.Cookie, new { id = watched, confirm = true }))).StatusCode);
+        Assert.Contains("watched", await db.ScalarAsync<string>("select detail from security_audit where event = 'kept.take'"));
+        // ... eine fremde Person auch mit Bestaetigung nie
+        var stranger = await StrangerAsync(app, db);
+        Assert.Equal(HttpStatusCode.NotFound, (await c.SendAsync(Req(HttpMethod.Post, "/api/remote/kept/take", stranger.Cookie, new { id = watched, confirm = true }))).StatusCode);
 
         static Guid AppOf(Who w) => w.App;
     }

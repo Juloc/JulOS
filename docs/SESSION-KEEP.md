@@ -171,3 +171,16 @@ A reload on the same device gets its remote session back, silently, without a se
 - The reload text of [SESSIONS.md](SESSIONS.md) changed accordingly.
 
 **Not verified:** a real phone, a killed installed app (PWA), VNC (the code path is shared; not run), Windows targets, the memory of a kept session (the plan's "to measure" stays open), a real device change (step 3).
+
+## Step 3: what was built (2026-11-25)
+
+The owner's report: with the desktop open on the PC, opening it on the phone made the two fight over it. Three causes, all fixed:
+
+- **The phone did not ask.** `kept.js decide` now returns `ask` for any kept session of the connection that is not this tab's own (another device watching it, one waiting since another device, a copied tab after the four short waits). A waiting session that **this app session** had last (`own`, tab closed and reopened) is still taken silently. `RemoteSession.keptDialog` asks "Bring it here / New session / Cancel"; "New session" ends the old one first (`POST /api/remote/kept/end`), "Cancel" closes the window without a ticket.
+- **Taking a watched session needs the person's yes:** `POST /api/remote/kept/take { id, confirm: true }`; `KeptTakeRule.Allows(who, kept, confirmed)`. Without `confirm` a watched session of another app session stays refused (404, `kept.take_denied`), and a stranger is refused with or without it. The audit line `kept.take` says "watched".
+- **The old device never heard "taken".** The take cancelled the old attachment's token, which also cancelled the pending `ReceiveAsync`/`SendAsync` and aborted the WebSocket; the old page saw a drop, resumed with its token and took the session back (log: "Browser weg nach 0 s (von einem anderen Browser genommen)" many times a second). `ServeAsync` now stops only the **reading of events** (`PumpToBrowserAsync(..., stopReading)`), sends 777, closes cleanly, then cancels the rest. The old page shows "taken" with **Take back** (its token takes it back; the other device then shows the same) and does not reconnect by itself.
+- **A kick by the target looked like a network drop.** When the target ends the session without a reason, or with error info 5 ("another connection took over"), and we did not end it ourselves, the relay sends **778** (`ErrorEndedAtTarget`) instead of closing silently; the page does not reconnect by itself (except the old "rejected password right after sign-in" case, which still opens the sign-in dialog).
+
+Checked by running: display test `A_second_device_with_its_own_connection_ends_the_first_with_778_and_not_silently` (real xrdp), backend `RemoteKeptTests`, `kept.test.mjs`, e2e "21 Übergabe" (two browser contexts with two sign-ins: ask, bring here, first shows "taken" with "Take back" and stays still for 4 s, take back, second shows "taken").
+
+**Not done from step 3:** the device name in the "taken" text ("taken by Pixel, Firefox"), the immediate end of kept sessions on "sign out everywhere" / device removal / password change (still within 10 s), a test with two takers at the same moment. **Not verified:** a real phone and PC (the owner's case), Windows targets.

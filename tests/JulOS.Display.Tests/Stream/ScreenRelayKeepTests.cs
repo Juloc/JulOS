@@ -254,6 +254,33 @@ public sealed class ScreenRelayKeepTests
         Assert.Null(relay.FindKept(owner, handle));
     }
 
+    // Ein zweites Geraet derselben Person oeffnet eine eigene Verbindung (anderer Platz) zum selben Desktop: xrdp gibt ihm die Sitzung und wirft die erste
+    // Verbindung hinaus, ohne Grund. Die erste muss davon hoeren (778), sonst verbindet sie sich neu und wirft ihrerseits das zweite hinaus (Ping-Pong).
+    [Fact]
+    public async Task A_second_device_with_its_own_connection_ends_the_first_with_778_and_not_silently()
+    {
+        var host = Host();
+        using var relay = new ScreenRelay(new TestLog(), keep: TimeSpan.FromSeconds(60));
+        using var cts = new CancellationTokenSource(Wait);
+        var owner = Guid.NewGuid();
+
+        var first = Browser.Create();
+        var run1 = relay.RunAsync(first.Server, Target(host, "u:c:desktop"), Alive, CancellationToken.None, owner: owner);
+        await first.UntilAsync(IsKeyPicture, cts.Token);
+
+        var second = Browser.Create();
+        var run2 = relay.RunAsync(second.Server, Target(host, "u:c:phone"), Alive, CancellationToken.None, owner: owner);
+        await second.UntilAsync(IsKeyPicture, cts.Token);
+
+        var error = await first.UntilAsync(m => m[0] == ScreenProtocol.ToBrowserError, cts.Token);
+        Assert.Equal(ScreenRelay.ErrorEndedAtTarget, (error[1] << 8) | error[2]);
+        await run1.WaitAsync(Wait);
+        Assert.Equal(0, relay.DetachedCount);                       // nichts zu erhalten: die Sitzung am Ziel hat jetzt das zweite Geraet
+
+        await second.SendAsync(ScreenProtocol.FromBrowserEnd);
+        await run2.WaitAsync(Wait);
+    }
+
     [Fact]
     public async Task A_resume_while_the_old_connection_is_still_there_takes_over()
     {

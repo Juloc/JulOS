@@ -1,10 +1,11 @@
 /* =====================================================================
- * Erhaltene Sitzungen, Seite des Browsers (docs/SESSION-KEEP.md, Schritt 1): nach einem Neuladen holt sich die Seite ihre eigene, gerade unbeobachtete
- * Sitzung zurueck, ohne zu fragen. Reine Logik ohne DOM und ohne fetch (getestet in tests/frontend/kept.test.mjs); app.js reicht list/take/sleep herein.
+ * Erhaltene Sitzungen, Seite des Browsers (docs/SESSION-KEEP.md, Schritte 1 und 3): nach einem Neuladen holt sich die Seite ihre eigene, gerade unbeobachtete
+ * Sitzung zurueck, ohne zu fragen; die Sitzung eines anderen Geraets holt sie nur nach einer Rueckfrage (Uebergabe). Reine Logik ohne DOM und ohne fetch (getestet in tests/frontend/kept.test.mjs); app.js reicht list/take/sleep herein.
  *
  * Die Seite merkt sich je Verbindung die oeffentliche Kennung ihrer Sitzung in sessionStorage (je Tab, ueberlebt ein Neuladen, verschwindet mit dem Tab).
  * Die Kennung ist kein Geheimnis: allein oeffnet sie nichts, der Server verlangt die App-Sitzung, die Besitzer-Pruefung und ein Einmal-Ticket.
- * Alles andere (mehrere Sitzungen, eine, die gerade angesehen wird, keine gemerkte Kennung) verhaelt sich wie bisher: eine neue Sitzung.
+ * Ohne Rueckfrage eine neue Sitzung aufzubauen, waehrend das Ziel noch eine erhaltene hat, hiesse: das Ziel gibt der neuen Anmeldung den Desktop, die alte
+ * verbindet sich neu und nimmt ihn zurueck, und die beiden Geraete streiten sich.
  * ===================================================================== */
 
 const PREFIX = 'julos.kept.';
@@ -24,44 +25,62 @@ export function forget(storage, connId) {
 }
 
 /**
- * Was tun mit der Liste des Servers? list: die erhaltenen Sitzungen dieser Verbindung ([{ id, unwatchedSince }]), remembered: die gemerkte Kennung.
- *  take: die eigene Sitzung wartet ohne Browser: nehmen.
+ * Was tun mit der Liste des Servers? list: die erhaltenen Sitzungen dieser Verbindung ([{ id, since, unwatchedSince, device, own }]), remembered: die gemerkte Kennung.
+ *  take: die eigene Sitzung wartet ohne Browser: still nehmen (ein Neuladen); ebenso eine wartende, die dieses Geraet (diese App-Sitzung, own) zuletzt hatte.
  *  wait: sie ist noch "angesehen" (der alte Socket eines Neuladens ist beim Server noch nicht als weg erkannt): gleich noch einmal fragen.
- *  new:  es gibt sie nicht (mehr) oder nichts gemerkt: eine neue Sitzung wie bisher.
+ *  ask:  eine Sitzung, die nicht die gemerkte ist (ein anderes Geraet, ein kopierter Tab, ein Handy ohne sessionStorage): die Person fragt der Dialog
+ *        ("Hierher holen" / "Neue Sitzung"); nie still nehmen. Bei mehreren die zuletzt begonnene.
+ *  new:  es gibt keine: eine neue Sitzung wie bisher.
  */
 export function decide(list, remembered) {
-  if (!remembered || !Array.isArray(list)) return { action: 'new' };
-  const mine = list.find((k) => k && k.id === remembered);
-  if (!mine) return { action: 'new' };
-  return mine.unwatchedSince ? { action: 'take', id: mine.id } : { action: 'wait' };
+  if (!Array.isArray(list)) return { action: 'new' };
+  const items = list.filter((k) => k && k.id);
+  const mine = remembered && items.find((k) => k.id === remembered);
+  if (mine) return mine.unwatchedSince ? { action: 'take', id: mine.id } : { action: 'wait' };
+  if (!items.length) return { action: 'new' };
+  const latest = (xs) => xs.reduce((a, b) => (String(b.since || '') > String(a.since || '') ? b : a));
+  // Dieses Geraet hatte sie zuletzt und niemand sieht sie an (Tab geschlossen und wieder geoeffnet): still nehmen, wie ein Neuladen
+  const ownWaiting = items.filter((k) => k.own && k.unwatchedSince);
+  if (ownWaiting.length) return { action: 'take', id: latest(ownWaiting).id };
+  return { action: 'ask', item: latest(items) };
 }
 
 export const WAIT_MS = 500;      // das Neuladen schliesst den alten Socket; der Server merkt es meist sofort, manchmal erst nach einem Atemzug
-export const MAX_WAITS = 4;      // dann gilt die Sitzung als anderswo angesehen (zum Beispiel ein kopierter Tab) und es gibt eine neue
+export const MAX_WAITS = 4;      // dann gilt die eigene Sitzung als anderswo angesehen (zum Beispiel ein kopierter Tab) und der Dialog fragt
 
 /**
- * Die eigene erhaltene Sitzung dieser Verbindung zurueckholen.
- * @param deps.list  (connId) => Promise<[{ id, unwatchedSince }]>
- * @param deps.take  (id) => Promise<{ ticket, layout, drive }>  (der Server antwortet auf unbekannt und fremd gleich: Fehler)
- * @returns {{ ticket, layout, drive } | null}  null: eine neue Sitzung aufbauen (jeder Fehler hier heisst nur "nicht zurueckgeholt")
+ * Vor dem ersten Aufbau: die eigene erhaltene Sitzung zurueckholen, oder fragen, was mit der eines anderen Geraets geschehen soll.
+ * @param deps.list  (connId) => Promise<[{ id, since, unwatchedSince, device, own }]>
+ * @param deps.take  (id, confirm) => Promise<{ ticket, layout, drive }>  (der Server antwortet auf unbekannt und fremd gleich: Fehler)
+ * @param deps.end   (id) => Promise  beendet eine erhaltene Sitzung ("Neue Sitzung": sonst gaebe das Ziel der neuen Anmeldung den Desktop, und die alte zeigte "uebernommen")
+ * @param deps.ask   (item) => Promise<'take' | 'new' | 'cancel'>  der Dialog
+ * @returns {{ ticket, layout, drive } | { cancelled: true } | null}  null: eine neue Sitzung aufbauen (jeder Fehler hier heisst nur "nicht zurueckgeholt")
  */
-export async function reclaim(connId, { storage, list, take, sleep }) {
+export async function reclaim(connId, { storage, list, take, end, ask, sleep }) {
   const handle = recall(storage, connId);
-  if (!handle) return null;
-  for (let waits = 0; waits <= MAX_WAITS; waits++) {
+  for (let waits = 0; ; waits++) {
     let items;
     try { items = await list(connId); } catch { return null; }
-    const d = decide(items, handle);
-    if (d.action === 'take') {
-      try {
-        const got = await take(d.id);
-        if (got && got.ticket) return got;
-      } catch { /* weg oder abgelehnt: neue Sitzung */ }
-      forget(storage, connId);
-      return null;
-    }
+    let d = decide(items, handle);
+    if (d.action === 'wait' && waits < MAX_WAITS) { await sleep(WAIT_MS); continue; }
+    if (d.action === 'wait') d = { action: 'ask', item: items.find((k) => k && k.id === handle) };
     if (d.action === 'new') { forget(storage, connId); return null; }
-    if (waits < MAX_WAITS) await sleep(WAIT_MS);
+    let confirm = false;
+    if (d.action === 'ask') {
+      const answer = await ask(d.item);
+      if (answer === 'cancel') return { cancelled: true };
+      if (answer !== 'take') {
+        try { await end(d.item.id); } catch { /* schon weg: egal */ }
+        forget(storage, connId);
+        return null;
+      }
+      d = { action: 'take', id: d.item.id }; confirm = true;
+    }
+    try {
+      const got = await take(d.id, confirm);
+      if (got && got.ticket) return got;
+    } catch { /* weg oder abgelehnt: neue Sitzung */ }
+    forget(storage, connId);
+    return null;
   }
-  return null;
 }

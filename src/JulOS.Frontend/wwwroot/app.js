@@ -16,7 +16,7 @@ import { Session, Sessions } from './sessions.js';
 import { createPrefs } from './prefs.js';
 import { normalizeAppearance, compactAppearance, resetArea, applyAppearance } from './appearance.js';
 import { isScheme, normalizeScheme, isDark } from './scheme.js';
-import { t, tp, tk, applyDom, getPref, setPref, isPref } from './i18n.js';
+import { t, tp, tk, applyDom, getPref, setPref, isPref, fmtTime } from './i18n.js';
 import { serverMsg } from './i18n-errors.js';
 import { showDialog, focusField, askWindow } from './desktop-window.js';
 import { ClipDiag } from './clipdiag.js';
@@ -579,7 +579,7 @@ const PROFILE = { stablePolls: 2, minGap: 8000 };
 const ERROR_TEXT = {
   513: tk('app.err513'), 514: tk('app.err514'), 515: tk('app.err515'),
   519: tk('app.err519'), 520: tk('app.err520'), 769: tk('app.err769'), 770: tk('app.err770'),
-  777: tk('app.err777'),
+  777: tk('app.err777'), 778: tk('app.err778'),
   797: null,        // zu viele Sitzungen: der Server schickt den Text selbst ("Es sind schon 8 Sitzungen offen ...")
 };
 
@@ -597,11 +597,15 @@ async function keptList(connId) {
   if (!r.ok) throw new Error('kept ' + r.status);
   return (await r.json()).sessions || [];
 }
-/** Ein Einmal-Ticket zum Nehmen einer erhaltenen Sitzung. */
-async function keptTake(id) {
-  const r = await fetch('/api/remote/kept/take', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, signal: AbortSignal.timeout(8000), body: JSON.stringify({ id }) });
+/** Ein Einmal-Ticket zum Nehmen einer erhaltenen Sitzung; confirm: die Person hat "Hierher holen" gewaehlt (noetig, wenn ein anderes Geraet sie gerade zeigt). */
+async function keptTake(id, confirm = false) {
+  const r = await fetch('/api/remote/kept/take', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, signal: AbortSignal.timeout(8000), body: JSON.stringify({ id, confirm }) });
   if (!r.ok) throw new Error('kept ' + r.status);
   return r.json();
+}
+/** Eine erhaltene Sitzung beenden (vor "Neue Sitzung"). */
+async function keptEnd(id) {
+  await fetch('/api/remote/kept/end', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-JulOS': '1' }, signal: AbortSignal.timeout(8000), body: JSON.stringify({ id }) });
 }
 
 export class RemoteSession extends Session {
@@ -689,7 +693,7 @@ export class RemoteSession extends Session {
     e.scrim.addEventListener('mousedown', (ev) => ev.preventDefault());
     e.scrim.addEventListener('click', () => { this.closeMenu(); this.closeWinSheet(); });
     e.menu.addEventListener('click', (ev) => this.onMenuClick(ev));
-    e.reconnectBtn.addEventListener('click', () => { this.retry = 0; if (this.hasCredentials()) this.start(); else this.requestClose(); });
+    e.reconnectBtn.addEventListener('click', () => { this.retry = 0; if (this.hasCredentials() || this.resume.usable()) this.start(); else this.requestClose(); });
     e.closeBtn.addEventListener('click', () => this.requestClose());
     // Desktop-Browser (Maus, echte Tastatur): ein Klick ins Bild holt die Sitzung nach vorn und gibt ihr die Tasten
     e.touch.addEventListener('mousedown', () => { if (cur() !== this) Sessions.activate(this.id); focusKbForHardware(); });
@@ -900,6 +904,27 @@ export class RemoteSession extends Session {
     this.el.overlay.hidden = true; this.setState('error', t('app.stateCertChanged'));
     cancel.focus();
   }
+  /** Uebergabe (docs/SESSION-KEEP.md, Schritt 3): auf diesem Ziel ist schon eine Sitzung dieser Person erhalten, die nicht die dieses Tabs ist. Fragen statt einfach
+      eine neue aufzubauen (sonst nimmt das Ziel sie der anderen weg, und die beiden Geraete streiten sich). Antwort: 'take', 'new' oder 'cancel'. */
+  keptDialog(item) {
+    return new Promise((resolve) => {
+      const wrap = document.createElement('div'); wrap.className = 'term-dialog';
+      const box = document.createElement('div'); box.className = 'box'; box.setAttribute('role', 'alertdialog');
+      const add = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; n.textContent = text; box.appendChild(n); return n; };
+      const device = item.device || t('app.keptSomeDevice'), overlayWasHidden = this.el.overlay.hidden;
+      const say = { device, time: fmtTime(item.since) };
+      add('h2', '', item.unwatchedSince ? t('app.keptTitleWaiting') : t('app.keptTitleWatched'));
+      add('p', '', item.unwatchedSince ? t('app.keptTextWaiting', say) : t('app.keptTextWatched', say));
+      add('p', 'hint', t('app.keptHint'));
+      const button = (cls, text, answer) => { const b = document.createElement('button'); b.type = 'button'; b.className = cls; b.textContent = text; b.addEventListener('click', () => { wrap.remove(); this.el.overlay.hidden = overlayWasHidden; resolve(answer); }); return b; };
+      const take = button('primary', t('app.keptTake'), 'take');
+      const actions = document.createElement('div'); actions.className = 'actions';
+      actions.append(button('', t('common.cancel'), 'cancel'), button('', t('app.keptNew'), 'new'), take); box.appendChild(actions);
+      wrap.appendChild(box); this.el.stage.appendChild(wrap);
+      this.el.overlay.hidden = true;
+      take.focus();
+    });
+  }
   /** Anmeldung am Ziel abgelehnt (769) oder Anmeldedaten verlangt (770): Dialog mit Benutzer, Passwort und Domaene, bis zu drei neue Versuche. Jeder Versuch
       holt ein neues Ticket mit den neuen Daten; das Passwort bleibt im Speicher dieser Sitzung und wird nirgends gespeichert. Die Sitzung (Fenster) bleibt. */
   loginDialog(code) {
@@ -986,6 +1011,7 @@ export class RemoteSession extends Session {
   async start() {
     if (this.popped) { const p = this.popped; this.popped = null; p.stop(); this.el.reconnectBtn.textContent = t('app.reconnect'); }   // zurueck ins Hauptfenster: das Fenster gibt die Leitung ab
     this.intentional = false; this.fatal = false; this.connectStarted = Date.now();
+    if (!this.popped) this.el.reconnectBtn.textContent = t('app.reconnect');      // nach "Zurueckholen" wieder der gewohnte Knopf
     if (this.loginBox) { this.loginBox.remove(); this.loginBox = null; }
     if (this.client && this.client.drawn) this.resume.confirm();      // ein Bild kam schon (zum Beispiel Seite wieder sichtbar, bevor der tote Socket gemeldet wurde): das Token darf die Sitzung aufnehmen
     const resuming = this.everConnected && this.resume.usable();
@@ -1024,8 +1050,9 @@ export class RemoteSession extends Session {
     // Nur beim ersten Aufbau dieser Sitzung, nicht bei Verbindungen mit Schwestersitzung (die gemerkte Kennung gehoert der ersten) und nicht bei Quick Connect.
     if (!resumeToken && !this.everConnected && !this.keptTried && isScreen(this.kind) && !this.conn.quick && !this.hasSibling()) {
       this.keptTried = true;
-      const got = await reclaim(this.conn.id, { storage: sessionStorage, sleep, list: keptList, take: keptTake });
+      const got = await reclaim(this.conn.id, { storage: sessionStorage, sleep, list: keptList, take: keptTake, end: keptEnd, ask: (item) => this.keptDialog(item) });
       if (stale()) return;
+      if (got && got.cancelled) return this.requestClose(t('app.keptCancelled'));
       if (got) { ticket = got.ticket; driveMode = got.drive || null; keyLayout = got.layout || 'de'; tookKept = true; this.dbg('kept-taken', {}); }
     }
     if (!resumeToken && !tookKept) try {
@@ -1116,7 +1143,17 @@ export class RemoteSession extends Session {
       const known = ERROR_TEXT[code] ? t(ERROR_TEXT[code]) : null;
       const msg = known || ((err && err.message) ? serverMsg(err.message) : t('app.errConnection'));
       this.connected = false;
-      if (code === 777) { forgetKept(sessionStorage, this.conn.id); this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); this.setState('taken', t('app.stateTaken')); return this.showOverlay(msg); }   // anderswo uebernommen: nicht zurueckholen, sonst streiten sich zwei Fenster
+      if (code === 777) {   // anderswo uebernommen: nicht von selbst zurueckholen (sonst streiten sich zwei Geraete), nur auf "Zurueckholen" (das Token nimmt sie, das andere Geraet hoert 777)
+        forgetKept(sessionStorage, this.conn.id); this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer);
+        this.setState('taken', t('app.stateTaken')); this.showOverlay(msg); this.el.reconnectBtn.textContent = t('app.takeBack'); return;
+      }
+      if (code === 778) {   // das Ziel hat die Sitzung selbst beendet oder einer anderen Verbindung gegeben: nicht von selbst neu verbinden, sonst Ping-Pong mit dem anderen Geraet
+        this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer);
+        if (this.firstLogin && Date.now() - this.connectedAt < 12000) return this.loginDialog(769);     // xrdp: gleich nach dem Anmelden getrennt = Passwort abgelehnt (wie bisher)
+        if (!this.everConnected) return this.streamFailed(t('app.errLostBeforePicture'));
+        if (this.hasSibling()) return this.takenBySibling();
+        this.setState('taken', t('app.stateTaken')); return this.showOverlay(msg);
+      }
       if (code === 797) { this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer); return this.requestClose(msg); }   // Obergrenze der Sitzungen: Meldung des Servers, Sitzung zu
       if (!this.everConnected) this.requestClose(known || t('app.errCannotConnect', { msg }));
       else if (this.hasSibling()) this.takenBySibling();

@@ -6,15 +6,23 @@ const memory = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ?
 const CONN = 'c1';
 const noSleep = () => Promise.resolve();
 
-test('decide: nichts gemerkt oder keine Liste heisst neue Sitzung', () => {
-  assert.deepEqual(decide([{ id: 'a', unwatchedSince: 't' }], null), { action: 'new' });
+test('decide: keine Liste oder keine Sitzung heisst neue Sitzung', () => {
   assert.deepEqual(decide(null, 'a'), { action: 'new' });
+  assert.deepEqual(decide([], 'a'), { action: 'new' });
+  assert.deepEqual(decide([], null), { action: 'new' });
 });
 
-test('decide: nur die eigene, unbeobachtete Sitzung wird genommen', () => {
+test('decide: nur die eigene, unbeobachtete Sitzung wird still genommen, jede andere wird erfragt (die zuletzt begonnene)', () => {
   assert.deepEqual(decide([{ id: 'a', unwatchedSince: 't' }, { id: 'b', unwatchedSince: 't' }], 'b'), { action: 'take', id: 'b' });
-  assert.deepEqual(decide([{ id: 'a', unwatchedSince: 't' }], 'x'), { action: 'new' });            // eine einzige fremde unbeobachtete wird nicht still genommen (Schritt 3 fragt)
   assert.deepEqual(decide([{ id: 'a', unwatchedSince: null }], 'a'), { action: 'wait' });          // noch angesehen: gleich noch einmal fragen
+  const other = { id: 'a', since: '2026-11-25T08:00:00Z', unwatchedSince: 't' };
+  assert.deepEqual(decide([other], 'x'), { action: 'ask', item: other });                         // ein anderes Geraet: nie still nehmen
+  assert.deepEqual(decide([other], null), { action: 'ask', item: other });                        // das Handy ohne sessionStorage
+  const watched = { id: 'b', since: '2026-11-25T09:00:00Z', unwatchedSince: null, device: 'Firefox, Linux' };
+  assert.deepEqual(decide([other, watched], null), { action: 'ask', item: watched });
+  // dieses Geraet hatte sie zuletzt und niemand sieht sie an (Tab zu und wieder auf): still; sieht ein anderer Tab desselben Geraets sie an: fragen
+  assert.deepEqual(decide([{ ...other, own: true }, watched], null), { action: 'take', id: 'a' });
+  assert.deepEqual(decide([{ ...watched, own: true }], null), { action: 'ask', item: { ...watched, own: true } });
 });
 
 test('Merken, Erinnern, Vergessen je Verbindung', () => {
@@ -28,10 +36,25 @@ test('Merken, Erinnern, Vergessen je Verbindung', () => {
   assert.equal(recall(s, CONN), null);
 });
 
-test('reclaim: ohne gemerkte Kennung wird nicht einmal gefragt', async () => {
-  let asked = 0;
-  const got = await reclaim(CONN, { storage: memory(), sleep: noSleep, list: async () => { asked++; return []; }, take: async () => ({ ticket: 't' }) });
-  assert.equal(got, null); assert.equal(asked, 0);
+test('reclaim: ohne erhaltene Sitzung gibt es keinen Dialog, nur eine neue Sitzung', async () => {
+  let dialogs = 0;
+  const got = await reclaim(CONN, { storage: memory(), sleep: noSleep, list: async () => [], take: async () => ({ ticket: 't' }), ask: async () => { dialogs++; return 'take'; } });
+  assert.equal(got, null); assert.equal(dialogs, 0);
+});
+
+test('Uebergabe: "Hierher holen" nimmt mit Bestaetigung, "Neue Sitzung" beendet die alte zuerst, "Abbrechen" baut nichts auf', async () => {
+  const desktop = { id: 'd1', since: 't0', unwatchedSince: null, device: 'Firefox, Linux' };
+  const run = async (answer) => {
+    const calls = [];
+    const got = await reclaim(CONN, { storage: memory(), sleep: noSleep, list: async () => [desktop],
+      take: async (id, confirm) => { calls.push(['take', id, confirm]); return { ticket: 'T' }; },
+      end: async (id) => { calls.push(['end', id]); },
+      ask: async (item) => { calls.push(['ask', item.device]); return answer; } });
+    return { got, calls };
+  };
+  assert.deepEqual(await run('take'), { got: { ticket: 'T' }, calls: [['ask', 'Firefox, Linux'], ['take', 'd1', true]] });
+  assert.deepEqual(await run('new'), { got: null, calls: [['ask', 'Firefox, Linux'], ['end', 'd1']] });
+  assert.deepEqual(await run('cancel'), { got: { cancelled: true }, calls: [['ask', 'Firefox, Linux']] });
 });
 
 test('reclaim: die eigene unbeobachtete Sitzung kommt mit Ticket, Layout und Laufwerk zurueck', async () => {
@@ -49,11 +72,11 @@ test('reclaim: noch "angesehen" wartet kurz und nimmt, sobald der Server den alt
   assert.equal(got.ticket, 'T'); assert.equal(sleeps, 2);
 });
 
-test('reclaim: dauerhaft angesehen (kopierter Tab) gibt nach MAX_WAITS auf, ohne die Kennung zu verwerfen', async () => {
+test('reclaim: dauerhaft angesehen (kopierter Tab) fragt nach MAX_WAITS, statt still eine neue Sitzung aufzubauen', async () => {
   const s = memory(); remember(s, CONN, 'h1');
-  let asked = 0, took = 0;
-  const got = await reclaim(CONN, { storage: s, sleep: noSleep, list: async () => { asked++; return [{ id: 'h1', unwatchedSince: null }]; }, take: async () => { took++; return { ticket: 'T' }; } });
-  assert.equal(got, null); assert.equal(asked, MAX_WAITS + 1); assert.equal(took, 0);
+  let listed = 0, took = 0, dialogs = 0;
+  const got = await reclaim(CONN, { storage: s, sleep: noSleep, list: async () => { listed++; return [{ id: 'h1', unwatchedSince: null }]; }, take: async () => { took++; return { ticket: 'T' }; }, ask: async () => { dialogs++; return 'cancel'; } });
+  assert.deepEqual(got, { cancelled: true }); assert.equal(listed, MAX_WAITS + 1); assert.equal(took, 0); assert.equal(dialogs, 1);
   assert.equal(recall(s, CONN), 'h1');
 });
 

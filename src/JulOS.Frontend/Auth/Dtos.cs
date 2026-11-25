@@ -42,5 +42,5 @@ internal sealed record TicketResponse(string Ticket, string Kind, int Width, int
 /// <summary>Eine erhaltene Sitzung in der Liste (docs/SESSION-KEEP.md): nur die Kennung und was die Person selbst sehen darf, nie Host, Adresse, Ziel-Benutzer oder ein Token. Own: diese App-Sitzung hatte sie zuletzt.</summary>
 internal sealed record KeptItem(string Id, string Name, DateTimeOffset Since, DateTimeOffset? UnwatchedSince, string Device, bool Own);
 internal sealed record KeptListResponse(KeptItem[] Sessions);
-internal sealed record KeptIdRequest(string? Id);
+internal sealed record KeptIdRequest(string? Id, bool Confirm = false);
 internal sealed record KeptTicketResponse(string Ticket, string? Layout = null, string? Drive = null);

@@ -3,6 +3,8 @@ namespace JulOS.Integrations.Display.Rdp;
 // Why a server ended a session, in words (the codes of its "set error info" message, MS-RDPBCGR 2.2.5.1.1).
 internal static class RdpErrorInfo
 {
+    public const string TakenOver = "Another connection took over this session.";
+
     public static string? Describe(uint code)
     {
         return code switch
@@ -12,7 +14,7 @@ internal static class RdpErrorInfo
             0x0002 => "The user was signed out from the server.",
             0x0003 => "The session ended because nothing happened in it for too long.",
             0x0004 => "The session ended because it reached its time limit.",
-            0x0005 => "Another connection took over this session.",
+            0x0005 => TakenOver,
             0x0006 => "The server ran out of memory.",
             0x0007 => "The server denied the connection.",
             0x0009 => "This user is not allowed to sign in over Remote Desktop on this server.",

@@ -24,7 +24,7 @@ function render() {
     <div class="tt-try" id="ttTry"><span id="ttTryText">${c.mode === 'tablet' ? t('tab.tryHint') : t('touch.tryHint')}</span></div>
     <div class="tt-field"><span>${t('touch.mode')}</span>${seg('mode', [['tablet', t('tab.modeTablet')], ['direct', t('tab.modeMouse')], ['pad', t('touch.modePad')]], c.mode)}</div>
     ${tablet ? `<p class="tt-hint">${t('tab.rules')}</p>
-    <div class="tt-field"><span>${t('tab.pinch')}</span>${seg('pinch', [['view', t('tab.pinchView')], ['size', t('tab.pinchSize')]], c.pinch)}</div>` : ''}
+    <div class="tt-field"><span>${t('tab.pinch')}</span>${seg('pinch', [['off', t('tab.pinchOff')], ['view', t('tab.pinchView')], ['size', t('tab.pinchSize')]], c.pinch)}</div>` : ''}
     <div class="tt-field"><span>${t('touch.right')}</span>${seg('rightClick', [['hold', t('touch.rightHold')], ['two', t('touch.rightTwo')], ['both', t('touch.rightBoth')]], c.rightClick)}</div>
     <div class="tt-field"><span>${t('touch.hold')}</span><div class="tt-range"><input type="range" data-name="holdMs" min="${HOLD_MIN}" max="${HOLD_MAX}" step="50" value="${c.holdMs}"><output>${t('touch.ms', { n: c.holdMs })}</output></div></div>
     <div class="tt-field"><span>${t('touch.scrollDir')}</span>${seg('scrollDir', [['natural', t('touch.dirNatural')], ['classic', t('touch.dirClassic')]], c.scrollDir)}</div>

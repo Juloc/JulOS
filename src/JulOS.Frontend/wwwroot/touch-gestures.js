@@ -20,7 +20,7 @@
 export const HOLD_MIN = 300, HOLD_MAX = 1000;
 export const TOUCH_DEFAULTS = Object.freeze({
   mode: 'tablet',            // 'tablet' | 'direct' (Maus) | 'pad' (Touchpad)
-  pinch: 'view',             // Tablet: Pinch zoomt das Bild im Browser ('view') oder aendert die Aufloesung der VM ('size')
+  pinch: 'off',              // zwei Finger spreizen: 'off' (nichts; gezoomt wird mit den Tasten der Leiste, zwei Finger scrollen nur) | 'view' (Tablet: Bild im Browser vergroessern) | 'size' (Aufloesung der VM)
   holdMs: 500,               // Haltedauer fuer den Rechtsklick (300 bis 1000)
   rightClick: 'both',        // 'hold' | 'two' | 'both'
   scrollDir: 'natural',      // 'natural' (Finger nach oben = Inhalt nach oben) | 'classic' (Finger nach oben = Bildlauf nach oben)
@@ -32,7 +32,7 @@ export const TOUCH_DEFAULTS = Object.freeze({
   clipChip: true,            // Anzeige der Zwischenablage des Geraets in der Sitzung
 });
 const ONE_OF = {
-  mode: ['tablet', 'direct', 'pad'], pinch: ['view', 'size'], rightClick: ['hold', 'two', 'both'], scrollDir: ['natural', 'classic'], scrollSpeed: ['slow', 'normal', 'fast'],
+  mode: ['tablet', 'direct', 'pad'], pinch: ['off', 'view', 'size'], rightClick: ['hold', 'two', 'both'], scrollDir: ['natural', 'classic'], scrollSpeed: ['slow', 'normal', 'fast'],
 };
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
@@ -132,7 +132,7 @@ export const toVm = (cx, cy, rect, scale, z = 1) => ({ x: Math.round((cx - rect.
 export class TouchGestures {
   constructor(cfg = {}) {
     this.cfg = normalizeTouch(cfg);
-    this.opt = { zoomed: false, reducedMotion: false };
+    this.opt = { zoomed: false, viewZoomed: false, reducedMotion: false };
     this.fingers = new Map();
     this.phase = 'idle';
     this.lastTap = null;           // { x, y, t } des letzten Tippens (fuer Doppeltipp und halten)
@@ -428,7 +428,11 @@ export class TouchGestures {
     if (this.fingers.size !== 2) return acts;
     const d = dist(a, b), m = mid(a, b);
     const dd = Math.abs(d - two.d0), mm = dist(m, two.m0);
-    if (!two.decided) {
+    // Pinch aus (Standard): zwei Finger koennen nur scrollen. So wird aus einem Scrollen nie ein Zoom, auch wenn die Finger dabei auseinander wandern.
+    const noPinch = this.cfg.pinch === 'off';
+    if (!two.decided && noPinch) {
+      if (mm >= SCROLL_MIN) { two.decided = 'scroll'; two.mLast = two.m0; }
+    } else if (!two.decided) {
       // Pinch erst bei klarer Abstandsaenderung, die ueber die Bewegung der Mitte hinausgeht; sonst Scrollen, sobald die Mitte wandert und der Abstand sich kaum aendert
       if (dd >= PINCH_MIN && dd > mm * PINCH_DOMINANCE) two.decided = 'pinch';
       else if (mm >= SCROLL_MIN && dd < mm * SCROLL_DOMINANCE) two.decided = 'scroll';
@@ -445,8 +449,9 @@ export class TouchGestures {
     } else if (two.decided === 'scroll') {
       let dx = m.x - two.mLast.x, dy = m.y - two.mLast.y;
       two.mLast = m;
-      if (this.tablet && this.opt.zoomed) {
-        // vergroessertes Bild: zwei Finger schieben es (das Bild folgt den Fingern)
+      if (this.tablet && this.opt.viewZoomed) {
+        // optisch vergroessertes Bild: zwei Finger schieben es (das Bild folgt den Fingern). Nur dann: eine geaenderte Anzeigegroesse (Aufloesung) hat nichts zu verschieben,
+        // dort scrollen zwei Finger wie sonst auch.
         if (dx || dy) { two.panned = true; acts.push({ type: 'pan', dx, dy, x: m.x, y: m.y }); }
         return acts;
       }

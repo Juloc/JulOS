@@ -163,7 +163,7 @@ test('Scrollrichtung "klassisch" dreht das Vorzeichen um; waagerechtes Scrollen 
 });
 
 test('Pinch erst bei klarer Abstandsaenderung; aus dem Pinch wird kein Scrollen, und am Ende kommt das Verhaeltnis', () => {
-  const g = new TouchGestures({ mode: 'direct' });
+  const g = new TouchGestures({ mode: 'direct', pinch: 'size' });
   const steps = [[0, 'down', 1, 100, 300], [5, 'down', 2, 200, 300]];        // Abstand 100
   for (let i = 1; i <= 8; i++) steps.push([5 + i * 16, 'move', 1, 100 - i * 8, 300], [5 + i * 16, 'move', 2, 200 + i * 8, 300]);   // Abstand waechst auf 228
   steps.push([200, 'up', 1, 36, 300], [210, 'up', 2, 264, 300]);
@@ -178,15 +178,33 @@ test('Pinch erst bei klarer Abstandsaenderung; aus dem Pinch wird kein Scrollen,
 });
 
 test('Pinch mit nur einem bewegten Finger zaehlt als Pinch, Scrollen mit leicht wechselndem Abstand als Scrollen', () => {
-  let g = new TouchGestures({ mode: 'direct' });
+  let g = new TouchGestures({ mode: 'direct', pinch: 'size' });
   let acts = run(g, [[0, 'down', 1, 100, 300], [5, 'down', 2, 200, 300], [30, 'move', 1, 90, 300], [50, 'move', 1, 70, 300], [70, 'move', 1, 50, 300]]);
   assert.ok(acts.some((a) => a.type === 'pinch') && !acts.some((a) => a.type === 'scroll'));
-  g = new TouchGestures({ mode: 'direct' });
+  g = new TouchGestures({ mode: 'direct', pinch: 'size' });
   const steps = [[0, 'down', 1, 100, 300], [5, 'down', 2, 200, 300]];
   for (let i = 1; i <= 8; i++) steps.push([5 + i * 16, 'move', 1, 100, 300 - i * 14], [5 + i * 16, 'move', 2, 200 + i * 2.5, 300 - i * 14]);   // Abstand waechst nur um 20
   acts = run(g, steps);
   assert.ok(acts.some((a) => a.type === 'scroll') && !acts.some((a) => a.type === 'pinch'));
 });
+test('Pinch aus (Vorgabe): spreizen zoomt nie; zwei Finger scrollen, auch wenn der Abstand dabei waechst', () => {
+  assert.equal(TOUCH_DEFAULTS.pinch, 'off');
+  // reines Spreizen: nichts (kein Zoom, kein Scrollen, kein Klick)
+  let steps = [[0, 'down', 1, 100, 300], [5, 'down', 2, 200, 300]];
+  for (let i = 1; i <= 8; i++) steps.push([5 + i * 16, 'move', 1, 100 - i * 8, 300], [5 + i * 16, 'move', 2, 200 + i * 8, 300]);
+  steps.push([400, 'up', 1, 36, 300], [410, 'up', 2, 264, 300]);
+  for (const mode of ['tablet', 'direct', 'pad']) {
+    const acts = run(new TouchGestures({ mode }), steps);
+    assert.ok(!acts.some((a) => ['pinch', 'pinchEnd', 'zoom', 'zoomEnd', 'scroll'].includes(a.type)), mode + ': ' + acts.map((a) => a.type).join(','));
+    assert.equal(clicks(acts).length, 0, mode);
+  }
+  // schieben und dabei kraeftig spreizen: es bleibt Scrollen
+  steps = [[0, 'down', 1, 100, 300], [5, 'down', 2, 200, 300]];
+  for (let i = 1; i <= 8; i++) steps.push([5 + i * 16, 'move', 1, 100 - i * 6, 300 - i * 14], [5 + i * 16, 'move', 2, 200 + i * 6, 300 - i * 14]);
+  const acts = run(new TouchGestures({ mode: 'tablet' }), steps);
+  assert.ok(acts.some((a) => a.type === 'scroll') && !acts.some((a) => a.type === 'zoom' || a.type === 'pinch'));
+});
+
 
 test('einmal als Scrollen entschieden, bleibt es dabei (kein Umschlagen in Zoom)', () => {
   const g = new TouchGestures({ mode: 'direct' });

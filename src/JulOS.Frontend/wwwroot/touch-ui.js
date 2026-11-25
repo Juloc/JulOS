@@ -3,6 +3,8 @@
  * Eine Ebene je Sitzung ueber dem Bild (pointer-events: none, Stil in touch.css). Die Gesten selbst stehen in touch-gestures.js, das Einstellungsblatt in touch-settings.js.
  * ===================================================================== */
 
+import { t } from './i18n.js';
+
 const SVG = 'http://www.w3.org/2000/svg';
 
 /** Kurze Vibration, wo vorhanden und eingeschaltet (nur nach einer Geste erlaubt, der Finger liegt ja auf dem Schirm). */
@@ -31,13 +33,18 @@ export class TouchUi {
     for (const cls of ['tt-track', 'tt-fill']) {
       const c = document.createElementNS(SVG, 'circle'); c.setAttribute('class', cls); c.setAttribute('cx', '32'); c.setAttribute('cy', '32'); c.setAttribute('r', '27'); svg.appendChild(c);
     }
-    el.appendChild(svg); this.layer.appendChild(el); this.ringEl = el;
+    el.appendChild(svg);
+    // Der Finger verdeckt die Mitte: ein Schildchen ueber dem Finger sagt, was das Halten gerade wird (nah am oberen Rand steht es darunter).
+    const tip = document.createElement('div'); tip.className = 'tt-tip' + (p.y < 96 ? ' below' : ''); tip.textContent = t('touch.tipHold');
+    el.appendChild(tip); this.tipEl = tip;
+    this.layer.appendChild(el); this.ringEl = el;
   }
+  tip(text) { if (this.ringEl && this.tipEl && this.tipEl.parentNode === this.ringEl) this.tipEl.textContent = text; }
   ringClear() { clearTimeout(this.fullTimer); if (this.ringEl) { this.ringEl.remove(); this.ringEl = null; } }
   /** Der Ring ist voll: kurzes Aufleuchten und Vibration; der Rechtsklick geht gleichzeitig hinaus. */
   ringFull(x, y) {
     if (!this.ringEl) this.ringStart(x, y, 60);
-    this.ringEl.classList.add('full');
+    this.ringEl.classList.add('full'); this.tip(t('touch.tipRight'));
     buzz(22, this.vibrate());
     const el = this.ringEl;
     this.fullTimer = setTimeout(() => { if (this.ringEl === el) this.ringClear(); }, 420);
@@ -46,13 +53,13 @@ export class TouchUi {
   /** Tablet, "Ziehen bereit": der Ring ist halb voll, kurze Vibration, die Farbe wechselt. */
   ringReady(x, y) {
     if (!this.ringEl) this.ringStart(x, y, 60);
-    this.ringEl.classList.add('ready');
+    this.ringEl.classList.add('ready'); this.tip(t('touch.tipDrag'));
     buzz(12, this.vibrate());
   }
   /** Tablet, "Rechtsklick bereit": der Ring ist voll und bleibt stehen, bis der Finger hebt oder zieht. */
   ringArmed(x, y) {
     if (!this.ringEl) this.ringStart(x, y, 60);
-    this.ringEl.classList.add('armed');
+    this.ringEl.classList.add('armed'); this.tip(t('touch.tipRight'));
     buzz(22, this.vibrate());
   }
 

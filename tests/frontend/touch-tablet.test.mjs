@@ -34,7 +34,8 @@ test('Vorgabe: Tablet; "Maus" und Touchpad bleiben waehlbar, Abweichungen gehen 
   assert.equal(normalizeTouch({ mode: 'pad' }).mode, 'pad');
   assert.equal(normalizeTouch({ mode: 'direct' }).mode, 'direct');
   assert.equal(normalizeTouch({ pinch: 'size' }).pinch, 'size');
-  assert.equal(normalizeTouch({ pinch: 'x' }).pinch, 'view');
+  assert.equal(normalizeTouch({ pinch: 'view' }).pinch, 'view');
+  assert.equal(normalizeTouch({ pinch: 'x' }).pinch, 'off', 'Vorgabe: Spreizen ist aus, gezoomt wird mit den Tasten');
   assert.deepEqual(compactTouch({ mode: 'direct' }), { mode: 'direct' });
   assert.deepEqual(compactTouch({ mode: 'tablet' }), {});
 });
@@ -199,7 +200,7 @@ test('Wisch zu spaet begonnen (der Finger lag schon ueber "Ziehen bereit"): das 
 
 test('Zwei Finger: Pinch zoomt optisch (Verhaeltnis seit Beginn, Mitte), am Ende zoomEnd; mit "Aufloesung" bleibt der alte Pinch', () => {
   const steps = [[0, 'down', 1, 100, 300], [10, 'down', 2, 200, 300], [60, 'move', 2, 240, 300], [120, 'move', 2, 300, 300], [180, 'up', 2, 300, 300]];
-  const acts = run(tab(), steps);
+  const acts = run(tab({ pinch: 'view' }), steps);
   const z = acts.filter((a) => a.type === 'zoom');
   assert.ok(z.length >= 2 && z[0].start && !z[1].start);
   assert.ok(Math.abs(z.at(-1).ratio - 2) < 1e-9, 'Abstand 100 -> 200');
@@ -215,7 +216,11 @@ test('Zwei Finger schieben: ungezoomt scrollen, gezoomt das Bild verschieben (es
   const steps = [[0, 'down', 1, 100, 400], [5, 'down', 2, 200, 400], [40, 'move', 1, 100, 360], [41, 'move', 2, 200, 360], [80, 'move', 1, 100, 300], [81, 'move', 2, 200, 300], [120, 'up', 1, 100, 300]];
   const plain = run(tab(), steps);
   assert.ok(plain.some((a) => a.type === 'scroll') && !plain.some((a) => a.type === 'pan'));
-  const g = tab(); g.setOptions({ zoomed: true });
+  // eine geaenderte Anzeigegroesse (Aufloesung) allein hat nichts zu verschieben: zwei Finger scrollen weiter
+  const sized = tab(); sized.setOptions({ zoomed: true, viewZoomed: false });
+  const bySize = run(sized, steps);
+  assert.ok(bySize.some((a) => a.type === 'scroll') && !bySize.some((a) => a.type === 'pan'));
+  const g = tab({ pinch: 'view' }); g.setOptions({ zoomed: true, viewZoomed: true });
   const zoomed = run(g, steps);
   const pans = zoomed.filter((a) => a.type === 'pan');
   assert.ok(pans.length && !zoomed.some((a) => a.type === 'scroll'));

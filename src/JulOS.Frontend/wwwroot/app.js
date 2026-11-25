@@ -1891,9 +1891,9 @@ export class RemoteSession extends Session {
     this.applyZoomState();
   }
   /** Neue Touch-Einstellungen (S.touch) in die Maschine und die Scrollschritte uebernehmen. */
-  applyTouchConfig() { this.gest.setConfig(S.touch); this.wheel.step = scrollStep(S.touch.scrollSpeed); if (S.touch.mode !== 'tablet') this.resetView(); }
+  applyTouchConfig() { this.gest.setConfig(S.touch); this.wheel.step = scrollStep(S.touch.scrollSpeed); if (S.touch.mode !== 'tablet' || S.touch.pinch !== 'view') this.resetView(); }
   /** Ein Zwei-Finger-Doppeltipp setzt den Zoom nur zurueck, wenn gezoomt ist (sonst bleibt der Rechtsklick sofort). */
-  applyZoomState() { this.gest.setOptions({ zoomed: this.view.z > 1 || Math.abs(this.k - pcDefaultK()) > 0.02 }); }
+  applyZoomState() { this.gest.setOptions({ zoomed: this.view.z > 1 || Math.abs(this.k - pcDefaultK()) > 0.02, viewZoomed: this.view.z > 1 }); }
   /** Stelle einer Aktion in Pixeln der VM: direkt an der Stelle des Fingers, im Touchpad-Modus am Zeiger. */
   gestPoint(a) { return a.where === 'pointer' ? this.padPoint() : this.remoteXY(a.x, a.y); }
   runGesture(a) {

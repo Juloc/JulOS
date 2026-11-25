@@ -14,9 +14,9 @@ One finger scrolls like on a tablet. JulOS turns the fingers into pointer, butto
 | Tap | left click at the finger |
 | Tap twice (within 330 ms, 36 px) | double click: the second click goes to the spot of the first, so the target sees two clicks at the same place |
 | Hold still, ring half full (about 320 ms, short buzz, ring changes colour): "ready to drag" | moving now presses the left button at the start spot and holds it until you lift (marker shown): select text, move windows, sliders, scroll bars; lifting without moving is a left click |
-| Hold still, ring full (500 ms by default, longer buzz) | lifting without moving is a right click at the finger; moving still drags |
-| Two fingers spread or pinch | optical zoom of the picture in the browser, up to 4 times, around the fingers; the VM resolution stays |
-| Two fingers slide | zoomed: moves the magnified picture; not zoomed: scrolls |
+| Hold still, ring full (500 ms by default, longer buzz) | lifting without moving is a right click at the finger; moving still drags. The ring is wider than a fingertip (104 px) and a small label above the finger says what the hold is becoming: "Halten …", "Ziehen", "Rechtsklick" (below the finger near the top edge) |
+| Two fingers spread or pinch | **nothing by default** (since 0.31.0): zooming is done with the magnifier buttons of the bar, so a scroll can never turn into a zoom. With the setting "Pinch" on "magnify the picture": optical zoom in the browser, up to 4 times, around the fingers; the VM resolution stays |
+| Two fingers slide | scrolls; with an optically magnified picture it moves the picture instead. A changed display size (resolution) alone does not: there is nothing to move, two fingers keep scrolling |
 | Two-finger tap | right click |
 | Two-finger double tap | zoom back (when magnified; the right click of the first tap then waits 380 ms) |
 
@@ -24,7 +24,7 @@ Rules that keep the gestures apart: a swipe starts only after 12 px (below that 
 hold first, then move. The scroll axis is locked to the dominant direction (slight drift does not scroll sideways) until you clearly move across (over 48 px). With the on-screen keyboard open the
 existing shifting of the picture still applies first. A second finger or `touchcancel` ends everything: a held button is released, ring, marker and coasting are removed.
 
-Settings (Profile, "Sitzung und Touch", and the session menu with a test area): mode (Tablet, Maus, Touchpad), pinch (magnify the picture, or change the resolution), right-click method (hold, two fingers, both),
+Settings (Profile, "Sitzung und Touch", and the session menu with a test area): mode (Tablet, Maus, Touchpad), pinch (off, which is the default; magnify the picture; or change the resolution), right-click method (hold, two fingers, both),
 hold time 300 to 1000 ms (the "ready to drag" point is half way between ring start and full), scroll direction and speed, vibration. The quick switch in the session menu cycles Tablet, Maus, Touchpad;
 "Anzeigegröße" there changes the VM resolution (60 to 160 %), which used to be the pinch. Stored per device and as server setting `touch`; the mode is part of it.
 Everything the machine decides is written to the client log as `gest` (kind, fingers, ms, path in px, wheel steps, zoom; no content; at most 60 per session), so the server log shows what the phone really did.

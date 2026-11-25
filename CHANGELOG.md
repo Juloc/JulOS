@@ -6,6 +6,8 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+## [0.31.0] - 2026-11-25
+
 ### Geändert
 - **Spreizen mit zwei Fingern zoomt nicht mehr von selbst** ([docs/TOUCH.md](docs/TOUCH.md)): Zoomen und Scrollen kamen sich in die Quere. Die Vorgabe für „Pinch" ist jetzt „Aus"; gezoomt wird mit den Lupen-Tasten der Leiste, zwei Finger scrollen nur noch. Wer das Spreizen will, schaltet es unter „Sitzung und Touch" wieder ein (Bild vergrößern oder Auflösung ändern).
 - **Der Halte-Ring ist größer und sagt, was er wird:** 104 statt 64 Pixel, damit der Finger ihn nicht verdeckt, und ein Schildchen über dem Finger zeigt „Halten …", dann „Ziehen" (halber Ring) und „Rechtsklick" (voller Ring).

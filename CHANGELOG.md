@@ -6,6 +6,8 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+## [0.32.0] - 2026-11-25
+
 ### Neu
 - **Übergabe an ein anderes Gerät** ([docs/SESSION-KEEP.md](docs/SESSION-KEEP.md), Schritt 3; [docs/SESSIONS.md](docs/SESSIONS.md)): ist der Desktop am PC offen und man öffnet ihn am Handy, fragt das Handy „Diese Sitzung ist woanders offen … Hierher holen / Neue Sitzung / Abbrechen“. Hierher holen übernimmt die laufende Sitzung (kein neuer Login, `POST /api/remote/kept/take` mit `confirm`); der PC zeigt „Die Sitzung ist jetzt auf einem anderen Gerät … geöffnet“ mit **Zurückholen** und verbindet sich nicht von selbst neu. Eine wartende Sitzung, die dasselbe Gerät zuletzt hatte, kommt weiter still zurück.
 

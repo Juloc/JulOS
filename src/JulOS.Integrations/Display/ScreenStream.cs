@@ -962,6 +962,13 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         var tick = Environment.TickCount64;
         Volatile.Write(ref _lastUpdateAt, tick);
         _refiner?.Mark(x, y, width, height, tick);
+        MarkDirty(x, y, width, height);
+        Wake();
+    }
+
+    /// <summary>Widens the area that the next picture has to take from the frame buffer.</summary>
+    private void MarkDirty(int x, int y, int width, int height)
+    {
         lock (_gate)
         {
             if (_dirty)
@@ -982,8 +989,6 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
 
             _dirtyPixels += (long)width * height;
         }
-
-        Wake();
     }
 
     void IScreenHandler.Resized(int width, int height)
@@ -1158,9 +1163,16 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
                     var due = needKey ? now : lastEncodedAt + Math.Max(encoder.SuggestedInterval(pixels), StreamQualityPolicy.MinIntervalMs(Quality));
                     if (now >= due)
                     {
-                        if (Convert(frame, left, top, width, height))
+                        // Take the area and clear it in one step, before converting: an update that the RDP or VNC reader reports while the
+                        // conversion runs stays marked for the next picture. Clearing after the conversion lost such updates, and their
+                        // part of the screen kept an older picture (doubled, shifted lines while scrolling).
+                        TakeDirty(out left, out top, out width, out height);
+                        if (!Convert(frame, left, top, width, height))
                         {
-                            ClearDirty();
+                            MarkDirty(left, top, width, height);
+                        }
+                        else
+                        {
                             ClearRefinements();
                             encodedAny |= Send(encoder, frame, needKey);
                             needKey = false;
@@ -1621,10 +1633,14 @@ public sealed class ScreenStream : IRdpHandler, IAsyncDisposable
         }
     }
 
-    private void ClearDirty()
+    private void TakeDirty(out int left, out int top, out int width, out int height)
     {
         lock (_gate)
         {
+            left = _dirtyLeft;
+            top = _dirtyTop;
+            width = _dirtyRight - _dirtyLeft;
+            height = _dirtyBottom - _dirtyTop;
             _dirty = false;
             _dirtyPixels = 0;
         }

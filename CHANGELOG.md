@@ -6,6 +6,9 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+### Behoben
+- **Doppelte, versetzte Zeilen und alte Bildreste in der Fernsitzung** (seit der Übernahme der Engine am 18.11.): Meldete der Desktop eine Änderung, während der Server gerade einen Bildbereich umwandelte, wurde diese Änderung danach als erledigt gelöscht, und ihr Teil des Bildschirms behielt das ältere Bild, bis die Stelle neu gezeichnet wurde (sichtbar vor allem beim Scrollen). Der Bereich wird jetzt in einem Schritt übernommen und geleert, bevor umgewandelt wird. Neuer Test `LostUpdateTests` (scheitert mit dem alten Code).
+
 ## [0.31.0] - 2026-11-25
 
 ### Geändert

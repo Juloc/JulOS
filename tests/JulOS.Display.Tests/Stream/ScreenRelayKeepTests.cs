@@ -281,6 +281,61 @@ public sealed class ScreenRelayKeepTests
         await run2.WaitAsync(Wait);
     }
 
+    // Das Handy war gesperrt und hat "uebernommen" verpasst: sein altes Token darf die Sitzung, die jetzt am PC laeuft, nie still zuruecknehmen
+    [Fact]
+    public async Task After_a_take_the_old_token_gets_taken_and_never_the_session()
+    {
+        var host = Host();
+        using var relay = new ScreenRelay(new TestLog(), keep: TimeSpan.FromSeconds(60));
+        using var cts = new CancellationTokenSource(Wait);
+        var owner = Guid.NewGuid();
+
+        var phone = Browser.Create();
+        var run1 = relay.RunAsync(phone.Server, Target(host) with { Info = new KeptInfo(Guid.NewGuid(), "Test", "Handy") }, Alive, CancellationToken.None, owner: owner, appSession: Guid.NewGuid());
+        var session = await phone.UntilAsync(m => m[0] == ScreenProtocol.ToBrowserSession, cts.Token);
+        var oldToken = TokenOf(session);
+        var handle = HandleOf(session);
+        await phone.UntilAsync(IsKeyPicture, cts.Token);
+
+        var pc = Browser.Create();
+        var pcApp = Guid.NewGuid();
+        var run2 = relay.RunAsync(pc.Server, null, Alive, CancellationToken.None, owner: owner, appSession: pcApp, takeHandle: handle);
+        var pcToken = TokenOf(await pc.UntilAsync(m => m[0] == ScreenProtocol.ToBrowserSession, cts.Token));
+        Assert.NotEqual(oldToken, pcToken);                                  // die Uebernahme bekommt ein neues Token
+        await pc.UntilAsync(IsKeyPicture, cts.Token);
+        await phone.UntilAsync(m => m[0] == ScreenProtocol.ToBrowserTaken, cts.Token);
+        await run1.WaitAsync(Wait);
+
+        var late = Browser.Create();
+        await relay.RunAsync(late.Server, null, Alive, CancellationToken.None, owner: owner, resume: oldToken).WaitAsync(Wait);
+        Assert.Equal(ScreenProtocol.ToBrowserTaken, (await late.ReadAsync(cts.Token))![0]);
+        Assert.Null(relay.FindKept(owner, handle)!.UnwatchedSince);         // der PC sieht sie weiter an
+        Assert.Equal(pcApp, relay.FindKept(owner, handle)!.AppSession);
+
+        await pc.SendAsync(ScreenProtocol.FromBrowserEnd);
+        await run2.WaitAsync(Wait);
+    }
+
+    // "Neue Sitzung" auf dem Handy beendet die am PC angesehene: der PC hoert 779 und baut nicht von selbst neu auf
+    [Fact]
+    public async Task Ending_a_watched_session_from_another_device_tells_the_viewer_779()
+    {
+        var host = Host();
+        using var relay = new ScreenRelay(new TestLog(), keep: TimeSpan.FromSeconds(60));
+        using var cts = new CancellationTokenSource(Wait);
+        var owner = Guid.NewGuid();
+
+        var pc = Browser.Create();
+        var run = relay.RunAsync(pc.Server, Target(host) with { Info = new KeptInfo(Guid.NewGuid(), "Test", "PC") }, Alive, CancellationToken.None, owner: owner, appSession: Guid.NewGuid());
+        var handle = HandleOf(await pc.UntilAsync(m => m[0] == ScreenProtocol.ToBrowserSession, cts.Token));
+        await pc.UntilAsync(IsKeyPicture, cts.Token);
+
+        Assert.NotNull(await relay.EndKeptAsync(owner, handle));
+        var error = await pc.UntilAsync(m => m[0] == ScreenProtocol.ToBrowserError, cts.Token);
+        Assert.Equal(ScreenRelay.ErrorEndedElsewhere, (error[1] << 8) | error[2]);
+        await run.WaitAsync(Wait);
+    }
+
     [Fact]
     public async Task A_resume_while_the_old_connection_is_still_there_takes_over()
     {

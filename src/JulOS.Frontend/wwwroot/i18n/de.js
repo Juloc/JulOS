@@ -105,6 +105,7 @@ export default {
   "app.keptCancelled": "Nicht übernommen: die Sitzung bleibt, wo sie ist.",
   "app.takeBack": "Zurückholen",
   "app.err778": "Das Ziel hat die Sitzung beendet oder einer anderen Verbindung gegeben. „Neu verbinden“ holt sie hierher.",
+  "app.err779": "Die Sitzung wurde auf einem anderen Gerät beendet. „Neu verbinden“ baut hier eine neue auf.",
   "app.errActionList": "Aktion: {actions}",
   "app.errApps": "Programme: {msg}",
   "app.errCannotConnect": "Verbindung nicht möglich: {msg}",
@@ -3055,4 +3056,6 @@ export default {
   "clip2.pasteFile": "Datei einfügen",
   "clip2.osc7Hint": "Der Ordner der Shell ist unbekannt: die Datei kommt in den Home-Ordner. Damit das Terminal deinem Ordner folgt, trägt man in bash in ~/.bashrc ein: PROMPT_COMMAND='printf \"\\e]7;file://%s%s\\a\" \"$HOSTNAME\" \"$PWD\"' (zsh: Funktion in precmd). Dieser Hinweis kommt nur einmal.",
   "err.keptGone": "Diese Sitzung gibt es nicht mehr.",
+  "err.endedElsewhere": "Die Sitzung wurde auf einem anderen Gerät beendet.",
+  "err.endedAtTarget": "Die Sitzung wurde am Ziel beendet.",
 };

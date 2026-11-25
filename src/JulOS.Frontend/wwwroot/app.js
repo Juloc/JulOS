@@ -579,7 +579,7 @@ const PROFILE = { stablePolls: 2, minGap: 8000 };
 const ERROR_TEXT = {
   513: tk('app.err513'), 514: tk('app.err514'), 515: tk('app.err515'),
   519: tk('app.err519'), 520: tk('app.err520'), 769: tk('app.err769'), 770: tk('app.err770'),
-  777: tk('app.err777'), 778: tk('app.err778'),
+  777: tk('app.err777'), 778: tk('app.err778'), 779: tk('app.err779'),
   797: null,        // zu viele Sitzungen: der Server schickt den Text selbst ("Es sind schon 8 Sitzungen offen ...")
 };
 
@@ -693,7 +693,7 @@ export class RemoteSession extends Session {
     e.scrim.addEventListener('mousedown', (ev) => ev.preventDefault());
     e.scrim.addEventListener('click', () => { this.closeMenu(); this.closeWinSheet(); });
     e.menu.addEventListener('click', (ev) => this.onMenuClick(ev));
-    e.reconnectBtn.addEventListener('click', () => { this.retry = 0; if (this.hasCredentials() || this.resume.usable()) this.start(); else this.requestClose(); });
+    e.reconnectBtn.addEventListener('click', () => { this.retry = 0; if (this.takeBackId) this.takeBack(); else if (this.hasCredentials() || this.resume.usable()) this.start(); else this.requestClose(); });
     e.closeBtn.addEventListener('click', () => this.requestClose());
     // Desktop-Browser (Maus, echte Tastatur): ein Klick ins Bild holt die Sitzung nach vorn und gibt ihr die Tasten
     e.touch.addEventListener('mousedown', () => { if (cur() !== this) Sessions.activate(this.id); focusKbForHardware(); });
@@ -827,6 +827,8 @@ export class RemoteSession extends Session {
   /** Das Fenster ist zu oder will zurueck (oder der Benutzer tippt "Wieder anheften"): die Sitzung hier wieder aufnehmen. */
   popBack() {
     const p = this.popped; if (!p) return;
+    const token = p.token && p.token();                 // das Fenster hat beim Uebernehmen ein neues Token bekommen; das alte hier ist abgeloest
+    if (token) this.resume.offered(token, Math.round(this.resume.keepMs / 1000));
     this.popped = null; p.stop();
     this.el.reconnectBtn.textContent = t('app.reconnect');
     this.quality = normalizeQuality(store.get('q.' + this.conn.id, this.quality)); this.statusBar.setQuality(this.quality);
@@ -903,6 +905,19 @@ export class RemoteSession extends Session {
     wrap.appendChild(box); this.el.stage.appendChild(wrap);
     this.el.overlay.hidden = true; this.setState('error', t('app.stateCertChanged'));
     cancel.focus();
+  }
+  /** "Zurueckholen" nach 777: die Sitzung ueber ihre Kennung nehmen (der Klick ist die Bestaetigung); das andere Geraet hoert dann 777. */
+  async takeBack() {
+    const id = this.takeBackId; this.takeBackId = null;
+    this.showBusy(t('app.connecting'));
+    try {
+      const got = await keptTake(id, true);
+      if (this.disposed) return;
+      this.pendingTake = got; this.resume.reset(); this.start();
+    } catch {
+      if (this.disposed) return;
+      this.el.reconnectBtn.textContent = t('app.reconnect'); this.showOverlay(t('err.keptGone'));     // inzwischen beendet: "Neu verbinden" baut eine neue auf
+    }
   }
   /** Uebergabe (docs/SESSION-KEEP.md, Schritt 3): auf diesem Ziel ist schon eine Sitzung dieser Person erhalten, die nicht die dieses Tabs ist. Fragen statt einfach
       eine neue aufzubauen (sonst nimmt das Ziel sie der anderen weg, und die beiden Geraete streiten sich). Antwort: 'take', 'new' oder 'cancel'. */
@@ -1009,7 +1024,7 @@ export class RemoteSession extends Session {
   }
 
   async start() {
-    if (this.popped) { const p = this.popped; this.popped = null; p.stop(); this.el.reconnectBtn.textContent = t('app.reconnect'); }   // zurueck ins Hauptfenster: das Fenster gibt die Leitung ab
+    if (this.popped) { const p = this.popped, token = p.token && p.token(); if (token) this.resume.offered(token, Math.round(this.resume.keepMs / 1000)); this.popped = null; p.stop(); this.el.reconnectBtn.textContent = t('app.reconnect'); }   // zurueck ins Hauptfenster: das Fenster gibt die Leitung ab (mit seinem neuen Token)
     this.intentional = false; this.fatal = false; this.connectStarted = Date.now();
     if (!this.popped) this.el.reconnectBtn.textContent = t('app.reconnect');      // nach "Zurueckholen" wieder der gewohnte Knopf
     if (this.loginBox) { this.loginBox.remove(); this.loginBox = null; }
@@ -1044,6 +1059,7 @@ export class RemoteSession extends Session {
     }
     if (stale()) return;
     let ticket, driveMode = null, keyLayout = 'de', tookKept = false;
+    if (this.pendingTake) { const got = this.pendingTake; this.pendingTake = null; ticket = got.ticket; driveMode = got.drive || null; keyLayout = got.layout || 'de'; tookKept = true; }   // "Zurueckholen"
     // Eine erhaltene Sitzung des Servers wieder aufnehmen: kein Ticket, kein Passwort, kein neuer Login am Ziel (der Server nimmt das Token, siehe resume.js)
     const resumeToken = this.everConnected && this.resume.usable() ? this.resume.token : null;
     // Neuladen: die eigene, gerade unbeobachtete Sitzung dieser Verbindung zurueckholen (Einmal-Ticket, kein Passwort, kein neuer Login am Ziel; siehe kept.js).
@@ -1076,7 +1092,7 @@ export class RemoteSession extends Session {
     const client = new StreamClient(wsBase + '/api/remote/screen', keyLayout, { keysyms: this.conn.kind === 'vnc', display: prevDisplay || undefined, resumed: !!resumeToken || tookKept });
     this.clipDiag.connected(); this.pasteGate.connected();
     this.wireAudio(client);
-    client.onsession = (o) => { if (this.client === client) { this.resume.offered(o.token, o.keep); if (!this.hasSibling()) rememberKept(sessionStorage, this.conn.id, o.handle); } };
+    client.onsession = (o) => { if (this.client === client) { this.resume.offered(o.token, o.keep); this.keptHandle = o.handle; if (!this.hasSibling()) rememberKept(sessionStorage, this.conn.id, o.handle); } };
     // Der Server kennt das Token nicht mehr (abgelaufen, Neustart, Sitzung dort beendet): ganz normal neu aufbauen, mit Ticket und neuem Login
     client.onresumefailed = () => {
       if (this.client !== client) return;
@@ -1145,11 +1161,13 @@ export class RemoteSession extends Session {
       this.connected = false;
       if (code === 777) {   // anderswo uebernommen: nicht von selbst zurueckholen (sonst streiten sich zwei Geraete), nur auf "Zurueckholen" (das Token nimmt sie, das andere Geraet hoert 777)
         forgetKept(sessionStorage, this.conn.id); this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer);
-        this.setState('taken', t('app.stateTaken')); this.showOverlay(msg); this.el.reconnectBtn.textContent = t('app.takeBack'); return;
+        this.takeBackId = this.keptHandle || null;          // das Token ist jetzt abgeloest; zurueck geht es ueber die Kennung mit Bestaetigung (steht im Verlauf)
+        if (!this.takeBackId) this.resume.reset();           // ohne Kennung (Quick Connect): "Neu verbinden" baut neu auf, das abgeloeste Token braechte nur wieder 777
+        this.setState('taken', t('app.stateTaken')); this.showOverlay(msg); if (this.takeBackId) this.el.reconnectBtn.textContent = t('app.takeBack'); return;
       }
-      if (code === 778) {   // das Ziel hat die Sitzung selbst beendet oder einer anderen Verbindung gegeben: nicht von selbst neu verbinden, sonst Ping-Pong mit dem anderen Geraet
+      if (code === 778 || code === 779) {   // das Ziel hat die Sitzung beendet oder einer anderen Verbindung gegeben (778), oder die Person auf einem anderen Geraet (779): nicht von selbst neu verbinden, sonst Ping-Pong
         this.fatal = true; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer);
-        if (this.firstLogin && Date.now() - this.connectedAt < 12000) return this.loginDialog(769);     // xrdp: gleich nach dem Anmelden getrennt = Passwort abgelehnt (wie bisher)
+        if (code === 778 && !this.resume.usable() && this.firstLogin && Date.now() - this.connectedAt < 12000) return this.loginDialog(769);     // xrdp: gleich nach dem Anmelden getrennt = Passwort abgelehnt (wie bisher)
         if (!this.everConnected) return this.streamFailed(t('app.errLostBeforePicture'));
         if (this.hasSibling()) return this.takenBySibling();
         this.setState('taken', t('app.stateTaken')); return this.showOverlay(msg);

@@ -120,7 +120,7 @@ function start(h) {
     displayHost.replaceChildren(display.getElement());
     display.onresize = () => fit();
     display.showCursor(true);
-    c.onsession = (o) => { if (client === c) resume.offered(o.token, o.keep); };
+    c.onsession = (o) => { if (client === c) { resume.offered(o.token, o.keep); const e = handover(); if (e) e.token = o.token; } };   // das Hauptfenster nimmt die Sitzung danach mit diesem Token zurueck
     c.onresumefailed = () => { if (client === c) finalMessage(t('popout.sessionGone')); };
     c.onstatechange = (st) => {
       if (client !== c) return;

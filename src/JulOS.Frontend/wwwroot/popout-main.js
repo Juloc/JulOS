@@ -37,8 +37,9 @@ export function openPopout(session, back, extra = {}, host = globalThis) {
   if (!canPopOut(session)) return { ok: false, reason: t('popout.errNotReady') };
   const win = host.open(popoutUrl(session.conn.id, session.id), 'julos-popout-' + session.id, popoutFeatures(host.screen));
   if (!win) return { ok: false, reason: t('popout.errBlocked') };
-  let done = false, timer = 0;
-  const finish = () => { if (done) return; done = true; clearInterval(timer); delete host[REGISTRY]?.[session.id]; back(); };
+  let done = false, timer = 0, latest = session.resume.token;
+  const current = () => host[REGISTRY]?.[session.id]?.token || latest;      // das Fenster schreibt sein neues Token hinein (der Server wechselt es beim Uebernehmen)
+  const finish = () => { if (done) return; done = true; clearInterval(timer); latest = current(); delete host[REGISTRY]?.[session.id]; back(); };
   host[REGISTRY] = host[REGISTRY] || {};
   host[REGISTRY][session.id] = {
     token: session.resume.token, keep: Math.round(session.resume.keepMs / 1000), k: session.k, title: session.title, name: session.conn.name,
@@ -50,6 +51,8 @@ export function openPopout(session, back, extra = {}, host = globalThis) {
   timer = setInterval(() => { if (win.closed) finish(); }, 600);
   return {
     ok: true, win,
+    /** Das Token, mit dem das Hauptfenster die Sitzung wieder aufnimmt. */
+    token: () => current(),
     /**
      * Zurueck ins Hauptfenster: das Fenster schliessen, ohne dass es back() noch einmal ausloest. Der Eintrag bleibt noch kurz stehen: das Fenster
      * liest ihn beim Schliessen, um die Leitung nur zu kappen (und die Sitzung nicht zu beenden).

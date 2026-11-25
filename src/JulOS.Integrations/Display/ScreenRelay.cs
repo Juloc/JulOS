@@ -41,6 +41,9 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
     // der Browser holt sie nicht von selbst zurueck, sonst nehmen sich zwei Geraete die Sitzung immer wieder gegenseitig weg.
     public const int ErrorEndedAtTarget = 778;
 
+    // Die Person hat die Sitzung auf einem anderen Geraet beendet (dort "Neue Sitzung"): auch hier nicht von selbst neu verbinden.
+    public const int ErrorEndedElsewhere = 779;
+
     private const int ReceiveBuffer = 256;
     private readonly SemaphoreSlim _slots = new(maxSessions);
     private readonly SessionRegistry _sessions = registry ?? new SessionRegistry(int.MaxValue);   // ohne Angabe (Tests): keine Obergrenze, aber Ablosen je Slot
@@ -116,6 +119,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         }
 
         var snapshot = Snapshot(live);
+        live.EndedElsewhere = true;
         log.LogInformation("Erhaltene Sitzung von der Person beendet.");
         await EndAsync(live).ConfigureAwait(false);
         return snapshot;
@@ -210,7 +214,7 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
 
         if (!string.IsNullOrEmpty(resume))
         {
-            await ResumeAsync(ws, resume, sessionAlive, ct, sessionCheck ?? SessionCheck, owner ?? Guid.Empty, clientCodecs, appSession ?? Guid.Empty).ConfigureAwait(false);
+            await ResumeAsync(ws, resume, sessionAlive, ct, sessionCheck ?? SessionCheck, owner ?? Guid.Empty, clientCodecs, appSession ?? Guid.Empty, viaHandle: !string.IsNullOrEmpty(takeHandle)).ConfigureAwait(false);
             return;
         }
 
@@ -248,7 +252,9 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
 
     private sealed class Live
     {
-        public required string Token;
+        public required string Token;                       // unter _keptGate: wechselt bei jedem Anhaengen (RotateToken)
+        public readonly Queue<string> RetiredTokens = new();  // unter _keptGate: die letzten abgeloesten Token; sie bekommen "uebernommen" statt der Sitzung
+        public volatile bool EndedElsewhere;                // die Person hat sie auf einem anderen Geraet beendet ("Neue Sitzung" dort): dem Betrachter 779 sagen
         public required Guid Owner;
         public required ScreenStream Stream;
         public required Task Run;
@@ -333,12 +339,24 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         }
     }
 
-    private async Task ResumeAsync(WebSocket ws, string token, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan sessionCheck, Guid owner, VideoCodecs clientCodecs, Guid appSession)
+    private async Task ResumeAsync(WebSocket ws, string token, Func<CancellationToken, Task<bool>> sessionAlive, CancellationToken ct, TimeSpan sessionCheck, Guid owner, VideoCodecs clientCodecs, Guid appSession, bool viaHandle = false)
     {
         Live? live;
+        var retired = false;
         lock (_keptGate)
         {
             _kept.TryGetValue(token, out live);
+            retired = live is not null && live.Token != token;
+        }
+
+        // Ein abgeloestes Token (ein anderes Geraet hat die Sitzung seitdem genommen, und dieses hat die Meldung verpasst, etwa ein gesperrtes Handy):
+        // nie still zuruecknehmen, sondern "uebernommen" sagen; zurueckholen geht nur ueber die Kennung mit Rueckfrage (kept/take mit confirm)
+        if (retired && !live!.Ended && live.Owner == owner)
+        {
+            log.LogInformation("Wiederaufnahme mit einem abgeloesten Token: uebernommen gemeldet.");
+            await FinishAsync(ws, ScreenProtocol.Taken(), ct).ConfigureAwait(false);
+            await CloseAsync(ws).ConfigureAwait(false);
+            return;
         }
 
         // Fremde und unbekannte Token gleich: dieselbe Antwort, kein Hinweis darauf, ob es das Token gibt
@@ -384,10 +402,40 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         }
 
         await StopWaitingAsync(live).ConfigureAwait(false);
+
+        // Ein neues Token nur bei einer Uebernahme (ein anderer Anschluss war dran, oder genommen ueber die Kennung); ein einfaches Wiederverbinden behaelt es,
+        // sonst saehe ein Handy, dem die Antwort mit dem neuen Token unterwegs verloren ging, beim naechsten Versuch faelschlich "uebernommen"
+        if (previous is not null || viaHandle)
+        {
+            RotateToken(live);
+        }
+
         log.LogInformation("Sitzung wieder aufgenommen nach {Seconds} s", (Environment.TickCount64 - live.Started) / 1000);
         live.Stream.SetClientCodecs(clientCodecs);
         live.Stream.Resume();
         await ServeAsync(ws, live, sessionAlive, ct, sessionCheck, alreadyLocked: true).ConfigureAwait(false);
+    }
+
+    private const int MaxRetiredTokens = 8;
+
+    // Jeder Anschluss bekommt ein neues Token (ServeAsync nennt es dem Browser in Nachricht 11); das alte bleibt eine Weile als "abgeloest" bekannt.
+    private void RotateToken(Live live)
+    {
+        lock (_keptGate)
+        {
+            var old = live.Token;
+            live.Token = NewToken();
+            _kept[live.Token] = live;
+            live.RetiredTokens.Enqueue(old);
+            while (live.RetiredTokens.Count > MaxRetiredTokens)
+            {
+                var gone = live.RetiredTokens.Dequeue();
+                if (_kept.TryGetValue(gone, out var l) && ReferenceEquals(l, live))
+                {
+                    _kept.Remove(gone);
+                }
+            }
+        }
     }
 
     /// <summary>Haelt das Verwerfen der Ereignisse und die Ablaufzeit an (ein Browser kommt).</summary>
@@ -461,6 +509,8 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
                 // statt bis zum naechsten Schreiben stehenzubleiben. Ein alter Browser pingt nie und wird nie so beendet.
                 await SendOnceAsync(ws, ScreenProtocol.LinkCapable(), ct).ConfigureAwait(false);
                 var link = new LinkWatch(null, linkDeadAfter);
+                // Haengt das alte Senden (halbtote Leitung, voller Puffer), soll der neue Browser nicht ewig warten: nach 4 s wird hart abgebrochen
+                using var giveUp = takenAway.Token.Register(() => { try { attach.CancelAfter(TimeSpan.FromSeconds(4)); } catch (ObjectDisposedException) { /* schon fertig */ } });
                 var send = PumpToBrowserAsync(ws, live.Stream, live.Owner, Downloads, attach.Token, takenAway.Token);
                 var receive = ReceiveFromBrowserAsync(ws, live.Stream, link, attach.Token);
                 var watch = WatchAsync(sessionAlive, sessionCheck, attach.Token);
@@ -581,6 +631,11 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
         {
             last = ScreenProtocol.Error(e is TimeoutException ? ErrorTimeout : ErrorUnreachable,
                 e is TimeoutException ? "Zeitüberschreitung beim Verbinden." : "Das Ziel ist nicht erreichbar.");
+        }
+
+        if (last is null && live.EndedElsewhere)
+        {
+            return ScreenProtocol.Error(ErrorEndedElsewhere, "Die Sitzung wurde auf einem anderen Gerät beendet.");
         }
 
         if (last is not null || live.Ended)
@@ -745,9 +800,12 @@ public sealed class ScreenRelay(ILogger<ScreenRelay> log, int maxSessions = 16, 
 
         lock (_keptGate)
         {
-            if (_kept.TryGetValue(live.Token, out var current) && ReferenceEquals(current, live))
+            foreach (var t in live.RetiredTokens.Append(live.Token))
             {
-                _kept.Remove(live.Token);
+                if (_kept.TryGetValue(t, out var current) && ReferenceEquals(current, live))
+                {
+                    _kept.Remove(t);
+                }
             }
 
             if (_byHandle.TryGetValue(live.Handle, out var byHandle) && ReferenceEquals(byHandle, live))

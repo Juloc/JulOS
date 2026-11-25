@@ -15,6 +15,8 @@ export const SERVER_TEXTS = {
   "Es wartet kein neuer Wiederherstellungsschlüssel.": "err.secNoPending",
   "Zu viele Anfragen, bitte kurz warten.": "err.tooMany",
   "Diese Sitzung gibt es nicht mehr.": "err.keptGone",
+  "Die Sitzung wurde auf einem anderen Gerät beendet.": "err.endedElsewhere",
+  "Die Sitzung wurde am Ziel beendet.": "err.endedAtTarget",
   "Push-Meldungen brauchen den Schlüssel des Servers.": "err.pushNoKey",
   "Der Endpunkt des Push-Dienstes ist nicht zulässig.": "err.pushEndpoint",
   "Die Schlüssel des Abos sind ungültig.": "err.pushKeys",

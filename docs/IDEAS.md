@@ -122,3 +122,15 @@ Today only `JulOS.dll user add NAME` in a terminal adds a person. Wanted: the ow
 invited person opens it, chooses a password and enrols the authenticator, then the owner assigns app roles. Needs a public page, a token table (a migration), rate limits and tests;
 see "Adding more people" in [SIGN-IN.md](SIGN-IN.md). Not started.
 - **AI gateway counts per person as well** (asked for by `notes`, 2026-11-24): an app may name the person of a call so the hub can show and limit usage per person, not only per app. Today each app counts its own people; the app's budget in the hub stays the outer limit.
+
+## The phone as the way into a remote desktop: app mode with three levels (discussed with the owner 2026-11-25, not agreed as scope yet)
+
+The owner works on a Linux desktop from the phone for hours. Wanted: that desktop is set up so it only makes sense through JulOS, and the phone shows three levels to switch between, each on its own step:
+
+1. **Sessions** (the JulOS level): everything that is open (this desktop, terminals, other machines) like the tabs of a browser, each with its last picture.
+2. **Windows of the desktop:** on the phone a remote desktop is always in app mode (one window at a time, full size); the desktop's own panel is hidden and JulOS shows the windows itself, large enough for a finger. The agent's app mode and the window list exist (`AGENT_API.md`, "Modes"); the phone has no view for them yet. First only for the owner's one desktop.
+3. **Inside one program:** a bar that belongs to the program in front and shows only while that program has the focus. First case: the AI coding app the owner uses, with the path to the current chat and what is open in it (chat, browser, changes) as tabs.
+
+Findings of a first look (2026-11-25): that app has an official way to extend its interface; an extension can draw a row above the prompt box and a side pane and can call the app's own tools, so the bar of level 3 can be tried inside the app without changing the app (it would sit above the prompt, not at the top left). Whether such an extension can list the other chats and bring one to the front is not tried yet. The other way, JulOS drawing that bar itself and steering the app from outside, needs a channel in both directions and is more work.
+
+Open: three fixed bars cost about 140 px on a phone before the content starts; a single line with a path (session, window, chat) that opens the choice of one level on a tap was proposed. The rework of clipboard and quick bar in the remote session belongs to the same piece; the owner has not said yet what hurts most there.

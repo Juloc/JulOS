@@ -63,3 +63,42 @@ jobs:
           # Nur main schreibt den Cache. Pull-Requests und Tags lesen ihn, schrieben aber je Lauf 50 bis 100 MB dazu (Stand: 3,5 von 7,6 GB), und der Cache
           # des Repositories fasst nur 10 GB: dann wirft GitHub die Schichten von main hinaus und der naechste Bau ist kalt.
           cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,mode=max' || '' }}
+
+  # Das zweite Image: Codex im eigenen Container (docs/CODEX-SIDECAR.md), gleiche Tags wie der Server (Version, latest, main). Nur das Codex-Programm und das Tor; es baut aus
+  # deploy/codex/Dockerfile mit dem Kontext des Repositories und prueft die Pruefsumme des Archivs beim Bau.
+  codex:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: |
+          version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Directory.Build.props | head -1)
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "Tag $GITHUB_REF_NAME passt nicht zur Version $version in Directory.Build.props"; exit 1
+          fi
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Login ghcr.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository }}-codex
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/codex/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=codex
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,scope=codex,mode=max' || '' }}

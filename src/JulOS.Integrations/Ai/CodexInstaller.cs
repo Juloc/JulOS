@@ -19,12 +19,15 @@ public sealed record CodexRelease(string Version, string Url, string Sha256, str
     private const string BaseUrl = "https://github.com/openai/codex/releases/download/rust-v" + PinnedVersion + "/";
 
     /// <summary>Die Veroeffentlichung fuer diesen Rechner (Linux, x64 oder arm64, statisch gebunden), sonst null.</summary>
-    public static CodexRelease? ForThisMachine() => OperatingSystem.IsLinux() ? RuntimeInformation.OSArchitecture switch
+    public static CodexRelease? ForThisMachine() => OperatingSystem.IsLinux() ? For(RuntimeInformation.OSArchitecture) : null;
+
+    /// <summary>Die Veroeffentlichung fuer eine Bauart (auch fuer das Image des eigenen Containers: deploy/codex/Dockerfile traegt dieselben Werte, ein Test vergleicht sie).</summary>
+    public static CodexRelease? For(Architecture architecture) => architecture switch
     {
         Architecture.X64 => new CodexRelease(PinnedVersion, BaseUrl + "codex-x86_64-unknown-linux-musl.tar.gz", "01baa2e47809f8597be5b2f8abd4e4dfe3fb5bcb6e504c2fbaaad97056c15e8d", "codex-x86_64-unknown-linux-musl"),
         Architecture.Arm64 => new CodexRelease(PinnedVersion, BaseUrl + "codex-aarch64-unknown-linux-musl.tar.gz", "bcf50b836385e51bd2976ab2bbe92b1b08a1cbe37712eb8dbe378aa78d24871c", "codex-aarch64-unknown-linux-musl"),
         _ => null,
-    } : null;
+    };
 }
 
 /// <summary>

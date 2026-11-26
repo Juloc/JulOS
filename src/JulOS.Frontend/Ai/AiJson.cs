@@ -23,7 +23,8 @@ internal sealed record UsageResponseDto(string App, BudgetDto Budget, string? Wa
 
 // ---- Verwaltung in den Einstellungen (/api/ai, hinter Sitzung) ----
 internal sealed record LoginDto(string State, string? Url, string? Code, DateTimeOffset? ExpiresAt);
-internal sealed record CodexDto(string Version, bool Supported, bool Confirmed, LoginDto Login);
+internal sealed record SelfTestDto(DateTimeOffset At, bool Ok, bool Counts, string[] Failed);
+internal sealed record CodexDto(string Version, bool Supported, bool Confirmed, LoginDto Login, string Mode, string? SidecarVersion, SelfTestDto? SelfTest);
 internal sealed record PlanWindowDto(double UsedPercent, int? Minutes, DateTimeOffset? ResetsAt);
 internal sealed record PlanUsageDto(string? Plan, PlanWindowDto[] Windows);
 internal sealed record ProviderDto(string Id, bool Enabled, bool KeySet, string Status, string? Detail, CodexDto? Codex, PlanUsageDto? Plan);
@@ -54,6 +55,7 @@ internal sealed record ConfirmRequest(bool? Confirmed);
 [JsonSerializable(typeof(ModelsResponseDto))]
 [JsonSerializable(typeof(UsageResponseDto))]
 [JsonSerializable(typeof(AiStateDto))]
+[JsonSerializable(typeof(SelfTestDto))]
 [JsonSerializable(typeof(AppCreatedDto))]
 [JsonSerializable(typeof(AppDto))]
 [JsonSerializable(typeof(KeyDto))]

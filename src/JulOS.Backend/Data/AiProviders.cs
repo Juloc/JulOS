@@ -55,7 +55,12 @@ public sealed class AiProviderStore(NpgsqlDataSource db, SecretBox box)
 /// <summary>Die Schalter des KI-Zugangs in den Einstellungen der Instanz: an oder aus (aus ist der Anfang) und das Standardmodell ("anbieter/modell").</summary>
 public sealed class AiSettings(InstanceSettings settings)
 {
-    public const string EnabledKey = "ai.enabled", DefaultModelKey = "ai.defaultModel", CodexConfirmedKey = "ai.codexConfirmed";
+    public const string EnabledKey = "ai.enabled", DefaultModelKey = "ai.defaultModel", CodexConfirmedKey = "ai.codexConfirmed", CodexSelfTestKey = "ai.codexSelfTest";
+
+    /// <summary>Das letzte Ergebnis des Selbsttests des Codex-Containers als JSON (docs/CODEX-SIDECAR.md), oder null.</summary>
+    public System.Text.Json.JsonElement? CodexSelfTest => settings.GetElement(CodexSelfTestKey);
+
+    public Task SetCodexSelfTestAsync(string json, CancellationToken ct = default) => settings.SetAsync(CodexSelfTestKey, json, ct);
 
     /// <summary>
     /// Die Version der Codex-Bruecke, deren Pruefung von Hand der Besitzer bestaetigt hat (docs/AI-GATEWAY.md, "Before turning the Codex bridge on, check it by hand"), oder null. Ohne

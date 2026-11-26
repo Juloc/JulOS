@@ -20,8 +20,11 @@ internal sealed class AiRegistry(IReadOnlyList<IAiProvider> providers, CodexBrid
 
     public IAiProvider? Get(string id) => providers.FirstOrDefault(p => p.Id == id);
 
-    /// <summary>Ob die Codex-Bruecke fuer Apps freigegeben ist: der Besitzer hat die Pruefung von Hand fuer die jetzt festgelegte Version bestaetigt.</summary>
-    public bool CodexConfirmed => settings.CodexConfirmedVersion == CodexRelease.PinnedVersion;
+    /// <summary>
+    /// Ob die Codex-Bruecke fuer Apps freigegeben ist: im eigenen Container, wenn der letzte Selbsttest gruen und frisch ist und fuer die jetzt festgelegte Version gilt; im selben Container,
+    /// wenn der Besitzer die Pruefung von Hand fuer diese Version bestaetigt hat.
+    /// </summary>
+    public bool CodexConfirmed => codex.Runner.Isolated ? CodexVerification.Read(settings)?.Counts(time.GetUtcNow()) == true : settings.CodexConfirmedVersion == CodexRelease.PinnedVersion;
 
     /// <summary>
     /// Die Anbieter, die gerade benutzt werden duerfen (Schalter an). forApps: fuer Apps mit Schluessel; die Codex-Bruecke zaehlt dafuer nur mit der Bestaetigung des Besitzers
@@ -60,7 +63,11 @@ internal static class AiServices
         services.AddSingleton(new AiConcurrency(AiRules.MaxConcurrentPerApp));
         // Das Codex-Programm liegt im Datenordner und wird erst beim Einschalten geladen; ohne Datenordner gibt es die Bruecke nicht
         services.AddSingleton(_ => new CodexInstaller(configuration["JULOS_DATA"] ?? "", string.IsNullOrWhiteSpace(configuration["JULOS_DATA"]) ? null : CodexRelease.ForThisMachine()));
-        services.AddSingleton(sp => new CodexBridge(sp.GetRequiredService<CodexInstaller>(), sp.GetRequiredService<TimeProvider>()));
+        // JULOS_CODEX_SOCKET gesetzt: das Programm laeuft im eigenen Container (docs/CODEX-SIDECAR.md), JulOS laedt nichts und fragt es nur ueber den Socket
+        services.AddSingleton<ICodexRunner>(sp => configuration["JULOS_CODEX_SOCKET"] is { Length: > 0 } socket ? new CodexSocketRunner(socket) : new LocalRunner(sp.GetRequiredService<CodexInstaller>()));
+        services.AddSingleton(sp => new CodexBridge(sp.GetRequiredService<ICodexRunner>(), sp.GetRequiredService<CodexInstaller>(), sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton<CodexVerification>();
+        services.AddHostedService(sp => sp.GetRequiredService<CodexVerification>());
         services.AddSingleton(sp =>
         {
             var store = sp.GetRequiredService<AiProviderStore>();

@@ -179,6 +179,8 @@ export const SERVER_TEXTS = {
   "Anbieter nicht gefunden.": "err.ai.notFound",
   "App nicht gefunden.": "err.ai.notFound",
   "Die Codex-Brücke hat keinen Schlüssel; sie wird mit dem ChatGPT-Konto angemeldet.": "err.ai.codexNoKey",
+  "Mit dem eigenen Container gibt der Selbsttest die Brücke frei, nicht eine Bestätigung.": "err.ai.codexSidecarConfirm",
+  "Der Selbsttest gibt es nur mit dem eigenen Container.": "err.ai.codexNoSidecar",
   "Schlüssel speichern ist aus: JULOS_SECRET_KEY setzen oder JULOS_DATA beschreibbar machen.": "err.ai.noSecretBox",
   "Das ist kein gültiger API-Schlüssel.": "err.ai.badKey",
   "Der KI-Zugang ist ausgeschaltet.": "err.ai.off",

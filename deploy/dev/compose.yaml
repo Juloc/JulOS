@@ -26,16 +26,40 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      codex:
+        condition: service_started
     environment:
       JULOS_DB: Host=postgres;Database=julos;Username=julos;Password=${DEV_DB_PASSWORD}
       JULOS_SECRET_KEY: ${DEV_SECRET_KEY:-}
       JULOS_RDP_GFX: ${DEV_RDP_GFX:-}            # Versuch: on = RDP-Grafikpipeline (GFX) einschalten (Standard aus)
+      JULOS_CODEX_SOCKET: /run/codex/codex.sock  # Codex im eigenen Container (docs/CODEX-SIDECAR.md), siehe Dienst codex
     # wie live: der Server laeuft als derselbe Benutzer wie die Sitzung der Ziel-Maschine (Socket-Ordner hat Rechte 0700)
     user: "1020:1020"
+    group_add:
+      - "10002"
     volumes:
       - julos-dev-share:/uploads
+      - julos-dev-codex-sock:/run/codex
     ports:
       - "127.0.0.1:18080:8080"
+
+  # Codex im eigenen Container, wie live (docs/CODEX-SIDECAR.md): der Selbsttest der Trennung laeuft gegen genau diesen Dienst. Nur lokal, keine Anmeldung noetig fuer den Selbsttest.
+  codex:
+    build:
+      context: ../..
+      dockerfile: deploy/codex/Dockerfile
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - julos-dev-codex-home:/home/codex
+      - julos-dev-codex-sock:/run/codex
+    mem_limit: 2g
+    pids_limit: 512
 
   # Wegwerf-Ziel fuer das Terminal (SSH). Zugang: Benutzer "tester", Passwort aus deploy/dev/.env (DEV_TARGET_PASSWORD)
   test-ssh:
@@ -71,5 +95,7 @@ services:
       - julos-dev-share:/home/ubuntu/julos-uploads
 
 volumes:
+  julos-dev-codex-home:
+  julos-dev-codex-sock:
   julos-dev-share:
   julos-dev-postgres:

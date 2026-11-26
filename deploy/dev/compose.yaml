@@ -40,6 +40,9 @@ services:
     volumes:
       - julos-dev-share:/uploads
       - julos-dev-codex-sock:/run/codex
+    # Datenordner (secret.key, ai/canary): wegwerfbar und fuer den Benutzer des Servers beschreibbar (ein benanntes Volume gehoerte dem Benutzer des Images)
+    tmpfs:
+      - /data:uid=1020,gid=1020,mode=0700
     ports:
       - "127.0.0.1:18080:8080"
 

@@ -96,7 +96,7 @@ function sidecarBlock(c, esc) {
   else if (!st.ok) line = `<p class="sec-warn" role="status">${esc(t('ai.codex.selftest.red', { at, checks: names }))}</p>`;
   else if (!st.counts) line = `<p class="sec-warn" role="status">${esc(t('ai.codex.selftest.stale', { at }))}</p>`;
   else line = `<p class="hint" role="status">${esc(t('ai.codex.selftest.ok', { at }))}</p>`;
-  return `<p class="hint">${esc(t('ai.codex.sidecar', { version: c.sidecarVersion || c.version }))}</p>${line}<div class="dlg-btns"><button type="button" class="ghost" data-ai="codex-selftest">${esc(t('ai.codex.selftest.run'))}</button></div>`;
+  return `<p class="hint">${esc(t('ai.codex.sidecar', { version: (c.sidecarVersion || c.version).replace(/^codex-cli\s+/, '') }))}</p>${line}<div class="dlg-btns"><button type="button" class="ghost" data-ai="codex-selftest">${esc(t('ai.codex.selftest.run'))}</button></div>`;
 }
 
 function codexBlock(p, esc) {

@@ -6,6 +6,8 @@ Wie eine Version veröffentlicht wird, steht in [docs/RELEASING.md](docs/RELEASI
 
 ## [Unveröffentlicht]
 
+## [0.33.0] - 2026-11-27
+
 ### Neu
 - **Codex im eigenen Container** ([docs/CODEX-SIDECAR.md](docs/CODEX-SIDECAR.md), [docs/AI-GATEWAY.md](docs/AI-GATEWAY.md)): die ChatGPT-Brücke startet das Codex-Programm nicht mehr im Container von JulOS, sondern in einem zweiten (`ghcr.io/juloc/julos-codex`, gleicher Tag) mit eigenem Benutzer, eigenem Volume für die Anmeldung, ohne Volumes von JulOS, ohne Docker-Socket, ohne Port und nicht im Netz von JulOS. JulOS spricht es nur über einen Unix-Socket an (`JULOS_CODEX_SOCKET`); das Tor dort (`tools/codex-gate`) kennt nur feste Befehle. Ein **Selbsttest** prüft von innen, dass der Container nichts von JulOS sieht (Kanarien-Datei und -Wort, `secret.key`, Docker-Socket), nicht Root ist, sein Ordner privat und das Programm das festgelegte ist; er läuft beim Einschalten, wenn der Container (neu) startet, täglich und per Knopf *Selbsttest jetzt*. Für Apps gilt die Brücke nur mit einem grünen Ergebnis, das höchstens 36 Stunden alt ist; die Prüfung von Hand und ihre Bestätigung entfallen in diesem Aufbau. Ohne `JULOS_CODEX_SOCKET` bleibt alles wie bisher. Die Compose-Dateien und die Test-Instanz haben den Dienst `codex`; der Workflow baut das zweite Image (amd64, arm64).
 

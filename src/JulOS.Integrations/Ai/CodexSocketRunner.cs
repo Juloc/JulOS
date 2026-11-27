@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -10,13 +11,15 @@ namespace JulOS.Integrations.Ai;
 /// "\u001e{"exit":N}" (Satztrenner zuerst); sie wird hier abgetrennt. Ohne diese Zeile gilt der Aufruf als abgebrochen (Exit -1). Kill schliesst die Verbindung; das Tor beendet dann das Programm.
 /// Es gibt keinen freien Text zum Tor: nur der Name des Befehls (und beim Selbsttest Pfad und Wort).
 /// </summary>
-public sealed class CodexSocketRunner(string socketPath) : ICodexRunner
+public sealed class CodexSocketRunner(string socketPath, TimeProvider? clock = null) : ICodexRunner
 {
     /// <summary>Der Arbeitsordner im Container des Programms (das Tor legt ihn an).</summary>
     public const string SidecarWork = "/home/codex/work";
 
     private readonly SemaphoreSlim _refresh = new(1, 1);
+    private readonly TimeProvider _clock = clock ?? TimeProvider.System;
     private DateTimeOffset _refreshed;
+    private DateTime? _socketStamp;
     private volatile bool _available;
     private volatile string? _version;
 
@@ -25,7 +28,10 @@ public sealed class CodexSocketRunner(string socketPath) : ICodexRunner
     public string? Version => _version;
     public string WorkDirectory => SidecarWork;
 
-    /// <summary>Wird ausgeloest, wenn der Container nach einer Pause wieder antwortet (auch beim ersten Mal): dann gehoert der Selbsttest neu gemacht.</summary>
+    /// <summary>
+    /// Wird ausgeloest, wenn der Container nach einer Pause wieder antwortet (auch beim ersten Mal) oder neu gestartet wurde: dann gehoert der Selbsttest neu gemacht. Ein Neustart
+    /// zwischen zwei Nachfragen faellt nicht als Pause auf; das Tor legt seinen Socket aber bei jedem Start neu an, darum zaehlt auch eine neue Zeit der Socket-Datei.
+    /// </summary>
     public event Action? BecameAvailable;
 
     public static string CommandName(CodexCommand c) => c switch
@@ -40,7 +46,7 @@ public sealed class CodexSocketRunner(string socketPath) : ICodexRunner
         await _refresh.WaitAsync(ct);
         try
         {
-            if (DateTimeOffset.UtcNow - _refreshed < TimeSpan.FromSeconds(10)) return;
+            if (_clock.GetUtcNow() - _refreshed < TimeSpan.FromSeconds(10)) return;
             var was = _available;
             string? version = null; var ok = false;
             try
@@ -55,10 +61,18 @@ public sealed class CodexSocketRunner(string socketPath) : ICodexRunner
                 ok = code == 0 && version.Length > 0 && version.Length < 200;
             }
             catch (Exception e) when (e is AiProviderException or IOException or OperationCanceledException && !ct.IsCancellationRequested) { }
-            _available = ok; _version = ok ? version : null; _refreshed = DateTimeOffset.UtcNow;
-            if (ok && !was) BecameAvailable?.Invoke();
+            var stamp = SocketStamp();
+            var restarted = ok && was && stamp != _socketStamp;
+            _available = ok; _version = ok ? version : null; _refreshed = _clock.GetUtcNow(); _socketStamp = stamp;
+            if (ok && (!was || restarted)) BecameAvailable?.Invoke();
         }
         finally { _refresh.Release(); }
+    }
+
+    private DateTime? SocketStamp()
+    {
+        try { return File.Exists(socketPath) ? File.GetLastWriteTimeUtc(socketPath) : null; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
     }
 
     public ICodexProcess Start(CodexCommand command, CodexSelfTestArgs? selfTest = null)
@@ -68,10 +82,7 @@ public sealed class CodexSocketRunner(string socketPath) : ICodexRunner
         try
         {
             socket.Connect(new UnixDomainSocketEndPoint(socketPath));
-            var first = command == CodexCommand.SelfTest
-                ? JsonSerializer.Serialize(new Dictionary<string, string> { ["cmd"] = "selftest", ["canary"] = selfTest!.CanaryPath, ["word"] = selfTest.Word })
-                : JsonSerializer.Serialize(new Dictionary<string, string> { ["cmd"] = CommandName(command) });
-            socket.Send(Encoding.UTF8.GetBytes(first + "\n"));
+            socket.Send(FirstLine(command, selfTest));
         }
         catch (Exception e) when (e is SocketException or IOException or ObjectDisposedException)
         {
@@ -80,6 +91,20 @@ public sealed class CodexSocketRunner(string socketPath) : ICodexRunner
             throw new AiProviderException("provider_unavailable", "Der Codex-Container ist nicht erreichbar.");
         }
         return new SocketProcess(socket);
+    }
+
+    /// <summary>Die erste Zeile zum Tor. Mit Utf8JsonWriter, nicht JsonSerializer: der Server laeuft ohne Reflection-JSON (JsonSerializerIsReflectionEnabledByDefault=false).</summary>
+    internal static byte[] FirstLine(CodexCommand command, CodexSelfTestArgs? selfTest)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var w = new Utf8JsonWriter(buffer))
+        {
+            w.WriteStartObject();
+            w.WriteString("cmd", CommandName(command));
+            if (command == CodexCommand.SelfTest) { w.WriteString("canary", selfTest!.CanaryPath); w.WriteString("word", selfTest.Word); }
+            w.WriteEndObject();
+        }
+        return [.. buffer.WrittenSpan, (byte)'\n'];
     }
 
     private sealed class SocketProcess : ICodexProcess

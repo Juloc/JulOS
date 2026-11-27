@@ -64,7 +64,7 @@ internal static class AiServices
         // Das Codex-Programm liegt im Datenordner und wird erst beim Einschalten geladen; ohne Datenordner gibt es die Bruecke nicht
         services.AddSingleton(_ => new CodexInstaller(configuration["JULOS_DATA"] ?? "", string.IsNullOrWhiteSpace(configuration["JULOS_DATA"]) ? null : CodexRelease.ForThisMachine()));
         // JULOS_CODEX_SOCKET gesetzt: das Programm laeuft im eigenen Container (docs/CODEX-SIDECAR.md), JulOS laedt nichts und fragt es nur ueber den Socket
-        services.AddSingleton<ICodexRunner>(sp => configuration["JULOS_CODEX_SOCKET"] is { Length: > 0 } socket ? new CodexSocketRunner(socket) : new LocalRunner(sp.GetRequiredService<CodexInstaller>()));
+        services.AddSingleton<ICodexRunner>(sp => configuration["JULOS_CODEX_SOCKET"] is { Length: > 0 } socket ? new CodexSocketRunner(socket, sp.GetRequiredService<TimeProvider>()) : new LocalRunner(sp.GetRequiredService<CodexInstaller>()));
         services.AddSingleton(sp => new CodexBridge(sp.GetRequiredService<ICodexRunner>(), sp.GetRequiredService<CodexInstaller>(), sp.GetRequiredService<TimeProvider>()));
         services.AddSingleton<CodexVerification>();
         services.AddHostedService(sp => sp.GetRequiredService<CodexVerification>());

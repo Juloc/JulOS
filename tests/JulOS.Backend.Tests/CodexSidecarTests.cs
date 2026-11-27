@@ -19,13 +19,14 @@ public sealed class CodexSidecarTests : IDisposable
     /// <summary>Ein Testserver auf einem Unix-Socket: liest die erste Zeile (merkt sie sich), dann entscheidet der Beantworter.</summary>
     private sealed class FakeGate : IDisposable
     {
-        public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "jg-" + Guid.NewGuid().ToString("N")[..10] + ".sock");
+        public string Path { get; }
         public List<string> First { get; } = [];
         public List<string> Closed { get; } = [];
         private readonly Socket _listener = new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
 
-        public FakeGate(Func<string, NetworkStream, Task> answer)
+        public FakeGate(Func<string, NetworkStream, Task> answer, string? path = null)
         {
+            Path = path ?? System.IO.Path.Combine(System.IO.Path.GetTempPath(), "jg-" + Guid.NewGuid().ToString("N")[..10] + ".sock");
             _listener.Bind(new UnixDomainSocketEndPoint(Path)); _listener.Listen(8);
             _ = Task.Run(async () =>
             {
@@ -52,7 +53,7 @@ public sealed class CodexSidecarTests : IDisposable
         public void Dispose() { _listener.Dispose(); try { File.Delete(Path); } catch (IOException) { } }
     }
 
-    private FakeGate Gate(Func<string, NetworkStream, Task> answer) { var g = new FakeGate(answer); _open.Add(g); return g; }
+    private FakeGate Gate(Func<string, NetworkStream, Task> answer, string? path = null) { var g = new FakeGate(answer, path); _open.Add(g); return g; }
 
     private static async Task Write(NetworkStream s, string text) { await s.WriteAsync(Encoding.UTF8.GetBytes(text)); await s.FlushAsync(); }
 
@@ -140,6 +141,24 @@ public sealed class CodexSidecarTests : IDisposable
         await runner.RefreshAsync(TestContext.Current.CancellationToken);
         Assert.True(runner.Available); Assert.Equal("codex-cli 0.171.0", runner.Version); Assert.Equal(1, came);
         Assert.True(runner.Isolated); Assert.Equal("/home/codex/work", runner.WorkDirectory);
+    }
+
+    [Fact]
+    public async Task A_restart_of_the_container_between_two_looks_also_asks_for_a_new_self_test()
+    {
+        static Task Answer(string first, NetworkStream s) => Write(s, "codex-cli 0.171.0\n\u001e{\"exit\":0}\n");
+        var gate = Gate(Answer);
+        var runner = new CodexSocketRunner(gate.Path, _time);
+        var came = 0; runner.BecameAvailable += () => came++;
+        var ct = TestContext.Current.CancellationToken;
+        await runner.RefreshAsync(ct);
+        _time.Advance(TimeSpan.FromSeconds(11)); await runner.RefreshAsync(ct);
+        Assert.Equal(1, came);                                     // dieselbe Socket-Datei: nichts Neues
+        // Das Tor startet neu (neue Socket-Datei am selben Ort), ohne dass eine Nachfrage dazwischen ins Leere ging
+        gate.Dispose(); await Task.Delay(50, ct);
+        Gate(Answer, gate.Path);
+        _time.Advance(TimeSpan.FromSeconds(11)); await runner.RefreshAsync(ct);
+        Assert.True(runner.Available); Assert.Equal(2, came);
     }
 
     // ------------------------------------------------------------------ der Selbsttest

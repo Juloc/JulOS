@@ -1,5 +1,4 @@
-using System.ComponentModel;
-using System.Diagnostics;
+using System.Text;
 
 namespace JulOS.Integrations.Ai;
 
@@ -15,7 +14,7 @@ internal sealed class CodexDeviceLogin : IDisposable
     /// <summary>Der Code des Programms gilt 15 Minuten.</summary>
     public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(16);
 
-    private readonly Process _process;
+    private readonly ICodexProcess _process;
     private readonly CancellationTokenSource _lifetime;
     private readonly TimeProvider _time;
     private readonly DateTimeOffset _started;
@@ -23,7 +22,7 @@ internal sealed class CodexDeviceLogin : IDisposable
     private volatile string? _url, _code;
     private int _cancelled;
 
-    private CodexDeviceLogin(Process process, TimeProvider time, TimeSpan lifetime)
+    private CodexDeviceLogin(ICodexProcess process, TimeProvider time, TimeSpan lifetime)
     {
         _process = process; _time = time; _started = time.GetUtcNow();
         _lifetime = new CancellationTokenSource(lifetime);
@@ -34,14 +33,11 @@ internal sealed class CodexDeviceLogin : IDisposable
 
     public CodexLoginState Snapshot() => new(_state, _state == "waiting" ? _url : null, _state == "waiting" ? _code : null, _state == "waiting" ? _started + Lifetime : null);
 
-    public static CodexDeviceLogin Start(ProcessStartInfo start, TimeProvider time, TimeSpan? lifetime = null)
+    public static CodexDeviceLogin Start(ICodexProcess process, TimeProvider time, TimeSpan? lifetime = null)
     {
-        Process process;
-        try { process = Process.Start(start) ?? throw new Win32Exception(); }
-        catch (Win32Exception) { throw new AiProviderException("provider_unavailable", "Das Codex-Programm lässt sich nicht starten."); }
         var login = new CodexDeviceLogin(process, time, lifetime ?? Lifetime);
         process.StandardInput.Close();
-        var reading = Task.WhenAll(login.ReadAsync(process.StandardOutput), login.ReadAsync(process.StandardError));
+        var reading = login.ReadAsync(new StreamReader(process.StandardOutput, Encoding.UTF8));
         login.Completed = login.WatchAsync(reading);
         return login;
     }
@@ -50,8 +46,7 @@ internal sealed class CodexDeviceLogin : IDisposable
 
     private void Stop()
     {
-        try { if (!_process.HasExited) _process.Kill(entireProcessTree: true); }
-        catch (Exception e) when (e is InvalidOperationException or Win32Exception) { }
+        _process.Kill();
     }
 
     private async Task ReadAsync(StreamReader reader)
@@ -72,9 +67,9 @@ internal sealed class CodexDeviceLogin : IDisposable
     {
         try
         {
-            await _process.WaitForExitAsync(_lifetime.Token);
+            var exit = await _process.WaitForExitAsync(_lifetime.Token);
             await reading;
-            var ok = _process.ExitCode == 0 && Volatile.Read(ref _cancelled) == 0;
+            var ok = exit == 0 && Volatile.Read(ref _cancelled) == 0;
             _state = ok ? "succeeded" : Volatile.Read(ref _cancelled) == 1 ? "cancelled" : "failed";
             return ok;
         }

@@ -1,6 +1,6 @@
 # Codex in its own container (build plan)
 
-Status: **plan for the build** (2026-11-26). Written by the JulOS chief chat for a build session; every decision below is made. If something here does not fit the code, ask the chief before choosing. Context: [AI-GATEWAY.md](AI-GATEWAY.md), section "Before turning the Codex bridge on, check it by hand" and its recommendation.
+Status: **built on a branch, not released** (2026-11-27; plan of 2026-11-26 by the JulOS chief chat). Checked in the dev stack: separation, self-test green and red, refusal for apps while red. See "As built" at the end. Context: [AI-GATEWAY.md](AI-GATEWAY.md), section "Before turning the Codex bridge on, check it by hand" and its recommendation.
 
 ## Goal in one sentence
 
@@ -127,3 +127,17 @@ The owner's stack repository is **not** changed by this build; the chief does th
 - Tests green (backend suite once through `devq`, frontend tests, gate tests).
 - In the dev stack with the sidecar: the card shows *Läuft im eigenen Container*, the self-test is green; a planted word in a file inside the sidecar (by hand, for the test) turns it red. The real ChatGPT sign-in is the owner's and is **not** part of this build.
 - Not verified, say so: the real sign-in and a real chat through the bridge, arm64, the browser tests (they need `/dev/fuse`, which the dev container gets with its next restart).
+
+## As built (2026-11-27)
+
+Everything above is built as written. Differences and additions found while running it:
+
+- **First line without reflection JSON.** The server runs with `JsonSerializerIsReflectionEnabledByDefault=false`; the runner writes `{"cmd":...}` with `Utf8JsonWriter` (the first version threw on every call in the real server; the tests had not seen it because the test host allows reflection).
+- **A quick restart counts as "back".** JulOS asks the container once a minute; a restart between two looks was never a pause, so the old green result would have counted for up to 36 hours, also for a container recreated with other volumes. The gate creates its socket anew on every start, so the runner remembers the socket file's time and a new time also starts a self-test. Test `A_restart_of_the_container_between_two_looks_also_asks_for_a_new_self_test`.
+- **Dev stack** (`deploy/dev/compose.yaml`): the service `codex` is built from `deploy/codex/Dockerfile`, `network_mode: bridge` as live; the server gets the socket volume, `group_add: ["10002"]` and a throwaway `tmpfs` for `/data` (the canary and `secret.key` live there).
+- **Gate:** the thread that drops stderr of `app-server` ends quietly when the pipe closes (it printed a traceback now and then).
+
+Checked by hand in the dev stack (amd64): the image build downloaded the real archive of the pinned release and its SHA-256 matched; from inside the codex container `/data`, `/data/secret.key` and `/data/ai/canary` do not exist, the canary word is in no file (`grep -r /`), no Docker socket, user `codex` (10001), home 0700, read-only root, all capabilities dropped, no published port, database and server not reachable by name or address. The card showed *Läuft im eigenen Container (Codex 0.171.0)* and *Selbsttest grün*; a copy of the canary word put into `/home/codex` by hand turned it red (*Der Container sieht Daten von JulOS*) and an app key got `provider_unverified`; removed, green again and the app reached the bridge (`provider_not_ready`, not signed in). Stopping the container showed *error / sidecar_unreachable*; starting it again ran a new self-test by itself.
+
+Not verified: the real ChatGPT sign-in and a real chat through the bridge, the arm64 image (archive hash not downloaded), the workflow run on GitHub, the live server, the browser tests (`/dev/fuse`).
+

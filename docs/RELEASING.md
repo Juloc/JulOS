@@ -10,7 +10,9 @@ and the Docker image tag.
    Optional but worth the minute before a tag: `deploy/dev/e2e.sh` (browser tests: setup and login, connections, RDP picture, keyboard and mouse, SSH terminal, phone and desktop layout; see [DEVELOPMENT.md](DEVELOPMENT.md#browser-tests-real-browser-playwright-in-docker)).
 4. Tag it with the same number and push: `git tag vX.Y.Z && git push origin main vX.Y.Z`. The workflow `docker` **refuses a tag that does not
    match `<Version>`**, and builds `ghcr.io/juloc/julos:X.Y.Z` (amd64 and arm64) with the commit and the build time in "Über JulOS".
-5. Roll out: change the image tag in `JulOS/docker-compose.yml` of the stack repository and sync the stack in Dockhand. A deploy cuts open
+   The same workflow builds the second image `ghcr.io/juloc/julos-codex:X.Y.Z` (Codex in its own container, `deploy/codex/Dockerfile`,
+   [CODEX-SIDECAR.md](CODEX-SIDECAR.md)) with the same tags and the same refusal; the build fails if the Codex archive does not match its pinned hash.
+5. Roll out: change the image tag in `JulOS/docker-compose.yml` of the stack repository (both images, `julos` and `julos-codex`, carry the same tag) and sync the stack in Dockhand. A deploy cuts open
    connections for a moment: tell the user first.
 
 Builds of `main` without a tag are published as `latest` and `main` and show the version of the file with the commit behind it.

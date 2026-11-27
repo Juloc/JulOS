@@ -105,7 +105,7 @@ internal sealed class AiGateway(AiAppStore apps, AiUsageStore usage, AiSettings 
         {
             // Die Codex-Bruecke ist eingeschaltet, aber der Besitzer hat die Pruefung von Hand noch nicht bestaetigt: fuer Apps aus
             var unverified = providerId == "codex" && (await registry.ActiveAsync(ct)).Any(p => p.Id == "codex");
-            await WriteFail(ctx, unverified ? new AiFail(503, "provider_unverified", "Die Codex-Brücke ist noch nicht vom Besitzer freigegeben.") : new AiFail(503, "provider_off", "Dieser Anbieter ist nicht eingeschaltet."));
+            await WriteFail(ctx, unverified ? new AiFail(503, "provider_unverified", registry.Codex.Runner.Isolated ? "Der Selbsttest des Codex-Containers ist nicht grün; die Brücke bleibt für Apps aus." : "Die Codex-Brücke ist noch nicht vom Besitzer freigegeben.") : new AiFail(503, "provider_off", "Dieser Anbieter ist nicht eingeschaltet."));
             return;
         }
         // Nur Modelle, die der Anbieter selbst nennt (dieselbe Liste wie /models, kurz gemerkt): ein frei erfundener Name erreicht weder den Anbieter noch die Tabelle des Verbrauchs

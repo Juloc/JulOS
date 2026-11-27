@@ -62,6 +62,8 @@ internal static class AiEndpoints
     private static void MapAdmin(IEndpointRouteBuilder app)
     {
         var log = app.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Ai");
+        var verification = app.ServiceProvider.GetRequiredService<CodexVerification>();
+        var time = app.ServiceProvider.GetRequiredService<TimeProvider>();
         SessionIdentity Who(HttpContext ctx) => (SessionIdentity)ctx.Items[ApiGuard.IdentityKey]!;
 
         async Task Audit(SecurityAuditStore audit, HttpContext ctx, string evt, string? detail = null)
@@ -79,7 +81,9 @@ internal static class AiEndpoints
         {
             registry.ForgetModels();
             if (!settings.Enabled) { registry.Codex.Stop(); return; }
-            if ((await providers.ListAsync(ct)).TryGetValue("codex", out var f) && f.Enabled) _ = registry.Installer.StartAsync();
+            if (!(await providers.ListAsync(ct)).TryGetValue("codex", out var f) || !f.Enabled) return;
+            // Im eigenen Container laedt JulOS nichts; dort wird stattdessen die Trennung geprueft
+            if (registry.Codex.Runner.Isolated) verification.Request(); else _ = registry.Installer.StartAsync();
         }
 
         async Task<AppDto> ToAppDto(AiApp a, AiUsageStore usage, CancellationToken ct) =>
@@ -102,7 +106,10 @@ internal static class AiEndpoints
                 if (p is CodexBridge bridge)
                 {
                     var login = bridge.LoginState();
-                    codex = new CodexDto(CodexRelease.PinnedVersion, registry.Installer.Supported, registry.CodexConfirmed, new LoginDto(login.State, login.Url, login.Code, login.ExpiresAt));
+                    var sidecar = bridge.Runner.Isolated;
+                    var last = sidecar ? CodexVerification.Read(settings) : null;
+                    codex = new CodexDto(CodexRelease.PinnedVersion, sidecar || registry.Installer.Supported, registry.CodexConfirmed, new LoginDto(login.State, login.Url, login.Code, login.ExpiresAt),
+                        sidecar ? "sidecar" : "local", sidecar ? bridge.Runner.Version : null, last is null ? null : new SelfTestDto(last.At, last.Ok, last.Counts(time.GetUtcNow()), last.Failed));
                     // Das Kontingent nur fragen, wenn die Bruecke ohnehin laeuft (das Ansehen startet nichts)
                     if (enabled && settings.Enabled && bridge.Running && state.Ready)
                     {
@@ -217,13 +224,25 @@ internal static class AiEndpoints
         });
 
         // Der Besitzer bestaetigt, dass er die Pruefung von Hand gemacht hat (docs/AI-GATEWAY.md); erst dann bedient die Codex-Bruecke Apps. Gilt fuer die festgelegte Version.
-        app.MapPut("/api/ai/providers/codex/confirm", async (ConfirmRequest body, HttpContext ctx, AiSettings settings, SecurityAuditStore audit, HitCounter hits) =>
+        app.MapPut("/api/ai/providers/codex/confirm", async (ConfirmRequest body, HttpContext ctx, AiRegistry registry, AiSettings settings, SecurityAuditStore audit, HitCounter hits) =>
         {
             if (Limited(ctx, hits)) return TooMany();
+            // Im eigenen Container ersetzt der Selbsttest die Pruefung von Hand: eine Bestaetigung gaebe es nur als Umweg an ihm vorbei
+            if (registry.Codex.Runner.Isolated) return Error(409, "Mit dem eigenen Container gibt der Selbsttest die Brücke frei, nicht eine Bestätigung.", "not_needed");
             if (body.Confirmed is not { } yes) return Error(400, "confirmed fehlt.");
             await settings.SetCodexConfirmedAsync(yes ? CodexRelease.PinnedVersion : null, ctx.RequestAborted);
             await Audit(audit, ctx, yes ? "ai.codex.confirm" : "ai.codex.unconfirm", CodexRelease.PinnedVersion);
             return Results.NoContent();
+        });
+
+        // Der Selbsttest des Codex-Containers jetzt (er laeuft sonst beim Einschalten und einmal am Tag); nur mit dem eigenen Container
+        app.MapPost("/api/ai/providers/codex/selftest", async (HttpContext ctx, AiRegistry registry, SecurityAuditStore audit, HitCounter hits) =>
+        {
+            if (Limited(ctx, hits, "ai-selftest", 6)) return TooMany();
+            if (!verification.Applicable) return Error(409, "Der Selbsttest gibt es nur mit dem eigenen Container.", "not_needed");
+            var r = await verification.RunNowAsync(ctx.RequestAborted);
+            await Audit(audit, ctx, r.Ok ? "ai.codex.selftest.ok" : "ai.codex.selftest.red", r.Ok ? null : string.Join(",", r.Failed));
+            return Results.Json(new SelfTestDto(r.At, r.Ok, r.Counts(time.GetUtcNow()), r.Failed), AiJson.Default.SelfTestDto);
         });
 
         app.MapDelete("/api/ai/providers/codex/login", async (HttpContext ctx, AiRegistry registry, SecurityAuditStore audit) =>

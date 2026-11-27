@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Startet die Test-Instanz (Datenbank, Server, Test-SSH, Test-Desktop). Erzeugt beim ersten Mal zufaellige Wegwerf-Zugangsdaten in deploy/dev/.env.
+# Startet die Test-Instanz (Datenbank, Server, Codex-Container, Test-SSH, Test-Desktop). Erzeugt beim ersten Mal zufaellige Wegwerf-Zugangsdaten in deploy/dev/.env.
 set -euo pipefail
 cd "$(dirname "$0")"
 if [ ! -f .env ]; then

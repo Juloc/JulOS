@@ -147,7 +147,10 @@ class Gate:
             kill()
 
         def drop_errors():                     # stderr of app-server can name the account: read and thrown away
-            while child.stderr.read(4096):
+            try:
+                while child.stderr.read(4096):
+                    pass
+            except (OSError, ValueError):      # the pipe is closed below once the program has ended
                 pass
 
         threading.Thread(target=from_client, daemon=True).start()

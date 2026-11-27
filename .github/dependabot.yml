@@ -1,24 +1,38 @@
-# Haelt Abhaengigkeiten aktuell (Sicherheitsupdates kommen bei Dependabot ohnehin sofort, unabhaengig vom Zeitplan hier).
+# Haelt Abhaengigkeiten aktuell: einmal im Monat, je Art ein Sammel-PR (Wunsch des Owners 2026-11-27: weniger PRs und Mails).
+# Sofortige Sicherheits-PRs gibt es nur, wenn im Repository "Dependabot alerts / security updates" eingeschaltet sind (derzeit aus);
+# die woechentliche Pruefung supply-chain.yml meldet bekannte Luecken in NuGet-Paketen unabhaengig davon.
 # Aktionen sind auf Commit-SHA gepinnt: Dependabot hebt den SHA und den Kommentar mit der Version an. Siehe docs/RELEASING.md "Updates und Sicherheit".
 version: 2
 updates:
   - package-ecosystem: nuget
     directory: /
-    schedule: { interval: weekly, day: monday }
-    open-pull-requests-limit: 5
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 2
     groups:
-      microsoft-runtime:
-        patterns: ["Microsoft.*", "System.*"]
+      nuget:
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
-    schedule: { interval: weekly, day: monday }
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 1
+    groups:
+      actions:
+        patterns: ["*"]
   - package-ecosystem: docker
     directory: /
-    schedule: { interval: weekly, day: monday }
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 1
+    groups:
+      docker:
+        patterns: ["*"]
     ignore:
       # Die .NET-Hauptversion hebt der Owner bewusst selbst an (nicht per Dependabot)
       - dependency-name: "dotnet/*"
         update-types: ["version-update:semver-major"]
   - package-ecosystem: docker-compose
     directory: /
-    schedule: { interval: weekly, day: monday }
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 1
+    groups:
+      compose:
+        patterns: ["*"]

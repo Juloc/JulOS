@@ -46,7 +46,8 @@ services:
     ports:
       - "127.0.0.1:18080:8080"
 
-  # Codex im eigenen Container, wie live (docs/CODEX-SIDECAR.md): der Selbsttest der Trennung laeuft gegen genau diesen Dienst. Nur lokal, keine Anmeldung noetig fuer den Selbsttest.
+  # Codex im eigenen Container, wie live (docs/CODEX-SIDECAR.md): der Selbsttest der Trennung laeuft gegen genau diesen Dienst. Eigener Benutzer (aus dem Image), eigenes Volume,
+  # keine Volumes von JulOS, kein Docker-Socket. Keine Anmeldung noetig fuer den Selbsttest.
   codex:
     build:
       context: ../..
@@ -63,6 +64,8 @@ services:
       - julos-dev-codex-sock:/run/codex
     mem_limit: 2g
     pids_limit: 512
+    # wie live: nicht im Netz der Test-Instanz (Datenbank, Server), nur der Socket verbindet; kein veroeffentlichter Port
+    network_mode: bridge
 
   # Wegwerf-Ziel fuer das Terminal (SSH). Zugang: Benutzer "tester", Passwort aus deploy/dev/.env (DEV_TARGET_PASSWORD)
   test-ssh:

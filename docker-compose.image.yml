@@ -28,6 +28,8 @@ services:
         condition: service_healthy
       julos-data-init:
         condition: service_completed_successfully
+      codex:
+        condition: service_started
     environment:
       JULOS_DB: "Host=postgres;Database=julos;Username=julos;Password=${JULOS_DB_PASSWORD}"
       # optional: Schluessel zum Speichern von Verbindungs-Passwoertern (openssl rand -base64 32); ohne ihn wird nichts gespeichert
@@ -72,8 +74,13 @@ services:
       JULOS_DDNS_UPDATE_AUTH_FILE: "${JULOS_DDNS_UPDATE_AUTH_FILE:-}"
       JULOS_DDNS_AUTO: "${JULOS_DDNS_AUTO:-off}"
       JULOS_DDNS_AUTO_SECONDS: "${JULOS_DDNS_AUTO_SECONDS:-}"
+      # Codex im eigenen Container (docs/CODEX-SIDECAR.md): JulOS spricht ihn nur ueber diesen Socket an. Ohne die Zeile (und den Dienst codex unten) laeuft Codex wie frueher im selben Container.
+      JULOS_CODEX_SOCKET: /run/codex/codex.sock
     # Der Server muss als derselbe Benutzer laufen wie die grafische Sitzung der Ziel-Maschine (Agent-Socket, Foto-Ordner)
     user: "${JULOS_UID:-1000}:${JULOS_GID:-1000}"
+    # die Gruppe des Codex-Sockets (codexsock im Image des Codex-Containers), damit der Server ihn oeffnen darf
+    group_add:
+      - "10002"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -85,6 +92,8 @@ services:
         volume:
           nocopy: true   # sonst uebernimmt ein leeres Volume beim Start die Rechte des Image-Ordners (Benutzer "app") statt die von julos-data-init
       - ${HOME}/julos-uploads:/uploads
+      # nur der Socket des Codex-Containers (sonst nichts)
+      - codex_sock:/run/codex
       # Backup-Ordner: vorher anlegen (mkdir -m 700 ~/julos-backup), er gehoert dem Benutzer des Servers; Ablageort ausserhalb dieses Rechners mitnehmen
       - ${JULOS_BACKUP_PATH:-${HOME}/julos-backup}:/backup
       # Zweites Backup-Ziel, Beispiele (docs/BACKUP.md): eingebundenes NAS (JULOS_BACKUP_COPY=path, JULOS_BACKUP_COPY_PATH=/backup-copy), das Ziel gehoert dem Server-Benutzer, Rechte 0700
@@ -114,6 +123,25 @@ services:
       start_period: 40s
       retries: 3
 
+  # Codex im eigenen Container (docs/CODEX-SIDECAR.md): eigener Benutzer (10001), eigenes Volume fuer die ChatGPT-Anmeldung, kein Zugriff auf die Daten von JulOS, kein
+  # veroeffentlichter Port, nicht im Netz von JulOS (braucht das Internet fuer OpenAI). JulOS erreicht ihn nur ueber den Socket im Volume codex_sock.
+  codex:
+    image: ghcr.io/juloc/julos-codex:latest
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - codex_home:/home/codex
+      - codex_sock:/run/codex
+    mem_limit: 2g
+    pids_limit: 512
+    network_mode: bridge
+
   # Einmalig vor dem Server: gibt das Datenvolume dem Benutzer des Servers (ein neues Volume gehoert sonst dem Benutzer des Images und waere fuer ihn nicht beschreibbar).
   julos-data-init:
     image: postgres:18   # nur seiner Werkzeuge wegen (chown), ohnehin vorhanden
@@ -132,3 +160,5 @@ services:
 volumes:
   julos-postgres:
   julos-data:
+  codex_home:
+  codex_sock:

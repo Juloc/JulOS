@@ -1,5 +1,3 @@
-using System.ComponentModel;
-using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -26,8 +24,21 @@ public sealed class CodexBridgeOptions
 /// laufen nebeneinander ueber denselben Prozess (die Ereignisse tragen die Faden-Kennung). Die Anmeldung ist die Geraete-Anmeldung des Programms.
 /// Nicht gegen das echte Programm geprueft: die Form der Nachrichten folgt dem, was Jularr und andere Projekte benutzen, getestet ist sie gegen ein Fake-Programm.
 /// </summary>
-public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, CodexBridgeOptions? options = null) : IAiProvider, IDisposable
+public sealed class CodexBridge : IAiProvider, IDisposable
 {
+    private readonly ICodexRunner _runner;
+    private readonly CodexInstaller _installer;
+    private readonly TimeProvider _time;
+
+    /// <summary>Das Programm im selben Container (wie bisher).</summary>
+    public CodexBridge(CodexInstaller installer, TimeProvider time, CodexBridgeOptions? options = null) : this(new LocalRunner(installer, options?.Executable), installer, time, options) { }
+
+    /// <summary>Mit einem beliebigen Starter: im selben Container (LocalRunner) oder im eigenen (SocketRunner).</summary>
+    public CodexBridge(ICodexRunner runner, CodexInstaller installer, TimeProvider time, CodexBridgeOptions? options = null)
+    {
+        _runner = runner; _installer = installer; _time = time; _options = options ?? new();
+    }
+
     private const string BaseInstructions = "You are a helpful assistant. Answer the user's request directly.";
     private static readonly string[] OffFeatures =
     [
@@ -36,7 +47,7 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
         "write_stdin_approval",
     ];
 
-    private readonly CodexBridgeOptions _options = options ?? new();
+    private readonly CodexBridgeOptions _options;
     private readonly SemaphoreSlim _startLock = new(1, 1);
     private readonly object _loginLock = new();
     private Connection? _connection;
@@ -48,8 +59,7 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
 
     public string Id => "codex";
 
-    // Das geladene Programm nur, wenn es noch die geprueft abgelegte Datei ist (vor jedem Start gefragt)
-    private string? Executable => _options.Executable ?? installer.VerifiedPath();
+    public ICodexRunner Runner => _runner;
 
     public bool Running => _connection is { Dead: false };
 
@@ -57,12 +67,17 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
 
     public async Task<AiProviderState> GetStateAsync(CancellationToken ct)
     {
-        if (_options.Executable is null)
+        if (_runner.Isolated)
         {
-            if (!installer.Supported) return new AiProviderState("error", "unsupported_platform");
-            if (installer.IsDownloading) return new AiProviderState("downloading");
-            if (!installer.IsInstalled) return installer.Failure is { } f ? new AiProviderState("install_failed", f) : new AiProviderState("not_installed");
-            if (Executable is null) return new AiProviderState("install_failed", installer.Failure);
+            await _runner.RefreshAsync(ct);
+            if (!_runner.Available) return new AiProviderState("error", "sidecar_unreachable");
+        }
+        else if (_options.Executable is null)
+        {
+            if (!_installer.Supported) return new AiProviderState("error", "unsupported_platform");
+            if (_installer.IsDownloading) return new AiProviderState("downloading");
+            if (!_installer.IsInstalled) return _installer.Failure is { } f ? new AiProviderState("install_failed", f) : new AiProviderState("not_installed");
+            if (!_runner.Available) return new AiProviderState("install_failed", _installer.Failure);
         }
         if (LoginState().State is "starting" or "waiting") return new AiProviderState("login_waiting");
         return await IsSignedInAsync(ct) ? new AiProviderState("ready") : new AiProviderState("not_signed_in");
@@ -76,27 +91,26 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
         try
         {
             if (FreshStatus() is { } again) return again;
-            var result = await RunAsync(["login", "status"], ct);
+            var result = await RunAsync(CodexCommand.LoginStatus, ct);
             var signedIn = result is { ExitCode: 0 } && result.Output.Contains("Logged in", StringComparison.OrdinalIgnoreCase);
-            _signedInCache = (time.GetUtcNow(), signedIn);
+            _signedInCache = (_time.GetUtcNow(), signedIn);
             return signedIn;
         }
         finally { _statusLock.Release(); }
     }
 
-    private bool? FreshStatus() => _signedInCache is { } c && time.GetUtcNow() - c.At < TimeSpan.FromSeconds(5) ? c.SignedIn : null;
+    private bool? FreshStatus() => _signedInCache is { } c && _time.GetUtcNow() - c.At < TimeSpan.FromSeconds(5) ? c.SignedIn : null;
 
     public CodexLoginState LoginState() { lock (_loginLock) return _login?.Snapshot() ?? new CodexLoginState("none", null, null, null); }
 
     /// <summary>Startet die Geraete-Anmeldung (eine laufende wird weiterbenutzt).</summary>
     public CodexLoginState StartLogin()
     {
-        var exe = Executable ?? throw new AiProviderException("not_installed", "Das Codex-Programm ist noch nicht geladen.");
         lock (_loginLock)
         {
             if (_login?.Snapshot().State is "starting" or "waiting") return _login.Snapshot();
             _login?.Dispose();
-            _login = CodexDeviceLogin.Start(Prepare(exe, ["login", "--device-auth"]), time);
+            _login = CodexDeviceLogin.Start(_runner.Start(CodexCommand.Login), _time);
             var started = _login;
             _ = started.Completed.ContinueWith(t =>
             {
@@ -114,7 +128,7 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
     {
         CancelLogin();
         StopConnection();
-        await RunAsync(["logout"], ct);
+        await RunAsync(CodexCommand.Logout, ct);
         _signedInCache = null;
     }
 
@@ -176,7 +190,7 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
         var features = new JsonObject(); foreach (var f in OffFeatures) features[f] = false;
         var thread = await c.RequestAsync("thread/start", new JsonObject
         {
-            ["model"] = request.Model, ["ephemeral"] = true, ["cwd"] = installer.Work, ["sandbox"] = "read-only", ["approvalPolicy"] = "never", ["baseInstructions"] = instructions,
+            ["model"] = request.Model, ["ephemeral"] = true, ["cwd"] = _runner.WorkDirectory, ["sandbox"] = "read-only", ["approvalPolicy"] = "never", ["baseInstructions"] = instructions,
             ["config"] = new JsonObject
             {
                 ["features"] = features, ["web_search"] = "disabled", ["include_apply_patch_tool"] = false, ["include_permissions_instructions"] = false,
@@ -250,23 +264,22 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
     private async Task<Connection> ConnectAsync(CancellationToken ct)
     {
         if (_connection is { Dead: false } live) return live;
-        var exe = Executable ?? throw new AiProviderException("not_installed", "Das Codex-Programm ist noch nicht geladen.");
         await _startLock.WaitAsync(ct);
         try
         {
             if (_connection is { Dead: false } again) return again;
-            if (_failures > 0 && time.GetUtcNow() < _nextStart) throw new AiProviderException("provider_unavailable", "Das Codex-Programm startet nach einem Fehler neu; bitte gleich noch einmal.");
+            if (_failures > 0 && _time.GetUtcNow() < _nextStart) throw new AiProviderException("provider_unavailable", "Das Codex-Programm startet nach einem Fehler neu; bitte gleich noch einmal.");
             Connection? c = null; var established = false;
             try
             {
-                c = Connection.Start(Prepare(exe, ["app-server"]), this);
+                c = Connection.Start(_runner.Start(CodexCommand.AppServer), this);
                 await c.RequestAsync("initialize", new JsonObject { ["clientInfo"] = new JsonObject { ["name"] = "julos", ["title"] = "JulOS", ["version"] = "1" }, ["capabilities"] = new JsonObject { ["experimentalApi"] = false } }, _options.ControlTimeout, ct);
                 await c.SendAsync(new JsonObject { ["method"] = "initialized", ["params"] = new JsonObject() }, ct);
                 _connection = c; established = true;
                 return c;
             }
             // Ein Abbruch des Aufrufers im Kaltstart zaehlt nicht als Fehler des Programms (sonst sperrte ein Schluessel-Inhaber die Bruecke mit Abbruechen); der Prozess wird trotzdem beendet (finally)
-            catch (Exception e) when (e is AiProviderException or Win32Exception or IOException or OperationCanceledException && !ct.IsCancellationRequested)
+            catch (Exception e) when (e is AiProviderException or IOException or OperationCanceledException && !ct.IsCancellationRequested)
             {
                 NoteFailure();
                 throw e as AiProviderException ?? new AiProviderException("provider_unavailable", "Das Codex-Programm lässt sich nicht starten.");
@@ -280,47 +293,29 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
     {
         var n = Interlocked.Increment(ref _failures);
         var wait = TimeSpan.FromTicks(Math.Min(_options.BackoffMax.Ticks, _options.BackoffStart.Ticks << Math.Min(n - 1, 20)));
-        _nextStart = time.GetUtcNow() + wait;
-    }
-
-    /// <summary>Gemeinsame Vorbereitung: keine Shell, eigener Arbeitsordner, eine leere Umgebung mit nur dem Noetigen (nichts von JulOS).</summary>
-    private ProcessStartInfo Prepare(string exe, string[] args)
-    {
-        CodexInstaller.CreatePrivate(installer.Home); CodexInstaller.CreatePrivate(installer.Work);
-        var start = new ProcessStartInfo(exe)
-        {
-            WorkingDirectory = installer.Work, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true,
-            StandardInputEncoding = new UTF8Encoding(false), StandardOutputEncoding = Encoding.UTF8,
-        };
-        foreach (var a in args) start.ArgumentList.Add(a);
-        start.Environment.Clear();
-        start.Environment["PATH"] = Environment.GetEnvironmentVariable("PATH") ?? "/usr/local/bin:/usr/bin:/bin";
-        start.Environment["HOME"] = installer.Home;
-        start.Environment["CODEX_HOME"] = installer.Home;
-        start.Environment["NO_COLOR"] = "1";
-        start.Environment["LANG"] = "C.UTF-8";
-        return start;
+        _nextStart = _time.GetUtcNow() + wait;
     }
 
     /// <summary>Ein kurzes Kommando des Programms (login status, logout) mit Frist; Ausgabe und Fehlerausgabe zusammen. Null, wenn es sich nicht starten laesst.</summary>
-    private async Task<CommandResult?> RunAsync(string[] args, CancellationToken ct)
+    private async Task<CommandResult?> RunAsync(CodexCommand command, CancellationToken ct)
     {
-        var exe = Executable;
-        if (exe is null) return null;
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
         limit.CancelAfter(TimeSpan.FromSeconds(15));
+        ICodexProcess? process = null;
         try
         {
-            using var process = Process.Start(Prepare(exe, args)) ?? throw new Win32Exception();
+            process = _runner.Start(command);
             process.StandardInput.Close();
-            var output = process.StandardOutput.ReadToEndAsync(limit.Token);
-            var errors = process.StandardError.ReadToEndAsync(limit.Token);
-            try { await process.WaitForExitAsync(limit.Token); }
-            catch { try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { } throw; }
-            return new CommandResult(process.ExitCode, await output + "\n" + await errors);
+            using var reader = new StreamReader(process.StandardOutput, Encoding.UTF8);
+            var output = reader.ReadToEndAsync(limit.Token);
+            int code;
+            try { code = await process.WaitForExitAsync(limit.Token); }
+            catch { process.Kill(); throw; }
+            return new CommandResult(code, await output);
         }
-        catch (Win32Exception) { return null; }
+        catch (Exception e) when (e is AiProviderException or IOException) { return null; }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return null; }
+        finally { process?.Dispose(); }
     }
 
     private sealed record CommandResult(int ExitCode, string Output);
@@ -328,7 +323,8 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
     /// <summary>Ein laufender app-server: Schreiben, Lesen und Verteilen der Antworten und Ereignisse.</summary>
     private sealed class Connection
     {
-        private readonly Process _process;
+        private readonly ICodexProcess _process;
+        private readonly StreamWriter _input;
         private readonly CodexBridge _owner;
         private readonly SemaphoreSlim _write = new(1, 1);
         private readonly object _lock = new();
@@ -337,16 +333,13 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
         private long _nextId;
         private volatile bool _intentional;
 
-        private Connection(Process process, CodexBridge owner) { _process = process; _owner = owner; }
+        private Connection(ICodexProcess process, CodexBridge owner) { _process = process; _input = new StreamWriter(process.StandardInput, new UTF8Encoding(false)); _owner = owner; }
 
         public volatile bool Dead;
 
-        public static Connection Start(ProcessStartInfo start, CodexBridge owner)
+        public static Connection Start(ICodexProcess process, CodexBridge owner)
         {
-            var process = Process.Start(start) ?? throw new Win32Exception();
             var c = new Connection(process, owner);
-            // Die Fehlerausgabe kann das Konto nennen: sie wird gelesen und verworfen
-            _ = Task.Run(async () => { var sink = new char[4096]; try { while (await process.StandardError.ReadAsync(sink.AsMemory()) > 0) { } } catch (Exception e) when (e is IOException or ObjectDisposedException) { } });
             _ = Task.Run(c.ReadLoopAsync);
             return c;
         }
@@ -354,8 +347,7 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
         public void Kill(bool intentional)
         {
             _intentional = intentional;
-            try { if (!_process.HasExited) _process.Kill(entireProcessTree: true); }
-            catch (Exception e) when (e is InvalidOperationException or Win32Exception) { }
+            _process.Kill();
         }
 
         public ChannelReader<JsonElement> Open(string threadId)
@@ -387,7 +379,7 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
         public async Task SendAsync(JsonObject message, CancellationToken ct)
         {
             await _write.WaitAsync(ct);
-            try { await _process.StandardInput.WriteLineAsync(message.ToJsonString().AsMemory(), ct); await _process.StandardInput.FlushAsync(ct); }
+            try { await _input.WriteLineAsync(message.ToJsonString().AsMemory(), ct); await _input.FlushAsync(ct); }
             catch (Exception e) when (e is IOException or ObjectDisposedException or InvalidOperationException) { throw new AiProviderException("provider_unavailable", "Das Codex-Programm wurde beendet."); }
             finally { _write.Release(); }
         }
@@ -403,7 +395,7 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
         {
             try
             {
-                var lines = new LineReader(_process.StandardOutput, 4 << 20);
+                var lines = new LineReader(new StreamReader(_process.StandardOutput, Encoding.UTF8), 4 << 20);
                 while (await lines.ReadLineAsync(CancellationToken.None) is { } line)
                 {
                     if (string.IsNullOrWhiteSpace(line)) continue;
@@ -427,7 +419,7 @@ public sealed class CodexBridge(CodexInstaller installer, TimeProvider time, Cod
                 }
             }
             catch (Exception e) when (e is IOException or ObjectDisposedException or InvalidOperationException or AiProviderException) { Kill(intentional: false); }
-            finally { OnEnded(); }
+            finally { OnEnded(); _process.Dispose(); }
         }
 
         private void Resolve(JsonElement id, JsonElement root)

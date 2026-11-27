@@ -11,3 +11,5 @@ JULOS_TEST_SSH="127.0.0.1:${DEV_SSH_PORT:-42222}" \
   dotnet test --project tests/JulOS.Backend.Tests/JulOS.Backend.Tests.csproj "$@"
 # Groessen-Logik des Handy-Clients (reines JavaScript, braucht nur node)
 if command -v node >/dev/null; then node --test "tests/frontend/*.test.mjs"; else echo "node fehlt: tests/frontend uebersprungen"; fi
+# Das Tor des Codex-Containers (reines Python, tools/codex-gate)
+if command -v python3 >/dev/null; then (cd tools/codex-gate && python3 -W ignore -m unittest -q test_codex_gate 2>&1 | grep -v '^gate:'); else echo "python3 fehlt: tools/codex-gate uebersprungen"; fi

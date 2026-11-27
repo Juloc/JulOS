@@ -83,9 +83,27 @@ function confirmBlock(c, esc) {
     : `<p class="sec-warn" role="status">${esc(t('ai.codex.unconfirmed'))}</p><div class="dlg-btns"><button type="button" class="ghost" data-ai="codex-confirm">${esc(t('ai.codex.confirm'))}</button></div>`;
 }
 
+// Im eigenen Container (docs/CODEX-SIDECAR.md) gibt der Selbsttest die Bruecke frei: keine Bestaetigung von Hand, sondern Version, Befund und ein Knopf
+const CHECK_KEYS = {
+  uid_not_root: tk('ai.codex.check.uid_not_root'), no_julos_data: tk('ai.codex.check.no_julos_data'), no_docker_socket: tk('ai.codex.check.no_docker_socket'), home_private: tk('ai.codex.check.home_private'),
+  codex_pinned: tk('ai.codex.check.codex_pinned'), version_matches: tk('ai.codex.check.version_matches'), unreachable: tk('ai.codex.check.unreachable'), no_data_dir: tk('ai.codex.check.no_data_dir'),
+};
+function sidecarBlock(c, esc) {
+  const st = c.selfTest, at = st ? fmtDate(st.at, { dateStyle: 'short', timeStyle: 'short' }) : '';
+  const names = st ? st.failed.map((n) => (CHECK_KEYS[n] ? t(CHECK_KEYS[n]) : n)).join('; ') : '';
+  let line;
+  if (!st) line = `<p class="sec-warn" role="status">${esc(t('ai.codex.selftest.none'))}</p>`;
+  else if (!st.ok) line = `<p class="sec-warn" role="status">${esc(t('ai.codex.selftest.red', { at, checks: names }))}</p>`;
+  else if (!st.counts) line = `<p class="sec-warn" role="status">${esc(t('ai.codex.selftest.stale', { at }))}</p>`;
+  else line = `<p class="hint" role="status">${esc(t('ai.codex.selftest.ok', { at }))}</p>`;
+  return `<p class="hint">${esc(t('ai.codex.sidecar', { version: c.sidecarVersion || c.version }))}</p>${line}<div class="dlg-btns"><button type="button" class="ghost" data-ai="codex-selftest">${esc(t('ai.codex.selftest.run'))}</button></div>`;
+}
+
 function codexBlock(p, esc) {
   const c = p.codex, btn = (a, label, cls = '') => `<button type="button" class="${cls || 'ghost'}" data-ai="${a}">${esc(label)}</button>`;
   if (!c.supported) return `<p class="hint">${esc(t('ai.codex.unsupported'))}</p>`;
+  const sidecar = c.mode === 'sidecar';
+  if (sidecar && p.status === 'error') return `<p class="sec-warn" role="status">${esc(t('ai.codex.sidecarDown'))}</p>${sidecarBlock(c, esc)}`;
   if (p.status === 'downloading') return `<p class="hint" role="status">${esc(t('ai.codex.downloading', { version: c.version }))}</p>`;
   if (p.status === 'not_installed' || p.status === 'install_failed') return `${p.status === 'install_failed' ? `<p class="sec-warn">${esc(t('ai.codex.failed'))}${p.detail ? ' ' + esc(p.detail) : ''}</p>` : ''}<div class="dlg-btns">${btn('codex-retry', t('ai.codex.download'), 'primary')}</div>`;
   const login = c.login || {};
@@ -99,8 +117,9 @@ function codexBlock(p, esc) {
   }
   const plan = p.plan && p.plan.windows.length ? `<p class="hint">${esc(t('ai.codex.plan', { plan: p.plan.plan || '', usage: p.plan.windows.map((w) => `${Math.round(w.usedPercent)} %${w.minutes ? ' / ' + (w.minutes >= 1440 ? Math.round(w.minutes / 1440) + ' d' : Math.round(w.minutes / 60) + ' h') : ''}`).join(', ') }))}</p>` : '';
   const after = LOGIN_END[login.state] ? `<p class="sec-warn">${esc(t(LOGIN_END[login.state]))}</p>` : '';
-  if (p.status === 'ready') return `${plan}${confirmBlock(c, esc)}<div class="dlg-btns">${btn('logout', t('ai.codex.logout'))}</div>`;
-  return `${after}<p class="hint">${esc(t('ai.codex.signInHelp'))}</p>${confirmBlock(c, esc)}<div class="dlg-btns">${btn('login-start', t('ai.codex.signIn'), 'primary')}</div>`;
+  const gate = sidecar ? sidecarBlock(c, esc) : confirmBlock(c, esc);
+  if (p.status === 'ready') return `${plan}${gate}<div class="dlg-btns">${btn('logout', t('ai.codex.logout'))}</div>`;
+  return `${after}<p class="hint">${esc(t('ai.codex.signInHelp'))}</p>${gate}<div class="dlg-btns">${btn('login-start', t('ai.codex.signIn'), 'primary')}</div>`;
 }
 
 function keyBlock(p, canStore, ui, esc) {
@@ -249,6 +268,7 @@ function createDialog(api, esc) {
     'login-cancel': () => run('p-codex', () => call('/api/ai/providers/codex/login', 'DELETE')),
     'codex-confirm': () => run('p-codex', () => call('/api/ai/providers/codex/confirm', 'PUT', { confirmed: true })),
     'codex-unconfirm': () => run('p-codex', () => call('/api/ai/providers/codex/confirm', 'PUT', { confirmed: false })),
+    'codex-selftest': () => run('p-codex', () => call('/api/ai/providers/codex/selftest', 'POST')),
     'logout': () => run('p-codex', () => call('/api/ai/providers/codex/logout', 'POST')),
     'key-save': (b) => {
       const input = body.querySelector('#aiKey-' + b.dataset.id), key = input ? input.value.trim() : '';
